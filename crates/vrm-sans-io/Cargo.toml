@@ -1,0 +1,12 @@
+[package]
+name = "vrm-sans-io"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+glam.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+vrm-core = { path = "../vrm-core" }
+vrm-protocol = { path = "../vrm-protocol" }

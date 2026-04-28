@@ -1,0 +1,35 @@
+[package]
+name = "vrm-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Renderer-agnostic Rust toolkit for reading and driving VRM/VRMA assets."
+
+[workspace]
+members = [
+    ".",
+    "crates/vrm-adapter",
+    "crates/vrm-core",
+    "crates/vrm-io",
+    "crates/vrm-protocol",
+    "crates/vrm-runtime",
+    "crates/vrm-sans-io",
+]
+resolver = "3"
+
+[workspace.dependencies]
+bitflags = "2.11.1"
+glam = "0.32.1"
+gltf = { version = "1.4.1", features = ["extensions"] }
+indexmap = { version = "2.14.0", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+thiserror = "2.0.18"
+
+[dependencies]
+vrm-adapter = { path = "crates/vrm-adapter" }
+vrm-core = { path = "crates/vrm-core" }
+vrm-io = { path = "crates/vrm-io" }
+vrm-protocol = { path = "crates/vrm-protocol" }
+vrm-runtime = { path = "crates/vrm-runtime" }
+vrm-sans-io = { path = "crates/vrm-sans-io" }

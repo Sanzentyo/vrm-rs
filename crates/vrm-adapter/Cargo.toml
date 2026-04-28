@@ -1,0 +1,14 @@
+[package]
+name = "vrm-adapter"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[features]
+bevy = []
+
+[dependencies]
+glam.workspace = true
+thiserror.workspace = true
+vrm-core = { path = "../vrm-core" }
+vrm-runtime = { path = "../vrm-runtime" }

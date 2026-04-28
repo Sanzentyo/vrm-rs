@@ -1,0 +1,11 @@
+[package]
+name = "vrm-runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+glam.workspace = true
+indexmap.workspace = true
+thiserror.workspace = true
+vrm-core = { path = "../vrm-core" }
