@@ -1914,6 +1914,7 @@ dependencies = [
  "glam 0.32.1",
  "vrm-adapter",
  "vrm-core",
+ "vrm-runtime",
 ]
 
 [[package]]

@@ -8,14 +8,15 @@ use bevy::prelude::{App, Asset, Entity, Handle, Plugin, Resource};
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
-    MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor, MtoonMaterializationOptions,
-    MtoonPipelineAccess, SceneGraph, TransformAccess, ViewMode, VisibilityAccess,
-    WorldTransformAccess, WorldTransformUpdate,
+    ConstraintRestAccess, MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor,
+    MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph, TransformAccess, ViewMode,
+    VisibilityAccess, WorldTransformAccess, WorldTransformUpdate,
 };
 use vrm_core::Transform;
 use vrm_core::{
     MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonPipelinePass, NodeRef, TextureRef, VrmDocument,
 };
+use vrm_runtime::ConstraintRestState;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BevyNodeMap {
@@ -242,6 +243,21 @@ impl VisibilityAccess for BevyRuntimeSceneState {
         let entity = self.entity(node)?;
         self.visibility.insert(entity, visible);
         Ok(())
+    }
+}
+
+impl ConstraintRestAccess for BevyRuntimeSceneState {
+    type Error = BevyAdapterError;
+
+    fn constraint_rest_state(
+        &self,
+        destination: NodeRef,
+        source: NodeRef,
+    ) -> Result<ConstraintRestState, Self::Error> {
+        Ok(ConstraintRestState::new(
+            self.local_transform(destination)?.rotation,
+            self.local_transform(source)?.rotation,
+        ))
     }
 }
 
@@ -490,8 +506,9 @@ impl Plugin for VrmRuntimePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vrm_adapter::apply_mtoon_pipeline_hints;
+    use vrm_adapter::{VrmRuntimeDriver, apply_mtoon_pipeline_hints};
     use vrm_core::{Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue, MtoonTextureSet};
+    use vrm_runtime::{AppliedExpression, RuntimeEvents};
 
     #[test]
     fn node_map_round_trips_entity() {
@@ -607,6 +624,64 @@ mod tests {
             Some([MtoonPipelinePass::Base(_)])
         ));
         assert_eq!(scene.emissive_intensity(MaterialRef(0)), Some(3.0));
+    }
+
+    #[test]
+    fn runtime_driver_ticks_against_bevy_scene_state() {
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            Entity::from_raw_u32(1).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(1),
+            Entity::from_raw_u32(2).unwrap(),
+            Transform::default(),
+        );
+        scene.set_parent(NodeRef(1), Some(NodeRef(0))).unwrap();
+        let document = VrmDocument {
+            first_person: Feature::Present(vrm_core::FirstPerson {
+                mesh_annotations: vec![vrm_core::FirstPersonMeshAnnotation {
+                    node: NodeRef(1),
+                    kind: vrm_core::FirstPersonAnnotation::FirstPersonOnly,
+                }],
+            }),
+            materials: vec![vrm_core::Material {
+                khr_emissive_strength: Feature::Present(vrm_core::EmissiveStrength(4.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let events = RuntimeEvents {
+            expressions: vec![AppliedExpression {
+                name: "blink".to_owned(),
+                effective_weight: 0.25,
+                binds: vec![vrm_core::ExpressionBind::MorphTarget {
+                    node: NodeRef(0),
+                    index: 3,
+                    weight: 100.0,
+                }],
+            }],
+            ..Default::default()
+        };
+        let mut driver = VrmRuntimeDriver::new(&document)
+            .with_runtime_events(&events)
+            .with_view_mode(ViewMode::ThirdPerson);
+
+        driver.tick(&mut scene, None).unwrap();
+
+        assert_eq!(scene.morph_weight(NodeRef(0), 3), Some(25.0));
+        assert!(matches!(
+            scene.mtoon_pipeline_passes(MaterialRef(0)),
+            Some([MtoonPipelinePass::Base(_)])
+        ));
+        assert_eq!(scene.emissive_intensity(MaterialRef(0)), Some(4.0));
+        assert!(!scene.is_visible(NodeRef(1)).unwrap());
     }
 
     #[test]

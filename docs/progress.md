@@ -103,6 +103,8 @@
 - Re-measured coverage after the Bevy runtime scene state: workspace line coverage is 77.32%, and `vrm-adapter-bevy` line coverage is 88.08%.
 - Extended `BevyRuntimeSceneState` with `MorphTargetAccess`, `MaterialAccess`, and `MtoonPipelineAccess` skeletons. The state now records morph weights, material colors, texture transforms, emissive intensities, and MToon pipeline passes so runtime driver side effects can be tested before concrete Bevy asset writeback is introduced.
 - Re-measured coverage after Bevy morph/material writeback state: workspace line coverage is 77.59%, and `vrm-adapter-bevy` line coverage is 90.91%.
+- Added `ConstraintRestAccess` to `BevyRuntimeSceneState` and a Bevy-side `VrmRuntimeDriver` integration test. A single driver tick now applies expression morph writes, MToon pipeline passes, emissive strength, and first-person visibility through the Bevy adapter skeleton.
+- Re-measured coverage after the Bevy runtime driver integration test: workspace line coverage is 77.64%, and `vrm-adapter-bevy` line coverage is 90.22%.
 
 Open work:
 
@@ -122,4 +124,4 @@ Open work:
 - Full VRMA model application parity now has one external numeric fixture comparison; remaining work is broader VRMA fixture coverage and stricter channel/path diagnostics.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.
 - MToon pipeline/shader generation per renderer.
-- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan/scene-state/writeback skeleton, especially applying recorded morph/material state into concrete Bevy mesh/material assets.
+- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan/scene-state/writeback/driver skeleton, especially applying recorded morph/material state into concrete Bevy mesh/material assets.
