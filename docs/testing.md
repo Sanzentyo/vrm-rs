@@ -10,7 +10,8 @@ Current generated coverage:
 - Root `VRMC_springBone` extension with collider, collider group, and spring joint data.
 - Per-node `VRMC_node_constraint` extension.
 - Per-material `VRMC_materials_mtoon` extension.
-- Invalid node reference case through the same generated sample.
+- Per-material archived `VRMC_materials_hdr_emissiveMultiplier` extension.
+- Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -45,6 +46,12 @@ Summary:
 cargo llvm-cov --workspace --all-features --summary-only
 ```
 
+CI currently runs the same workspace coverage pass with a conservative line threshold:
+
+```powershell
+cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
+```
+
 HTML report:
 
 ```powershell
@@ -63,20 +70,21 @@ Current known coverage gaps:
 Measured locally on 2026-04-29 with:
 
 ```powershell
-cargo llvm-cov --workspace --all-features --summary-only
+cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 ```
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 68.56% | 73.50% |
-| `vrm-adapter` | 85.39% | 90.51% |
-| `vrm-core` | 60.05% | 75.80% |
-| `vrm-io` | 31.93% | 29.71% |
-| `vrm-protocol` | 85.09% | 79.77% |
-| `vrm-runtime` | 66.34% | 69.54% |
-| `vrm-sans-io` | 82.73% | 85.64% |
+| Workspace total | 78.70% | 81.49% |
+| `vrm-adapter` | 86.70% | 91.38% |
+| `vrm-core` | 66.07% | 79.89% |
+| `vrm-io` | 68.27% | 64.34% |
+| `vrm-protocol` | 85.96% | 80.87% |
+| `vrm-runtime` | 76.89% | 76.71% |
+| `vrm-sans-io` | 84.90% | 88.00% |
+| facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is `vrm-io`, followed by deeper runtime numeric parity tests.
+The next test-effort priority is deeper runtime numeric parity tests against three-vrm behavior, followed by `vrm-io` fixture semantics and Bevy/wgpu/ash compile examples.
 
 ## Current External Official Samples
 

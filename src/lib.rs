@@ -20,3 +20,21 @@ pub use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 pub fn load(bytes: &[u8]) -> Result<VrmModel<Resolved>, VrmIoError> {
     load_vrm_from_slice(bytes).map(LoadedVrm::into_model)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn facade_load_reports_invalid_payload() {
+        let err = load(b"not gltf").unwrap_err();
+        assert!(matches!(err, VrmIoError::Gltf(_)));
+    }
+
+    #[test]
+    fn facade_reexports_state_types() {
+        let asset = VrmAsset::<Parsed>::new_parsed(core::VrmDocument::default());
+        let model: VrmModel<Resolved> = asset.mark_validated().resolve();
+        assert_eq!(model.document().kind, core::VrmKind::Vrm1);
+    }
+}

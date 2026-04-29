@@ -666,6 +666,16 @@ impl Axis {
 pub struct Material {
     pub name: Option<String>,
     pub mtoon: Feature<MtoonMaterial>,
+    pub hdr_emissive_multiplier: Feature<HdrEmissiveMultiplier>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrEmissiveMultiplier(pub f32);
+
+impl HdrEmissiveMultiplier {
+    pub fn emissive_intensity(self) -> f32 {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -874,6 +884,24 @@ mod tests {
     }
 
     #[test]
+    fn feature_helpers_distinguish_present_and_absent() {
+        let present = Feature::Present(42);
+        let absent: Feature<i32> = Feature::Absent;
+
+        assert_eq!(present.as_ref(), Some(&42));
+        assert!(present.is_present());
+        assert_eq!(absent.as_ref(), None);
+        assert!(!absent.is_present());
+    }
+
+    #[test]
+    fn hdr_emissive_multiplier_exposes_emissive_intensity() {
+        let multiplier = HdrEmissiveMultiplier(2.5);
+
+        assert_eq!(multiplier.emissive_intensity(), 2.5);
+    }
+
+    #[test]
     fn vrm0_compatibility_rotates_forward_axis() {
         let compatibility = Vrm0Compatibility::default();
         assert!(
@@ -916,5 +944,27 @@ mod tests {
                 MtoonPipelinePass::Outline(hints.outline.unwrap())
             ]
         );
+    }
+
+    #[test]
+    fn mtoon_pipeline_hints_cover_opaque_and_alpha_test() {
+        let opaque = MtoonMaterial {
+            render_queue: MtoonRenderQueue::Opaque,
+            ..MtoonMaterial::default()
+        }
+        .pipeline_hints();
+        assert_eq!(opaque.alpha_mode, MtoonAlphaMode::Opaque);
+        assert!(opaque.depth_write);
+        assert!(!opaque.blend);
+        assert_eq!(opaque.outline, None);
+
+        let alpha_test = MtoonMaterial {
+            render_queue: MtoonRenderQueue::AlphaTest,
+            ..MtoonMaterial::default()
+        }
+        .pipeline_hints();
+        assert_eq!(alpha_test.alpha_mode, MtoonAlphaMode::Mask);
+        assert!(alpha_test.depth_write);
+        assert!(!alpha_test.blend);
     }
 }

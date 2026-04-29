@@ -117,6 +117,12 @@ pub trait MaterialAccess {
         scale: Option<[f32; 2]>,
         offset: Option<[f32; 2]>,
     ) -> Result<(), Self::Error>;
+
+    fn set_emissive_intensity(
+        &mut self,
+        material: MaterialRef,
+        intensity: f32,
+    ) -> Result<(), Self::Error>;
 }
 
 pub trait MtoonPipelineAccess {
@@ -149,7 +155,7 @@ pub trait AnimationSink {
     fn apply_runtime_events(&mut self, events: &RuntimeEvents) -> Result<(), Self::Error>;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct VrmRuntimeDriver<'a> {
     pub document: &'a VrmDocument,
     pub animation_frame: Option<&'a VrmAnimationFrame>,
@@ -157,6 +163,7 @@ pub struct VrmRuntimeDriver<'a> {
     pub root: Option<NodeRef>,
     pub view_mode: ViewMode,
     pub apply_vrm0_orientation: bool,
+    pub vrm0_orientation_applied: bool,
 }
 
 impl<'a> VrmRuntimeDriver<'a> {
@@ -168,6 +175,7 @@ impl<'a> VrmRuntimeDriver<'a> {
             root: None,
             view_mode: ViewMode::ThirdPerson,
             apply_vrm0_orientation: true,
+            vrm0_orientation_applied: false,
         }
     }
 
@@ -197,7 +205,7 @@ impl<'a> VrmRuntimeDriver<'a> {
     }
 
     pub fn tick<T, E>(
-        &self,
+        &mut self,
         target: &mut T,
         spring_state: Option<&mut SpringRuntimeState>,
     ) -> Result<(), AdapterError<E>>
@@ -212,9 +220,11 @@ impl<'a> VrmRuntimeDriver<'a> {
             + VisibilityAccess<Error = E>,
     {
         if self.apply_vrm0_orientation
+            && !self.vrm0_orientation_applied
             && let Some(root) = self.root
         {
             apply_vrm0_orientation_compensation(target, self.document, root)?;
+            self.vrm0_orientation_applied = true;
         }
         if let Some(frame) = self.animation_frame {
             apply_animation_frame(target, self.document, frame)?;
@@ -231,6 +241,7 @@ impl<'a> VrmRuntimeDriver<'a> {
             }
         }
         apply_mtoon_pipeline_hints(target, self.document)?;
+        apply_hdr_emissive_multipliers(target, self.document)?;
         apply_first_person_annotations(target, self.document, self.view_mode)
     }
 }
@@ -317,6 +328,23 @@ where
         if let Feature::Present(mtoon) = &material.mtoon {
             target
                 .set_mtoon_pipeline_passes(MaterialRef(index), &mtoon.pipeline_passes())
+                .map_err(AdapterError::Target)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn apply_hdr_emissive_multipliers<T, E>(
+    target: &mut T,
+    document: &VrmDocument,
+) -> Result<(), AdapterError<E>>
+where
+    T: MaterialAccess<Error = E>,
+{
+    for (index, material) in document.materials.iter().enumerate() {
+        if let Feature::Present(multiplier) = material.hdr_emissive_multiplier {
+            target
+                .set_emissive_intensity(MaterialRef(index), multiplier.emissive_intensity())
                 .map_err(AdapterError::Target)?;
         }
     }
@@ -595,8 +623,12 @@ where
     if let Some(translation) = frame.hips_translation
         && let Some(hips) = document.humanoid.bones.get(&HumanBoneName::Hips)
     {
+        let mut transform = target
+            .local_transform(hips.node)
+            .map_err(AdapterError::Target)?;
+        transform.translation = translation;
         target
-            .translate_local(hips.node, translation)
+            .set_local_transform(hips.node, transform)
             .map_err(AdapterError::Target)?;
     }
 
@@ -683,8 +715,9 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use vrm_core::{
-        Expression, ExpressionSet, Feature, FirstPerson, FirstPersonMeshAnnotation, HumanBone,
-        Humanoid, MtoonMaterial, MtoonRenderQueue, RotationTrack, VrmAnimation, VrmDocument,
+        Expression, ExpressionSet, Feature, FirstPerson, FirstPersonMeshAnnotation,
+        HdrEmissiveMultiplier, HumanBone, Humanoid, MtoonMaterial, MtoonRenderQueue, RotationTrack,
+        VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -695,6 +728,7 @@ mod tests {
         translations: Vec<(NodeRef, Vec3)>,
         local_sets: Vec<(NodeRef, Transform)>,
         mtoon_passes: Vec<(MaterialRef, Vec<MtoonPipelinePass>)>,
+        emissive_intensities: Vec<(MaterialRef, f32)>,
         visibility: Vec<(NodeRef, bool)>,
         parents: std::collections::HashMap<NodeRef, NodeRef>,
         local_transforms: std::collections::HashMap<NodeRef, Transform>,
@@ -831,6 +865,15 @@ mod tests {
         ) -> Result<(), Self::Error> {
             Ok(())
         }
+
+        fn set_emissive_intensity(
+            &mut self,
+            material: MaterialRef,
+            intensity: f32,
+        ) -> Result<(), Self::Error> {
+            self.emissive_intensities.push((material, intensity));
+            Ok(())
+        }
     }
 
     impl MtoonPipelineAccess for Mock {
@@ -944,11 +987,46 @@ mod tests {
 
         assert_eq!(mock.rotations.len(), 1);
         assert_eq!(mock.rotations[0].0, NodeRef(1));
-        assert_eq!(
-            mock.translations,
-            vec![(NodeRef(0), Vec3::new(1.0, 2.0, 3.0))]
-        );
+        assert!(mock.translations.is_empty());
+        assert_eq!(mock.local_sets.len(), 1);
+        assert_eq!(mock.local_sets[0].0, NodeRef(0));
+        assert_eq!(mock.local_sets[0].1.translation, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(mock.morphs, vec![(NodeRef(1), 0, 25.0)]);
+    }
+
+    #[test]
+    fn humanoid_frame_sets_hips_translation_without_accumulation() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Hips,
+                    HumanBone {
+                        node: NodeRef(0),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let frame = VrmAnimationFrame {
+            hips_translation: Some(Vec3::new(1.0, 2.0, 3.0)),
+            ..VrmAnimationFrame::default()
+        };
+        let mut mock = Mock::default();
+
+        apply_humanoid_frame(&mut mock, &document, &frame).unwrap();
+        apply_humanoid_frame(&mut mock, &document, &frame).unwrap();
+
+        assert!(mock.translations.is_empty());
+        assert_eq!(mock.local_sets.len(), 2);
+        assert!(
+            mock.local_sets
+                .iter()
+                .all(|(node, transform)| *node == NodeRef(0)
+                    && transform.translation == Vec3::new(1.0, 2.0, 3.0))
+        );
     }
 
     #[test]
@@ -991,6 +1069,7 @@ mod tests {
                     render_queue: MtoonRenderQueue::Transparent,
                     ..MtoonMaterial::default()
                 }),
+                ..vrm_core::Material::default()
             }],
             ..VrmDocument::default()
         };
@@ -1004,6 +1083,26 @@ mod tests {
             mock.mtoon_passes[0].1.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[test]
+    fn hdr_emissive_multiplier_applies_to_material_refs() {
+        let document = VrmDocument {
+            materials: vec![
+                vrm_core::Material::default(),
+                vrm_core::Material {
+                    name: Some("glow".to_owned()),
+                    hdr_emissive_multiplier: Feature::Present(HdrEmissiveMultiplier(4.0)),
+                    ..vrm_core::Material::default()
+                },
+            ],
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock::default();
+
+        apply_hdr_emissive_multipliers(&mut mock, &document).unwrap();
+
+        assert_eq!(mock.emissive_intensities, vec![(MaterialRef(1), 4.0)]);
     }
 
     #[test]
@@ -1395,16 +1494,22 @@ mod tests {
             ..Mock::default()
         };
 
-        VrmRuntimeDriver::new(&document)
+        let mut driver = VrmRuntimeDriver::new(&document)
             .with_root(NodeRef(0))
             .with_view_mode(ViewMode::FirstPerson)
             .with_animation_frame(&frame)
-            .with_runtime_events(&events)
-            .tick(&mut mock, Some(&mut spring_state))
-            .unwrap();
+            .with_runtime_events(&events);
+        driver.tick(&mut mock, Some(&mut spring_state)).unwrap();
 
-        assert_eq!(mock.local_sets.len(), 1);
-        assert_eq!(mock.translations, vec![(NodeRef(1), Vec3::Y)]);
+        assert!(mock.translations.is_empty());
+        assert!(mock.local_sets.iter().any(|(node, transform)| {
+            *node == NodeRef(0) && (transform.rotation * Vec3::Z).abs_diff_eq(Vec3::NEG_Z, 0.0001)
+        }));
+        assert!(
+            mock.local_sets
+                .iter()
+                .any(|(node, transform)| *node == NodeRef(1) && transform.translation == Vec3::Y)
+        );
         assert_eq!(
             mock.morphs,
             vec![(NodeRef(8), 0, 25.0), (NodeRef(8), 0, 50.0)]
@@ -1412,5 +1517,31 @@ mod tests {
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(3)));
         assert_eq!(mock.visibility, vec![(NodeRef(8), true)]);
+    }
+
+    #[test]
+    fn runtime_driver_applies_vrm0_orientation_once() {
+        let document = VrmDocument {
+            compatibility: vrm_core::Compatibility {
+                vrm0: Some(vrm_core::Vrm0Compatibility::default()),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            local_transforms: [(NodeRef(0), Transform::default())].into_iter().collect(),
+            ..Mock::default()
+        };
+        let mut driver = VrmRuntimeDriver::new(&document).with_root(NodeRef(0));
+
+        driver.tick(&mut mock, None).unwrap();
+        driver.tick(&mut mock, None).unwrap();
+
+        assert_eq!(
+            mock.local_sets
+                .iter()
+                .filter(|(node, _)| *node == NodeRef(0))
+                .count(),
+            1
+        );
     }
 }

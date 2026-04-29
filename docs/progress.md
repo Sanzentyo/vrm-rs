@@ -41,10 +41,17 @@
 - Added CI workflow for fmt/test/clippy and non-threshold `cargo-llvm-cov` summary coverage.
 - Expanded external fixture tests from load-only checks to semantic assertions for VRM metadata/humanoid/material/spring/constraints and VRMA tracks.
 - Expanded protocol roundtrip tests for VRM0, spring bone, node constraint, MToon, VRMA, unknown extensions, and invalid extension errors.
+- Hardened `VrmRuntimeDriver` so VRM0 root orientation compensation is applied once per driver instead of compounding every tick.
+- Changed VRMA/sample humanoid hips translation adapter writeback to set absolute local translation for the sampled frame rather than accumulating deltas.
+- Added per-extension `specVersion` validation for extracted `VRMC_springBone`, `VRMC_node_constraint`, and `VRMC_materials_mtoon`, accepting three-vrm-compatible `1.0` and `1.0-beta`.
+- Added archived `VRMC_materials_hdr_emissiveMultiplier` protocol/IO/sans-IO/core/adapter support, mapping it to renderer-facing emissive intensity.
+- Fixed VRM1 material extension mapping to preserve glTF material indices in `VrmDocument::materials`.
+- Raised generated/unit/doc coverage to 81.02% line coverage and added a conservative CI `cargo-llvm-cov --fail-under-lines 70` gate.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
+- Humanoid raw/normalized pose API parity with `three-vrm-core` (`VRMRig`, `VRMHumanoidRig`, `getRawPose`, `setNormalizedPose` style workflows).
 - Spring bone parity refinements: sparse chain handling, explicit rest-axis capture, center-space particle state, and world transform refresh hooks.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.

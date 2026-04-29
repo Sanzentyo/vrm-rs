@@ -45,6 +45,8 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let mut bundle = parse_root_extensions(&extension_map(document.as_json().extensions.as_ref()))?;
     extract_node_constraints(&document, &mut bundle)?;
     extract_mtoon_materials(&document, &mut bundle)?;
+    extract_hdr_emissive_multipliers(&document, &mut bundle)?;
+    validate_vrmc_extension_versions(&bundle)?;
     let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle)?;
 
     let image_data = images
@@ -556,6 +558,58 @@ fn extract_mtoon_materials(
     Ok(())
 }
 
+fn extract_hdr_emissive_multipliers(
+    document: &gltf::Document,
+    bundle: &mut ExtensionBundle,
+) -> Result<(), VrmIoError> {
+    for material in document.materials() {
+        let Some(material_index) = material.index() else {
+            continue;
+        };
+        let extensions = extension_map(
+            document.as_json().materials[material_index]
+                .extensions
+                .as_ref(),
+        );
+        if let Some(value) = extensions.get("VRMC_materials_hdr_emissiveMultiplier") {
+            let multiplier = serde_json::from_value(value.clone()).map_err(|err| {
+                VrmIoError::InvalidExtension {
+                    extension: "VRMC_materials_hdr_emissiveMultiplier".to_owned(),
+                    message: err.to_string(),
+                }
+            })?;
+            bundle
+                .hdr_emissive_multipliers
+                .insert(material_index, multiplier);
+        }
+    }
+    Ok(())
+}
+
+fn validate_vrmc_extension_versions(bundle: &ExtensionBundle) -> Result<(), VrmIoError> {
+    if let Some(spring_bone) = &bundle.spring_bone {
+        ensure_vrmc_spec_version("VRMC_springBone", &spring_bone.spec_version)?;
+    }
+    for constraint in &bundle.node_constraints {
+        ensure_vrmc_spec_version("VRMC_node_constraint", &constraint.constraint.spec_version)?;
+    }
+    for mtoon in bundle.mtoon_materials.values() {
+        ensure_vrmc_spec_version("VRMC_materials_mtoon", &mtoon.spec_version)?;
+    }
+    Ok(())
+}
+
+fn ensure_vrmc_spec_version(extension: &'static str, spec_version: &str) -> Result<(), VrmIoError> {
+    if matches!(spec_version, "1.0" | "1.0-beta") {
+        Ok(())
+    } else {
+        Err(VrmIoError::UnsupportedExtensionSpecVersion {
+            extension: extension.to_owned(),
+            spec_version: spec_version.to_owned(),
+        })
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum VrmIoError {
     #[error(transparent)]
@@ -568,6 +622,11 @@ pub enum VrmIoError {
     Build(#[from] BuildError),
     #[error("invalid extension {extension}: {message}")]
     InvalidExtension { extension: String, message: String },
+    #[error("unsupported {extension} specVersion: {spec_version}")]
+    UnsupportedExtensionSpecVersion {
+        extension: String,
+        spec_version: String,
+    },
     #[error("invalid animation channel: {message}")]
     InvalidAnimationChannel { message: String },
 }
@@ -620,6 +679,13 @@ mod tests {
             document.materials.first().map(|material| &material.mtoon),
             Some(Feature::Present(mtoon)) if mtoon.outline_width_mode == OutlineWidthMode::WorldCoordinates
         ));
+        assert!(matches!(
+            document
+                .materials
+                .first()
+                .map(|material| material.hdr_emissive_multiplier.as_ref()),
+            Some(Some(multiplier)) if multiplier.emissive_intensity() == 2.5
+        ));
         assert_eq!(document.node_constraints.len(), 1);
         assert!(document.spring_bone.is_present());
     }
@@ -633,6 +699,230 @@ mod tests {
         let err = load_vrm_from_slice(&bytes).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("node(999)"));
+    }
+
+    #[test]
+    fn generated_sample_reports_invalid_node_constraint_extension() {
+        let mut sample = generated_vrm1_gltf();
+        sample["nodes"][14]["extensions"]["VRMC_node_constraint"]["constraint"]["rotation"]["source"] =
+            json!("bad");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidExtension { extension, .. }
+                if extension == "VRMC_node_constraint"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_reports_invalid_mtoon_extension() {
+        let mut sample = generated_vrm1_gltf();
+        sample["materials"][0]["extensions"]["VRMC_materials_mtoon"]["specVersion"] = json!(1);
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidExtension { extension, .. }
+                if extension == "VRMC_materials_mtoon"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_rejects_unsupported_spring_bone_spec_version() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_springBone"]["specVersion"] = json!("2.0");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::UnsupportedExtensionSpecVersion {
+                extension,
+                spec_version
+            } if extension == "VRMC_springBone" && spec_version == "2.0"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_rejects_unsupported_node_constraint_spec_version() {
+        let mut sample = generated_vrm1_gltf();
+        sample["nodes"][14]["extensions"]["VRMC_node_constraint"]["specVersion"] = json!("2.0");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::UnsupportedExtensionSpecVersion {
+                extension,
+                spec_version
+            } if extension == "VRMC_node_constraint" && spec_version == "2.0"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_rejects_unsupported_mtoon_spec_version() {
+        let mut sample = generated_vrm1_gltf();
+        sample["materials"][0]["extensions"]["VRMC_materials_mtoon"]["specVersion"] = json!("2.0");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::UnsupportedExtensionSpecVersion {
+                extension,
+                spec_version
+            } if extension == "VRMC_materials_mtoon" && spec_version == "2.0"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_accepts_beta_secondary_extension_spec_versions() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_springBone"]["specVersion"] = json!("1.0-beta");
+        sample["nodes"][14]["extensions"]["VRMC_node_constraint"]["specVersion"] =
+            json!("1.0-beta");
+        sample["materials"][0]["extensions"]["VRMC_materials_mtoon"]["specVersion"] =
+            json!("1.0-beta");
+        let bytes = sample.to_string().into_bytes();
+
+        let loaded = load_vrm_from_slice(&bytes).unwrap();
+
+        assert!(loaded.model().document().spring_bone.is_present());
+        assert_eq!(loaded.model().document().node_constraints.len(), 1);
+        assert!(loaded.model().document().materials[0].mtoon.is_present());
+    }
+
+    #[test]
+    fn generated_sample_reports_invalid_hdr_emissive_extension() {
+        let mut sample = generated_vrm1_gltf();
+        sample["materials"][0]["extensions"]["VRMC_materials_hdr_emissiveMultiplier"]["emissiveMultiplier"] =
+            json!("bright");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidExtension { extension, .. }
+                if extension == "VRMC_materials_hdr_emissiveMultiplier"
+        ));
+    }
+
+    #[test]
+    fn vrma_node_map_extracts_humanoid_expression_and_look_at_nodes() {
+        let vrma = vrm_protocol::vrma::VrmcVrmAnimation {
+            spec_version: "1.0".to_owned(),
+            humanoid: Some(vrm_protocol::vrma::Humanoid {
+                human_bones: [("hips".to_owned(), json!({ "node": 1 }))]
+                    .into_iter()
+                    .collect(),
+            }),
+            expressions: Some(vrm_protocol::vrma::Expressions {
+                preset: Some(
+                    [("blink".to_owned(), json!({ "node": 2 }))]
+                        .into_iter()
+                        .collect(),
+                ),
+                custom: Some(
+                    [("custom".to_owned(), json!({ "node": 3 }))]
+                        .into_iter()
+                        .collect(),
+                ),
+            }),
+            look_at: Some(vrm_protocol::vrma::LookAt { node: 4 }),
+            extensions: None,
+            extras: None,
+        };
+
+        let map = VrmaNodeMap::from_extension(&vrma);
+
+        assert_eq!(map.humanoid.get(&1), Some(&HumanBoneName::Hips));
+        assert_eq!(
+            map.expressions.get(&2),
+            Some(&VrmaExpressionTarget::Preset(ExpressionName::Blink))
+        );
+        assert_eq!(
+            map.expressions.get(&3),
+            Some(&VrmaExpressionTarget::Custom("custom".to_owned()))
+        );
+        assert_eq!(map.look_at, Some(4));
+    }
+
+    #[test]
+    fn node_rest_graph_tracks_parent_and_world_matrices() {
+        let sample = generated_transform_hierarchy_gltf();
+        let (document, _, _) = gltf::import_slice(sample.to_string().as_bytes()).unwrap();
+        let graph = NodeRestGraph::from_document(&document);
+
+        assert_eq!(graph.parents[1], Some(0));
+        assert!(
+            graph.world_matrices[1]
+                .transform_point3(Vec3::ZERO)
+                .abs_diff_eq(Vec3::new(1.0, 2.0, 0.0), 0.0001)
+        );
+    }
+
+    #[test]
+    fn vrma_rest_pose_captures_hips_parent_and_position() {
+        let sample = generated_transform_hierarchy_gltf();
+        let (document, _, _) = gltf::import_slice(sample.to_string().as_bytes()).unwrap();
+        let node_map = VrmaNodeMap {
+            humanoid: [(1, HumanBoneName::Hips)].into_iter().collect(),
+            ..VrmaNodeMap::default()
+        };
+
+        let rest_pose = VrmaRestPose::from_document(&document, &node_map);
+
+        assert!(
+            rest_pose
+                .hips_world_position
+                .abs_diff_eq(Vec3::new(1.0, 2.0, 0.0), 0.0001)
+        );
+        assert!(
+            rest_pose
+                .hips_parent_world_matrix
+                .transform_point3(Vec3::X)
+                .abs_diff_eq(Vec3::new(2.0, 0.0, 0.0), 0.0001)
+        );
+    }
+
+    #[test]
+    fn human_bone_parent_handles_humanoid_chain_and_custom_bones() {
+        assert_eq!(
+            human_bone_parent(&HumanBoneName::Head),
+            Some(HumanBoneName::Neck)
+        );
+        assert_eq!(
+            human_bone_parent(&HumanBoneName::LeftIndexDistal),
+            Some(HumanBoneName::LeftIndexIntermediate)
+        );
+        assert_eq!(
+            human_bone_parent(&HumanBoneName::Custom("x".to_owned())),
+            None
+        );
+    }
+
+    #[test]
+    fn node_from_value_rejects_missing_or_overflowing_nodes() {
+        assert_eq!(node_from_value(&json!({ "node": 7 })), Some(7));
+        assert_eq!(node_from_value(&json!({ "notNode": 7 })), None);
+        assert_eq!(node_from_value(&json!({ "node": "7" })), None);
+    }
+
+    #[test]
+    fn supported_fixture_filter_accepts_only_known_extensions() {
+        assert!(is_supported_fixture(std::path::Path::new("avatar.vrm")));
+        assert!(is_supported_fixture(std::path::Path::new("clip.VRMA")));
+        assert!(!is_supported_fixture(std::path::Path::new("texture.png")));
+        assert!(!is_supported_fixture(std::path::Path::new("README")));
     }
 
     fn generated_vrm1_gltf() -> Value {
@@ -676,7 +966,8 @@ mod tests {
                 "VRMC_vrm",
                 "VRMC_springBone",
                 "VRMC_node_constraint",
-                "VRMC_materials_mtoon"
+                "VRMC_materials_mtoon",
+                "VRMC_materials_hdr_emissiveMultiplier"
             ],
             "scene": 0,
             "scenes": [{ "nodes": [0] }],
@@ -692,6 +983,9 @@ mod tests {
                         "outlineWidthMode": "worldCoordinates",
                         "outlineWidthFactor": 0.01,
                         "outlineColorFactor": [0.1, 0.1, 0.1]
+                    },
+                    "VRMC_materials_hdr_emissiveMultiplier": {
+                        "emissiveMultiplier": 2.5
                     }
                 }
             }],
@@ -756,6 +1050,18 @@ mod tests {
                     }]
                 }
             }
+        })
+    }
+
+    fn generated_transform_hierarchy_gltf() -> Value {
+        json!({
+            "asset": { "version": "2.0", "generator": "vrm-rs transform graph test" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0] }],
+            "nodes": [
+                { "translation": [1.0, 0.0, 0.0], "children": [1] },
+                { "translation": [0.0, 2.0, 0.0] }
+            ]
         })
     }
 

@@ -3,7 +3,9 @@
 use glam::Vec3;
 use thiserror::Error;
 use vrm_core::*;
-use vrm_protocol::{VrmExtension, node_constraint, spring_bone, vrm0, vrm1, vrma};
+use vrm_protocol::{
+    VrmExtension, materials_hdr_emissive_multiplier, node_constraint, spring_bone, vrm0, vrm1, vrma,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct ValidatedAssetBuilder {
@@ -30,6 +32,7 @@ impl ValidatedAssetBuilder {
         self,
         bundle: vrm_protocol::ExtensionBundle,
     ) -> Result<VrmAsset<Validated>, BuildError> {
+        validate_secondary_extension_versions(&bundle)?;
         let extension = bundle.vrm.ok_or(BuildError::MissingVrm)?;
         let mut document = match extension {
             VrmExtension::Vrm1(vrm) => map_vrm1(*vrm)?,
@@ -49,22 +52,28 @@ impl ValidatedAssetBuilder {
             })
             .collect::<Result<_, _>>()?;
 
-        document.materials.extend(
-            bundle
-                .mtoon_materials
-                .into_iter()
-                .map(|(index, material)| {
-                    let mut core = Material {
-                        name: Some(format!("material_{index}")),
-                        mtoon: Feature::Present(map_mtoon(material)),
-                    };
-                    if let Some(count) = self.material_count {
-                        ensure_ref("material", index, count)?;
-                    }
-                    Ok::<_, BuildError>(std::mem::take(&mut core))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        if let Some(count) = self.material_count {
+            ensure_material_slots(&mut document.materials, count);
+        }
+
+        for (index, material) in bundle.mtoon_materials {
+            if let Some(count) = self.material_count {
+                ensure_ref("material", index, count)?;
+            }
+            let slot = material_slot(&mut document.materials, index);
+            slot.name.get_or_insert_with(|| format!("material_{index}"));
+            slot.mtoon = Feature::Present(map_mtoon(material));
+        }
+
+        for (index, multiplier) in bundle.hdr_emissive_multipliers {
+            if let Some(count) = self.material_count {
+                ensure_ref("material", index, count)?;
+            }
+            let slot = material_slot(&mut document.materials, index);
+            slot.name.get_or_insert_with(|| format!("material_{index}"));
+            slot.hdr_emissive_multiplier =
+                Feature::Present(map_hdr_emissive_multiplier(multiplier));
+        }
 
         if !document.humanoid.bones.is_empty() && !document.humanoid.required_bones_present() {
             return Err(BuildError::Core(CoreError::MissingRequiredHumanBones));
@@ -562,6 +571,7 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
     Material {
         name: material.name,
         mtoon: mtoon.map_or(Feature::Absent, Feature::Present),
+        ..Material::default()
     }
 }
 
@@ -748,6 +758,25 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
     }
 }
 
+fn map_hdr_emissive_multiplier(
+    multiplier: materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier,
+) -> HdrEmissiveMultiplier {
+    HdrEmissiveMultiplier(multiplier.emissive_multiplier)
+}
+
+fn ensure_material_slots(materials: &mut Vec<Material>, count: usize) {
+    if materials.len() < count {
+        materials.resize_with(count, Material::default);
+    }
+}
+
+fn material_slot(materials: &mut Vec<Material>, index: usize) -> &mut Material {
+    if index >= materials.len() {
+        ensure_material_slots(materials, index + 1);
+    }
+    &mut materials[index]
+}
+
 fn map_vrma(animation: vrma::VrmcVrmAnimation) -> VrmDocument {
     let mut document = VrmDocument {
         kind: VrmKind::Vrma,
@@ -865,6 +894,31 @@ fn validate_spring_references(document: &VrmDocument) -> Result<(), BuildError> 
     }
 
     Ok(())
+}
+
+fn validate_secondary_extension_versions(
+    bundle: &vrm_protocol::ExtensionBundle,
+) -> Result<(), BuildError> {
+    if let Some(spring_bone) = &bundle.spring_bone {
+        ensure_vrmc_spec_version("VRMC_springBone", &spring_bone.spec_version)?;
+    }
+    for constraint in &bundle.node_constraints {
+        ensure_vrmc_spec_version("VRMC_node_constraint", &constraint.constraint.spec_version)?;
+    }
+    for mtoon in bundle.mtoon_materials.values() {
+        ensure_vrmc_spec_version("VRMC_materials_mtoon", &mtoon.spec_version)?;
+    }
+    Ok(())
+}
+
+fn ensure_vrmc_spec_version(extension: &str, spec_version: &str) -> Result<(), BuildError> {
+    if matches!(spec_version, "1.0" | "1.0-beta") {
+        Ok(())
+    } else {
+        Err(BuildError::Protocol(format!(
+            "unsupported spec version for {extension}: {spec_version}"
+        )))
+    }
 }
 
 fn ensure_ref(kind: &'static str, index: usize, len: usize) -> Result<(), BuildError> {
@@ -1102,6 +1156,162 @@ mod tests {
         assert!(expressions.custom.contains_key("customSmile"));
     }
 
+    #[test]
+    fn maps_material_extensions_by_gltf_material_index() {
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm1(Box::new(vrm1::VrmcVrm {
+                spec_version: "1.0".to_owned(),
+                meta: vrm1::Meta {
+                    name: "avatar".to_owned(),
+                    authors: vec!["vrm-rs".to_owned()],
+                    ..Default::default()
+                },
+                humanoid: vrm1::Humanoid {
+                    human_bones: vrm1::HumanBones {
+                        bones: required_vrm1_bones(),
+                    },
+                    ..Default::default()
+                },
+                first_person: None,
+                look_at: None,
+                expressions: None,
+                extensions: None,
+                extras: None,
+            }))),
+            mtoon_materials: [(
+                2,
+                vrm_protocol::materials_mtoon::VrmcMaterialsMtoon {
+                    spec_version: "1.0".to_owned(),
+                    outline_width_mode: Some("worldCoordinates".to_owned()),
+                    outline_width_factor: Some(0.01),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            hdr_emissive_multipliers: [(
+                1,
+                vrm_protocol::materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier {
+                    emissive_multiplier: 3.0,
+                    extensions: None,
+                    extras: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .with_material_count(3)
+            .build(bundle)
+            .unwrap();
+
+        assert_eq!(asset.document.materials.len(), 3);
+        assert!(asset.document.materials[0].mtoon.as_ref().is_none());
+        assert_eq!(
+            asset.document.materials[1]
+                .hdr_emissive_multiplier
+                .as_ref()
+                .map(|value| value.emissive_intensity()),
+            Some(3.0)
+        );
+        assert!(asset.document.materials[2].mtoon.as_ref().is_some());
+    }
+
+    #[test]
+    fn rejects_unsupported_secondary_extension_spec_versions_in_sans_io() {
+        let mut bundle = vrm1_bundle();
+        bundle.spring_bone = Some(vrm_protocol::spring_bone::VrmcSpringBone {
+            spec_version: "2.0".to_owned(),
+            ..Default::default()
+        });
+
+        let err = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap_err();
+
+        assert!(
+            matches!(err, BuildError::Protocol(message) if message.contains("VRMC_springBone") && message.contains("2.0"))
+        );
+    }
+
+    #[test]
+    fn material_slot_growth_preserves_existing_vrm0_materials() {
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: required_vrm0_bones(),
+                    ..Default::default()
+                }),
+                material_properties: Some(vec![
+                    vrm0::Material {
+                        name: Some("legacy_0".to_owned()),
+                        ..Default::default()
+                    },
+                    vrm0::Material {
+                        name: Some("legacy_1".to_owned()),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            }))),
+            mtoon_materials: [(
+                2,
+                vrm_protocol::materials_mtoon::VrmcMaterialsMtoon {
+                    spec_version: "1.0".to_owned(),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .with_material_count(3)
+            .build(bundle)
+            .unwrap();
+
+        assert_eq!(
+            asset.document.materials[0].name.as_deref(),
+            Some("legacy_0")
+        );
+        assert_eq!(
+            asset.document.materials[1].name.as_deref(),
+            Some("legacy_1")
+        );
+        assert!(asset.document.materials[2].mtoon.is_present());
+    }
+
+    fn vrm1_bundle() -> ExtensionBundle {
+        ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm1(Box::new(vrm1::VrmcVrm {
+                spec_version: "1.0".to_owned(),
+                meta: vrm1::Meta {
+                    name: "avatar".to_owned(),
+                    authors: vec!["vrm-rs".to_owned()],
+                    ..Default::default()
+                },
+                humanoid: vrm1::Humanoid {
+                    human_bones: vrm1::HumanBones {
+                        bones: required_vrm1_bones(),
+                    },
+                    ..Default::default()
+                },
+                first_person: None,
+                look_at: None,
+                expressions: None,
+                extensions: None,
+                extras: None,
+            }))),
+            ..Default::default()
+        }
+    }
+
     fn required_vrm0_bones() -> Vec<vrm0::HumanBone> {
         [
             ("hips", 0),
@@ -1130,6 +1340,29 @@ mod tests {
             center: None,
             axis_length: None,
         })
+        .collect()
+    }
+
+    fn required_vrm1_bones() -> vrm_protocol::AnyMap {
+        [
+            ("hips", 0),
+            ("spine", 1),
+            ("head", 2),
+            ("leftUpperLeg", 3),
+            ("leftLowerLeg", 4),
+            ("leftFoot", 5),
+            ("rightUpperLeg", 6),
+            ("rightLowerLeg", 7),
+            ("rightFoot", 8),
+            ("leftUpperArm", 9),
+            ("leftLowerArm", 10),
+            ("leftHand", 11),
+            ("rightUpperArm", 12),
+            ("rightLowerArm", 13),
+            ("rightHand", 14),
+        ]
+        .into_iter()
+        .map(|(bone, node)| (bone.to_owned(), serde_json::json!({ "node": node })))
         .collect()
     }
 }

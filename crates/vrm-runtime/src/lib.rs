@@ -844,6 +844,41 @@ mod tests {
     }
 
     #[test]
+    fn sampling_tracks_handles_bounds_and_invalid_shapes() {
+        let scalar = ScalarTrack {
+            times: vec![1.0, 2.0],
+            values: vec![10.0, 20.0],
+        };
+        assert_eq!(sample_scalar_track(&scalar, 0.0), Some(10.0));
+        assert_eq!(sample_scalar_track(&scalar, 3.0), Some(20.0));
+        assert_eq!(
+            sample_scalar_track(
+                &ScalarTrack {
+                    times: vec![0.0],
+                    values: vec![],
+                },
+                0.0
+            ),
+            None
+        );
+
+        let rotation = RotationTrack {
+            times: vec![0.0, 1.0],
+            values: vec![Quat::IDENTITY, Quat::from_rotation_y(1.0)],
+        };
+        assert!(sample_rotation_track(&rotation, 0.5).is_some());
+
+        let translation = TranslationTrack {
+            times: vec![0.0, 1.0],
+            values: vec![Vec3::ZERO, Vec3::X],
+        };
+        assert_eq!(
+            sample_translation_track(&translation, 0.5),
+            Some(Vec3::new(0.5, 0.0, 0.0))
+        );
+    }
+
+    #[test]
     fn maps_look_at_direction_to_expression_weights() {
         let look_at = LookAt {
             horizontal_inner: RangeMap {
@@ -903,6 +938,24 @@ mod tests {
         );
 
         assert!(tail.distance(Vec3::Y) >= 0.6 - f32::EPSILON);
+    }
+
+    #[test]
+    fn spring_collision_handles_capsule_and_plane() {
+        let capsule = ColliderShape::Capsule {
+            offset: Vec3::ZERO,
+            radius: 0.5,
+            tail: Vec3::Y,
+        };
+        let capsule_result = resolve_collision(Vec3::new(0.1, 0.5, 0.0), 0.1, &capsule);
+        assert!(capsule_result.distance(Vec3::new(0.0, 0.5, 0.0)) >= 0.6 - f32::EPSILON);
+
+        let plane = ColliderShape::Plane {
+            offset: Vec3::ZERO,
+            normal: Vec3::Y,
+        };
+        let plane_result = resolve_collision(Vec3::new(0.0, -0.2, 0.0), 0.1, &plane);
+        assert!(plane_result.y >= 0.1 - f32::EPSILON);
     }
 
     #[test]
@@ -1021,6 +1074,16 @@ mod tests {
         let source = Quat::from_rotation_y(1.0);
         let solved = solve_rotation_constraint(state, source, 1.0);
         assert!(solved.abs_diff_eq(source, 1e-6));
+    }
+
+    #[test]
+    fn roll_constraint_uses_selected_axis_and_weight() {
+        let state = ConstraintRestState::new(Quat::IDENTITY, Quat::IDENTITY);
+        let source = Quat::from_rotation_x(1.0);
+        let solved = solve_roll_constraint(state, source, Axis::PositiveX, 0.5);
+
+        assert!((solved * Vec3::Y).angle_between(Vec3::Y) > 0.0);
+        assert!((solved * Vec3::Y).angle_between(source * Vec3::Y) < 1.0);
     }
 
     #[test]

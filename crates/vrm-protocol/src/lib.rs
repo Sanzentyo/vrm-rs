@@ -516,6 +516,19 @@ pub mod materials_mtoon {
     }
 }
 
+pub mod materials_hdr_emissive_multiplier {
+    use super::ExtensionMap;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct VrmcMaterialsHdrEmissiveMultiplier {
+        pub emissive_multiplier: f32,
+        pub extensions: Option<ExtensionMap>,
+        pub extras: Option<serde_json::Value>,
+    }
+}
+
 pub mod vrma {
     use super::{AnyMap, ExtensionMap};
     use serde::{Deserialize, Serialize};
@@ -567,6 +580,8 @@ pub struct ExtensionBundle {
     pub spring_bone: Option<spring_bone::VrmcSpringBone>,
     pub node_constraints: Vec<NodeConstraintExtension>,
     pub mtoon_materials: IndexMap<usize, materials_mtoon::VrmcMaterialsMtoon>,
+    pub hdr_emissive_multipliers:
+        IndexMap<usize, materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier>,
     pub unknown: ExtensionMap,
 }
 
@@ -771,6 +786,21 @@ mod tests {
 
         assert_eq!(value["shadeMultiplyTexture"]["index"], 2);
         assert_eq!(value["extras"]["note"], "ok");
+    }
+
+    #[test]
+    fn hdr_emissive_multiplier_round_trips_extras() {
+        let input = serde_json::json!({
+            "emissiveMultiplier": 4.0,
+            "extras": { "archived": true }
+        });
+
+        let multiplier: materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier =
+            serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(multiplier).unwrap();
+
+        assert_eq!(value["emissiveMultiplier"], 4.0);
+        assert_eq!(value["extras"]["archived"], true);
     }
 
     #[test]

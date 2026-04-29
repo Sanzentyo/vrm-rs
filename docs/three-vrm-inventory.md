@@ -7,6 +7,7 @@
 - `packages/types-vrmc-springbone-1.0`: spring bone extension declarations.
 - `packages/types-vrmc-node-constraint-1.0`: node constraint extension declarations.
 - `packages/types-vrmc-materials-mtoon-1.0`: MToon material extension declarations.
+- `packages/types-vrmc-materials-hdr-emissive-multiplier-1.0`: archived HDR emissive multiplier material extension declarations.
 - `packages/types-vrmc-vrm-animation-1.0`: VRMA extension declarations.
 - `packages/three-vrm-core`: humanoid, expressions, first-person, lookAt, meta.
 - `packages/three-vrm-springbone`: spring bone manager, colliders, dependency ordering.
@@ -24,7 +25,15 @@ Design translation:
 
 Known risks:
 
-- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing.
+- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation is covered, but deeper normalized-pose parity is still pending.
 - MToon shader/pipeline behavior is renderer-specific; the first Rust API exposes parameters and hints only.
 - Spring bone physics needs deeper parity work beyond first deterministic update ordering.
 - Node constraints should error on circular dependencies.
+- Humanoid raw/normalized pose utilities in `three-vrm-core` are not yet represented as a Rust pose API.
+
+Compatibility checkpoints added:
+
+- `VRMC_materials_hdr_emissiveMultiplier` now roundtrips as protocol data, maps to `HdrEmissiveMultiplier`, survives glTF material index placement, and can be written to engine material state through `MaterialAccess::set_emissive_intensity`.
+- Per-node/per-material VRMC extension `specVersion` validation now accepts `1.0`/`1.0-beta` and rejects unsupported versions for spring bone, node constraint, and MToon.
+- `VrmRuntimeDriver` treats VRM0 root orientation compensation as a one-shot driver state, matching loader-style behavior instead of compounding every runtime tick.
+- VRMA hips translation writeback is absolute per sampled frame, matching animation-track semantics instead of accumulating deltas.
