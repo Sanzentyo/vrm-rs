@@ -26,9 +26,9 @@ Design translation:
 
 Known risks:
 
-- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation and humanoid pose API shape are covered, but real-avatar numeric parity is still pending.
+- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation, humanoid pose API shape, and an ignored Alicia VRM0 compatibility fixture smoke check are covered, but deeper real-avatar numeric/material parity is still pending.
 - MToon shader/pipeline behavior is renderer-specific; the first Rust API exposes parameters and hints only.
-- Spring bone physics now has center-space parity helpers, but still needs real three-vrm numeric fixture comparison.
+- Spring bone physics has center-space parity helpers and real three-vrm numeric fixture comparison for Seed-san plus the collider-heavy constraint sample; remaining work is broader official sample breadth and tighter investigation of small collider-heavy deltas.
 - First-person `auto` now handles head-subtree visibility and exposes headless skinned-mesh triangle-erasure planning; downstream engines still need concrete clone implementations.
 - `VRMC_springBone_extended_collider` `inside` behavior is now represented and resolved in runtime collision math.
 - VRMA missing/draft/unknown `specVersion` behavior is now exposed as loader warnings instead of only hard failures.
@@ -40,6 +40,7 @@ Compatibility checkpoints added:
 - `KHR_materials_emissive_strength` now roundtrips, maps to `EmissiveStrength`, and takes precedence over archived VRMC HDR multiplier.
 - `HumanoidPoseRig` covers raw/normalized absolute and rest-relative pose workflows using engine transform traits.
 - Spring rest-state parity helpers cover typed center-space tails, initial-local-rotation premultiplication, and VRM0 7cm childless-joint fallback.
+- Node constraint solvers now match representative three-vrm rotation, roll, and aim quaternion cases for rest rotation, parent rotation, axis selection, and weight interpolation.
 - Per-node/per-material VRMC extension `specVersion` validation now accepts `1.0`/`1.0-beta` and rejects unsupported versions for spring bone, node constraint, and MToon.
 - `VrmRuntimeDriver` treats VRM0 root orientation compensation as a one-shot driver state, matching loader-style behavior instead of compounding every runtime tick.
 - VRMA hips translation writeback is absolute per sampled frame, matching animation-track semantics instead of accumulating deltas.

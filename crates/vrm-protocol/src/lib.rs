@@ -9,7 +9,8 @@ use thiserror::Error;
 
 pub mod vrm0 {
     use super::{AnyMap, ExtensionMap};
-    use serde::{Deserialize, Serialize};
+    use serde::{Deserialize, Deserializer, Serialize};
+    use serde_json::Value;
 
     #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -32,6 +33,7 @@ pub mod vrm0 {
         pub author: Option<String>,
         pub contact_information: Option<String>,
         pub reference: Option<String>,
+        #[serde(default, deserialize_with = "deserialize_option_non_negative_index")]
         pub texture: Option<usize>,
         pub allowed_user_name: Option<String>,
         pub violent_usage_name: Option<String>,
@@ -62,8 +64,11 @@ pub mod vrm0 {
         pub bone: String,
         pub node: usize,
         pub use_default_values: Option<bool>,
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub min: Option<[f32; 3]>,
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub max: Option<[f32; 3]>,
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub center: Option<[f32; 3]>,
         pub axis_length: Option<f32>,
     }
@@ -71,7 +76,9 @@ pub mod vrm0 {
     #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct FirstPerson {
+        #[serde(default, deserialize_with = "deserialize_option_non_negative_index")]
         pub first_person_bone: Option<usize>,
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub first_person_bone_offset: Option<[f32; 3]>,
         pub mesh_annotations: Option<Vec<FirstPersonMeshAnnotation>>,
         pub look_at_type_name: Option<String>,
@@ -141,8 +148,10 @@ pub mod vrm0 {
         pub comment: Option<String>,
         pub stiffiness: Option<f32>,
         pub gravity_power: Option<f32>,
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub gravity_dir: Option<[f32; 3]>,
         pub drag_force: Option<f32>,
+        #[serde(default, deserialize_with = "deserialize_option_non_negative_index")]
         pub center: Option<usize>,
         pub hit_radius: Option<f32>,
         pub bones: Option<Vec<usize>>,
@@ -159,6 +168,7 @@ pub mod vrm0 {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SecondaryAnimationCollider {
+        #[serde(default, deserialize_with = "deserialize_option_vec3")]
         pub offset: Option<[f32; 3]>,
         pub radius: Option<f32>,
     }
@@ -176,6 +186,50 @@ pub mod vrm0 {
         pub tag_map: Option<AnyMap>,
         pub extensions: Option<ExtensionMap>,
         pub extras: Option<serde_json::Value>,
+    }
+
+    fn deserialize_option_vec3<'de, D>(deserializer: D) -> Result<Option<[f32; 3]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<Value>::deserialize(deserializer)?
+            .map(vec3_from_value)
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
+
+    fn deserialize_option_non_negative_index<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<usize>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Option::<i64>::deserialize(deserializer)?.and_then(|value| usize::try_from(value).ok()))
+    }
+
+    fn vec3_from_value(value: Value) -> Result<[f32; 3], String> {
+        match value {
+            Value::Array(values) if values.len() == 3 => {
+                let mut out = [0.0; 3];
+                for (index, value) in values.into_iter().enumerate() {
+                    out[index] = value
+                        .as_f64()
+                        .ok_or_else(|| format!("vec3[{index}] must be a number"))?
+                        as f32;
+                }
+                Ok(out)
+            }
+            Value::Object(map) => {
+                let component = |key: &str| {
+                    map.get(key)
+                        .and_then(Value::as_f64)
+                        .map(|value| value as f32)
+                        .ok_or_else(|| format!("vec3.{key} must be a number"))
+                };
+                Ok([component("x")?, component("y")?, component("z")?])
+            }
+            other => Err(format!("expected vec3 array or object, got {other}")),
+        }
     }
 }
 
@@ -751,6 +805,62 @@ mod tests {
             "blink"
         );
         assert_eq!(value["materialProperties"][0]["extras"]["kept"], true);
+    }
+
+    #[test]
+    fn vrm0_accepts_object_form_vec3_fields() {
+        let input = serde_json::json!({
+            "humanoid": {
+                "humanBones": [{
+                    "bone": "hips",
+                    "node": 0,
+                    "min": { "x": -1.0, "y": -2.0, "z": -3.0 },
+                    "max": { "x": 1.0, "y": 2.0, "z": 3.0 },
+                    "center": { "x": 0.1, "y": 0.2, "z": 0.3 }
+                }]
+            },
+            "meta": {
+                "texture": -1
+            },
+            "firstPerson": {
+                "firstPersonBone": -1,
+                "firstPersonBoneOffset": { "x": 0.0, "y": 1.0, "z": 2.0 }
+            },
+            "secondaryAnimation": {
+                "boneGroups": [{
+                    "gravityDir": { "x": 0.0, "y": -1.0, "z": 0.0 },
+                    "center": -1
+                }],
+                "colliderGroups": [{
+                    "node": 0,
+                    "colliders": [{
+                        "offset": { "x": 0.0, "y": 0.5, "z": 0.0 },
+                        "radius": 0.1
+                    }]
+                }]
+            }
+        });
+
+        let vrm: vrm0::Vrm = serde_json::from_value(input).unwrap();
+        let bone = &vrm.humanoid.unwrap().human_bones[0];
+
+        assert_eq!(bone.min, Some([-1.0, -2.0, -3.0]));
+        assert_eq!(bone.max, Some([1.0, 2.0, 3.0]));
+        assert_eq!(bone.center, Some([0.1, 0.2, 0.3]));
+        let first_person = vrm.first_person.unwrap();
+        assert_eq!(first_person.first_person_bone, None);
+        assert_eq!(first_person.first_person_bone_offset, Some([0.0, 1.0, 2.0]));
+        assert_eq!(vrm.meta.unwrap().texture, None);
+        let secondary = vrm.secondary_animation.unwrap();
+        assert_eq!(
+            secondary.bone_groups.as_ref().unwrap()[0].gravity_dir,
+            Some([0.0, -1.0, 0.0])
+        );
+        assert_eq!(secondary.bone_groups.unwrap()[0].center, None);
+        assert_eq!(
+            secondary.collider_groups.unwrap()[0].colliders[0].offset,
+            Some([0.0, 0.5, 0.0])
+        );
     }
 
     #[test]

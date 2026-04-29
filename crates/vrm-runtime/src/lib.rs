@@ -1421,6 +1421,30 @@ mod tests {
     }
 
     #[test]
+    fn rotation_constraint_matches_three_vrm_rest_and_weight_cases() {
+        let quat_a = quat(0.191, 0.462, 0.191, 0.845);
+        let quat_b = quat(-0.462, -0.191, -0.462, 0.733);
+        let identity = Quat::IDENTITY;
+
+        assert_quat_close(
+            solve_rotation_constraint(ConstraintRestState::new(identity, identity), quat_b, 1.0),
+            quat_b,
+        );
+        assert_quat_close(
+            solve_rotation_constraint(ConstraintRestState::new(identity, identity), quat_b, 0.5),
+            identity.slerp(quat_b, 0.5),
+        );
+        assert_quat_close(
+            solve_rotation_constraint(ConstraintRestState::new(quat_a, identity), quat_b, 1.0),
+            quat_a * quat_b,
+        );
+        assert_quat_close(
+            solve_rotation_constraint(ConstraintRestState::new(quat_a, identity), quat_b, 0.5),
+            quat_a.slerp(quat_a * quat_b, 0.5),
+        );
+    }
+
+    #[test]
     fn roll_constraint_uses_selected_axis_and_weight() {
         let state = ConstraintRestState::new(Quat::IDENTITY, Quat::IDENTITY);
         let source = Quat::from_rotation_x(1.0);
@@ -1428,6 +1452,48 @@ mod tests {
 
         assert!((solved * Vec3::Y).angle_between(Vec3::Y) > 0.0);
         assert!((solved * Vec3::Y).angle_between(source * Vec3::Y) < 1.0);
+    }
+
+    #[test]
+    fn roll_constraint_matches_three_vrm_axis_cases() {
+        let quat_identity = Quat::IDENTITY;
+        let quat_ny90 = quat(0.0, -0.707, 0.0, 0.707);
+        let quat_ny45 = quat(0.0, -0.383, 0.0, 0.924);
+        let quat_pz90 = quat(0.0, 0.0, 0.707, 0.707);
+        let quat_px90 = quat(0.707, 0.0, 0.0, 0.707);
+        let quat_px90_pz90 = quat(0.5, -0.5, 0.5, 0.5);
+
+        let identity_state = ConstraintRestState::new(quat_identity, quat_identity);
+        assert_quat_close(
+            solve_roll_constraint(identity_state, quat_ny90, Axis::PositiveY, 1.0),
+            quat_ny90,
+        );
+        assert_quat_close(
+            solve_roll_constraint(identity_state, quat_ny90, Axis::PositiveY, 0.5),
+            quat_ny45,
+        );
+        assert_quat_close(
+            solve_roll_constraint(identity_state, quat_pz90, Axis::PositiveY, 1.0),
+            quat_identity,
+        );
+        assert_quat_close(
+            solve_roll_constraint(
+                ConstraintRestState::new(quat_identity, quat_px90),
+                quat_px90 * quat_pz90,
+                Axis::PositiveY,
+                1.0,
+            ),
+            quat_ny90,
+        );
+        assert_quat_close(
+            solve_roll_constraint(
+                ConstraintRestState::new(quat_px90, quat_identity),
+                quat_ny90,
+                Axis::PositiveZ,
+                1.0,
+            ),
+            quat_px90_pz90,
+        );
     }
 
     #[test]
@@ -1442,5 +1508,130 @@ mod tests {
         });
         let aimed = solved * Vec3::X;
         assert!(aimed.abs_diff_eq(Vec3::Y, 1e-5));
+    }
+
+    #[test]
+    fn aim_constraint_matches_three_vrm_axis_parent_and_weight_cases() {
+        let quat_nz90 = quat(0.0, 0.0, -0.707, 0.707);
+        let quat_nz45 = quat(0.0, 0.0, -0.383, 0.924);
+        let quat_nz135 = quat(0.0, 0.0, -0.924, 0.383);
+        let quat_px90 = quat(0.707, 0.0, 0.0, 0.707);
+        let quat_ny90 = quat(0.0, -0.707, 0.0, 0.707);
+        let quat_nz90_ny90 = quat(-0.5, -0.5, -0.5, 0.5);
+        let quat_nz45_ny90 = quat(-0.271, -0.653, -0.271, 0.653);
+        let quat_py180 = quat(0.0, 1.0, 0.0, 0.0);
+        let quat_pz90 = quat(0.0, 0.0, 0.707, 0.707);
+        let quat_90_around_xz = quat(0.5, 0.0, 0.5, 0.707);
+
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_nz90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 0.5,
+            }),
+            quat_nz45,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::Z,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_px90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::NegativeZ,
+                weight: 1.0,
+            }),
+            quat_ny90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: quat_ny90,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_nz90_ny90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: quat_ny90,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 0.5,
+            }),
+            quat_nz45_ny90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::Y,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: Quat::IDENTITY,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_nz135,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::X,
+                destination_parent_world_rotation: quat_py180,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_pz90,
+        );
+        assert_quat_close(
+            solve_aim_constraint(AimConstraintInput {
+                destination_rest_rotation: Quat::IDENTITY,
+                destination_world_position: Vec3::ZERO,
+                source_world_position: Vec3::new(1.0, 0.0, -1.0),
+                destination_parent_world_rotation: quat_py180,
+                axis: Axis::PositiveY,
+                weight: 1.0,
+            }),
+            quat_90_around_xz,
+        );
+    }
+
+    fn quat(x: f32, y: f32, z: f32, w: f32) -> Quat {
+        Quat::from_xyzw(x, y, z, w).normalize()
+    }
+
+    fn assert_quat_close(actual: Quat, expected: Quat) {
+        assert!(
+            actual.abs_diff_eq(expected, 0.003) || actual.abs_diff_eq(-expected, 0.003),
+            "actual={actual:?}, expected={expected:?}"
+        );
     }
 }

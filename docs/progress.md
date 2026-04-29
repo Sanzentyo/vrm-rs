@@ -83,6 +83,14 @@
   2. Keep VRMA breadth extensible by asserting track-class coverage per external `.vrma` file.
   3. Add a minimal Bevy runtime plugin/config marker so downstream Bevy integrations have an ECS entry point before full transform/material writeback exists.
 - Completed that slice by extending ignored external IO fixture assertions for MToon UV animation, expression override samples, constraints, spring bones, optional VRM0 samples, and VRMA multi-track extraction, and by adding `VrmRuntimePlugin` plus `BevyVrmRuntimeConfig` to `vrm-adapter-bevy`.
+- Started the next parity slice:
+  1. Add a local-only VRM0 Alicia fixture from UniVRM for ignored compatibility assertions without committing the binary asset.
+  2. Port representative three-vrm node constraint solver cases for rotation, roll, and aim constraints.
+  3. Refresh docs and coverage after the new parity cases pass.
+- Added ignored external VRM0 semantic assertions for `AliciaSolid_vrm-0.51.vrm`, covering `VrmKind::Vrm0Compat`, compatibility metadata presence, and user-facing first-person/expression feature availability.
+- Expanded VRM0 protocol compatibility to accept object-form vec3 values (`{ x, y, z }`) and legacy `-1` sentinel indices for optional texture/bone/spring center references, as required by the Alicia VRM0 sample.
+- Added three-vrm-derived node constraint parity tests for rotation rest/weight cases, roll axis/rest cases, and aim axis/parent/weight cases in `vrm-runtime`.
+- Raised generated/unit/doc coverage to 77.03% line coverage after the Alicia VRM0 protocol test and node constraint solver parity cases.
 
 Open work:
 
@@ -94,9 +102,10 @@ Open work:
   1. Expand VRMA parity. Done with normalized pose comparison plus directory-level VRMA golden test.
   2. Expand VRM0 compatibility parity. Done for legacy first-person flags and lookAt ranges.
   3. Improve spring numeric parity. Done with per-golden max-delta reporting and explicit tolerance classes.
-- Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
+- Deep VRM0 compatibility parity beyond root orientation now has an external Alicia fixture smoke check, but still needs stricter semantic assertions for legacy materials, humanoid axes, and mesh annotations.
 - Humanoid pose parity now has snapshot/diff helpers plus Seed-san raw/normalized rest-state and posed writeback golden coverage.
 - Spring bone parity now has stable-length multi-frame rotation comparison plus all-joint center-tail state comparison on Seed-san and directory-level coverage for the collider-heavy VRM1_Constraint_Twist_Sample fixture. Remaining spring work is deeper solver investigation for the small collider-heavy numeric tolerance and more official sample breadth.
+- Node constraint parity now includes direct three-vrm quaternion cases for rotation, roll, and aim solvers. Remaining work is fixture-driven manager ordering/writeback parity on complete VRM scenes.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity now has one external numeric fixture comparison; remaining work is broader VRMA fixture coverage and stricter channel/path diagnostics.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.

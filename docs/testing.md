@@ -64,6 +64,7 @@ Current known coverage gaps:
 
 - Protocol roundtrip tests cover representative extension shapes, but not every optional schema field.
 - External fixture tests assert semantic presence for official samples and compare Seed-san humanoid rest-state, posed humanoid writeback, spring center-space output, collider-heavy spring output, and VRMA application output against three-vrm.
+- Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines; Bevy/wgpu/ash compile examples are still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
 
@@ -77,17 +78,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 71.93% | 76.45% |
+| Workspace total | 72.49% | 77.03% |
 | `vrm-adapter-bevy` | 72.82% | 66.67% |
 | `vrm-adapter` | 62.27% | 72.46% |
 | `vrm-core` | 67.63% | 76.73% |
-| `vrm-io` | 69.45% | 65.66% |
-| `vrm-protocol` | 89.01% | 85.20% |
-| `vrm-runtime` | 79.56% | 79.79% |
+| `vrm-io` | 69.32% | 65.60% |
+| `vrm-protocol` | 86.45% | 85.40% |
+| `vrm-runtime` | 82.02% | 82.69% |
 | `vrm-sans-io` | 88.70% | 91.57% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The next test-effort priority is broader fixture breadth and stricter diagnostics, especially additional VRMA clips, more VRM0 compatibility fixtures, and renderer adapter examples.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The next test-effort priority is broader fixture breadth and stricter diagnostics, especially additional VRMA clips, deeper VRM0 material/humanoid compatibility fixtures, and renderer adapter examples.
 
 ## Ordered Parity Milestones
 
@@ -108,6 +109,12 @@ Latest completed implementation slice:
 1. External fixture semantic breadth: assert known official fixture features for MToon UV animation, expression override samples, constraints, spring bones, and VRMA track classes.
 2. VRMA fixture breadth: keep ignored directory tests ready for additional `.vrma` files by checking humanoid rotation, hips translation, expression, and lookAt track categories when present.
 3. Bevy adapter skeleton: provide a minimal plugin/config marker as the first ECS entry point before concrete transform, morph, material, and mesh writeback systems are implemented.
+
+Current active parity slice:
+
+1. VRM0 external compatibility fixture: load UniVRM's Alicia VRM0 sample from `.external-fixtures/official/UniVRM/` and assert compatibility-level semantics without committing the binary asset.
+2. Node constraint solver parity: port representative three-vrm rotation, roll, and aim quaternion cases into `vrm-runtime` unit tests.
+3. Coverage refresh: rerun fmt/test/clippy/llvm-cov after the new assertions and update the snapshot if the totals change.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 
@@ -151,6 +158,7 @@ Spark downloaded the current local fixture set into `.external-fixtures/official
 | `VRMC_materials_mtoon_UV_Animation_Test.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_materials_mtoon_UV_Animation_Test/vrm/VRMC_materials_mtoon_UV_Animation_Test.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for MToon UV animation parity, external only. |
 | `VRMC_vrm_expressions_isBinary_Overridden.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_vrm_expressions_isBinary_Overridden/vrm/VRMC_vrm_expressions_isBinary_Overridden.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for expression override parity, external only. |
 | `VRMC_vrm_expressions_isBinary_Overrides.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_vrm_expressions_isBinary_Overrides/vrm/VRMC_vrm_expressions_isBinary_Overrides.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for expression override parity, external only. |
+| `UniVRM/AliciaSolid_vrm-0.51.vrm` | `https://raw.githubusercontent.com/vrm-c/UniVRM/cc52748645889e1521f5a4cef2103b8b028100bf/Tests/Models/Alicia_vrm-0.51/AliciaSolid_vrm-0.51.vrm` | VRM0 compatibility fixture for ignored semantic tests. Keep external until redistribution/license status is reviewed for this repository's MIT/Apache source distribution. |
 | `test.vrma` | `https://raw.githubusercontent.com/pixiv/three-vrm/9d125586f6d7da094b0ac5f204cebf19586f2397/packages/three-vrm-animation/examples/models/test.vrma` | Local testing only until upstream redistribution status is confirmed; no embedded asset license/provenance found. |
 
 The URLs are commit-pinned to avoid branch drift.

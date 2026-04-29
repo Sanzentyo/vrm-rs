@@ -1464,7 +1464,9 @@ mod tests {
                 "expression override sample should expose binary or override metadata"
             );
         }
-        if file_name.eq_ignore_ascii_case("VRM0_AliciaSolid.vrm") {
+        if file_name.eq_ignore_ascii_case("VRM0_AliciaSolid.vrm")
+            || file_name.eq_ignore_ascii_case("AliciaSolid_vrm-0.51.vrm")
+        {
             assert_eq!(document.kind, vrm_core::VrmKind::Vrm0Compat);
             assert!(
                 document.compatibility.vrm0.is_some(),
