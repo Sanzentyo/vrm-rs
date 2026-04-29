@@ -8,8 +8,9 @@ use bevy::prelude::{App, Asset, Entity, Handle, Plugin, Resource};
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
-    MtoonMaterialDescriptor, MtoonMaterializationOptions, SceneGraph, TransformAccess, ViewMode,
-    VisibilityAccess, WorldTransformAccess, WorldTransformUpdate,
+    MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor, MtoonMaterializationOptions,
+    MtoonPipelineAccess, SceneGraph, TransformAccess, ViewMode, VisibilityAccess,
+    WorldTransformAccess, WorldTransformUpdate,
 };
 use vrm_core::Transform;
 use vrm_core::{
@@ -44,6 +45,12 @@ pub enum BevyAdapterError {
     CyclicHierarchy(NodeRef),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BevyTextureTransform {
+    pub scale: Option<[f32; 2]>,
+    pub offset: Option<[f32; 2]>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BevyRuntimeSceneState {
     pub nodes: BevyNodeMap,
@@ -52,6 +59,11 @@ pub struct BevyRuntimeSceneState {
     local_transforms: HashMap<Entity, Transform>,
     world_transforms: HashMap<Entity, Transform>,
     visibility: HashMap<Entity, bool>,
+    morph_weights: HashMap<(NodeRef, usize), f32>,
+    material_colors: HashMap<(MaterialRef, String), Vec<f32>>,
+    texture_transforms: HashMap<MaterialRef, BevyTextureTransform>,
+    emissive_intensities: HashMap<MaterialRef, f32>,
+    mtoon_pipeline_passes: HashMap<MaterialRef, Vec<MtoonPipelinePass>>,
 }
 
 impl BevyRuntimeSceneState {
@@ -89,6 +101,28 @@ impl BevyRuntimeSceneState {
             .get(&entity)
             .copied()
             .ok_or(BevyAdapterError::MissingEntity(entity))
+    }
+
+    pub fn morph_weight(&self, node: NodeRef, morph_index: usize) -> Option<f32> {
+        self.morph_weights.get(&(node, morph_index)).copied()
+    }
+
+    pub fn material_color(&self, material: MaterialRef, property: &str) -> Option<&[f32]> {
+        self.material_colors
+            .get(&(material, property.to_owned()))
+            .map(Vec::as_slice)
+    }
+
+    pub fn texture_transform(&self, material: MaterialRef) -> Option<BevyTextureTransform> {
+        self.texture_transforms.get(&material).copied()
+    }
+
+    pub fn emissive_intensity(&self, material: MaterialRef) -> Option<f32> {
+        self.emissive_intensities.get(&material).copied()
+    }
+
+    pub fn mtoon_pipeline_passes(&self, material: MaterialRef) -> Option<&[MtoonPipelinePass]> {
+        self.mtoon_pipeline_passes.get(&material).map(Vec::as_slice)
     }
 
     fn entity(&self, node: NodeRef) -> Result<Entity, BevyAdapterError> {
@@ -207,6 +241,69 @@ impl VisibilityAccess for BevyRuntimeSceneState {
     fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error> {
         let entity = self.entity(node)?;
         self.visibility.insert(entity, visible);
+        Ok(())
+    }
+}
+
+impl MorphTargetAccess for BevyRuntimeSceneState {
+    type Error = BevyAdapterError;
+
+    fn set_morph_weight(
+        &mut self,
+        node: NodeRef,
+        morph_index: usize,
+        weight: f32,
+    ) -> Result<(), Self::Error> {
+        self.entity(node)?;
+        self.morph_weights.insert((node, morph_index), weight);
+        Ok(())
+    }
+}
+
+impl MaterialAccess for BevyRuntimeSceneState {
+    type Error = BevyAdapterError;
+
+    fn set_material_color(
+        &mut self,
+        material: MaterialRef,
+        property: &str,
+        value: &[f32],
+    ) -> Result<(), Self::Error> {
+        self.material_colors
+            .insert((material, property.to_owned()), value.to_vec());
+        Ok(())
+    }
+
+    fn set_texture_transform(
+        &mut self,
+        material: MaterialRef,
+        scale: Option<[f32; 2]>,
+        offset: Option<[f32; 2]>,
+    ) -> Result<(), Self::Error> {
+        self.texture_transforms
+            .insert(material, BevyTextureTransform { scale, offset });
+        Ok(())
+    }
+
+    fn set_emissive_intensity(
+        &mut self,
+        material: MaterialRef,
+        intensity: f32,
+    ) -> Result<(), Self::Error> {
+        self.emissive_intensities.insert(material, intensity);
+        Ok(())
+    }
+}
+
+impl MtoonPipelineAccess for BevyRuntimeSceneState {
+    type Error = BevyAdapterError;
+
+    fn set_mtoon_pipeline_passes(
+        &mut self,
+        material: MaterialRef,
+        passes: &[MtoonPipelinePass],
+    ) -> Result<(), Self::Error> {
+        self.mtoon_pipeline_passes.insert(material, passes.to_vec());
         Ok(())
     }
 }
@@ -393,7 +490,8 @@ impl Plugin for VrmRuntimePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vrm_core::{Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue};
+    use vrm_adapter::apply_mtoon_pipeline_hints;
+    use vrm_core::{Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue, MtoonTextureSet};
 
     #[test]
     fn node_map_round_trips_entity() {
@@ -449,6 +547,66 @@ mod tests {
         );
         scene.set_node_visible(NodeRef(1), false).unwrap();
         assert!(!scene.is_visible(NodeRef(1)).unwrap());
+    }
+
+    #[test]
+    fn runtime_scene_state_records_morph_and_material_writeback() {
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            Entity::from_raw_u32(1).unwrap(),
+            Transform::default(),
+        );
+
+        scene.set_morph_weight(NodeRef(0), 2, 40.0).unwrap();
+        scene
+            .set_material_color(MaterialRef(3), "_Color", &[1.0, 0.5, 0.25, 1.0])
+            .unwrap();
+        scene
+            .set_texture_transform(MaterialRef(3), Some([2.0, 3.0]), Some([0.1, 0.2]))
+            .unwrap();
+
+        assert_eq!(scene.morph_weight(NodeRef(0), 2), Some(40.0));
+        assert_eq!(
+            scene.material_color(MaterialRef(3), "_Color"),
+            Some([1.0, 0.5, 0.25, 1.0].as_slice())
+        );
+        assert_eq!(
+            scene.texture_transform(MaterialRef(3)),
+            Some(BevyTextureTransform {
+                scale: Some([2.0, 3.0]),
+                offset: Some([0.1, 0.2])
+            })
+        );
+    }
+
+    #[test]
+    fn runtime_scene_state_records_mtoon_and_emissive_writeback() {
+        let document = VrmDocument {
+            materials: vec![vrm_core::Material {
+                khr_emissive_strength: Feature::Present(vrm_core::EmissiveStrength(3.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    textures: MtoonTextureSet {
+                        main_texture: Some(TextureRef(1)),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut scene = BevyRuntimeSceneState::default();
+
+        apply_mtoon_pipeline_hints(&mut scene, &document).unwrap();
+        vrm_adapter::apply_emissive_strengths(&mut scene, &document).unwrap();
+
+        assert!(matches!(
+            scene.mtoon_pipeline_passes(MaterialRef(0)),
+            Some([MtoonPipelinePass::Base(_)])
+        ));
+        assert_eq!(scene.emissive_intensity(MaterialRef(0)), Some(3.0));
     }
 
     #[test]
