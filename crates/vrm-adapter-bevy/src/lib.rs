@@ -5,21 +5,21 @@
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
 use bevy::prelude::{
-    App, Asset, Component, Entity, Handle, Plugin, Quat as BevyQuat, Query, Res, ResMut, Resource,
-    Transform as BevyTransform, Update, Vec3 as BevyVec3,
+    App, Asset, Component, Entity, Handle, IntoScheduleConfigs, Plugin, Quat as BevyQuat, Query,
+    Res, ResMut, Resource, Transform as BevyTransform, Update, Vec3 as BevyVec3,
 };
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
     ConstraintRestAccess, MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor,
     MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph, TransformAccess, ViewMode,
-    VisibilityAccess, WorldTransformAccess, WorldTransformUpdate,
+    VisibilityAccess, VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate,
 };
 use vrm_core::Transform;
 use vrm_core::{
     MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonPipelinePass, NodeRef, TextureRef, VrmDocument,
 };
-use vrm_runtime::ConstraintRestState;
+use vrm_runtime::{ConstraintRestState, RuntimeEvents};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BevyNodeMap {
@@ -98,6 +98,26 @@ pub struct BevyRuntimeSceneState {
     texture_transforms: HashMap<MaterialRef, BevyTextureTransform>,
     emissive_intensities: HashMap<MaterialRef, f32>,
     mtoon_pipeline_passes: HashMap<MaterialRef, Vec<MtoonPipelinePass>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Resource)]
+pub struct BevyVrmDocument {
+    pub document: VrmDocument,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Resource)]
+pub struct BevyVrmRuntimeEvents {
+    pub events: RuntimeEvents,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
+pub struct BevyVrmRuntimeState {
+    pub vrm0_orientation_applied: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
+pub struct BevyVrmRuntimeError {
+    pub message: Option<String>,
 }
 
 impl BevyRuntimeSceneState {
@@ -448,6 +468,33 @@ pub fn write_scene_state_materials(
     }
 }
 
+pub fn tick_scene_state_runtime(
+    mut scene: ResMut<BevyRuntimeSceneState>,
+    document: Res<BevyVrmDocument>,
+    events: Res<BevyVrmRuntimeEvents>,
+    config: Res<BevyVrmRuntimeConfig>,
+    mut state: ResMut<BevyVrmRuntimeState>,
+    mut last_error: ResMut<BevyVrmRuntimeError>,
+) {
+    let mut driver = VrmRuntimeDriver::new(&document.document)
+        .with_runtime_events(&events.events)
+        .with_view_mode(config.view_mode)
+        .with_vrm0_orientation(config.apply_vrm0_orientation);
+    if let Some(root) = config.root_node {
+        driver = driver.with_root(root);
+    }
+    driver.vrm0_orientation_applied = state.vrm0_orientation_applied;
+
+    let result = if config.use_spring_parity {
+        driver.tick_with_spring_parity(&mut *scene, None)
+    } else {
+        driver.tick(&mut *scene, None)
+    };
+
+    state.vrm0_orientation_applied = driver.vrm0_orientation_applied;
+    last_error.message = result.err().map(|error| format!("{error:?}"));
+}
+
 fn compose_transform(parent: Transform, local: Transform) -> Transform {
     Transform {
         translation: parent.translation + parent.rotation * (parent.scale * local.translation),
@@ -602,6 +649,7 @@ pub fn bevy_mtoon_material_plans(
 #[derive(Clone, Debug, PartialEq, Eq, Resource)]
 pub struct BevyVrmRuntimeConfig {
     pub view_mode: ViewMode,
+    pub root_node: Option<NodeRef>,
     pub apply_vrm0_orientation: bool,
     pub use_spring_parity: bool,
 }
@@ -610,6 +658,7 @@ impl Default for BevyVrmRuntimeConfig {
     fn default() -> Self {
         Self {
             view_mode: ViewMode::ThirdPerson,
+            root_node: Some(NodeRef(0)),
             apply_vrm0_orientation: true,
             use_spring_parity: true,
         }
@@ -625,14 +674,20 @@ impl Plugin for VrmRuntimePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.config.clone())
             .init_resource::<BevyRuntimeSceneState>()
+            .init_resource::<BevyVrmDocument>()
+            .init_resource::<BevyVrmRuntimeEvents>()
+            .init_resource::<BevyVrmRuntimeState>()
+            .init_resource::<BevyVrmRuntimeError>()
             .add_systems(
                 Update,
                 (
+                    tick_scene_state_runtime,
                     write_scene_state_transforms,
                     write_scene_state_visibility,
                     write_scene_state_morph_weights,
                     write_scene_state_materials,
-                ),
+                )
+                    .chain(),
             );
     }
 }
@@ -953,6 +1008,7 @@ mod tests {
         let mut app = App::new();
         let config = BevyVrmRuntimeConfig {
             view_mode: ViewMode::FirstPerson,
+            root_node: None,
             apply_vrm0_orientation: false,
             use_spring_parity: true,
         };
@@ -962,6 +1018,103 @@ mod tests {
         });
 
         assert_eq!(app.world().resource::<BevyVrmRuntimeConfig>(), &config);
+    }
+
+    #[test]
+    fn runtime_plugin_ticks_scene_state_between_readback_and_writeback() {
+        let mut app = App::new();
+        app.add_plugins(VrmRuntimePlugin {
+            config: BevyVrmRuntimeConfig {
+                view_mode: ViewMode::ThirdPerson,
+                root_node: None,
+                apply_vrm0_orientation: false,
+                use_spring_parity: true,
+            },
+        });
+        app.add_systems(
+            Update,
+            read_bevy_transforms_into_scene_state.before(tick_scene_state_runtime),
+        );
+
+        *app.world_mut().resource_mut::<BevyVrmDocument>() = BevyVrmDocument {
+            document: VrmDocument {
+                materials: vec![vrm_core::Material {
+                    khr_emissive_strength: Feature::Present(vrm_core::EmissiveStrength(6.0)),
+                    mtoon: Feature::Present(MtoonMaterial::default()),
+                    ..vrm_core::Material::default()
+                }],
+                ..VrmDocument::default()
+            },
+        };
+        *app.world_mut().resource_mut::<BevyVrmRuntimeEvents>() = BevyVrmRuntimeEvents {
+            events: RuntimeEvents {
+                expressions: vec![AppliedExpression {
+                    name: "blink".to_owned(),
+                    effective_weight: 0.5,
+                    binds: vec![vrm_core::ExpressionBind::MorphTarget {
+                        node: NodeRef(0),
+                        index: 1,
+                        weight: 100.0,
+                    }],
+                }],
+                ..RuntimeEvents::default()
+            },
+        };
+
+        let node_entity = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(0)),
+                BevyTransform {
+                    translation: BevyVec3::new(2.0, 0.0, 0.0),
+                    ..BevyTransform::default()
+                },
+                BevyVrmMorphWeights::default(),
+            ))
+            .id();
+        let material_entity = app
+            .world_mut()
+            .spawn((
+                VrmMaterialBinding(MaterialRef(0)),
+                BevyVrmMaterialState::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let scene = app.world().resource::<BevyRuntimeSceneState>();
+        assert_eq!(
+            scene.local_transform(NodeRef(0)).unwrap().translation,
+            Vec3::new(2.0, 0.0, 0.0)
+        );
+        assert_eq!(scene.morph_weight(NodeRef(0), 1), Some(50.0));
+        assert!(
+            app.world()
+                .resource::<BevyVrmRuntimeError>()
+                .message
+                .is_none()
+        );
+
+        assert_eq!(
+            app.world()
+                .entity(node_entity)
+                .get::<BevyVrmMorphWeights>()
+                .unwrap()
+                .weights
+                .get(&1)
+                .copied(),
+            Some(50.0)
+        );
+        let material = app
+            .world()
+            .entity(material_entity)
+            .get::<BevyVrmMaterialState>()
+            .unwrap();
+        assert_eq!(material.emissive_intensity, Some(6.0));
+        assert!(matches!(
+            material.mtoon_pipeline_passes.as_slice(),
+            [MtoonPipelinePass::Base(_)]
+        ));
     }
 
     #[test]

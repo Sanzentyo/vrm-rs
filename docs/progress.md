@@ -111,6 +111,8 @@
 - Re-measured coverage after Bevy ECS writeback systems: workspace line coverage is 78.17%, and `vrm-adapter-bevy` line coverage is 93.63%.
 - Added `read_bevy_transforms_into_scene_state`, a Bevy system helper that copies `VrmNode` plus `Transform` and optional `BevyVrmVisibility` components into `BevyRuntimeSceneState` before a runtime driver tick. It is intentionally not auto-registered by `VrmRuntimePlugin` so apps can schedule ECS readback before driver execution and writeback after driver execution without stale component data overwriting runtime output.
 - Re-measured coverage after Bevy ECS readback helper: workspace line coverage is 78.33%, and `vrm-adapter-bevy` line coverage is 94.66%.
+- Added Bevy runtime tick resources and system integration. `VrmRuntimePlugin` now initializes `BevyVrmDocument`, `BevyVrmRuntimeEvents`, `BevyVrmRuntimeState`, and `BevyVrmRuntimeError`, runs `tick_scene_state_runtime`, and chains component writeback after runtime execution so a scheduled readback helper can feed ECS transforms into the driver before outputs are written back.
+- Re-measured coverage after Bevy runtime tick system integration: workspace line coverage is 78.68%, and `vrm-adapter-bevy` line coverage is 95.37%.
 
 Open work:
 
