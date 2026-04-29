@@ -41,7 +41,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 ## P1: three-vrm Parity
 
-- [ ] Deepen VRM0 numeric humanoid compatibility.
+- [x] Deepen VRM0 numeric humanoid compatibility.
   - Done when Alicia or another VRM0 fixture has golden numeric checks for humanoid axis, rest pose, raw/normalized pose writeback, and legacy orientation behavior.
 - [ ] Expand VRM0 legacy material edge cases.
   - Done when additional legacy material float/vector/texture-transform cases are covered by generated tests and at least one external fixture assertion.

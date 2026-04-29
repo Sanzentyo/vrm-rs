@@ -126,6 +126,8 @@
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
 - Re-measured coverage after the Bevy MToon materialization example: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%. The example is verified separately with `cargo run --example bevy_mtoon_materialization`.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
+- Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
+- Re-measured coverage after Alicia VRM0 numeric humanoid parity: workspace line coverage is 79.42%, and `vrm-adapter-bevy` line coverage is 95.05%.
 
 Open work:
 

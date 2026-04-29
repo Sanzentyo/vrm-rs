@@ -3756,6 +3756,19 @@ mod tests {
     #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
     fn humanoid_pose_matches_three_vrm_golden_rest_state() {
         let (golden_path, golden) = load_three_vrm_golden();
+        compare_humanoid_rest_golden(&golden_path, &golden);
+    }
+
+    #[test]
+    #[ignore = "requires Alicia three-vrm golden JSON in .external-fixtures/golden"]
+    fn vrm0_alicia_humanoid_pose_matches_three_vrm_golden_rest_state() {
+        let golden_path =
+            workspace_path(".external-fixtures/golden/AliciaSolid_vrm-0.51.spring.json");
+        let golden = load_three_vrm_golden_from_path(&golden_path);
+        compare_humanoid_rest_golden(&golden_path, &golden);
+    }
+
+    fn compare_humanoid_rest_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {
         let fixture = golden["fixture"]
             .as_str()
             .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
@@ -3801,6 +3814,22 @@ mod tests {
     #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
     fn humanoid_pose_writeback_matches_three_vrm_golden() {
         let (golden_path, golden) = load_three_vrm_golden();
+        compare_humanoid_writeback_golden(&golden_path, &golden);
+    }
+
+    #[test]
+    #[ignore = "requires Alicia three-vrm golden JSON in .external-fixtures/golden"]
+    fn vrm0_alicia_humanoid_pose_writeback_matches_three_vrm_golden() {
+        let golden_path =
+            workspace_path(".external-fixtures/golden/AliciaSolid_vrm-0.51.spring.json");
+        let golden = load_three_vrm_golden_from_path(&golden_path);
+        compare_humanoid_writeback_golden(&golden_path, &golden);
+    }
+
+    fn compare_humanoid_writeback_golden(
+        golden_path: &std::path::Path,
+        golden: &serde_json::Value,
+    ) {
         let fixture = golden["fixture"]
             .as_str()
             .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
@@ -3811,7 +3840,7 @@ mod tests {
             translation: 0.0005,
             rotation_radians: 0.0005,
         };
-        let raw_scenario = golden_pose_scenario(&golden, "rawWriteback");
+        let raw_scenario = golden_pose_scenario(golden, "rawWriteback");
         let mut raw_scene = FixtureScene::new(loaded.scene().clone());
         let raw_rig = HumanoidPoseRig::capture(&raw_scene, document).unwrap();
         let raw_input: RawPose = pose_from_json(&raw_scenario["inputPose"]);
@@ -3830,7 +3859,7 @@ mod tests {
             "rawWriteback.rawAbsolutePose",
         );
 
-        let normalized_scenario = golden_pose_scenario(&golden, "normalizedWriteback");
+        let normalized_scenario = golden_pose_scenario(golden, "normalizedWriteback");
         let mut normalized_scene = FixtureScene::new(loaded.scene().clone());
         let mut normalized_rig = HumanoidPoseRig::capture(&normalized_scene, document).unwrap();
         let normalized_input: vrm_core::NormalizedPose =
@@ -4030,15 +4059,24 @@ mod tests {
     fn load_three_vrm_golden() -> (std::path::PathBuf, serde_json::Value) {
         let golden_path = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(".external-fixtures/golden/Seed-san.spring.json")
-            });
-        let golden: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&golden_path)
+            .unwrap_or_else(|| workspace_path(".external-fixtures/golden/Seed-san.spring.json"));
+        let golden = load_three_vrm_golden_from_path(&golden_path);
+        (golden_path, golden)
+    }
+
+    fn workspace_path(relative: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(relative)
+    }
+
+    fn load_three_vrm_golden_from_path(golden_path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_slice(
+            &std::fs::read(golden_path)
                 .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
         )
-        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
-        (golden_path, golden)
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()))
     }
 
     fn load_three_vrm_vrma_golden() -> (std::path::PathBuf, serde_json::Value) {

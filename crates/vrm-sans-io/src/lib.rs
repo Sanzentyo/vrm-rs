@@ -315,7 +315,7 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
                 .into_iter()
                 .map(|bone| {
                     (
-                        HumanBoneName::from(bone.bone.as_str()),
+                        map_vrm0_human_bone_name(&bone.bone),
                         HumanBone {
                             node: NodeRef(bone.node),
                             rest: Transform::default(),
@@ -369,6 +369,16 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
         .collect();
 
     Ok(document)
+}
+
+fn map_vrm0_human_bone_name(name: &str) -> HumanBoneName {
+    match name {
+        "leftThumbProximal" => HumanBoneName::LeftThumbMetacarpal,
+        "leftThumbIntermediate" => HumanBoneName::LeftThumbProximal,
+        "rightThumbProximal" => HumanBoneName::RightThumbMetacarpal,
+        "rightThumbIntermediate" => HumanBoneName::RightThumbProximal,
+        _ => HumanBoneName::from(name),
+    }
 }
 
 fn map_vrm0_blend_shape(
@@ -1211,6 +1221,15 @@ mod tests {
     fn maps_vrm0_blend_shape_material_values_and_thumb_aliases() {
         let mut bones = required_vrm0_bones();
         bones.push(vrm0::HumanBone {
+            bone: "leftThumbProximal".to_owned(),
+            node: 14,
+            use_default_values: None,
+            min: None,
+            max: None,
+            center: None,
+            axis_length: None,
+        });
+        bones.push(vrm0::HumanBone {
             bone: "leftThumbIntermediate".to_owned(),
             node: 15,
             use_default_values: None,
@@ -1273,6 +1292,13 @@ mod tests {
             .build(bundle)
             .unwrap();
 
+        assert!(
+            asset
+                .document
+                .humanoid
+                .bones
+                .contains_key(&HumanBoneName::LeftThumbMetacarpal)
+        );
         assert!(
             asset
                 .document
