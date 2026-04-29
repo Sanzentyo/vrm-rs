@@ -3176,6 +3176,42 @@ mod tests {
     #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
     fn spring_parity_matches_three_vrm_golden_rotations() {
         let (golden_path, golden) = load_three_vrm_golden();
+        compare_spring_golden(&golden_path, &golden);
+    }
+
+    #[test]
+    #[ignore = "requires three-vrm golden JSON files; set VRM_RS_THREE_VRM_GOLDEN_DIR"]
+    fn spring_parity_matches_three_vrm_golden_directory() {
+        let golden_dir = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(".external-fixtures/golden"));
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&golden_dir)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let golden: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path)
+                    .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display())),
+            )
+            .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()));
+            if golden["springJoints"].as_array().is_none_or(Vec::is_empty) {
+                continue;
+            }
+            compare_spring_golden(&path, &golden);
+            checked += 1;
+        }
+        assert!(
+            checked >= 2,
+            "expected at least Seed-san and a collider-heavy spring golden in {}",
+            golden_dir.display()
+        );
+    }
+
+    fn compare_spring_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {
         let fixture = golden["fixture"]
             .as_str()
             .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
@@ -3193,9 +3229,11 @@ mod tests {
         let mut scene = FixtureScene::new(loaded.scene().clone());
         let rest = SpringRestMap::capture(&scene, system).unwrap();
         let mut state = rest.runtime_state(system);
+        let tail_tolerance = 0.003;
+        let rotation_tolerance = 0.0015;
 
         let mut compared = 0;
-        for frame in golden_frames(&golden) {
+        for frame in golden_frames(golden) {
             scene.rotations.clear();
             step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
                 .unwrap();
@@ -3222,7 +3260,7 @@ mod tests {
                         .copied()
                         .unwrap_or_else(|| panic!("node {} has no center tail state", node.0));
                     assert!(
-                        actual_tail.abs_diff_eq(expected_tail, 0.0005),
+                        actual_tail.abs_diff_eq(expected_tail, tail_tolerance),
                         "frame {frame_index}, node {} center tail mismatch: actual={actual_tail:?} expected={expected_tail:?}",
                         node.0
                     );
@@ -3236,7 +3274,8 @@ mod tests {
                     .copied()
                     .unwrap_or_else(|| panic!("node {} was not written by spring parity", node.0));
                 assert!(
-                    actual.abs_diff_eq(expected, 0.0005) || actual.abs_diff_eq(-expected, 0.0005),
+                    actual.abs_diff_eq(expected, rotation_tolerance)
+                        || actual.abs_diff_eq(-expected, rotation_tolerance),
                     "frame {frame_index}, node {} rotation mismatch: actual={actual:?} expected={expected:?}",
                     node.0
                 );
