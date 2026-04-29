@@ -1234,6 +1234,22 @@ mod tests {
                             mesh: 4,
                             first_person_flag: "FirstPersonOnly".to_owned(),
                         },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 5,
+                            first_person_flag: "auto".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 6,
+                            first_person_flag: "thirdPersonOnly".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 7,
+                            first_person_flag: "firstPersonOnly".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 8,
+                            first_person_flag: "UnknownFlag".to_owned(),
+                        },
                     ]),
                     look_at_type_name: Some("BlendShape".to_owned()),
                     look_at_horizontal_inner: Some(vrm0::FirstPersonDegreeMap {
@@ -1241,6 +1257,12 @@ mod tests {
                         y_range: Some(12.0),
                         ..Default::default()
                     }),
+                    look_at_horizontal_outer: Some(vrm0::FirstPersonDegreeMap {
+                        x_range: Some(60.0),
+                        y_range: Some(15.0),
+                        ..Default::default()
+                    }),
+                    look_at_vertical_down: Some(vrm0::FirstPersonDegreeMap::default()),
                     look_at_vertical_up: Some(vrm0::FirstPersonDegreeMap {
                         x_range: Some(30.0),
                         y_range: Some(8.0),
@@ -1270,6 +1292,13 @@ mod tests {
                 (NodeRef(2), FirstPersonAnnotation::Both),
                 (NodeRef(3), FirstPersonAnnotation::ThirdPersonOnly),
                 (NodeRef(4), FirstPersonAnnotation::FirstPersonOnly),
+                (NodeRef(5), FirstPersonAnnotation::Auto),
+                (NodeRef(6), FirstPersonAnnotation::ThirdPersonOnly),
+                (NodeRef(7), FirstPersonAnnotation::FirstPersonOnly),
+                (
+                    NodeRef(8),
+                    FirstPersonAnnotation::Unknown("UnknownFlag".to_owned())
+                ),
             ]
         );
         let look_at = asset.document.look_at.as_ref().unwrap();
@@ -1277,6 +1306,10 @@ mod tests {
         assert_eq!(look_at.offset_from_head, Vec3::new(0.0, 0.1, 0.2));
         assert_eq!(look_at.horizontal_inner.input_max_value, 45.0);
         assert_eq!(look_at.horizontal_inner.output_scale, 12.0);
+        assert_eq!(look_at.horizontal_outer.input_max_value, 60.0);
+        assert_eq!(look_at.horizontal_outer.output_scale, 15.0);
+        assert_eq!(look_at.vertical_down.input_max_value, 90.0);
+        assert_eq!(look_at.vertical_down.output_scale, 10.0);
         assert_eq!(look_at.vertical_up.input_max_value, 30.0);
         assert_eq!(look_at.vertical_up.output_scale, 8.0);
     }

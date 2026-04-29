@@ -77,6 +77,7 @@
   1. Broadened VRMA application parity beyond a single raw-pose assertion by comparing normalized pose output and allowing directory-level VRMA golden files.
   2. Deepened VRM0 compatibility coverage for legacy first-person flag spelling and lookAt range mapping.
   3. Tightened spring numeric parity reporting by collecting per-golden maximum tail and rotation deltas, with stricter tail tolerance for normal fixtures and documented wider tolerance for collider-heavy fixtures.
+- Addressed pessimistic gpt-5.4 review findings for that push: spring tail reporting now uses component-wise deltas to match the assertion semantics, VRMA normalized pose parity is reconstructed from the written raw scene, VRMA expression parity rejects unexpected Rust-only expression keys, VRM0 compatibility tests cover lowercase/unknown first-person flags plus all lookAt range directions/defaults, and testing docs now describe current coverage instead of stale next-priority text.
 
 Open work:
 

@@ -230,6 +230,68 @@ impl HumanoidPoseRig {
         relative_pose(&self.normalized_current, &self.normalized_rest)
     }
 
+    pub fn get_normalized_pose_from_raw<T, E>(
+        &self,
+        target: &T,
+    ) -> Result<vrm_core::NormalizedPose, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E>,
+    {
+        Ok(relative_pose(
+            &self.get_normalized_absolute_pose_from_raw(target)?,
+            &self.normalized_rest,
+        ))
+    }
+
+    pub fn get_normalized_absolute_pose_from_raw<T, E>(
+        &self,
+        target: &T,
+    ) -> Result<vrm_core::NormalizedAbsolutePose, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E>,
+    {
+        self.raw_nodes
+            .iter()
+            .filter_map(|(name, node)| {
+                self.normalized_rest
+                    .get(name)
+                    .map(|rest| (name.clone(), *node, *rest))
+            })
+            .map(|(name, node, rest)| {
+                let transform = target.local_transform(node).map_err(AdapterError::Target)?;
+                let parent_world = self
+                    .parent_world_rotations
+                    .get(&name)
+                    .copied()
+                    .unwrap_or(Quat::IDENTITY);
+                let raw_rest = self
+                    .raw_rest_rotations
+                    .get(&name)
+                    .copied()
+                    .unwrap_or(Quat::IDENTITY);
+                let translation = if name == HumanBoneName::Hips {
+                    target
+                        .world_transform(node)
+                        .map(|transform| transform.translation)
+                        .map_err(AdapterError::Target)?
+                } else {
+                    rest.translation
+                };
+                Ok((
+                    name,
+                    vrm_core::PoseTransform {
+                        translation,
+                        rotation: parent_world
+                            * transform.rotation
+                            * raw_rest.inverse()
+                            * parent_world.inverse(),
+                    },
+                ))
+            })
+            .collect::<Result<IndexMap<_, _>, AdapterError<E>>>()
+            .map(pose_from_iter)
+    }
+
     pub fn set_normalized_pose(&mut self, pose: &vrm_core::NormalizedPose) {
         self.normalized_current = absolute_pose(pose, &self.normalized_rest);
     }
@@ -3586,10 +3648,10 @@ mod tests {
                         .get(&node)
                         .copied()
                         .unwrap_or_else(|| panic!("node {} has no center tail state", node.0));
-                    let tail_delta = actual_tail.distance(expected_tail);
+                    let tail_delta = vec3_component_delta(actual_tail, expected_tail);
                     report.max_tail_delta = report.max_tail_delta.max(tail_delta);
                     assert!(
-                        actual_tail.abs_diff_eq(expected_tail, tolerance.tail),
+                        tail_delta <= tolerance.tail,
                         "frame {frame_index}, node {} center tail mismatch: actual={actual_tail:?} expected={expected_tail:?}",
                         node.0
                     );
@@ -3613,6 +3675,15 @@ mod tests {
             }
         }
         report
+    }
+
+    fn vec3_component_delta(actual: Vec3, expected: Vec3) -> f32 {
+        actual
+            .to_array()
+            .into_iter()
+            .zip(expected.to_array())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0, f32::max)
     }
 
     fn quat_component_delta(actual: Quat, expected: Quat) -> f32 {
@@ -3815,6 +3886,7 @@ mod tests {
             let mut rig = HumanoidPoseRig::capture(&scene, document).unwrap();
             apply_vrma_animation_frame_with_look_at(&mut scene, &mut rig, document, &frame)
                 .unwrap();
+            scene.update_world_transforms().unwrap();
             assert_pose_matches_json(
                 &rig.get_raw_absolute_pose(&scene).unwrap(),
                 &sample["rawAbsolutePose"],
@@ -3822,7 +3894,7 @@ mod tests {
                 &format!("vrma@{time}.rawAbsolutePose"),
             );
             assert_pose_matches_json(
-                &rig.get_normalized_pose(),
+                &rig.get_normalized_pose_from_raw(&scene).unwrap(),
                 &sample["normalizedPose"],
                 tolerance,
                 &format!("vrma@{time}.normalizedPose"),
@@ -3853,22 +3925,43 @@ mod tests {
         let expected = expected
             .as_object()
             .unwrap_or_else(|| panic!("VRMA expressionWeights must be an object"));
+        let actual_weights = frame_expression_weights(frame);
+        let expected_keys = expected.keys().cloned().collect::<HashSet<_>>();
+        let actual_keys = actual_weights.keys().cloned().collect::<HashSet<_>>();
+        assert!(
+            actual_keys.is_subset(&expected_keys),
+            "vrma@{time} expression emitted unexpected keys: {:?}",
+            actual_keys.difference(&expected_keys).collect::<Vec<_>>()
+        );
         for (name, value) in expected {
             let expected_weight = value
                 .as_f64()
                 .unwrap_or_else(|| panic!("VRMA expression weight must be number: {value}"))
                 as f32;
-            let actual = frame
-                .preset_expressions
-                .get(&ExpressionName::from(name.as_str()))
-                .copied()
-                .or_else(|| frame.custom_expressions.get(name).copied())
-                .unwrap_or(0.0);
+            let actual = actual_weights.get(name).copied().unwrap_or(0.0);
             assert!(
                 (actual - expected_weight).abs() <= 0.0005,
                 "vrma@{time} expression {name} mismatch: actual={actual} expected={expected_weight}"
             );
         }
+    }
+
+    fn frame_expression_weights(frame: &VrmAnimationFrame) -> HashMap<String, f32> {
+        frame
+            .preset_expressions
+            .iter()
+            .map(|(name, weight)| (expression_name_to_golden_key(name), *weight))
+            .chain(
+                frame
+                    .custom_expressions
+                    .iter()
+                    .map(|(name, weight)| (name.clone(), *weight)),
+            )
+            .collect()
+    }
+
+    fn expression_name_to_golden_key(name: &ExpressionName) -> String {
+        name.as_str().to_owned()
     }
 
     fn golden_pose_scenario<'a>(

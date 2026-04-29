@@ -63,7 +63,7 @@ cargo llvm-cov --workspace --all-features --html
 Current known coverage gaps:
 
 - Protocol roundtrip tests cover representative extension shapes, but not every optional schema field.
-- External fixture tests assert semantic presence for official samples and compare Seed-san spring, humanoid rest-state, and posed humanoid writeback output against three-vrm.
+- External fixture tests assert semantic presence for official samples and compare Seed-san humanoid rest-state, posed humanoid writeback, spring center-space output, collider-heavy spring output, and VRMA application output against three-vrm.
 - Adapter tests use mock engines; Bevy/wgpu/ash compile examples are still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
 
@@ -77,17 +77,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 73.40% | 77.86% |
+| Workspace total | 72.62% | 77.13% |
 | `vrm-adapter-bevy` | 69.14% | 66.04% |
-| `vrm-adapter` | 64.07% | 74.21% |
+| `vrm-adapter` | 62.27% | 72.46% |
 | `vrm-core` | 67.63% | 76.73% |
 | `vrm-io` | 73.71% | 69.81% |
 | `vrm-protocol` | 89.01% | 85.20% |
 | `vrm-runtime` | 79.56% | 79.79% |
-| `vrm-sans-io` | 88.40% | 91.30% |
+| `vrm-sans-io` | 88.70% | 91.57% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is additional real-avatar numeric golden comparison against three-vrm, especially posed humanoid writeback behavior and collider-heavy spring fixtures. The current external fixture tests now cover recursive fixture discovery, semantic IO loading, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, and Seed-san raw/normalized humanoid rest-state comparison on real VRM files without committing those binaries.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The next test-effort priority is broader fixture breadth and stricter diagnostics, especially additional VRMA clips, more VRM0 compatibility fixtures, and renderer adapter examples.
 
 ## Ordered Parity Milestones
 
@@ -99,9 +99,9 @@ The current ordered work queue is:
 
 Latest completed ordered work queue:
 
-1. VRMA parity breadth: compare normalized pose output as well as raw application output, and support directory-level VRMA golden files for future fixture expansion.
-2. VRM0 compatibility depth: add generated compatibility tests for legacy first-person flag spelling and lookAt range mapping behavior that tends to differ from VRM1.
-3. Spring numeric precision: report and assert per-golden maximum tail/rotation deltas so simple fixtures can remain tight while collider-heavy fixtures carry an explicit wider tolerance.
+1. VRMA parity breadth: compare normalized pose reconstructed from raw scene writeback as well as raw application output, assert that Rust does not emit unexpected expression keys, and support directory-level VRMA golden files for future fixture expansion.
+2. VRM0 compatibility depth: add generated compatibility tests for legacy first-person flag spelling, lowercase fallback spellings, unknown flags, all lookAt range directions, and default range values.
+3. Spring numeric precision: report and assert per-golden maximum tail/rotation component deltas so simple fixtures can remain tight while collider-heavy fixtures carry an explicit wider tolerance.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 
@@ -132,7 +132,7 @@ $env:VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR = "D:\git\vrm-rs\.external-fixtures\golden
 cargo test -p vrm-adapter vrma_application_matches_three_vrm_golden_directory -- --ignored
 ```
 
-The golden output records public local rotations, three-vrm's private center-space spring tail state, humanoid raw/normalized rest/current poses, deterministic posed humanoid writeback scenarios, and VRMA application samples. The spring comparison checks center tails for all joints over multiple frames, including tiny-tail joints, and compares rotations only for stable-length joints. Extremely tiny tail vectors (`<= 0.001`) are skipped for quaternion comparison because their normalized direction is numerically sensitive, but their simulation state remains covered by the center-tail assertion. Spring tests now collect maximum tail and rotation deltas per golden file; normal fixtures use `0.001` tail and `0.0015` rotation tolerance, while collider-heavy constraint fixtures use `0.003` tail and `0.0015` rotation tolerance because collider resolution accumulates small three.js/Rust float-path differences over chained joints. VRMA application parity compares raw humanoid pose after normalized-to-raw writeback, normalized pose, expression weights, and lookAt quaternion at deterministic sample times.
+The golden output records public local rotations, three-vrm's private center-space spring tail state, humanoid raw/normalized rest/current poses, deterministic posed humanoid writeback scenarios, and VRMA application samples. The spring comparison checks center tails for all joints over multiple frames, including tiny-tail joints, and compares rotations only for stable-length joints. Extremely tiny tail vectors (`<= 0.001`) are skipped for quaternion comparison because their normalized direction is numerically sensitive, but their simulation state remains covered by the center-tail assertion. Spring tests now collect maximum tail and rotation component deltas per golden file; normal fixtures use `0.001` tail and `0.0015` rotation tolerance, while collider-heavy constraint fixtures use `0.003` tail and `0.0015` rotation tolerance because collider resolution accumulates small three.js/Rust float-path differences over chained joints. VRMA application parity compares raw humanoid pose after normalized-to-raw writeback, normalized pose reconstructed from the written raw scene, expression weights without allowing unexpected Rust-only keys, and lookAt quaternion at deterministic sample times.
 
 ## Current External Official Samples
 
