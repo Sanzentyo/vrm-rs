@@ -125,6 +125,7 @@
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
 - Re-measured coverage after the Bevy MToon materialization example: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%. The example is verified separately with `cargo run --example bevy_mtoon_materialization`.
+- Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 
 Open work:
 
