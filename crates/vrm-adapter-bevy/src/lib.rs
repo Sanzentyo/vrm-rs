@@ -12,14 +12,14 @@ use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
     ConstraintRestAccess, MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor,
-    MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph, TransformAccess, ViewMode,
-    VisibilityAccess, VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate,
+    MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph, SpringRestMap, TransformAccess,
+    ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate,
 };
 use vrm_core::Transform;
 use vrm_core::{
     MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonPipelinePass, NodeRef, TextureRef, VrmDocument,
 };
-use vrm_runtime::{ConstraintRestState, RuntimeEvents};
+use vrm_runtime::{CenterSpringRuntimeState, ConstraintRestState, RuntimeEvents};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BevyNodeMap {
@@ -113,6 +113,19 @@ pub struct BevyVrmRuntimeEvents {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
 pub struct BevyVrmRuntimeState {
     pub vrm0_orientation_applied: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Resource)]
+pub struct BevyVrmSpringParityState {
+    pub rest: Option<SpringRestMap>,
+    pub runtime: Option<CenterSpringRuntimeState>,
+}
+
+impl BevyVrmSpringParityState {
+    pub fn clear(&mut self) {
+        self.rest = None;
+        self.runtime = None;
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
@@ -411,6 +424,32 @@ pub fn read_bevy_transforms_into_scene_state(
     let _ = scene.update_world_transforms();
 }
 
+pub fn initialize_spring_parity_state(
+    scene: Res<BevyRuntimeSceneState>,
+    document: Res<BevyVrmDocument>,
+    mut spring: ResMut<BevyVrmSpringParityState>,
+    mut last_error: ResMut<BevyVrmRuntimeError>,
+) {
+    if spring.rest.is_some() && spring.runtime.is_some() {
+        return;
+    }
+    let Some(system) = document.document.spring_bone.as_ref() else {
+        spring.clear();
+        return;
+    };
+    match SpringRestMap::capture(&*scene, system) {
+        Ok(rest) => {
+            spring.runtime = Some(rest.runtime_state(system));
+            spring.rest = Some(rest);
+            last_error.message = None;
+        }
+        Err(error) => {
+            spring.clear();
+            last_error.message = Some(format!("{error:?}"));
+        }
+    }
+}
+
 pub fn write_scene_state_transforms(
     scene: Res<BevyRuntimeSceneState>,
     mut query: Query<(&VrmNode, &mut BevyTransform)>,
@@ -474,6 +513,7 @@ pub fn tick_scene_state_runtime(
     events: Res<BevyVrmRuntimeEvents>,
     config: Res<BevyVrmRuntimeConfig>,
     mut state: ResMut<BevyVrmRuntimeState>,
+    mut spring: ResMut<BevyVrmSpringParityState>,
     mut last_error: ResMut<BevyVrmRuntimeError>,
 ) {
     let mut driver = VrmRuntimeDriver::new(&document.document)
@@ -486,7 +526,15 @@ pub fn tick_scene_state_runtime(
     driver.vrm0_orientation_applied = state.vrm0_orientation_applied;
 
     let result = if config.use_spring_parity {
-        driver.tick_with_spring_parity(&mut *scene, None)
+        if let BevyVrmSpringParityState {
+            rest: Some(rest),
+            runtime: Some(runtime),
+        } = &mut *spring
+        {
+            driver.tick_with_spring_parity(&mut *scene, Some((&*rest, runtime)))
+        } else {
+            driver.tick_with_spring_parity(&mut *scene, None)
+        }
     } else {
         driver.tick(&mut *scene, None)
     };
@@ -677,6 +725,7 @@ impl Plugin for VrmRuntimePlugin {
             .init_resource::<BevyVrmDocument>()
             .init_resource::<BevyVrmRuntimeEvents>()
             .init_resource::<BevyVrmRuntimeState>()
+            .init_resource::<BevyVrmSpringParityState>()
             .init_resource::<BevyVrmRuntimeError>()
             .add_systems(
                 Update,
@@ -1115,6 +1164,103 @@ mod tests {
             material.mtoon_pipeline_passes.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[test]
+    fn runtime_plugin_ticks_spring_parity_from_bevy_resources() {
+        let mut app = App::new();
+        app.add_plugins(VrmRuntimePlugin {
+            config: BevyVrmRuntimeConfig {
+                view_mode: ViewMode::ThirdPerson,
+                root_node: None,
+                apply_vrm0_orientation: false,
+                use_spring_parity: true,
+            },
+        });
+        app.add_systems(
+            Update,
+            (
+                read_bevy_transforms_into_scene_state,
+                initialize_spring_parity_state,
+            )
+                .chain()
+                .before(tick_scene_state_runtime),
+        );
+
+        *app.world_mut().resource_mut::<BevyVrmDocument>() = BevyVrmDocument {
+            document: VrmDocument {
+                spring_bone: Feature::Present(SpringBoneSystem {
+                    springs: vec![Spring {
+                        joints: vec![SpringJoint {
+                            node: NodeRef(1),
+                            stiffness: 0.0,
+                            gravity_power: 1.0,
+                            gravity_dir: Vec3::X,
+                            drag_force: 1.0,
+                            ..SpringJoint::default()
+                        }],
+                        ..Spring::default()
+                    }],
+                    ..SpringBoneSystem::default()
+                }),
+                ..VrmDocument::default()
+            },
+        };
+        *app.world_mut().resource_mut::<BevyVrmRuntimeEvents>() = BevyVrmRuntimeEvents {
+            events: RuntimeEvents {
+                delta: DeltaTime(1.0),
+                ..RuntimeEvents::default()
+            },
+        };
+
+        let joint_entity = app
+            .world_mut()
+            .spawn((VrmNode(NodeRef(1)), BevyTransform::default()))
+            .id();
+        let child_entity = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(2)),
+                BevyTransform {
+                    translation: BevyVec3::Y,
+                    ..BevyTransform::default()
+                },
+            ))
+            .id();
+        {
+            let mut scene = app.world_mut().resource_mut::<BevyRuntimeSceneState>();
+            scene.insert_node(NodeRef(1), joint_entity, Transform::default());
+            scene.insert_node(
+                NodeRef(2),
+                child_entity,
+                Transform {
+                    translation: Vec3::Y,
+                    ..Transform::default()
+                },
+            );
+            scene.set_parent(NodeRef(2), Some(NodeRef(1))).unwrap();
+        }
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<BevyVrmSpringParityState>()
+                .rest
+                .is_some()
+        );
+        assert!(
+            app.world()
+                .resource::<BevyVrmRuntimeError>()
+                .message
+                .is_none()
+        );
+        let transform = app
+            .world()
+            .entity(joint_entity)
+            .get::<BevyTransform>()
+            .unwrap();
+        assert_ne!(transform.rotation, BevyQuat::IDENTITY);
     }
 
     #[test]

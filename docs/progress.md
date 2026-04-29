@@ -113,6 +113,8 @@
 - Re-measured coverage after Bevy ECS readback helper: workspace line coverage is 78.33%, and `vrm-adapter-bevy` line coverage is 94.66%.
 - Added Bevy runtime tick resources and system integration. `VrmRuntimePlugin` now initializes `BevyVrmDocument`, `BevyVrmRuntimeEvents`, `BevyVrmRuntimeState`, and `BevyVrmRuntimeError`, runs `tick_scene_state_runtime`, and chains component writeback after runtime execution so a scheduled readback helper can feed ECS transforms into the driver before outputs are written back.
 - Re-measured coverage after Bevy runtime tick system integration: workspace line coverage is 78.68%, and `vrm-adapter-bevy` line coverage is 95.37%.
+- Added `BevyVrmSpringParityState` and `initialize_spring_parity_state` so Bevy apps can capture `SpringRestMap` plus center-space spring runtime state after ECS readback and feed it into `tick_scene_state_runtime`. The Bevy integration test now covers readback, spring rest capture, parity tick, and transform writeback through `App::update`.
+- Re-measured coverage after Bevy spring parity resource integration: workspace line coverage is 78.84%, and `vrm-adapter-bevy` line coverage is 94.82%.
 
 Open work:
 
