@@ -1974,9 +1974,10 @@ mod tests {
 
         fn set_local_transform(
             &mut self,
-            _node: NodeRef,
-            _transform: Transform,
+            node: NodeRef,
+            transform: Transform,
         ) -> Result<(), Self::Error> {
+            self.local_overrides.insert(node, transform);
             Ok(())
         }
 
@@ -1988,11 +1989,10 @@ mod tests {
             Ok(())
         }
 
-        fn translate_local(
-            &mut self,
-            _node: NodeRef,
-            _translation: Vec3,
-        ) -> Result<(), Self::Error> {
+        fn translate_local(&mut self, node: NodeRef, translation: Vec3) -> Result<(), Self::Error> {
+            let mut local = self.local(node);
+            local.translation = translation;
+            self.local_overrides.insert(node, local);
             Ok(())
         }
     }
@@ -3291,6 +3291,77 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
+    fn humanoid_pose_writeback_matches_three_vrm_golden() {
+        let (golden_path, golden) = load_three_vrm_golden();
+        let fixture = golden["fixture"]
+            .as_str()
+            .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
+        let loaded = vrm_io::load_vrm_from_path(fixture)
+            .unwrap_or_else(|err| panic!("failed to load golden fixture {fixture}: {err:?}"));
+        let document = loaded.model().document();
+        let tolerance = PoseTolerance {
+            translation: 0.0005,
+            rotation_radians: 0.0005,
+        };
+        let raw_scenario = golden_pose_scenario(&golden, "rawWriteback");
+        let mut raw_scene = FixtureScene::new(loaded.scene().clone());
+        let raw_rig = HumanoidPoseRig::capture(&raw_scene, document).unwrap();
+        let raw_input: RawPose = pose_from_json(&raw_scenario["inputPose"]);
+        raw_rig.set_raw_pose(&mut raw_scene, &raw_input).unwrap();
+
+        assert_pose_matches_json(
+            &raw_rig.get_raw_pose(&raw_scene).unwrap(),
+            &raw_scenario["expected"]["rawPose"],
+            tolerance,
+            "rawWriteback.rawPose",
+        );
+        assert_pose_matches_json(
+            &raw_rig.get_raw_absolute_pose(&raw_scene).unwrap(),
+            &raw_scenario["expected"]["rawAbsolutePose"],
+            tolerance,
+            "rawWriteback.rawAbsolutePose",
+        );
+
+        let normalized_scenario = golden_pose_scenario(&golden, "normalizedWriteback");
+        let mut normalized_scene = FixtureScene::new(loaded.scene().clone());
+        let mut normalized_rig = HumanoidPoseRig::capture(&normalized_scene, document).unwrap();
+        let normalized_input: vrm_core::NormalizedPose =
+            pose_from_json(&normalized_scenario["inputPose"]);
+        normalized_rig.set_normalized_pose(&normalized_input);
+        normalized_rig
+            .apply_normalized_to_raw(&mut normalized_scene)
+            .unwrap();
+
+        assert_pose_matches_json(
+            &normalized_rig.get_normalized_pose(),
+            &normalized_scenario["inputPose"],
+            tolerance,
+            "normalizedWriteback.normalizedPose",
+        );
+        assert_pose_matches_json(
+            &normalized_rig
+                .get_raw_absolute_pose(&normalized_scene)
+                .unwrap(),
+            &normalized_scenario["expected"]["rawAbsolutePose"],
+            tolerance,
+            "normalizedWriteback.rawAbsolutePose",
+        );
+    }
+
+    fn golden_pose_scenario<'a>(
+        golden: &'a serde_json::Value,
+        name: &str,
+    ) -> &'a serde_json::Value {
+        golden["humanoidPoseScenarios"]
+            .as_array()
+            .unwrap_or_else(|| panic!("golden humanoidPoseScenarios must be an array"))
+            .iter()
+            .find(|scenario| scenario["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("golden missing humanoid pose scenario {name}"))
+    }
+
     fn load_three_vrm_golden() -> (std::path::PathBuf, serde_json::Value) {
         let golden_path = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN")
             .map(std::path::PathBuf::from)
@@ -3348,6 +3419,22 @@ mod tests {
             compared += 1;
         }
         assert!(compared > 0, "{label} did not contain any bones");
+    }
+
+    fn pose_from_json<Space, Basis>(
+        value: &serde_json::Value,
+    ) -> vrm_core::HumanoidPose<Space, Basis> {
+        let entries = value
+            .as_object()
+            .unwrap_or_else(|| panic!("pose must be an object: {value}"))
+            .iter()
+            .map(|(bone_name, transform)| {
+                let bone = serde_json::from_value(serde_json::Value::String(bone_name.clone()))
+                    .unwrap_or_else(|err| panic!("unsupported bone name {bone_name}: {err}"));
+                (bone, pose_transform_from_json(transform))
+            })
+            .collect::<IndexMap<_, _>>();
+        pose_from_iter(entries)
     }
 
     fn pose_transform_from_json(value: &serde_json::Value) -> vrm_core::PoseTransform {

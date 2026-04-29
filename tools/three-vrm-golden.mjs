@@ -43,9 +43,10 @@ globalThis.createImageBitmap = async () => ({ close() {} });
 
 const root = path.resolve(threeVrmRoot);
 const threePackage = path.join(root, 'packages/three-vrm');
-const [{ GLTFLoader }, { VRMLoaderPlugin }] = await Promise.all([
+const [{ GLTFLoader }, { VRMLoaderPlugin }, THREE] = await Promise.all([
   import(pathToFileURL(path.join(threePackage, 'node_modules/three/examples/jsm/loaders/GLTFLoader.js')).href),
   import(pathToFileURL(path.join(threePackage, 'lib/three-vrm.module.js')).href),
+  import(pathToFileURL(path.join(threePackage, 'node_modules/three/build/three.module.js')).href),
 ]);
 
 const loader = new GLTFLoader();
@@ -65,6 +66,7 @@ const rounded = (value) => Number(value.toFixed(8));
 const vector = (value) => value.toArray().map(rounded);
 const privateVector = (value) => value?.toArray ? vector(value) : null;
 const quaternion = (value) => [value.x, value.y, value.z, value.w].map(rounded);
+const eulerQuaternion = (x, y, z) => quaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, 'XYZ')));
 const pose = (value) => Object.fromEntries(Object.entries(value ?? {}).map(([bone, transform]) => [
   bone,
   {
@@ -72,6 +74,23 @@ const pose = (value) => Object.fromEntries(Object.entries(value ?? {}).map(([bon
     rotation: transform.rotation?.map(rounded) ?? null,
   },
 ]));
+const poseInput = (entries) => Object.fromEntries(Object.entries(entries)
+  .filter(([bone]) => vrm.humanoid?.getRawBoneNode(bone) != null)
+  .map(([bone, transform]) => [
+    bone,
+    {
+      position: transform.position ?? [0, 0, 0],
+      rotation: transform.rotation,
+    },
+  ]));
+const humanoidSnapshot = () => vrm.humanoid ? {
+  rawRestPose: pose(vrm.humanoid.rawRestPose),
+  rawPose: pose(vrm.humanoid.getRawPose()),
+  rawAbsolutePose: pose(vrm.humanoid.getRawAbsolutePose()),
+  normalizedRestPose: pose(vrm.humanoid.normalizedRestPose),
+  normalizedPose: pose(vrm.humanoid.getNormalizedPose()),
+  normalizedAbsolutePose: pose(vrm.humanoid.getNormalizedAbsolutePose()),
+} : null;
 
 const snapshotSpringJoints = () => [...vrm.springBoneManager.joints]
   .map((joint, index) => ({
@@ -98,12 +117,44 @@ for (let frame = 0; frame < frames; frame += 1) {
   });
 }
 
-const humanoid = vrm.humanoid ? {
-  rawRestPose: pose(vrm.humanoid.rawRestPose),
-  rawPose: pose(vrm.humanoid.getRawPose()),
-  normalizedRestPose: pose(vrm.humanoid.normalizedRestPose),
-  normalizedPose: pose(vrm.humanoid.getNormalizedPose()),
-} : null;
+const humanoid = humanoidSnapshot();
+const humanoidPoseScenarios = [];
+if (vrm.humanoid) {
+  const rawInput = poseInput({
+    hips: { position: [0.0125, -0.00625, 0.01875], rotation: eulerQuaternion(0.03, -0.02, 0.01) },
+    spine: { rotation: eulerQuaternion(-0.04, 0.015, 0.02) },
+    head: { rotation: eulerQuaternion(0.06, -0.035, 0.025) },
+    leftUpperArm: { rotation: eulerQuaternion(0.08, 0.02, -0.04) },
+    rightUpperArm: { rotation: eulerQuaternion(-0.07, 0.025, 0.05) },
+  });
+  vrm.humanoid.resetRawPose();
+  vrm.humanoid.resetNormalizedPose();
+  vrm.humanoid.setRawPose(rawInput);
+  gltf.scene.updateMatrixWorld(true);
+  humanoidPoseScenarios.push({
+    name: 'rawWriteback',
+    inputPose: pose(rawInput),
+    expected: humanoidSnapshot(),
+  });
+
+  const normalizedInput = poseInput({
+    hips: { position: [0.02, 0.015, -0.0125], rotation: eulerQuaternion(-0.015, 0.025, -0.01) },
+    spine: { rotation: eulerQuaternion(0.025, 0.01, -0.035) },
+    head: { rotation: eulerQuaternion(-0.045, 0.05, 0.015) },
+    leftUpperLeg: { rotation: eulerQuaternion(0.035, 0.0, 0.0125) },
+    rightUpperLeg: { rotation: eulerQuaternion(-0.03, 0.0, -0.0175) },
+  });
+  vrm.humanoid.resetRawPose();
+  vrm.humanoid.resetNormalizedPose();
+  vrm.humanoid.setNormalizedPose(normalizedInput);
+  vrm.humanoid.update();
+  gltf.scene.updateMatrixWorld(true);
+  humanoidPoseScenarios.push({
+    name: 'normalizedWriteback',
+    inputPose: pose(normalizedInput),
+    expected: humanoidSnapshot(),
+  });
+}
 
 const result = {
   generator: 'vrm-rs tools/three-vrm-golden.mjs',
@@ -112,6 +163,7 @@ const result = {
   delta,
   frames,
   humanoid,
+  humanoidPoseScenarios,
   springJoints: frameSnapshots.at(-1)?.springJoints ?? [],
   frameSnapshots,
 };
