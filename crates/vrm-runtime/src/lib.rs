@@ -480,6 +480,12 @@ pub struct SpringRuntimeState {
     initial_states: Vec<Vec<SpringParticleState>>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CenterSpringRuntimeState {
+    states: Vec<Vec<CenterSpringParticleState>>,
+    initial_states: Vec<Vec<CenterSpringParticleState>>,
+}
+
 impl SpringRuntimeState {
     pub fn from_system(
         system: &SpringBoneSystem,
@@ -515,6 +521,59 @@ impl SpringRuntimeState {
         spring_index: usize,
         joint_index: usize,
     ) -> Option<&mut SpringParticleState> {
+        self.states
+            .get_mut(spring_index)
+            .and_then(|spring| spring.get_mut(joint_index))
+    }
+
+    pub fn reset(&mut self) {
+        self.states.clone_from(&self.initial_states);
+    }
+
+    pub fn set_init_state(&mut self) {
+        self.initial_states.clone_from(&self.states);
+    }
+}
+
+impl CenterSpringRuntimeState {
+    pub fn from_system(
+        system: &SpringBoneSystem,
+        mut init: impl FnMut(usize, usize, &SpringJoint) -> CenterSpringParticleState,
+    ) -> Self {
+        let states = system
+            .springs
+            .iter()
+            .enumerate()
+            .map(|(spring_index, spring)| {
+                spring
+                    .joints
+                    .iter()
+                    .enumerate()
+                    .map(|(joint_index, joint)| init(spring_index, joint_index, joint))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        Self {
+            initial_states: states.clone(),
+            states,
+        }
+    }
+
+    pub fn get(
+        &self,
+        spring_index: usize,
+        joint_index: usize,
+    ) -> Option<&CenterSpringParticleState> {
+        self.states
+            .get(spring_index)
+            .and_then(|spring| spring.get(joint_index))
+    }
+
+    pub fn get_mut(
+        &mut self,
+        spring_index: usize,
+        joint_index: usize,
+    ) -> Option<&mut CenterSpringParticleState> {
         self.states
             .get_mut(spring_index)
             .and_then(|spring| spring.get_mut(joint_index))
@@ -1237,6 +1296,23 @@ mod tests {
         };
         let mut state = SpringRuntimeState::from_system(&system, |_, _, _| {
             SpringParticleState::at_rest(Vec3::ZERO, Vec3::Y, 1.0)
+        });
+        state.get_mut(0, 0).unwrap().current_tail = Vec3::X;
+        state.reset();
+        assert_eq!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
+    fn center_spring_runtime_state_can_reset_to_init() {
+        let system = SpringBoneSystem {
+            springs: vec![Spring {
+                joints: vec![SpringJoint::default()],
+                ..Spring::default()
+            }],
+            ..SpringBoneSystem::default()
+        };
+        let mut state = CenterSpringRuntimeState::from_system(&system, |_, _, _| {
+            CenterSpringParticleState::at_rest(Vec3::Y)
         });
         state.get_mut(0, 0).unwrap().current_tail = Vec3::X;
         state.reset();

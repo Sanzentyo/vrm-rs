@@ -59,12 +59,15 @@
 - Added VRMA loader warning diagnostics for missing/draft/unknown `specVersion` and ignored non-hips humanoid translation tracks.
 - Added MToon material descriptor generation and a Bevy 0.18.1 adapter skeleton crate with node/asset registries and MToon descriptor bridge.
 - Raised generated/unit/doc coverage to 83.70% line coverage after parity API and Bevy skeleton tests.
+- Added `CenterSpringRuntimeState`, `SpringRestMap`, `step_spring_bone_system_parity`, and `VrmRuntimeDriver::tick_with_spring_parity` so engine adapters can drive spring bones through the center-space three-vrm parity path instead of the older world-space particle path.
+- Spring rest capture now records sparse spring-chain children, first scene-child fallback, center-space initial tails, center node references, and the VRM0 7cm final-joint fallback separately from mutable runtime state.
+- Fixed spring parity rest capture to use selected child local translation like three-vrm's `child.position`, made zero-delta parity stepping a no-op at the adapter layer, and added `WorldTransformUpdate` so high-level parity ticks can synchronize engine world matrices before spring simulation.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
 - Humanoid pose parity now has snapshot/diff helpers, but still needs golden values generated from three-vrm on real avatars.
-- Spring bone parity now has extended collider `inside` support, but still needs multi-joint sparse-chain numeric comparison against three-vrm.
+- Spring bone parity now has the adapter-level center-space driver path, but still needs real three-vrm golden numeric comparisons on official multi-joint fixtures.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.

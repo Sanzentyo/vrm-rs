@@ -77,17 +77,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.90% | 83.70% |
+| Workspace total | 81.41% | 84.73% |
 | `vrm-adapter-bevy` | 69.14% | 66.04% |
-| `vrm-adapter` | 88.19% | 92.59% |
+| `vrm-adapter` | 88.06% | 93.28% |
 | `vrm-core` | 67.18% | 76.43% |
 | `vrm-io` | 70.95% | 66.94% |
 | `vrm-protocol` | 89.01% | 85.20% |
-| `vrm-runtime` | 78.62% | 78.66% |
+| `vrm-runtime` | 79.32% | 79.70% |
 | `vrm-sans-io` | 85.82% | 88.89% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is real-avatar numeric parity tests against three-vrm for humanoid pose and spring bone behavior, followed by Bevy/wgpu/ash compile examples.
+The next test-effort priority is real-avatar numeric parity tests against three-vrm for the new center-space spring driver and humanoid pose behavior, followed by Bevy/wgpu/ash compile examples.
 
 ## Current External Official Samples
 

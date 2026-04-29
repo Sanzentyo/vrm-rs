@@ -11,10 +11,12 @@ use vrm_core::{
     TextureRef, Transform, VrmDocument,
 };
 use vrm_runtime::{
-    AimConstraintInput, AppliedExpression, ConstraintRestState, DeltaTime, RuntimeEvents,
+    AimConstraintInput, AppliedExpression, CenterSpringParticleState, CenterSpringRuntimeState,
+    ConstraintRestState, DeltaTime, RuntimeEvents, SpringJointParityInput, SpringJointRestState,
     SpringJointSimulationInput, SpringParticleState, SpringRuntimeState, VrmAnimationFrame,
     collider_shape_in_simulation_space, solve_aim_constraint, solve_roll_constraint,
     solve_rotation_constraint, solve_spring_joint_rotation, step_spring_joint,
+    step_spring_joint_parity,
 };
 
 pub trait SceneGraph {
@@ -43,6 +45,12 @@ pub trait WorldTransformAccess {
     fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error>;
 }
 
+pub trait WorldTransformUpdate {
+    type Error;
+
+    fn update_world_transforms(&mut self) -> Result<(), Self::Error>;
+}
+
 pub trait ConstraintRestAccess {
     type Error;
 
@@ -56,6 +64,19 @@ pub trait ConstraintRestAccess {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ConstraintRestMap {
     states: HashMap<(NodeRef, NodeRef), ConstraintRestState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringRestEntry {
+    pub rest: SpringJointRestState,
+    pub initial_center_state: CenterSpringParticleState,
+    pub child: Option<NodeRef>,
+    pub center: Option<NodeRef>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpringRestMap {
+    states: HashMap<(usize, usize), SpringRestEntry>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -473,6 +494,54 @@ fn transform_matrix(transform: Transform) -> Mat4 {
     )
 }
 
+fn first_child<T, E>(target: &T, node: NodeRef) -> Result<Option<NodeRef>, AdapterError<E>>
+where
+    T: SceneGraph<Error = E>,
+{
+    Ok(target
+        .children(node)
+        .map_err(AdapterError::Target)?
+        .first()
+        .copied())
+}
+
+fn initial_local_child_position<T, E>(
+    target: &T,
+    joint_local: Transform,
+    child: Option<NodeRef>,
+) -> Result<Vec3, AdapterError<E>>
+where
+    T: TransformAccess<Error = E>,
+{
+    child
+        .map(|child| {
+            target
+                .local_transform(child)
+                .map_err(AdapterError::Target)
+                .map(|child_local| child_local.translation)
+        })
+        .transpose()
+        .map(|local| {
+            local.unwrap_or_else(|| {
+                SpringJointRestState::vrm0_tail_fallback(joint_local).initial_local_child_position
+            })
+        })
+}
+
+fn center_space_tail(
+    joint_world: Transform,
+    center_world: Option<Transform>,
+    rest: SpringJointRestState,
+) -> Vec3 {
+    let tail_world =
+        transform_matrix(joint_world).transform_point3(rest.initial_local_child_position);
+    center_world
+        .map(transform_matrix)
+        .unwrap_or(Mat4::IDENTITY)
+        .inverse()
+        .transform_point3(tail_world)
+}
+
 impl ConstraintRestMap {
     pub fn capture<T, E>(
         target: &T,
@@ -504,6 +573,72 @@ impl ConstraintRestMap {
 
     pub fn get(&self, destination: NodeRef, source: NodeRef) -> Option<ConstraintRestState> {
         self.states.get(&(destination, source)).copied()
+    }
+}
+
+impl SpringRestMap {
+    pub fn capture<T, E>(target: &T, system: &SpringBoneSystem) -> Result<Self, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+    {
+        let states = system
+            .springs
+            .iter()
+            .enumerate()
+            .flat_map(|(spring_index, spring)| {
+                spring
+                    .joints
+                    .iter()
+                    .enumerate()
+                    .map(move |(joint_index, joint)| (spring_index, spring, joint_index, joint))
+            })
+            .map(|(spring_index, spring, joint_index, joint)| {
+                let joint_local = target
+                    .local_transform(joint.node)
+                    .map_err(AdapterError::Target)?;
+                let joint_world = target
+                    .world_transform(joint.node)
+                    .map_err(AdapterError::Target)?;
+                let child = if let Some(next_joint) = spring.joints.get(joint_index + 1) {
+                    Some(next_joint.node)
+                } else {
+                    first_child(target, joint.node)?
+                };
+                let initial_local_child_position =
+                    initial_local_child_position(target, joint_local, child)?;
+                let rest = SpringJointRestState::from_local_child(
+                    joint_local,
+                    initial_local_child_position,
+                );
+                let center_world = spring
+                    .center
+                    .map(|center| target.world_transform(center).map_err(AdapterError::Target))
+                    .transpose()?;
+                let center_tail = center_space_tail(joint_world, center_world, rest);
+                Ok((
+                    (spring_index, joint_index),
+                    SpringRestEntry {
+                        rest,
+                        initial_center_state: CenterSpringParticleState::at_rest(center_tail),
+                        child,
+                        center: spring.center,
+                    },
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, AdapterError<E>>>()?;
+        Ok(Self { states })
+    }
+
+    pub fn get(&self, spring_index: usize, joint_index: usize) -> Option<SpringRestEntry> {
+        self.states.get(&(spring_index, joint_index)).copied()
+    }
+
+    pub fn runtime_state(&self, system: &SpringBoneSystem) -> CenterSpringRuntimeState {
+        CenterSpringRuntimeState::from_system(system, |spring_index, joint_index, _| {
+            self.get(spring_index, joint_index)
+                .map(|entry| entry.initial_center_state)
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -697,6 +832,51 @@ impl<'a> VrmRuntimeDriver<'a> {
                 (&self.document.spring_bone, spring_state)
             {
                 step_spring_bone_system(target, system, state, events.delta)?;
+            }
+        }
+        apply_mtoon_pipeline_hints(target, self.document)?;
+        apply_emissive_strengths(target, self.document)?;
+        apply_first_person_annotations(target, self.document, self.view_mode)
+    }
+
+    pub fn tick_with_spring_parity<T, E>(
+        &mut self,
+        target: &mut T,
+        spring: Option<(&SpringRestMap, &mut CenterSpringRuntimeState)>,
+    ) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>
+            + WorldTransformAccess<Error = E>
+            + WorldTransformUpdate<Error = E>
+            + SceneGraph<Error = E>
+            + ConstraintRestAccess<Error = E>
+            + MorphTargetAccess<Error = E>
+            + MaterialAccess<Error = E>
+            + MtoonPipelineAccess<Error = E>
+            + VisibilityAccess<Error = E>,
+    {
+        if self.apply_vrm0_orientation
+            && !self.vrm0_orientation_applied
+            && let Some(root) = self.root
+        {
+            apply_vrm0_orientation_compensation(target, self.document, root)?;
+            self.vrm0_orientation_applied = true;
+        }
+        if let Some(frame) = self.animation_frame {
+            apply_animation_frame(target, self.document, frame)?;
+        }
+        if let Some(events) = self.runtime_events {
+            for expression in &events.expressions {
+                apply_expression_binds(target, expression)?;
+            }
+            apply_node_constraints(target, &events.constraints)?;
+            if let (Feature::Present(system), Some((rest, state))) =
+                (&self.document.spring_bone, spring)
+            {
+                target
+                    .update_world_transforms()
+                    .map_err(AdapterError::Target)?;
+                step_spring_bone_system_parity(target, system, rest, state, events.delta)?;
             }
         }
         apply_mtoon_pipeline_hints(target, self.document)?;
@@ -1072,6 +1252,29 @@ where
         .collect()
 }
 
+pub fn collect_spring_colliders_world<T, E>(
+    target: &T,
+    system: &SpringBoneSystem,
+    spring: &Spring,
+) -> Result<Vec<ColliderShape>, AdapterError<E>>
+where
+    T: WorldTransformAccess<Error = E>,
+{
+    spring
+        .collider_groups
+        .iter()
+        .filter_map(|group_index| system.collider_groups.get(*group_index))
+        .flat_map(|group| &group.colliders)
+        .filter_map(|collider_index| system.colliders.get(*collider_index))
+        .map(|collider| {
+            target
+                .world_transform(collider.node)
+                .map(|world| collider_shape_in_simulation_space(collider, world, None))
+                .map_err(AdapterError::Target)
+        })
+        .collect()
+}
+
 pub fn apply_node_constraints<T, E>(
     target: &mut T,
     constraints: &[NodeConstraint],
@@ -1233,6 +1436,73 @@ where
                 },
             );
             apply_spring_joint_tail(target, joint.node, local_axis, tail)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn step_spring_bone_system_parity<T, E>(
+    target: &mut T,
+    system: &SpringBoneSystem,
+    rest_map: &SpringRestMap,
+    state: &mut CenterSpringRuntimeState,
+    delta: DeltaTime,
+) -> Result<(), AdapterError<E>>
+where
+    T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+{
+    if delta.0 <= 0.0 {
+        return Ok(());
+    }
+
+    for (spring_index, spring) in system.springs.iter().enumerate() {
+        let colliders = collect_spring_colliders_world(target, system, spring)?;
+        for (joint_index, joint) in spring.joints.iter().enumerate() {
+            let entry = rest_map.get(spring_index, joint_index).ok_or(
+                AdapterError::InvalidSpringJoint {
+                    spring_index,
+                    joint_index,
+                },
+            )?;
+            let particle = state.get_mut(spring_index, joint_index).ok_or(
+                AdapterError::InvalidSpringJoint {
+                    spring_index,
+                    joint_index,
+                },
+            )?;
+            let parent_world = target
+                .parent(joint.node)
+                .map_err(AdapterError::Target)?
+                .map(|parent| target.world_transform(parent).map_err(AdapterError::Target))
+                .transpose()?
+                .unwrap_or_default();
+            let joint_world = target
+                .world_transform(joint.node)
+                .map_err(AdapterError::Target)?;
+            let child_world = entry
+                .child
+                .map(|child| target.world_transform(child).map_err(AdapterError::Target))
+                .transpose()?;
+            let center_world = entry
+                .center
+                .map(|center| target.world_transform(center).map_err(AdapterError::Target))
+                .transpose()?;
+            let (_, rotation) = step_spring_joint_parity(
+                particle,
+                SpringJointParityInput {
+                    joint,
+                    rest: entry.rest,
+                    parent_world,
+                    joint_world,
+                    child_world,
+                    center_world,
+                    colliders: &colliders,
+                    delta,
+                },
+            );
+            target
+                .set_local_rotation(joint.node, rotation)
+                .map_err(AdapterError::Target)?;
         }
     }
     Ok(())
@@ -1414,6 +1684,7 @@ mod tests {
         first_person_meshes: Vec<usize>,
         third_person_meshes: Vec<usize>,
         headless_meshes: Vec<(usize, HeadlessMeshPlan)>,
+        world_updates: usize,
         skinned_meshes: std::collections::HashMap<NodeRef, Vec<usize>>,
         mesh_joints: std::collections::HashMap<usize, Vec<NodeRef>>,
         mesh_indices: std::collections::HashMap<usize, Vec<u32>>,
@@ -1464,6 +1735,15 @@ mod tests {
                 .get(&node)
                 .copied()
                 .unwrap_or_default())
+        }
+    }
+
+    impl WorldTransformUpdate for Mock {
+        type Error = Infallible;
+
+        fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
+            self.world_updates += 1;
+            Ok(())
         }
     }
 
@@ -2492,6 +2772,209 @@ mod tests {
     }
 
     #[test]
+    fn spring_rest_map_captures_sparse_chain_and_center_state() {
+        let system = SpringBoneSystem {
+            springs: vec![Spring {
+                joints: vec![
+                    vrm_core::SpringJoint {
+                        node: NodeRef(2),
+                        ..vrm_core::SpringJoint::default()
+                    },
+                    vrm_core::SpringJoint {
+                        node: NodeRef(4),
+                        ..vrm_core::SpringJoint::default()
+                    },
+                    vrm_core::SpringJoint {
+                        node: NodeRef(5),
+                        ..vrm_core::SpringJoint::default()
+                    },
+                ],
+                center: Some(NodeRef(10)),
+                ..Spring::default()
+            }],
+            ..SpringBoneSystem::default()
+        };
+        let mock = Mock {
+            local_transforms: [
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(4),
+                    Transform {
+                        translation: Vec3::Z,
+                        ..Transform::default()
+                    },
+                ),
+                (
+                    NodeRef(5),
+                    Transform {
+                        translation: Vec3::X * 2.0,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(4),
+                    Transform {
+                        translation: Vec3::Y * 2.0,
+                        ..Transform::default()
+                    },
+                ),
+                (
+                    NodeRef(5),
+                    Transform {
+                        translation: Vec3::Y * 3.0,
+                        ..Transform::default()
+                    },
+                ),
+                (
+                    NodeRef(10),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+
+        let rest = SpringRestMap::capture(&mock, &system).unwrap();
+        let first = rest.get(0, 0).unwrap();
+        let final_joint = rest.get(0, 2).unwrap();
+
+        assert_eq!(first.child, Some(NodeRef(4)));
+        assert!(
+            first
+                .rest
+                .initial_local_child_position
+                .abs_diff_eq(Vec3::Z, 0.0001)
+        );
+        assert!(
+            first
+                .initial_center_state
+                .current_tail
+                .abs_diff_eq(Vec3::Z - Vec3::Y, 0.0001)
+        );
+        assert!(
+            final_joint
+                .rest
+                .initial_local_child_position
+                .abs_diff_eq(Vec3::X * 0.07, 0.0001)
+        );
+    }
+
+    #[test]
+    fn spring_bone_system_parity_steps_center_state_and_writes_local_rotation() {
+        let system = SpringBoneSystem {
+            springs: vec![Spring {
+                joints: vec![vrm_core::SpringJoint {
+                    node: NodeRef(2),
+                    stiffness: 0.0,
+                    gravity_power: 1.0,
+                    gravity_dir: Vec3::X,
+                    drag_force: 1.0,
+                    ..vrm_core::SpringJoint::default()
+                }],
+                ..Spring::default()
+            }],
+            ..SpringBoneSystem::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(3), NodeRef(2)), (NodeRef(2), NodeRef(1))]
+                .into_iter()
+                .collect(),
+            local_transforms: [(
+                NodeRef(2),
+                Transform {
+                    rotation: Quat::IDENTITY,
+                    ..Transform::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (NodeRef(1), Transform::default()),
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let rest = SpringRestMap::capture(&mock, &system).unwrap();
+        let mut state = rest.runtime_state(&system);
+
+        step_spring_bone_system_parity(&mut mock, &system, &rest, &mut state, DeltaTime(1.0))
+            .unwrap();
+
+        assert_eq!(mock.rotations.len(), 1);
+        assert_eq!(mock.rotations[0].0, NodeRef(2));
+        assert!(mock.rotations[0].1 * Vec3::Y != Vec3::Y);
+        assert_ne!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
+    fn spring_bone_system_parity_zero_delta_is_noop() {
+        let system = SpringBoneSystem {
+            springs: vec![Spring {
+                joints: vec![vrm_core::SpringJoint {
+                    node: NodeRef(2),
+                    ..vrm_core::SpringJoint::default()
+                }],
+                ..Spring::default()
+            }],
+            ..SpringBoneSystem::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(3), NodeRef(2))].into_iter().collect(),
+            local_transforms: [
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let rest = SpringRestMap::capture(&mock, &system).unwrap();
+        let mut state = rest.runtime_state(&system);
+
+        step_spring_bone_system_parity(&mut mock, &system, &rest, &mut state, DeltaTime(0.0))
+            .unwrap();
+
+        assert!(mock.rotations.is_empty());
+        assert_eq!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
     fn runtime_driver_combines_tick_side_effects() {
         let document = VrmDocument {
             compatibility: vrm_core::Compatibility {
@@ -2643,6 +3126,62 @@ mod tests {
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(3)));
         assert_eq!(mock.visibility, vec![(NodeRef(8), true)]);
+    }
+
+    #[test]
+    fn runtime_driver_can_use_spring_parity_state() {
+        let document = VrmDocument {
+            spring_bone: Feature::Present(SpringBoneSystem {
+                springs: vec![Spring {
+                    joints: vec![vrm_core::SpringJoint {
+                        node: NodeRef(2),
+                        stiffness: 0.0,
+                        gravity_power: 1.0,
+                        gravity_dir: Vec3::X,
+                        drag_force: 1.0,
+                        ..vrm_core::SpringJoint::default()
+                    }],
+                    ..Spring::default()
+                }],
+                ..SpringBoneSystem::default()
+            }),
+            ..VrmDocument::default()
+        };
+        let events = RuntimeEvents {
+            delta: DeltaTime(1.0),
+            ..RuntimeEvents::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(3), NodeRef(2)), (NodeRef(2), NodeRef(1))]
+                .into_iter()
+                .collect(),
+            local_transforms: [(NodeRef(2), Transform::default())].into_iter().collect(),
+            world_transforms: [
+                (NodeRef(1), Transform::default()),
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let system = document.spring_bone.as_ref().unwrap();
+        let rest = SpringRestMap::capture(&mock, system).unwrap();
+        let mut spring_state = rest.runtime_state(system);
+        let mut driver = VrmRuntimeDriver::new(&document).with_runtime_events(&events);
+
+        driver
+            .tick_with_spring_parity(&mut mock, Some((&rest, &mut spring_state)))
+            .unwrap();
+
+        assert_eq!(mock.world_updates, 1);
+        assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
     }
 
     #[test]
