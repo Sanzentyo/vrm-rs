@@ -2,7 +2,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use vrm_core::{
     ColliderShape, ConstraintKind, ExpressionBind, ExpressionName, Feature, FirstPersonAnnotation,
@@ -630,7 +630,7 @@ pub fn apply_first_person_annotations<T, E>(
     mode: ViewMode,
 ) -> Result<(), AdapterError<E>>
 where
-    T: VisibilityAccess<Error = E>,
+    T: VisibilityAccess<Error = E> + SceneGraph<Error = E>,
 {
     let Some(first_person) = document.first_person.as_ref() else {
         return Ok(());
@@ -638,7 +638,11 @@ where
 
     for annotation in &first_person.mesh_annotations {
         let visible = match (&annotation.kind, mode) {
-            (FirstPersonAnnotation::Both | FirstPersonAnnotation::Auto, _) => true,
+            (FirstPersonAnnotation::Both, _) => true,
+            (FirstPersonAnnotation::Auto, ViewMode::FirstPerson) => {
+                !is_head_or_descendant(target, document, annotation.node)?
+            }
+            (FirstPersonAnnotation::Auto, ViewMode::ThirdPerson) => true,
             (FirstPersonAnnotation::FirstPersonOnly, ViewMode::FirstPerson) => true,
             (FirstPersonAnnotation::FirstPersonOnly, ViewMode::ThirdPerson) => false,
             (FirstPersonAnnotation::ThirdPersonOnly, ViewMode::FirstPerson) => false,
@@ -651,6 +655,37 @@ where
     }
 
     Ok(())
+}
+
+pub fn is_head_or_descendant<T, E>(
+    target: &T,
+    document: &VrmDocument,
+    node: NodeRef,
+) -> Result<bool, AdapterError<E>>
+where
+    T: SceneGraph<Error = E>,
+{
+    let Some(head) = document
+        .humanoid
+        .bones
+        .get(&HumanBoneName::Head)
+        .map(|bone| bone.node)
+    else {
+        return Ok(false);
+    };
+
+    let mut current = Some(node);
+    let mut visited = HashSet::new();
+    while let Some(node) = current {
+        if node == head {
+            return Ok(true);
+        }
+        if !visited.insert(node) {
+            return Ok(false);
+        }
+        current = target.parent(node).map_err(AdapterError::Target)?;
+    }
+    Ok(false)
 }
 
 pub fn apply_mtoon_pipeline_hints<T, E>(
@@ -1569,6 +1604,82 @@ mod tests {
             mock.visibility,
             vec![(NodeRef(1), true), (NodeRef(2), false), (NodeRef(3), true)]
         );
+    }
+
+    #[test]
+    fn first_person_auto_hides_head_subtree_in_first_person() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Head,
+                    HumanBone {
+                        node: NodeRef(10),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            first_person: Feature::Present(FirstPerson {
+                mesh_annotations: vec![
+                    FirstPersonMeshAnnotation {
+                        node: NodeRef(12),
+                        kind: FirstPersonAnnotation::Auto,
+                    },
+                    FirstPersonMeshAnnotation {
+                        node: NodeRef(20),
+                        kind: FirstPersonAnnotation::Auto,
+                    },
+                ],
+            }),
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            parents: [
+                (NodeRef(11), NodeRef(10)),
+                (NodeRef(12), NodeRef(11)),
+                (NodeRef(20), NodeRef(0)),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+
+        apply_first_person_annotations(&mut mock, &document, ViewMode::FirstPerson).unwrap();
+
+        assert_eq!(
+            mock.visibility,
+            vec![(NodeRef(12), false), (NodeRef(20), true)]
+        );
+    }
+
+    #[test]
+    fn first_person_auto_keeps_head_subtree_visible_in_third_person() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Head,
+                    HumanBone {
+                        node: NodeRef(10),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            first_person: Feature::Present(FirstPerson {
+                mesh_annotations: vec![FirstPersonMeshAnnotation {
+                    node: NodeRef(10),
+                    kind: FirstPersonAnnotation::Auto,
+                }],
+            }),
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock::default();
+
+        apply_first_person_annotations(&mut mock, &document, ViewMode::ThirdPerson).unwrap();
+
+        assert_eq!(mock.visibility, vec![(NodeRef(10), true)]);
     }
 
     #[test]

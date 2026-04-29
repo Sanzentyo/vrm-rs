@@ -51,7 +51,8 @@
 - Added `HumanoidPoseRig` in `vrm-adapter` for raw pose get/set/reset, normalized pose get/set/reset, and normalized-to-raw writeback through engine transform traits.
 - Added spring bone rest-state and center-space parity stepping helpers mirroring three-vrm's tail integration shape, including VRM0 7cm final-joint fallback, center-space particle state typing, and initial-local-rotation premultiplication.
 - Added `KHR_materials_emissive_strength` protocol/IO/sans-IO/core/adapter support and made it take precedence over archived `VRMC_materials_hdr_emissiveMultiplier`.
-- Raised generated/unit/doc coverage to 82.91% line coverage after pose, spring parity, and KHR emissive tests.
+- Raised generated/unit/doc coverage to 83.16% line coverage after pose, spring parity, KHR emissive, and first-person auto tests.
+- Added first-person `auto` topology handling in `vrm-adapter`: head descendants are hidden in first-person view and visible in third-person view.
 
 Open work:
 
@@ -60,6 +61,6 @@ Open work:
 - Spring bone parity still needs multi-joint sparse-chain numeric comparison against three-vrm.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
-- First-person `auto` handling that uses mesh/head topology instead of the current conservative visible-both behavior.
+- First-person `auto` mesh splitting for skinned meshes by skin-index/skin-weight triangle erasure.
 - MToon pipeline/shader generation per renderer.
 - Real Bevy adapter crate once a Bevy version is selected.

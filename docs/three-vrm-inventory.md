@@ -29,6 +29,7 @@ Known risks:
 - VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation and humanoid pose API shape are covered, but real-avatar numeric parity is still pending.
 - MToon shader/pipeline behavior is renderer-specific; the first Rust API exposes parameters and hints only.
 - Spring bone physics now has center-space parity helpers, but still needs real three-vrm numeric fixture comparison.
+- First-person `auto` now handles head-subtree visibility, but skinned-mesh headless clone generation still needs a mesh adapter API.
 - Node constraints should error on circular dependencies.
 
 Compatibility checkpoints added:
@@ -40,3 +41,4 @@ Compatibility checkpoints added:
 - Per-node/per-material VRMC extension `specVersion` validation now accepts `1.0`/`1.0-beta` and rejects unsupported versions for spring bone, node constraint, and MToon.
 - `VrmRuntimeDriver` treats VRM0 root orientation compensation as a one-shot driver state, matching loader-style behavior instead of compounding every runtime tick.
 - VRMA hips translation writeback is absolute per sampled frame, matching animation-track semantics instead of accumulating deltas.
+- First-person `auto` annotations now use humanoid head topology to hide head descendants in first-person mode while keeping them visible in third-person mode.
