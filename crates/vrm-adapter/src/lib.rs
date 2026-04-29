@@ -3483,6 +3483,64 @@ mod tests {
     }
 
     fn compare_spring_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {
+        let tolerance = spring_golden_tolerance(golden_path);
+        let report = spring_golden_report(golden_path, golden, tolerance);
+        assert!(
+            report.compared_rotations > 0,
+            "golden did not contain stable spring joints"
+        );
+        assert!(
+            report.max_tail_delta <= tolerance.tail,
+            "{} max center tail delta {} exceeded {}",
+            golden_path.display(),
+            report.max_tail_delta,
+            tolerance.tail
+        );
+        assert!(
+            report.max_rotation_delta <= tolerance.rotation,
+            "{} max rotation delta {} exceeded {}",
+            golden_path.display(),
+            report.max_rotation_delta,
+            tolerance.rotation
+        );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct SpringGoldenTolerance {
+        tail: f32,
+        rotation: f32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    struct SpringGoldenReport {
+        compared_rotations: usize,
+        max_tail_delta: f32,
+        max_rotation_delta: f32,
+    }
+
+    fn spring_golden_tolerance(golden_path: &std::path::Path) -> SpringGoldenTolerance {
+        let file_name = golden_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if file_name.contains("Constraint") {
+            SpringGoldenTolerance {
+                tail: 0.003,
+                rotation: 0.0015,
+            }
+        } else {
+            SpringGoldenTolerance {
+                tail: 0.001,
+                rotation: 0.0015,
+            }
+        }
+    }
+
+    fn spring_golden_report(
+        golden_path: &std::path::Path,
+        golden: &serde_json::Value,
+        tolerance: SpringGoldenTolerance,
+    ) -> SpringGoldenReport {
         let fixture = golden["fixture"]
             .as_str()
             .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
@@ -3500,10 +3558,8 @@ mod tests {
         let mut scene = FixtureScene::new(loaded.scene().clone());
         let rest = SpringRestMap::capture(&scene, system).unwrap();
         let mut state = rest.runtime_state(system);
-        let tail_tolerance = 0.003;
-        let rotation_tolerance = 0.0015;
 
-        let mut compared = 0;
+        let mut report = SpringGoldenReport::default();
         for frame in golden_frames(golden) {
             scene.rotations.clear();
             step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
@@ -3530,8 +3586,10 @@ mod tests {
                         .get(&node)
                         .copied()
                         .unwrap_or_else(|| panic!("node {} has no center tail state", node.0));
+                    let tail_delta = actual_tail.distance(expected_tail);
+                    report.max_tail_delta = report.max_tail_delta.max(tail_delta);
                     assert!(
-                        actual_tail.abs_diff_eq(expected_tail, tail_tolerance),
+                        actual_tail.abs_diff_eq(expected_tail, tolerance.tail),
                         "frame {frame_index}, node {} center tail mismatch: actual={actual_tail:?} expected={expected_tail:?}",
                         node.0
                     );
@@ -3544,16 +3602,32 @@ mod tests {
                     .get(&node)
                     .copied()
                     .unwrap_or_else(|| panic!("node {} was not written by spring parity", node.0));
+                let rotation_delta = quat_component_delta(actual, expected);
+                report.max_rotation_delta = report.max_rotation_delta.max(rotation_delta);
                 assert!(
-                    actual.abs_diff_eq(expected, rotation_tolerance)
-                        || actual.abs_diff_eq(-expected, rotation_tolerance),
+                    rotation_delta <= tolerance.rotation,
                     "frame {frame_index}, node {} rotation mismatch: actual={actual:?} expected={expected:?}",
                     node.0
                 );
-                compared += 1;
+                report.compared_rotations += 1;
             }
         }
-        assert!(compared > 0, "golden did not contain stable spring joints");
+        report
+    }
+
+    fn quat_component_delta(actual: Quat, expected: Quat) -> f32 {
+        quat_component_delta_same_sign(actual, expected)
+            .min(quat_component_delta_same_sign(actual, -expected))
+    }
+
+    fn quat_component_delta_same_sign(actual: Quat, expected: Quat) -> f32 {
+        let actual = actual.to_array();
+        let expected = expected.to_array();
+        actual
+            .into_iter()
+            .zip(expected)
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0, f32::max)
     }
 
     #[test]
@@ -3664,6 +3738,42 @@ mod tests {
     #[ignore = "requires three-vrm VRMA golden JSON; set VRM_RS_THREE_VRM_VRMA_GOLDEN"]
     fn vrma_application_matches_three_vrm_golden() {
         let (golden_path, golden) = load_three_vrm_vrma_golden();
+        compare_vrma_golden(&golden_path, &golden);
+    }
+
+    #[test]
+    #[ignore = "requires three-vrm VRMA golden JSON files; set VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR"]
+    fn vrma_application_matches_three_vrm_golden_directory() {
+        let golden_dir = std::env::var_os("VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(".external-fixtures/golden"));
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&golden_dir)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let golden: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path)
+                    .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display())),
+            )
+            .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()));
+            if golden["vrma"].as_str().is_none() {
+                continue;
+            }
+            compare_vrma_golden(&path, &golden);
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "expected at least one VRMA golden in {}",
+            golden_dir.display()
+        );
+    }
+
+    fn compare_vrma_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {
         let fixture = golden["fixture"].as_str().unwrap_or_else(|| {
             panic!(
                 "VRMA golden fixture is missing in {}",
@@ -3710,6 +3820,12 @@ mod tests {
                 &sample["rawAbsolutePose"],
                 tolerance,
                 &format!("vrma@{time}.rawAbsolutePose"),
+            );
+            assert_pose_matches_json(
+                &rig.get_normalized_pose(),
+                &sample["normalizedPose"],
+                tolerance,
+                &format!("vrma@{time}.normalizedPose"),
             );
             assert_expression_weights_match(&frame, &sample["expressionWeights"], time);
             if let Some(expected) = sample["lookAtQuaternion"].as_array() {

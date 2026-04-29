@@ -335,7 +335,7 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
                 .into_iter()
                 .map(|annotation| FirstPersonMeshAnnotation {
                     node: NodeRef(annotation.mesh),
-                    kind: FirstPersonAnnotation::from(annotation.first_person_flag.as_str()),
+                    kind: map_vrm0_first_person_flag(&annotation.first_person_flag),
                 })
                 .collect(),
         });
@@ -470,6 +470,16 @@ fn map_vrm0_degree_map(range: Option<vrm0::FirstPersonDegreeMap>) -> RangeMap {
         input_max_value: range.x_range.unwrap_or(90.0),
         output_scale: range.y_range.unwrap_or(10.0),
     })
+}
+
+fn map_vrm0_first_person_flag(flag: &str) -> FirstPersonAnnotation {
+    match flag {
+        "Auto" | "auto" => FirstPersonAnnotation::Auto,
+        "Both" | "both" => FirstPersonAnnotation::Both,
+        "ThirdPersonOnly" | "thirdPersonOnly" => FirstPersonAnnotation::ThirdPersonOnly,
+        "FirstPersonOnly" | "firstPersonOnly" => FirstPersonAnnotation::FirstPersonOnly,
+        other => FirstPersonAnnotation::Unknown(other.to_owned()),
+    }
 }
 
 fn map_vrm0_secondary_animation(animation: vrm0::SecondaryAnimation) -> SpringBoneSystem {
@@ -1195,6 +1205,80 @@ mod tests {
             ] if *weight == 75.0 && kind == "_Color" && target_value == &vec![1.0, 0.5, 0.25, 1.0]
         ));
         assert!(expressions.custom.contains_key("customSmile"));
+    }
+
+    #[test]
+    fn maps_vrm0_legacy_first_person_flags_and_look_at_ranges() {
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: required_vrm0_bones(),
+                    ..Default::default()
+                }),
+                first_person: Some(vrm0::FirstPerson {
+                    first_person_bone_offset: Some([0.0, 0.1, 0.2]),
+                    mesh_annotations: Some(vec![
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 1,
+                            first_person_flag: "Auto".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 2,
+                            first_person_flag: "Both".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 3,
+                            first_person_flag: "ThirdPersonOnly".to_owned(),
+                        },
+                        vrm0::FirstPersonMeshAnnotation {
+                            mesh: 4,
+                            first_person_flag: "FirstPersonOnly".to_owned(),
+                        },
+                    ]),
+                    look_at_type_name: Some("BlendShape".to_owned()),
+                    look_at_horizontal_inner: Some(vrm0::FirstPersonDegreeMap {
+                        x_range: Some(45.0),
+                        y_range: Some(12.0),
+                        ..Default::default()
+                    }),
+                    look_at_vertical_up: Some(vrm0::FirstPersonDegreeMap {
+                        x_range: Some(30.0),
+                        y_range: Some(8.0),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap();
+        let first_person = asset.document.first_person.as_ref().unwrap();
+        let annotations = first_person
+            .mesh_annotations
+            .iter()
+            .map(|annotation| (annotation.node, annotation.kind.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            annotations,
+            vec![
+                (NodeRef(1), FirstPersonAnnotation::Auto),
+                (NodeRef(2), FirstPersonAnnotation::Both),
+                (NodeRef(3), FirstPersonAnnotation::ThirdPersonOnly),
+                (NodeRef(4), FirstPersonAnnotation::FirstPersonOnly),
+            ]
+        );
+        let look_at = asset.document.look_at.as_ref().unwrap();
+        assert_eq!(look_at.kind, LookAtKind::Expression);
+        assert_eq!(look_at.offset_from_head, Vec3::new(0.0, 0.1, 0.2));
+        assert_eq!(look_at.horizontal_inner.input_max_value, 45.0);
+        assert_eq!(look_at.horizontal_inner.output_scale, 12.0);
+        assert_eq!(look_at.vertical_up.input_max_value, 30.0);
+        assert_eq!(look_at.vertical_up.output_scale, 8.0);
     }
 
     #[test]
