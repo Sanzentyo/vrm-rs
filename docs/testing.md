@@ -77,9 +77,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.57% | 82.29% |
+| Workspace total | 78.41% | 82.19% |
 | `vrm-adapter-bevy` | 69.14% | 66.04% |
-| `vrm-adapter` | 78.04% | 85.89% |
+| `vrm-adapter` | 77.57% | 85.61% |
 | `vrm-core` | 67.18% | 76.43% |
 | `vrm-io` | 73.69% | 69.79% |
 | `vrm-protocol` | 89.01% | 85.20% |
@@ -96,7 +96,7 @@ Build the local sibling `../three-vrm` workspace first, then generate spring gol
 ```powershell
 npx pnpm@10.24.0 install
 npx pnpm@10.24.0 --filter @pixiv/three-vrm-springbone --filter @pixiv/three-vrm-core --filter @pixiv/three-vrm-materials-mtoon --filter @pixiv/three-vrm-materials-hdr-emissive-multiplier --filter @pixiv/three-vrm-materials-v0compat --filter @pixiv/three-vrm-node-constraint --filter @pixiv/three-vrm --filter @pixiv/three-vrm-animation build
-node tools\three-vrm-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --three-vrm-root D:\git\three-vrm --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.spring.json
+node tools\three-vrm-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --three-vrm-root D:\git\three-vrm --frames 8 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.spring.json
 ```
 
 Run the ignored comparison with:
@@ -106,7 +106,7 @@ $env:VRM_RS_THREE_VRM_GOLDEN = "D:\git\vrm-rs\.external-fixtures\golden\Seed-san
 cargo test -p vrm-adapter spring_parity_matches_three_vrm_golden_rotations -- --ignored
 ```
 
-The first golden test compares stable-length spring joints and intentionally skips extremely tiny tail vectors (`<= 0.001`) because those joints are numerically sensitive to normalization details. Tiny-tail parity remains an explicit follow-up item.
+The first golden test compares stable-length spring joints over multiple frames and intentionally skips extremely tiny tail vectors (`<= 0.001`) because those joints are numerically sensitive to normalization details. Tiny-tail parity remains an explicit follow-up item.
 
 ## Current External Official Samples
 

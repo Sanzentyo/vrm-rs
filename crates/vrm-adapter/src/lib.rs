@@ -3203,37 +3203,47 @@ mod tests {
         let rest = SpringRestMap::capture(&scene, system).unwrap();
         let mut state = rest.runtime_state(system);
 
-        step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
-            .unwrap();
-
-        let actual = scene.rotations.into_iter().collect::<HashMap<_, _>>();
         let mut compared = 0;
-        for joint in golden["springJoints"]
-            .as_array()
-            .expect("golden springJoints must be an array")
-        {
-            if vec3_len_from_json(&joint["initialLocalChildPosition"]) <= 0.001 {
-                continue;
+        for frame in golden_frames(&golden) {
+            scene.rotations.clear();
+            step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
+                .unwrap();
+            let actual = scene.rotations.iter().copied().collect::<HashMap<_, _>>();
+            let frame_index = frame["frame"].as_u64().unwrap_or(1);
+            for joint in frame["springJoints"]
+                .as_array()
+                .expect("golden frame springJoints must be an array")
+            {
+                if vec3_len_from_json(&joint["initialLocalChildPosition"]) <= 0.001 {
+                    continue;
+                }
+                let node = NodeRef(
+                    joint["node"]
+                        .as_u64()
+                        .unwrap_or_else(|| panic!("golden joint node is missing: {joint}"))
+                        as usize,
+                );
+                let expected = quat_from_json(&joint["localRotation"]);
+                let actual = actual
+                    .get(&node)
+                    .copied()
+                    .unwrap_or_else(|| panic!("node {} was not written by spring parity", node.0));
+                assert!(
+                    actual.abs_diff_eq(expected, 0.0005) || actual.abs_diff_eq(-expected, 0.0005),
+                    "frame {frame_index}, node {} rotation mismatch: actual={actual:?} expected={expected:?}",
+                    node.0
+                );
+                compared += 1;
             }
-            let node = NodeRef(
-                joint["node"]
-                    .as_u64()
-                    .unwrap_or_else(|| panic!("golden joint node is missing: {joint}"))
-                    as usize,
-            );
-            let expected = quat_from_json(&joint["localRotation"]);
-            let actual = actual
-                .get(&node)
-                .copied()
-                .unwrap_or_else(|| panic!("node {} was not written by spring parity", node.0));
-            assert!(
-                actual.abs_diff_eq(expected, 0.0005) || actual.abs_diff_eq(-expected, 0.0005),
-                "node {} rotation mismatch: actual={actual:?} expected={expected:?}",
-                node.0
-            );
-            compared += 1;
         }
         assert!(compared > 0, "golden did not contain stable spring joints");
+    }
+
+    fn golden_frames(golden: &serde_json::Value) -> Vec<&serde_json::Value> {
+        if let Some(frames) = golden["frameSnapshots"].as_array() {
+            return frames.iter().collect();
+        }
+        vec![golden]
     }
 
     fn quat_from_json(value: &serde_json::Value) -> Quat {
