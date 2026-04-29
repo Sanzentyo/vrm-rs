@@ -67,12 +67,13 @@
 - Recorded additional external-only official sample files and license notes. Even when embedded VRM metadata permits redistribution, these binary assets are kept out of the MIT/Apache repository.
 - Added `tools/three-vrm-golden.mjs` to generate ignored three-vrm spring golden JSON from real VRM files, plus an ignored adapter comparison test for stable-length Seed-san spring joint rotations over multiple frames.
 - Updated parity stepping to synchronize world transforms after each spring joint rotation so downstream sparse-chain joints see the same immediately-updated world matrices as three-vrm.
+- Extended three-vrm spring golden output with private center-space tail state and compare it in the ignored parity test. This covers tiny-tail joint simulation state even when quaternion output is too sensitive to normalize directly.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
 - Humanoid pose parity now has snapshot/diff helpers, but still needs golden values generated from three-vrm on real avatars.
-- Spring bone parity now has stable-length multi-frame three-vrm golden comparison on Seed-san, but tiny-tail joints (`<= 0.001`) still need a dedicated numeric strategy.
+- Spring bone parity now has stable-length multi-frame rotation comparison plus all-joint center-tail state comparison on Seed-san. Remaining spring work is collider-heavy, center-node, and additional fixture parity rather than the tiny-tail baseline.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.

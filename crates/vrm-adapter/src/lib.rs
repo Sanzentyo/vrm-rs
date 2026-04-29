@@ -3209,20 +3209,36 @@ mod tests {
             step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
                 .unwrap();
             let actual = scene.rotations.iter().copied().collect::<HashMap<_, _>>();
+            let actual_tails = center_tail_map(system, &state);
             let frame_index = frame["frame"].as_u64().unwrap_or(1);
             for joint in frame["springJoints"]
                 .as_array()
                 .expect("golden frame springJoints must be an array")
             {
-                if vec3_len_from_json(&joint["initialLocalChildPosition"]) <= 0.001 {
-                    continue;
-                }
                 let node = NodeRef(
                     joint["node"]
                         .as_u64()
                         .unwrap_or_else(|| panic!("golden joint node is missing: {joint}"))
                         as usize,
                 );
+                if let Some(expected_tail) = joint
+                    .get("centerTail")
+                    .and_then(|value| value.as_array())
+                    .map(|values| vec3_from_json_array(values))
+                {
+                    let actual_tail = actual_tails
+                        .get(&node)
+                        .copied()
+                        .unwrap_or_else(|| panic!("node {} has no center tail state", node.0));
+                    assert!(
+                        actual_tail.abs_diff_eq(expected_tail, 0.0005),
+                        "frame {frame_index}, node {} center tail mismatch: actual={actual_tail:?} expected={expected_tail:?}",
+                        node.0
+                    );
+                }
+                if vec3_len_from_json(&joint["initialLocalChildPosition"]) <= 0.001 {
+                    continue;
+                }
                 let expected = quat_from_json(&joint["localRotation"]);
                 let actual = actual
                     .get(&node)
@@ -3237,6 +3253,29 @@ mod tests {
             }
         }
         assert!(compared > 0, "golden did not contain stable spring joints");
+    }
+
+    fn center_tail_map(
+        system: &SpringBoneSystem,
+        state: &CenterSpringRuntimeState,
+    ) -> HashMap<NodeRef, Vec3> {
+        system
+            .springs
+            .iter()
+            .enumerate()
+            .flat_map(|(spring_index, spring)| {
+                spring
+                    .joints
+                    .iter()
+                    .enumerate()
+                    .map(move |(joint_index, joint)| (spring_index, joint_index, joint))
+            })
+            .filter_map(|(spring_index, joint_index, joint)| {
+                state
+                    .get(spring_index, joint_index)
+                    .map(|particle| (joint.node, particle.current_tail))
+            })
+            .collect()
     }
 
     fn golden_frames(golden: &serde_json::Value) -> Vec<&serde_json::Value> {
@@ -3257,13 +3296,20 @@ mod tests {
     }
 
     fn vec3_len_from_json(value: &serde_json::Value) -> f32 {
-        let values = value
-            .as_array()
-            .unwrap_or_else(|| panic!("expected vector array, got {value}"))
+        vec3_from_json_array(
+            value
+                .as_array()
+                .unwrap_or_else(|| panic!("expected vector array, got {value}")),
+        )
+        .length()
+    }
+
+    fn vec3_from_json_array(values: &[serde_json::Value]) -> Vec3 {
+        let values = values
             .iter()
             .map(|value| value.as_f64().expect("vector component must be number") as f32)
             .collect::<Vec<_>>();
-        Vec3::new(values[0], values[1], values[2]).length()
+        Vec3::new(values[0], values[1], values[2])
     }
 
     #[test]

@@ -63,6 +63,7 @@ if (!vrm?.springBoneManager) {
 const associationFor = (object) => gltf.parser.associations.get(object)?.nodes ?? null;
 const rounded = (value) => Number(value.toFixed(8));
 const vector = (value) => value.toArray().map(rounded);
+const privateVector = (value) => value?.toArray ? vector(value) : null;
 const quaternion = (value) => [value.x, value.y, value.z, value.w].map(rounded);
 
 const snapshotSpringJoints = () => [...vrm.springBoneManager.joints]
@@ -73,6 +74,8 @@ const snapshotSpringJoints = () => [...vrm.springBoneManager.joints]
     childNode: joint.child ? associationFor(joint.child) : null,
     childName: joint.child?.name ?? null,
     initialLocalChildPosition: vector(joint.initialLocalChildPosition),
+    centerTail: privateVector(joint._currentTail),
+    previousCenterTail: privateVector(joint._prevTail),
     localRotation: quaternion(joint.bone.quaternion),
   }))
   .filter((joint) => joint.node != null);
