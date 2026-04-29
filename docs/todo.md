@@ -45,9 +45,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
   - Done when Alicia or another VRM0 fixture has golden numeric checks for humanoid axis, rest pose, raw/normalized pose writeback, and legacy orientation behavior.
 - [x] Expand VRM0 legacy material edge cases.
   - Done when additional legacy material float/vector/texture-transform cases are covered by generated tests and at least one external fixture assertion.
-- [ ] Improve spring bone numeric parity tolerance.
+- [x] Improve spring bone numeric parity tolerance.
   - Done when the collider-heavy fixture tolerance is either tightened or the remaining float-path difference is documented with a focused solver test.
-- [ ] Add more official spring fixture breadth.
+- [x] Add more official spring fixture breadth.
   - Done when directory-level ignored golden tests cover more than Seed-san and the current collider-heavy constraint sample.
 - [ ] Add fixture-driven node constraint manager parity.
   - Done when complete VRM scenes compare constraint ordering/writeback against three-vrm golden output, beyond standalone quaternion solver cases.

@@ -9,7 +9,7 @@ use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
     ExpressionName, Feature, HumanBoneName, Resolved, RotationTrack, ScalarTrack, Transform,
-    TranslationTrack, VrmAnimation, VrmModel,
+    TranslationTrack, VrmAnimation, VrmKind, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -73,6 +73,7 @@ pub struct GltfNodeRest {
     pub children: Vec<usize>,
     pub local: Transform,
     pub world: Transform,
+    pub world_matrix: Mat4,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +132,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         .with_node_count(node_count)
         .with_material_count(material_count)
         .build(bundle)?;
+    expand_vrm0_spring_roots(&mut asset.document, &scene);
     if let Some(animations) = vrma_animations {
         asset.document.animation = animations
             .first()
@@ -484,6 +486,7 @@ impl NodeRestGraph {
                     children: self.children[index].clone(),
                     local: self.local_transforms[index],
                     world: self.world_transforms[index],
+                    world_matrix: self.world_matrices[index],
                 })
                 .collect(),
         }
@@ -528,6 +531,54 @@ impl NodeRestGraph {
 
         for child in node.children() {
             self.visit_node(child, Some(index), world_matrix, world_rotation);
+        }
+    }
+}
+
+fn expand_vrm0_spring_roots(document: &mut vrm_core::VrmDocument, scene: &GltfSceneRest) {
+    if document.kind != VrmKind::Vrm0Compat {
+        return;
+    }
+    let Feature::Present(system) = &mut document.spring_bone else {
+        return;
+    };
+    for spring in &mut system.springs {
+        spring.joints = spring
+            .joints
+            .iter()
+            .flat_map(|joint| {
+                let nodes = scene
+                    .node(joint.node.0)
+                    .map(|_| scene_descendants_preorder(scene, joint.node))
+                    .unwrap_or_else(|| vec![joint.node]);
+                nodes.into_iter().map(|node| {
+                    let mut joint = joint.clone();
+                    joint.node = node;
+                    joint
+                })
+            })
+            .collect();
+    }
+}
+
+fn scene_descendants_preorder(
+    scene: &GltfSceneRest,
+    root: vrm_core::NodeRef,
+) -> Vec<vrm_core::NodeRef> {
+    let mut nodes = Vec::new();
+    push_scene_descendants_preorder(scene, root, &mut nodes);
+    nodes
+}
+
+fn push_scene_descendants_preorder(
+    scene: &GltfSceneRest,
+    node: vrm_core::NodeRef,
+    nodes: &mut Vec<vrm_core::NodeRef>,
+) {
+    nodes.push(node);
+    if let Some(rest) = scene.node(node.0) {
+        for child in &rest.children {
+            push_scene_descendants_preorder(scene, vrm_core::NodeRef(*child), nodes);
         }
     }
 }
@@ -1601,6 +1652,14 @@ mod tests {
             });
             assert_eq!(spring_bone.springs.len(), 3);
             assert_eq!(spring_bone.collider_groups.len(), 6);
+            assert_eq!(
+                spring_bone
+                    .springs
+                    .iter()
+                    .map(|spring| spring.joints.len())
+                    .sum::<usize>(),
+                48
+            );
             assert!(
                 spring_bone
                     .springs

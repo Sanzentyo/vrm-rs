@@ -417,16 +417,35 @@ pub struct SpringJointRestState {
     pub initial_local_rotation: Quat,
     pub initial_local_child_position: Vec3,
     pub bone_axis: Vec3,
+    pub initial_parent_world_rotation: Quat,
+    pub initial_world_bone_axis: Vec3,
+    pub initial_world_bone_length: f32,
 }
 
 impl SpringJointRestState {
     pub fn from_local_child(initial_local: Transform, initial_local_child_position: Vec3) -> Self {
+        let bone_axis = initial_local_child_position.normalize_or(Vec3::Y);
         Self {
             initial_local_matrix: transform_matrix(initial_local),
             initial_local_rotation: initial_local.rotation,
             initial_local_child_position,
-            bone_axis: initial_local_child_position.normalize_or(Vec3::Y),
+            bone_axis,
+            initial_parent_world_rotation: Quat::IDENTITY,
+            initial_world_bone_axis: bone_axis,
+            initial_world_bone_length: initial_local_child_position.length(),
         }
+    }
+
+    pub fn with_initial_world_bone(
+        mut self,
+        parent_world_rotation: Quat,
+        world_bone_axis: Vec3,
+        world_bone_length: f32,
+    ) -> Self {
+        self.initial_parent_world_rotation = parent_world_rotation;
+        self.initial_world_bone_axis = world_bone_axis.normalize_or(self.bone_axis);
+        self.initial_world_bone_length = world_bone_length;
+        self
     }
 
     pub fn vrm0_tail_fallback(initial_local: Transform) -> Self {
@@ -675,18 +694,11 @@ pub fn step_spring_joint_parity(
         .map(transform_matrix)
         .unwrap_or(Mat4::IDENTITY);
     let world_to_center = center_to_world.inverse();
-    let world_space_bone_axis = (transform_matrix(input.parent_world)
-        * input.rest.initial_local_matrix)
-        .transform_vector3(input.rest.bone_axis)
-        .normalize_or_zero();
-    let world_space_bone_length = input
-        .child_world
-        .map(|child| child.translation.distance(input.joint_world.translation))
-        .unwrap_or_else(|| {
-            transform_matrix(input.joint_world)
-                .transform_point3(input.rest.initial_local_child_position)
-                .distance(input.joint_world.translation)
-        });
+    let parent_rotation_delta =
+        input.parent_world.rotation * input.rest.initial_parent_world_rotation.inverse();
+    let world_space_bone_axis =
+        (parent_rotation_delta * input.rest.initial_world_bone_axis).normalize_or_zero();
+    let world_space_bone_length = input.rest.initial_world_bone_length;
 
     let inertia = state.current_tail
         + (state.current_tail - state.previous_tail) * (1.0 - input.joint.drag_force);

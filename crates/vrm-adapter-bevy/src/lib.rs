@@ -9,14 +9,14 @@ use bevy::prelude::{
     Quat as BevyQuat, Query, Res, ResMut, Resource, Transform as BevyTransform, Update,
     Vec3 as BevyVec3,
 };
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
     ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess,
     MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph,
     SkinVertexInfluence, SpringRestMap, TransformAccess, ViewMode, VisibilityAccess,
-    VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate, is_head_or_descendant,
-    plan_headless_mesh,
+    VrmRuntimeDriver, WorldMatrixAccess, WorldTransformAccess, WorldTransformUpdate,
+    is_head_or_descendant, plan_headless_mesh,
 };
 use vrm_core::Transform;
 use vrm_core::{
@@ -428,6 +428,20 @@ impl WorldTransformAccess for BevyRuntimeSceneState {
     fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
         let entity = self.entity(node)?;
         Self::node_transform(&self.world_transforms, entity)
+    }
+}
+
+impl WorldMatrixAccess for BevyRuntimeSceneState {
+    type Error = BevyAdapterError;
+
+    fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
+        self.world_transform(node).map(|transform| {
+            Mat4::from_scale_rotation_translation(
+                transform.scale,
+                transform.rotation,
+                transform.translation,
+            )
+        })
     }
 }
 

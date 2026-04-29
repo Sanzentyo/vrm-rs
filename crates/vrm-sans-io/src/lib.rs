@@ -520,7 +520,7 @@ fn map_vrm0_secondary_animation(animation: vrm0::SecondaryAnimation) -> SpringBo
             colliders.extend(group.colliders.into_iter().map(|collider| SpringCollider {
                 node: NodeRef(group.node),
                 shape: ColliderShape::Sphere {
-                    offset: vec3(collider.offset),
+                    offset: vec3_vrm0_collider(collider.offset),
                     radius: collider.radius.unwrap_or(0.0),
                     inside: false,
                 },
@@ -561,6 +561,10 @@ fn map_vrm0_secondary_animation(animation: vrm0::SecondaryAnimation) -> SpringBo
         collider_groups,
         springs,
     }
+}
+
+fn vec3_vrm0_collider(value: Option<[f32; 3]>) -> Vec3 {
+    value.map_or(Vec3::ZERO, |value| Vec3::new(value[0], value[1], -value[2]))
 }
 
 fn map_vrm0_material(material: vrm0::Material) -> Material {
@@ -1120,7 +1124,7 @@ mod tests {
                     collider_groups: Some(vec![vrm0::SecondaryAnimationColliderGroup {
                         node: 2,
                         colliders: vec![vrm0::SecondaryAnimationCollider {
-                            offset: Some([0.0, 1.0, 0.0]),
+                            offset: Some([0.0, 1.0, 0.5]),
                             radius: Some(0.25),
                         }],
                     }]),
@@ -1213,6 +1217,14 @@ mod tests {
         let spring_bone = asset.document.spring_bone.as_ref().unwrap();
         assert!(asset.document.compatibility.vrm0.is_some());
         assert_eq!(spring_bone.colliders.len(), 1);
+        assert_eq!(
+            spring_bone.colliders[0].shape,
+            ColliderShape::Sphere {
+                offset: Vec3::new(0.0, 1.0, -0.5),
+                radius: 0.25,
+                inside: false
+            }
+        );
         assert_eq!(spring_bone.collider_groups[0].colliders, vec![0]);
         assert_eq!(spring_bone.springs[0].joints[0].node, NodeRef(2));
         let mtoon = asset.document.materials[0].mtoon.as_ref().unwrap();

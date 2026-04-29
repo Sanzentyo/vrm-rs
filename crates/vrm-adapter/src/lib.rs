@@ -45,6 +45,12 @@ pub trait WorldTransformAccess {
     fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error>;
 }
 
+pub trait WorldMatrixAccess {
+    type Error;
+
+    fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error>;
+}
+
 pub trait WorldTransformUpdate {
     type Error;
 
@@ -556,17 +562,6 @@ fn transform_matrix(transform: Transform) -> Mat4 {
     )
 }
 
-fn first_child<T, E>(target: &T, node: NodeRef) -> Result<Option<NodeRef>, AdapterError<E>>
-where
-    T: SceneGraph<Error = E>,
-{
-    Ok(target
-        .children(node)
-        .map_err(AdapterError::Target)?
-        .first()
-        .copied())
-}
-
 fn initial_local_child_position<T, E>(
     target: &T,
     joint_local: Transform,
@@ -588,6 +583,24 @@ where
                 SpringJointRestState::vrm0_tail_fallback(joint_local).initial_local_child_position
             })
         })
+}
+
+fn spring_joint_child<T, E>(
+    target: &T,
+    node: NodeRef,
+    next_joint: Option<NodeRef>,
+) -> Result<Option<NodeRef>, AdapterError<E>>
+where
+    T: SceneGraph<Error = E>,
+{
+    let children = target.children(node).map_err(AdapterError::Target)?;
+    if let Some(next_joint) = next_joint
+        && (children.contains(&next_joint)
+            || target.parent(next_joint).map_err(AdapterError::Target)? == Some(node))
+    {
+        return Ok(Some(next_joint));
+    }
+    Ok(children.first().copied())
 }
 
 fn center_space_tail(
@@ -661,14 +674,20 @@ impl SpringRestMap {
                 let joint_world = target
                     .world_transform(joint.node)
                     .map_err(AdapterError::Target)?;
-                let child = if let Some(next_joint) = spring.joints.get(joint_index + 1) {
-                    Some(next_joint.node)
-                } else {
-                    first_child(target, joint.node)?
-                };
+                let child = spring_joint_child(
+                    target,
+                    joint.node,
+                    spring.joints.get(joint_index + 1).map(|joint| joint.node),
+                )?;
                 let initial_local_child_position =
                     initial_local_child_position(target, joint_local, child)?;
-                let rest = SpringJointRestState::from_local_child(
+                let parent_world = target
+                    .parent(joint.node)
+                    .map_err(AdapterError::Target)?
+                    .map(|parent| target.world_transform(parent).map_err(AdapterError::Target))
+                    .transpose()?
+                    .unwrap_or_default();
+                let mut rest = SpringJointRestState::from_local_child(
                     joint_local,
                     initial_local_child_position,
                 );
@@ -677,6 +696,19 @@ impl SpringRestMap {
                     .map(|center| target.world_transform(center).map_err(AdapterError::Target))
                     .transpose()?;
                 let center_tail = center_space_tail(joint_world, center_world, rest);
+                let tail_world = center_world
+                    .map(transform_matrix)
+                    .unwrap_or(Mat4::IDENTITY)
+                    .transform_point3(center_tail);
+                let world_bone_axis = (tail_world - joint_world.translation).normalize_or(
+                    (joint_world.rotation * initial_local_child_position).normalize_or(Vec3::Y),
+                );
+                let world_bone_length = tail_world.distance(joint_world.translation);
+                rest = rest.with_initial_world_bone(
+                    parent_world.rotation,
+                    world_bone_axis,
+                    world_bone_length,
+                );
                 Ok((
                     (spring_index, joint_index),
                     SpringRestEntry {
@@ -928,6 +960,7 @@ impl<'a> VrmRuntimeDriver<'a> {
     where
         T: TransformAccess<Error = E>
             + WorldTransformAccess<Error = E>
+            + WorldMatrixAccess<Error = E>
             + WorldTransformUpdate<Error = E>
             + SceneGraph<Error = E>
             + ConstraintRestAccess<Error = E>
@@ -1352,7 +1385,7 @@ pub fn collect_spring_colliders_world<T, E>(
     spring: &Spring,
 ) -> Result<Vec<ColliderShape>, AdapterError<E>>
 where
-    T: WorldTransformAccess<Error = E>,
+    T: WorldMatrixAccess<Error = E>,
 {
     spring
         .collider_groups
@@ -1362,11 +1395,48 @@ where
         .filter_map(|collider_index| system.colliders.get(*collider_index))
         .map(|collider| {
             target
-                .world_transform(collider.node)
-                .map(|world| collider_shape_in_simulation_space(collider, world, None))
+                .world_matrix(collider.node)
+                .map(|world| collider_shape_from_world_matrix(collider, world))
                 .map_err(AdapterError::Target)
         })
         .collect()
+}
+
+fn collider_shape_from_world_matrix(
+    collider: &vrm_core::SpringCollider,
+    world: Mat4,
+) -> ColliderShape {
+    match &collider.shape {
+        ColliderShape::Sphere {
+            offset,
+            radius,
+            inside,
+        } => ColliderShape::Sphere {
+            offset: world.transform_point3(*offset),
+            radius: *radius,
+            inside: *inside,
+        },
+        ColliderShape::Capsule {
+            offset,
+            radius,
+            tail,
+            inside,
+        } => ColliderShape::Capsule {
+            offset: world.transform_point3(*offset),
+            radius: *radius,
+            tail: world.transform_point3(*tail),
+            inside: *inside,
+        },
+        ColliderShape::Plane {
+            offset,
+            normal,
+            inside,
+        } => ColliderShape::Plane {
+            offset: world.transform_point3(*offset),
+            normal: world.transform_vector3(*normal).normalize_or_zero(),
+            inside: *inside,
+        },
+    }
 }
 
 pub fn apply_node_constraints<T, E>(
@@ -1545,6 +1615,7 @@ pub fn step_spring_bone_system_parity<T, E>(
 where
     T: TransformAccess<Error = E>
         + WorldTransformAccess<Error = E>
+        + WorldMatrixAccess<Error = E>
         + WorldTransformUpdate<Error = E>
         + SceneGraph<Error = E>,
 {
@@ -1934,6 +2005,14 @@ mod tests {
         }
     }
 
+    impl WorldMatrixAccess for Mock {
+        type Error = Infallible;
+
+        fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
+            Ok(transform_matrix(self.world_transform(node)?))
+        }
+    }
+
     impl WorldTransformUpdate for Mock {
         type Error = Infallible;
 
@@ -2122,6 +2201,7 @@ mod tests {
         scene: vrm_io::GltfSceneRest,
         local_overrides: HashMap<NodeRef, Transform>,
         world_overrides: HashMap<NodeRef, Transform>,
+        world_matrix_overrides: HashMap<NodeRef, Mat4>,
         rotations: Vec<(NodeRef, Quat)>,
         morphs: Vec<(NodeRef, usize, f32)>,
         look_at_rotations: Vec<Quat>,
@@ -2133,6 +2213,7 @@ mod tests {
                 scene,
                 local_overrides: HashMap::new(),
                 world_overrides: HashMap::new(),
+                world_matrix_overrides: HashMap::new(),
                 rotations: Vec::new(),
                 morphs: Vec::new(),
                 look_at_rotations: Vec::new(),
@@ -2154,14 +2235,22 @@ mod tests {
 
         fn refresh_node_world(&mut self, node: NodeRef) {
             let local = self.local(node);
-            let world = self
+            let local_matrix = transform_matrix(local);
+            let world_matrix = self
                 .node(node)
                 .parent
                 .map(NodeRef)
-                .and_then(|parent| self.world_overrides.get(&parent).copied())
-                .map(|parent| compose_transform(parent, local))
-                .unwrap_or(local);
+                .and_then(|parent| self.world_matrix_overrides.get(&parent).copied())
+                .map(|parent| parent * local_matrix)
+                .unwrap_or(local_matrix);
+            let (scale, rotation, translation) = world_matrix.to_scale_rotation_translation();
+            let world = Transform {
+                translation,
+                rotation,
+                scale,
+            };
             self.world_overrides.insert(node, world);
+            self.world_matrix_overrides.insert(node, world_matrix);
             for child in self.node(node).children.clone() {
                 self.refresh_node_world(NodeRef(child));
             }
@@ -2209,6 +2298,18 @@ mod tests {
                 .get(&node)
                 .copied()
                 .unwrap_or_else(|| self.node(node).world))
+        }
+    }
+
+    impl WorldMatrixAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
+            Ok(self
+                .world_matrix_overrides
+                .get(&node)
+                .copied()
+                .unwrap_or_else(|| self.node(node).world_matrix))
         }
     }
 
@@ -2293,16 +2394,6 @@ mod tests {
         fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
             self.look_at_rotations.push(rotation);
             Ok(())
-        }
-    }
-
-    fn compose_transform(parent: Transform, child: Transform) -> Transform {
-        let matrix = transform_matrix(parent) * transform_matrix(child);
-        let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
-        Transform {
-            translation,
-            rotation,
-            scale,
         }
     }
 
@@ -3316,6 +3407,9 @@ mod tests {
             ..SpringBoneSystem::default()
         };
         let mock = Mock {
+            parents: [(NodeRef(4), NodeRef(2)), (NodeRef(5), NodeRef(4))]
+                .into_iter()
+                .collect(),
             local_transforms: [
                 (NodeRef(2), Transform::default()),
                 (
@@ -3409,13 +3503,22 @@ mod tests {
             parents: [(NodeRef(3), NodeRef(2)), (NodeRef(2), NodeRef(1))]
                 .into_iter()
                 .collect(),
-            local_transforms: [(
-                NodeRef(2),
-                Transform {
-                    rotation: Quat::IDENTITY,
-                    ..Transform::default()
-                },
-            )]
+            local_transforms: [
+                (
+                    NodeRef(2),
+                    Transform {
+                        rotation: Quat::IDENTITY,
+                        ..Transform::default()
+                    },
+                ),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
             .into_iter()
             .collect(),
             world_transforms: [
@@ -3638,7 +3741,7 @@ mod tests {
             .unwrap_or_default();
         if file_name.contains("Constraint") {
             SpringGoldenTolerance {
-                tail: 0.003,
+                tail: 0.0022,
                 rotation: 0.0015,
             }
         } else {
