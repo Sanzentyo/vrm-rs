@@ -4,7 +4,8 @@ use glam::Vec3;
 use thiserror::Error;
 use vrm_core::*;
 use vrm_protocol::{
-    VrmExtension, materials_hdr_emissive_multiplier, node_constraint, spring_bone, vrm0, vrm1, vrma,
+    VrmExtension, khr_materials_emissive_strength, materials_hdr_emissive_multiplier,
+    node_constraint, spring_bone, vrm0, vrm1, vrma,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -73,6 +74,15 @@ impl ValidatedAssetBuilder {
             slot.name.get_or_insert_with(|| format!("material_{index}"));
             slot.hdr_emissive_multiplier =
                 Feature::Present(map_hdr_emissive_multiplier(multiplier));
+        }
+
+        for (index, strength) in bundle.khr_emissive_strengths {
+            if let Some(count) = self.material_count {
+                ensure_ref("material", index, count)?;
+            }
+            let slot = material_slot(&mut document.materials, index);
+            slot.name.get_or_insert_with(|| format!("material_{index}"));
+            slot.khr_emissive_strength = Feature::Present(map_khr_emissive_strength(strength));
         }
 
         if !document.humanoid.bones.is_empty() && !document.humanoid.required_bones_present() {
@@ -764,6 +774,12 @@ fn map_hdr_emissive_multiplier(
     HdrEmissiveMultiplier(multiplier.emissive_multiplier)
 }
 
+fn map_khr_emissive_strength(
+    strength: khr_materials_emissive_strength::KhrMaterialsEmissiveStrength,
+) -> EmissiveStrength {
+    EmissiveStrength(strength.emissive_strength.unwrap_or(1.0))
+}
+
 fn ensure_material_slots(materials: &mut Vec<Material>, count: usize) {
     if materials.len() < count {
         materials.resize_with(count, Material::default);
@@ -1199,6 +1215,16 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            khr_emissive_strengths: [(
+                1,
+                vrm_protocol::khr_materials_emissive_strength::KhrMaterialsEmissiveStrength {
+                    emissive_strength: Some(5.0),
+                    extensions: None,
+                    extras: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -1210,14 +1236,70 @@ mod tests {
 
         assert_eq!(asset.document.materials.len(), 3);
         assert!(asset.document.materials[0].mtoon.as_ref().is_none());
-        assert_eq!(
-            asset.document.materials[1]
-                .hdr_emissive_multiplier
-                .as_ref()
-                .map(|value| value.emissive_intensity()),
-            Some(3.0)
-        );
+        let (strength, source) = asset.document.materials[1].effective_emissive_strength();
+        assert_eq!(strength.0, 5.0);
+        assert_eq!(source, EmissiveStrengthSource::KhrMaterialsEmissiveStrength);
         assert!(asset.document.materials[2].mtoon.as_ref().is_some());
+    }
+
+    #[test]
+    fn empty_khr_emissive_strength_extension_defaults_to_one_and_takes_precedence() {
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm1(Box::new(vrm1::VrmcVrm {
+                spec_version: "1.0".to_owned(),
+                meta: vrm1::Meta {
+                    name: "avatar".to_owned(),
+                    authors: vec!["vrm-rs".to_owned()],
+                    ..Default::default()
+                },
+                humanoid: vrm1::Humanoid {
+                    human_bones: vrm1::HumanBones {
+                        bones: required_vrm1_bones(),
+                    },
+                    ..Default::default()
+                },
+                first_person: None,
+                look_at: None,
+                expressions: None,
+                extensions: None,
+                extras: None,
+            }))),
+            hdr_emissive_multipliers: [(
+                0,
+                vrm_protocol::materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier {
+                    emissive_multiplier: 3.0,
+                    extensions: None,
+                    extras: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            khr_emissive_strengths: [(
+                0,
+                vrm_protocol::khr_materials_emissive_strength::KhrMaterialsEmissiveStrength {
+                    emissive_strength: None,
+                    extensions: None,
+                    extras: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .with_material_count(1)
+            .build(bundle)
+            .unwrap();
+
+        assert_eq!(
+            asset.document.materials[0].effective_emissive_strength(),
+            (
+                EmissiveStrength(1.0),
+                EmissiveStrengthSource::KhrMaterialsEmissiveStrength
+            )
+        );
     }
 
     #[test]

@@ -405,7 +405,48 @@ pub struct SpringParticleState {
     pub previous_tail: Vec3,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CenterSpringParticleState {
+    pub current_tail: Vec3,
+    pub previous_tail: Vec3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringJointRestState {
+    pub initial_local_matrix: Mat4,
+    pub initial_local_rotation: Quat,
+    pub initial_local_child_position: Vec3,
+    pub bone_axis: Vec3,
+}
+
+impl SpringJointRestState {
+    pub fn from_local_child(initial_local: Transform, initial_local_child_position: Vec3) -> Self {
+        Self {
+            initial_local_matrix: transform_matrix(initial_local),
+            initial_local_rotation: initial_local.rotation,
+            initial_local_child_position,
+            bone_axis: initial_local_child_position.normalize_or(Vec3::Y),
+        }
+    }
+
+    pub fn vrm0_tail_fallback(initial_local: Transform) -> Self {
+        Self::from_local_child(
+            initial_local,
+            initial_local.translation.normalize_or(Vec3::Y) * 0.07,
+        )
+    }
+}
+
 impl Default for SpringParticleState {
+    fn default() -> Self {
+        Self {
+            current_tail: Vec3::ZERO,
+            previous_tail: Vec3::ZERO,
+        }
+    }
+}
+
+impl Default for CenterSpringParticleState {
     fn default() -> Self {
         Self {
             current_tail: Vec3::ZERO,
@@ -420,6 +461,15 @@ impl SpringParticleState {
         Self {
             current_tail: tail,
             previous_tail: tail,
+        }
+    }
+}
+
+impl CenterSpringParticleState {
+    pub fn at_rest(center_tail: Vec3) -> Self {
+        Self {
+            current_tail: center_tail,
+            previous_tail: center_tail,
         }
     }
 }
@@ -501,6 +551,18 @@ pub struct SpringJointSimulationInput<'a> {
     pub delta: DeltaTime,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringJointParityInput<'a> {
+    pub joint: &'a SpringJoint,
+    pub rest: SpringJointRestState,
+    pub parent_world: Transform,
+    pub joint_world: Transform,
+    pub child_world: Option<Transform>,
+    pub center_world: Option<Transform>,
+    pub colliders: &'a [ColliderShape],
+    pub delta: DeltaTime,
+}
+
 impl<'a> From<SpringJointSimulationInput<'a>> for SpringParticleStep<'a> {
     fn from(value: SpringJointSimulationInput<'a>) -> Self {
         Self {
@@ -539,6 +601,65 @@ pub fn step_spring_joint(
     input: SpringJointSimulationInput<'_>,
 ) -> Vec3 {
     step_spring_particle(state, input.into())
+}
+
+pub fn step_spring_joint_parity(
+    state: &mut CenterSpringParticleState,
+    input: SpringJointParityInput<'_>,
+) -> (Vec3, Quat) {
+    if input.delta.0 <= 0.0 {
+        return (state.current_tail, input.rest.initial_local_rotation);
+    }
+
+    let center_to_world = input
+        .center_world
+        .map(transform_matrix)
+        .unwrap_or(Mat4::IDENTITY);
+    let world_to_center = center_to_world.inverse();
+    let world_space_bone_axis = (transform_matrix(input.parent_world)
+        * input.rest.initial_local_matrix)
+        .transform_vector3(input.rest.bone_axis)
+        .normalize_or_zero();
+    let world_space_bone_length = input
+        .child_world
+        .map(|child| child.translation.distance(input.joint_world.translation))
+        .unwrap_or_else(|| {
+            transform_matrix(input.joint_world)
+                .transform_point3(input.rest.initial_local_child_position)
+                .distance(input.joint_world.translation)
+        });
+
+    let inertia = state.current_tail
+        + (state.current_tail - state.previous_tail) * (1.0 - input.joint.drag_force);
+    let mut next_tail = center_to_world.transform_point3(inertia)
+        + world_space_bone_axis * input.joint.stiffness * input.delta.0
+        + input.joint.gravity_dir.normalize_or_zero() * input.joint.gravity_power * input.delta.0;
+
+    next_tail = constrain_length(
+        input.joint_world.translation,
+        next_tail,
+        world_space_bone_length,
+    );
+    for collider in input.colliders {
+        next_tail = resolve_collision(next_tail, input.joint.hit_radius, collider);
+        next_tail = constrain_length(
+            input.joint_world.translation,
+            next_tail,
+            world_space_bone_length,
+        );
+    }
+
+    state.previous_tail = state.current_tail;
+    state.current_tail = world_to_center.transform_point3(next_tail);
+
+    let world_initial_inverse =
+        (transform_matrix(input.parent_world) * input.rest.initial_local_matrix).inverse();
+    let local_tail = world_initial_inverse
+        .transform_point3(next_tail)
+        .normalize_or_zero();
+    let rotation = input.rest.initial_local_rotation
+        * Quat::from_rotation_arc(input.rest.bone_axis, local_tail);
+    (state.current_tail, rotation.normalize())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1066,6 +1187,99 @@ mod tests {
         state.get_mut(0, 0).unwrap().current_tail = Vec3::X;
         state.reset();
         assert_eq!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
+    fn spring_joint_parity_step_uses_center_space_and_rest_axis() {
+        let joint = SpringJoint {
+            stiffness: 1.0,
+            gravity_power: 0.0,
+            drag_force: 1.0,
+            ..SpringJoint::default()
+        };
+        let rest = SpringJointRestState::from_local_child(Transform::default(), Vec3::Y);
+        let mut state = CenterSpringParticleState::at_rest(Vec3::Y);
+
+        let (center_tail, rotation) = step_spring_joint_parity(
+            &mut state,
+            SpringJointParityInput {
+                joint: &joint,
+                rest,
+                parent_world: Transform::default(),
+                joint_world: Transform::default(),
+                child_world: Some(Transform {
+                    translation: Vec3::Y,
+                    ..Transform::default()
+                }),
+                center_world: Some(Transform {
+                    translation: Vec3::X,
+                    ..Transform::default()
+                }),
+                colliders: &[],
+                delta: DeltaTime(1.0),
+            },
+        );
+
+        assert!(center_tail.length() > 0.0);
+        assert!(rotation.is_normalized());
+    }
+
+    #[test]
+    fn spring_joint_parity_premultiplies_initial_local_rotation() {
+        let joint = SpringJoint {
+            stiffness: 0.0,
+            gravity_power: 0.0,
+            drag_force: 1.0,
+            ..SpringJoint::default()
+        };
+        let initial = Transform {
+            rotation: Quat::from_rotation_y(0.7),
+            ..Transform::default()
+        };
+        let rest = SpringJointRestState::from_local_child(initial, Vec3::Y);
+        let mut state = CenterSpringParticleState::at_rest(Vec3::Z);
+
+        let (_, rotation) = step_spring_joint_parity(
+            &mut state,
+            SpringJointParityInput {
+                joint: &joint,
+                rest,
+                parent_world: Transform::default(),
+                joint_world: Transform::default(),
+                child_world: Some(Transform {
+                    translation: Vec3::Z,
+                    ..Transform::default()
+                }),
+                center_world: None,
+                colliders: &[],
+                delta: DeltaTime(1.0),
+            },
+        );
+
+        let local_tail = transform_matrix(initial)
+            .inverse()
+            .transform_point3(Vec3::Z)
+            .normalize_or_zero();
+        let arc = Quat::from_rotation_arc(Vec3::Y, local_tail);
+        let expected = (initial.rotation * arc).normalize();
+        let reversed = (arc * initial.rotation).normalize();
+
+        assert!(rotation.abs_diff_eq(expected, 1e-5));
+        assert!(!rotation.abs_diff_eq(reversed, 1e-5));
+    }
+
+    #[test]
+    fn spring_joint_rest_state_uses_vrm0_tail_fallback() {
+        let rest = SpringJointRestState::vrm0_tail_fallback(Transform {
+            translation: Vec3::X * 2.0,
+            ..Transform::default()
+        });
+
+        assert!(
+            rest.initial_local_child_position
+                .abs_diff_eq(Vec3::X * 0.07, 0.0001)
+        );
+        assert!(rest.bone_axis.abs_diff_eq(Vec3::X, 0.0001));
     }
 
     #[test]

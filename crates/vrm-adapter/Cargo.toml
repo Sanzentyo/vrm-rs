@@ -9,6 +9,7 @@ bevy = []
 
 [dependencies]
 glam.workspace = true
+indexmap.workspace = true
 thiserror.workspace = true
 vrm-core = { path = "../vrm-core" }
 vrm-runtime = { path = "../vrm-runtime" }

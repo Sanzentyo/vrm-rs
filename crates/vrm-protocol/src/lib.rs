@@ -529,6 +529,19 @@ pub mod materials_hdr_emissive_multiplier {
     }
 }
 
+pub mod khr_materials_emissive_strength {
+    use super::ExtensionMap;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct KhrMaterialsEmissiveStrength {
+        pub emissive_strength: Option<f32>,
+        pub extensions: Option<ExtensionMap>,
+        pub extras: Option<serde_json::Value>,
+    }
+}
+
 pub mod vrma {
     use super::{AnyMap, ExtensionMap};
     use serde::{Deserialize, Serialize};
@@ -582,6 +595,8 @@ pub struct ExtensionBundle {
     pub mtoon_materials: IndexMap<usize, materials_mtoon::VrmcMaterialsMtoon>,
     pub hdr_emissive_multipliers:
         IndexMap<usize, materials_hdr_emissive_multiplier::VrmcMaterialsHdrEmissiveMultiplier>,
+    pub khr_emissive_strengths:
+        IndexMap<usize, khr_materials_emissive_strength::KhrMaterialsEmissiveStrength>,
     pub unknown: ExtensionMap,
 }
 
@@ -801,6 +816,21 @@ mod tests {
 
         assert_eq!(value["emissiveMultiplier"], 4.0);
         assert_eq!(value["extras"]["archived"], true);
+    }
+
+    #[test]
+    fn khr_emissive_strength_round_trips_defaultable_value() {
+        let input = serde_json::json!({
+            "emissiveStrength": 3.5,
+            "extras": { "source": "khr" }
+        });
+
+        let strength: khr_materials_emissive_strength::KhrMaterialsEmissiveStrength =
+            serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(strength).unwrap();
+
+        assert_eq!(value["emissiveStrength"], 3.5);
+        assert_eq!(value["extras"]["source"], "khr");
     }
 
     #[test]

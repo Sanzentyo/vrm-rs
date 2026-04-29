@@ -250,6 +250,64 @@ impl HumanBoneName {
             HumanBoneName::RightHand,
         ]
     }
+
+    pub fn parent(&self) -> Option<Self> {
+        use HumanBoneName::*;
+        match self {
+            Hips => None,
+            Spine => Some(Hips),
+            Chest => Some(Spine),
+            UpperChest => Some(Chest),
+            Neck => Some(UpperChest),
+            Head => Some(Neck),
+            LeftEye | RightEye | Jaw => Some(Head),
+            LeftUpperLeg => Some(Hips),
+            LeftLowerLeg => Some(LeftUpperLeg),
+            LeftFoot => Some(LeftLowerLeg),
+            LeftToes => Some(LeftFoot),
+            RightUpperLeg => Some(Hips),
+            RightLowerLeg => Some(RightUpperLeg),
+            RightFoot => Some(RightLowerLeg),
+            RightToes => Some(RightFoot),
+            LeftShoulder => Some(UpperChest),
+            LeftUpperArm => Some(LeftShoulder),
+            LeftLowerArm => Some(LeftUpperArm),
+            LeftHand => Some(LeftLowerArm),
+            RightShoulder => Some(UpperChest),
+            RightUpperArm => Some(RightShoulder),
+            RightLowerArm => Some(RightUpperArm),
+            RightHand => Some(RightLowerArm),
+            LeftThumbMetacarpal | LeftThumbProximal => Some(LeftHand),
+            LeftThumbDistal => Some(LeftThumbProximal),
+            LeftIndexProximal => Some(LeftHand),
+            LeftIndexIntermediate => Some(LeftIndexProximal),
+            LeftIndexDistal => Some(LeftIndexIntermediate),
+            LeftMiddleProximal => Some(LeftHand),
+            LeftMiddleIntermediate => Some(LeftMiddleProximal),
+            LeftMiddleDistal => Some(LeftMiddleIntermediate),
+            LeftRingProximal => Some(LeftHand),
+            LeftRingIntermediate => Some(LeftRingProximal),
+            LeftRingDistal => Some(LeftRingIntermediate),
+            LeftLittleProximal => Some(LeftHand),
+            LeftLittleIntermediate => Some(LeftLittleProximal),
+            LeftLittleDistal => Some(LeftLittleIntermediate),
+            RightThumbMetacarpal | RightThumbProximal => Some(RightHand),
+            RightThumbDistal => Some(RightThumbProximal),
+            RightIndexProximal => Some(RightHand),
+            RightIndexIntermediate => Some(RightIndexProximal),
+            RightIndexDistal => Some(RightIndexIntermediate),
+            RightMiddleProximal => Some(RightHand),
+            RightMiddleIntermediate => Some(RightMiddleProximal),
+            RightMiddleDistal => Some(RightMiddleIntermediate),
+            RightRingProximal => Some(RightHand),
+            RightRingIntermediate => Some(RightRingProximal),
+            RightRingDistal => Some(RightRingIntermediate),
+            RightLittleProximal => Some(RightHand),
+            RightLittleIntermediate => Some(RightLittleProximal),
+            RightLittleDistal => Some(RightLittleIntermediate),
+            Custom(_) => None,
+        }
+    }
 }
 
 impl From<&str> for HumanBoneName {
@@ -322,6 +380,57 @@ pub struct HumanBone {
     pub node: NodeRef,
     pub rest: Transform,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RawPoseSpace;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NormalizedPoseSpace;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AbsolutePoseBasis;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestRelativePoseBasis;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PoseTransform {
+    pub translation: Vec3,
+    pub rotation: Quat,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HumanoidPose<Space, Basis> {
+    pub bones: IndexMap<HumanBoneName, PoseTransform>,
+    space: PhantomData<Space>,
+    basis: PhantomData<Basis>,
+}
+
+impl<Space, Basis> Default for HumanoidPose<Space, Basis> {
+    fn default() -> Self {
+        Self {
+            bones: IndexMap::new(),
+            space: PhantomData,
+            basis: PhantomData,
+        }
+    }
+}
+
+impl<Space, Basis> HumanoidPose<Space, Basis> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, bone: HumanBoneName, transform: PoseTransform) {
+        self.bones.insert(bone, transform);
+    }
+
+    pub fn get(&self, bone: &HumanBoneName) -> Option<&PoseTransform> {
+        self.bones.get(bone)
+    }
+}
+
+pub type RawAbsolutePose = HumanoidPose<RawPoseSpace, AbsolutePoseBasis>;
+pub type RawPose = HumanoidPose<RawPoseSpace, RestRelativePoseBasis>;
+pub type NormalizedAbsolutePose = HumanoidPose<NormalizedPoseSpace, AbsolutePoseBasis>;
+pub type NormalizedPose = HumanoidPose<NormalizedPoseSpace, RestRelativePoseBasis>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {
@@ -667,6 +776,7 @@ pub struct Material {
     pub name: Option<String>,
     pub mtoon: Feature<MtoonMaterial>,
     pub hdr_emissive_multiplier: Feature<HdrEmissiveMultiplier>,
+    pub khr_emissive_strength: Feature<EmissiveStrength>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -675,6 +785,40 @@ pub struct HdrEmissiveMultiplier(pub f32);
 impl HdrEmissiveMultiplier {
     pub fn emissive_intensity(self) -> f32 {
         self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EmissiveStrength(pub f32);
+
+impl Default for EmissiveStrength {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmissiveStrengthSource {
+    KhrMaterialsEmissiveStrength,
+    VrmcMaterialsHdrEmissiveMultiplier,
+    Default,
+}
+
+impl Material {
+    pub fn effective_emissive_strength(&self) -> (EmissiveStrength, EmissiveStrengthSource) {
+        if let Feature::Present(strength) = self.khr_emissive_strength {
+            return (
+                strength,
+                EmissiveStrengthSource::KhrMaterialsEmissiveStrength,
+            );
+        }
+        if let Feature::Present(multiplier) = self.hdr_emissive_multiplier {
+            return (
+                EmissiveStrength(multiplier.emissive_intensity()),
+                EmissiveStrengthSource::VrmcMaterialsHdrEmissiveMultiplier,
+            );
+        }
+        (EmissiveStrength::default(), EmissiveStrengthSource::Default)
     }
 }
 
@@ -899,6 +1043,66 @@ mod tests {
         let multiplier = HdrEmissiveMultiplier(2.5);
 
         assert_eq!(multiplier.emissive_intensity(), 2.5);
+    }
+
+    #[test]
+    fn material_effective_emissive_strength_prefers_khr() {
+        let material = Material {
+            hdr_emissive_multiplier: Feature::Present(HdrEmissiveMultiplier(2.0)),
+            khr_emissive_strength: Feature::Present(EmissiveStrength(4.0)),
+            ..Material::default()
+        };
+
+        assert_eq!(
+            material.effective_emissive_strength(),
+            (
+                EmissiveStrength(4.0),
+                EmissiveStrengthSource::KhrMaterialsEmissiveStrength
+            )
+        );
+        assert_eq!(
+            Material::default().effective_emissive_strength(),
+            (EmissiveStrength(1.0), EmissiveStrengthSource::Default)
+        );
+    }
+
+    #[test]
+    fn humanoid_pose_newtype_keeps_space_and_basis_separate() {
+        let mut pose = RawPose::new();
+        pose.insert(
+            HumanBoneName::Hips,
+            PoseTransform {
+                translation: Vec3::Y,
+                rotation: Quat::IDENTITY,
+            },
+        );
+
+        assert_eq!(pose.get(&HumanBoneName::Hips).unwrap().translation, Vec3::Y);
+        assert_eq!(HumanBoneName::Head.parent(), Some(HumanBoneName::Neck));
+    }
+
+    #[test]
+    fn human_bone_parent_map_has_no_self_parent_and_symmetric_arms() {
+        for bone in HumanBoneName::required() {
+            assert_ne!(bone.parent(), Some(bone.clone()));
+        }
+
+        assert_eq!(
+            HumanBoneName::LeftLowerArm.parent(),
+            Some(HumanBoneName::LeftUpperArm)
+        );
+        assert_eq!(
+            HumanBoneName::RightLowerArm.parent(),
+            Some(HumanBoneName::RightUpperArm)
+        );
+        assert_eq!(
+            HumanBoneName::LeftHand.parent(),
+            Some(HumanBoneName::LeftLowerArm)
+        );
+        assert_eq!(
+            HumanBoneName::RightHand.parent(),
+            Some(HumanBoneName::RightLowerArm)
+        );
     }
 
     #[test]

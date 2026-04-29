@@ -47,12 +47,17 @@
 - Added archived `VRMC_materials_hdr_emissiveMultiplier` protocol/IO/sans-IO/core/adapter support, mapping it to renderer-facing emissive intensity.
 - Fixed VRM1 material extension mapping to preserve glTF material indices in `VrmDocument::materials`.
 - Raised generated/unit/doc coverage to 81.02% line coverage and added a conservative CI `cargo-llvm-cov --fail-under-lines 70` gate.
+- Added type-state style humanoid pose types for raw/normalized and absolute/rest-relative poses.
+- Added `HumanoidPoseRig` in `vrm-adapter` for raw pose get/set/reset, normalized pose get/set/reset, and normalized-to-raw writeback through engine transform traits.
+- Added spring bone rest-state and center-space parity stepping helpers mirroring three-vrm's tail integration shape, including VRM0 7cm final-joint fallback, center-space particle state typing, and initial-local-rotation premultiplication.
+- Added `KHR_materials_emissive_strength` protocol/IO/sans-IO/core/adapter support and made it take precedence over archived `VRMC_materials_hdr_emissiveMultiplier`.
+- Raised generated/unit/doc coverage to 82.91% line coverage after pose, spring parity, and KHR emissive tests.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
-- Humanoid raw/normalized pose API parity with `three-vrm-core` (`VRMRig`, `VRMHumanoidRig`, `getRawPose`, `setNormalizedPose` style workflows).
-- Spring bone parity refinements: sparse chain handling, explicit rest-axis capture, center-space particle state, and world transform refresh hooks.
+- Humanoid pose parity still needs numeric fixture comparison against three-vrm on real avatars.
+- Spring bone parity still needs multi-joint sparse-chain numeric comparison against three-vrm.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
 - First-person `auto` handling that uses mesh/head topology instead of the current conservative visible-both behavior.

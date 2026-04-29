@@ -46,6 +46,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     extract_node_constraints(&document, &mut bundle)?;
     extract_mtoon_materials(&document, &mut bundle)?;
     extract_hdr_emissive_multipliers(&document, &mut bundle)?;
+    extract_khr_emissive_strengths(&document, &mut bundle)?;
     validate_vrmc_extension_versions(&bundle)?;
     let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle)?;
 
@@ -586,6 +587,34 @@ fn extract_hdr_emissive_multipliers(
     Ok(())
 }
 
+fn extract_khr_emissive_strengths(
+    document: &gltf::Document,
+    bundle: &mut ExtensionBundle,
+) -> Result<(), VrmIoError> {
+    for material in document.materials() {
+        let Some(material_index) = material.index() else {
+            continue;
+        };
+        let extensions = extension_map(
+            document.as_json().materials[material_index]
+                .extensions
+                .as_ref(),
+        );
+        if let Some(value) = extensions.get("KHR_materials_emissive_strength") {
+            let strength = serde_json::from_value(value.clone()).map_err(|err| {
+                VrmIoError::InvalidExtension {
+                    extension: "KHR_materials_emissive_strength".to_owned(),
+                    message: err.to_string(),
+                }
+            })?;
+            bundle
+                .khr_emissive_strengths
+                .insert(material_index, strength);
+        }
+    }
+    Ok(())
+}
+
 fn validate_vrmc_extension_versions(bundle: &ExtensionBundle) -> Result<(), VrmIoError> {
     if let Some(spring_bone) = &bundle.spring_bone {
         ensure_vrmc_spec_version("VRMC_springBone", &spring_bone.spec_version)?;
@@ -686,6 +715,8 @@ mod tests {
                 .map(|material| material.hdr_emissive_multiplier.as_ref()),
             Some(Some(multiplier)) if multiplier.emissive_intensity() == 2.5
         ));
+        let (emissive_strength, _) = document.materials[0].effective_emissive_strength();
+        assert_eq!(emissive_strength.0, 5.0);
         assert_eq!(document.node_constraints.len(), 1);
         assert!(document.spring_bone.is_present());
     }
@@ -813,6 +844,22 @@ mod tests {
             err,
             VrmIoError::InvalidExtension { extension, .. }
                 if extension == "VRMC_materials_hdr_emissiveMultiplier"
+        ));
+    }
+
+    #[test]
+    fn generated_sample_reports_invalid_khr_emissive_extension() {
+        let mut sample = generated_vrm1_gltf();
+        sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"] =
+            json!("bright");
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidExtension { extension, .. }
+                if extension == "KHR_materials_emissive_strength"
         ));
     }
 
@@ -967,7 +1014,8 @@ mod tests {
                 "VRMC_springBone",
                 "VRMC_node_constraint",
                 "VRMC_materials_mtoon",
-                "VRMC_materials_hdr_emissiveMultiplier"
+                "VRMC_materials_hdr_emissiveMultiplier",
+                "KHR_materials_emissive_strength"
             ],
             "scene": 0,
             "scenes": [{ "nodes": [0] }],
@@ -986,6 +1034,9 @@ mod tests {
                     },
                     "VRMC_materials_hdr_emissiveMultiplier": {
                         "emissiveMultiplier": 2.5
+                    },
+                    "KHR_materials_emissive_strength": {
+                        "emissiveStrength": 5.0
                     }
                 }
             }],

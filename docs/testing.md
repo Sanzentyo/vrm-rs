@@ -11,6 +11,7 @@ Current generated coverage:
 - Per-node `VRMC_node_constraint` extension.
 - Per-material `VRMC_materials_mtoon` extension.
 - Per-material archived `VRMC_materials_hdr_emissiveMultiplier` extension.
+- Per-material `KHR_materials_emissive_strength` extension, including invalid shape handling, present-but-empty defaulting, and precedence over archived HDR multiplier.
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
@@ -61,7 +62,7 @@ cargo llvm-cov --workspace --all-features --html
 Current known coverage gaps:
 
 - Protocol roundtrip tests cover representative extension shapes, but not every optional schema field.
-- External fixture tests assert semantic presence for official samples but do not compare numeric animation/spring outputs against three-vrm.
+- External fixture tests assert semantic presence for official samples but do not compare numeric humanoid/spring outputs against three-vrm.
 - Adapter tests use mock engines; Bevy/wgpu/ash compile examples are still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
 
@@ -75,16 +76,16 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.70% | 81.49% |
-| `vrm-adapter` | 86.70% | 91.38% |
-| `vrm-core` | 66.07% | 79.89% |
-| `vrm-io` | 68.27% | 64.34% |
-| `vrm-protocol` | 85.96% | 80.87% |
-| `vrm-runtime` | 76.89% | 76.71% |
-| `vrm-sans-io` | 84.90% | 88.00% |
+| Workspace total | 80.12% | 82.91% |
+| `vrm-adapter` | 88.20% | 92.65% |
+| `vrm-core` | 67.18% | 76.43% |
+| `vrm-io` | 69.58% | 65.76% |
+| `vrm-protocol` | 86.74% | 81.87% |
+| `vrm-runtime` | 78.67% | 78.61% |
+| `vrm-sans-io` | 85.28% | 88.52% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is deeper runtime numeric parity tests against three-vrm behavior, followed by `vrm-io` fixture semantics and Bevy/wgpu/ash compile examples.
+The next test-effort priority is real-avatar numeric parity tests against three-vrm for humanoid pose and spring bone behavior, followed by Bevy/wgpu/ash compile examples.
 
 ## Current External Official Samples
 

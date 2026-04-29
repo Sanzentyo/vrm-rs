@@ -2,7 +2,7 @@
 
 ## Crates
 
-- `vrm-protocol`: serde wire types for VRM 0.0, VRMC_vrm 1.0, VRMC_springBone, VRMC_node_constraint, VRMC_materials_mtoon, and VRMC_vrm_animation.
+- `vrm-protocol`: serde wire types for VRM 0.0, VRMC_vrm 1.0, VRMC_springBone, VRMC_node_constraint, VRMC_materials_mtoon, KHR emissive strength, and VRMC_vrm_animation.
 - `vrm-core`: pure domain types. This crate defines `VrmAsset<State>`, `VrmModel<State>`, `NodeRef`, `MaterialRef`, `TextureRef`, humanoid, expressions, lookAt, spring bone, constraints, material parameters, and animation tracks.
 - `vrm-sans-io`: side-effect-free conversion from protocol data into validated core data.
 - `vrm-io`: glTF/GLB IO through the `gltf` crate, extension extraction, buffer/image collection, and model construction.
@@ -51,10 +51,10 @@ Current channel mapping:
 Runtime math remains renderer-agnostic. Engine adapters are expected to provide current transforms and apply returned rotations/positions.
 
 - Node constraints expose pure solvers for rotation, roll, and aim constraints.
-- Spring bone exposes particle state, a Verlet-style step helper, and sphere/capsule/plane collision correction.
+- Spring bone exposes world-space particle state, typed center-space parity particle state, rest state, Verlet-style step helpers, center-space parity stepping, and sphere/capsule/plane collision correction.
 - LookAt exposes azimuth/altitude calculation and expression-weight mapping for `lookLeft`, `lookRight`, `lookUp`, and `lookDown`.
 - MToon exposes renderer hints such as render order and outline enablement, but not backend-specific shader generation.
-- Adapter code provides `VrmRuntimeDriver` for engines that want one high-level tick over animation frames, runtime events, constraints, spring bone, first-person visibility, VRM0 orientation compatibility, and MToon pipeline hints.
+- Adapter code provides `HumanoidPoseRig` for raw/normalized pose read/write workflows and `VrmRuntimeDriver` for engines that want one high-level tick over animation frames, runtime events, constraints, spring bone, first-person visibility, VRM0 orientation compatibility, and material hints.
 - MToon pipeline data is exposed as pass hints for renderer-side pipeline selection; shader generation remains outside `vrm-core`.
 
 ## Test Fixture Policy

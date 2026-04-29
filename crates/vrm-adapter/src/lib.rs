@@ -1,12 +1,13 @@
 //! Traits for connecting `vrm-rs` runtime output to external engines.
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use thiserror::Error;
 use vrm_core::{
     ColliderShape, ConstraintKind, ExpressionBind, ExpressionName, Feature, FirstPersonAnnotation,
-    HumanBoneName, MaterialRef, MtoonPipelinePass, NodeConstraint, NodeRef, Spring,
-    SpringBoneSystem, TextureRef, Transform, VrmDocument,
+    HumanBoneName, MaterialRef, MtoonPipelinePass, NodeConstraint, NodeRef, RawAbsolutePose,
+    RawPose, Spring, SpringBoneSystem, TextureRef, Transform, VrmDocument,
 };
 use vrm_runtime::{
     AimConstraintInput, AppliedExpression, ConstraintRestState, DeltaTime, RuntimeEvents,
@@ -54,6 +55,341 @@ pub trait ConstraintRestAccess {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ConstraintRestMap {
     states: HashMap<(NodeRef, NodeRef), ConstraintRestState>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HumanoidPoseRig {
+    raw_rest: RawAbsolutePose,
+    normalized_rest: vrm_core::NormalizedAbsolutePose,
+    normalized_current: vrm_core::NormalizedAbsolutePose,
+    parent_world_rotations: HashMap<HumanBoneName, Quat>,
+    raw_rest_rotations: HashMap<HumanBoneName, Quat>,
+    raw_nodes: HashMap<HumanBoneName, NodeRef>,
+}
+
+impl HumanoidPoseRig {
+    pub fn capture<T, E>(target: &T, document: &VrmDocument) -> Result<Self, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+    {
+        let raw_nodes = document
+            .humanoid
+            .bones
+            .iter()
+            .map(|(name, bone)| (name.clone(), bone.node))
+            .collect::<HashMap<_, _>>();
+        let raw_rest = capture_raw_absolute_pose(target, document)?;
+        let parent_world_rotations = document
+            .humanoid
+            .bones
+            .iter()
+            .map(|(name, bone)| {
+                let parent_rotation = target
+                    .parent(bone.node)
+                    .map_err(AdapterError::Target)?
+                    .map(|parent| {
+                        target
+                            .world_transform(parent)
+                            .map(|transform| transform.rotation)
+                            .map_err(AdapterError::Target)
+                    })
+                    .transpose()?
+                    .unwrap_or(Quat::IDENTITY);
+                Ok((name.clone(), parent_rotation))
+            })
+            .collect::<Result<HashMap<_, _>, AdapterError<E>>>()?;
+        let raw_rest_rotations = raw_rest
+            .bones
+            .iter()
+            .map(|(name, transform)| (name.clone(), transform.rotation))
+            .collect::<HashMap<_, _>>();
+        let normalized_rest = capture_normalized_absolute_pose(target, document)?;
+        Ok(Self {
+            normalized_current: normalized_rest.clone(),
+            raw_rest,
+            normalized_rest,
+            parent_world_rotations,
+            raw_rest_rotations,
+            raw_nodes,
+        })
+    }
+
+    pub fn raw_rest_pose(&self) -> &RawAbsolutePose {
+        &self.raw_rest
+    }
+
+    pub fn normalized_rest_pose(&self) -> &vrm_core::NormalizedAbsolutePose {
+        &self.normalized_rest
+    }
+
+    pub fn get_raw_absolute_pose<T, E>(
+        &self,
+        target: &T,
+    ) -> Result<RawAbsolutePose, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        self.raw_nodes
+            .iter()
+            .map(|(name, node)| {
+                target
+                    .local_transform(*node)
+                    .map(|transform| {
+                        (
+                            name.clone(),
+                            vrm_core::PoseTransform {
+                                translation: transform.translation,
+                                rotation: transform.rotation,
+                            },
+                        )
+                    })
+                    .map_err(AdapterError::Target)
+            })
+            .collect::<Result<IndexMap<_, _>, _>>()
+            .map(pose_from_iter)
+    }
+
+    pub fn get_raw_pose<T, E>(&self, target: &T) -> Result<RawPose, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        let absolute = self.get_raw_absolute_pose(target)?;
+        Ok(relative_pose(&absolute, &self.raw_rest))
+    }
+
+    pub fn set_raw_pose<T, E>(&self, target: &mut T, pose: &RawPose) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        let absolute = absolute_pose(pose, &self.raw_rest);
+        self.set_raw_absolute_pose(target, &absolute)
+    }
+
+    pub fn reset_raw_pose<T, E>(&self, target: &mut T) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        self.set_raw_absolute_pose(target, &self.raw_rest)
+    }
+
+    pub fn get_normalized_absolute_pose(&self) -> vrm_core::NormalizedAbsolutePose {
+        self.normalized_current.clone()
+    }
+
+    pub fn get_normalized_pose(&self) -> vrm_core::NormalizedPose {
+        relative_pose(&self.normalized_current, &self.normalized_rest)
+    }
+
+    pub fn set_normalized_pose(&mut self, pose: &vrm_core::NormalizedPose) {
+        self.normalized_current = absolute_pose(pose, &self.normalized_rest);
+    }
+
+    pub fn reset_normalized_pose(&mut self) {
+        self.normalized_current = self.normalized_rest.clone();
+    }
+
+    pub fn apply_normalized_to_raw<T, E>(&self, target: &mut T) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+    {
+        for (name, node) in &self.raw_nodes {
+            let Some(normalized) = self.normalized_current.get(name) else {
+                continue;
+            };
+            let parent_world = self
+                .parent_world_rotations
+                .get(name)
+                .copied()
+                .unwrap_or(Quat::IDENTITY);
+            let raw_rest = self
+                .raw_rest_rotations
+                .get(name)
+                .copied()
+                .unwrap_or(Quat::IDENTITY);
+            let mut transform = target
+                .local_transform(*node)
+                .map_err(AdapterError::Target)?;
+            transform.rotation =
+                parent_world.inverse() * normalized.rotation * parent_world * raw_rest;
+            if *name == HumanBoneName::Hips {
+                let parent_world_transform = target
+                    .parent(*node)
+                    .map_err(AdapterError::Target)?
+                    .map(|parent| target.world_transform(parent).map_err(AdapterError::Target))
+                    .transpose()?
+                    .unwrap_or_default();
+                transform.translation = transform_matrix(parent_world_transform)
+                    .inverse()
+                    .transform_point3(normalized.translation);
+            }
+            target
+                .set_local_transform(*node, transform)
+                .map_err(AdapterError::Target)?;
+        }
+        Ok(())
+    }
+
+    fn set_raw_absolute_pose<T, E>(
+        &self,
+        target: &mut T,
+        pose: &RawAbsolutePose,
+    ) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        for (name, transform) in &pose.bones {
+            let Some(node) = self.raw_nodes.get(name).copied() else {
+                continue;
+            };
+            target
+                .set_local_transform(
+                    node,
+                    Transform {
+                        translation: transform.translation,
+                        rotation: transform.rotation,
+                        scale: target
+                            .local_transform(node)
+                            .map_err(AdapterError::Target)?
+                            .scale,
+                    },
+                )
+                .map_err(AdapterError::Target)?;
+        }
+        Ok(())
+    }
+}
+
+fn capture_raw_absolute_pose<T, E>(
+    target: &T,
+    document: &VrmDocument,
+) -> Result<RawAbsolutePose, AdapterError<E>>
+where
+    T: TransformAccess<Error = E>,
+{
+    document
+        .humanoid
+        .bones
+        .iter()
+        .map(|(name, bone)| {
+            target
+                .local_transform(bone.node)
+                .map(|transform| {
+                    (
+                        name.clone(),
+                        vrm_core::PoseTransform {
+                            translation: transform.translation,
+                            rotation: transform.rotation,
+                        },
+                    )
+                })
+                .map_err(AdapterError::Target)
+        })
+        .collect::<Result<IndexMap<_, _>, _>>()
+        .map(pose_from_iter)
+}
+
+fn capture_normalized_absolute_pose<T, E>(
+    target: &T,
+    document: &VrmDocument,
+) -> Result<vrm_core::NormalizedAbsolutePose, AdapterError<E>>
+where
+    T: WorldTransformAccess<Error = E>,
+{
+    let world_positions = document
+        .humanoid
+        .bones
+        .iter()
+        .map(|(name, bone)| {
+            target
+                .world_transform(bone.node)
+                .map(|transform| (name.clone(), transform.translation))
+                .map_err(AdapterError::Target)
+        })
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    let entries = document
+        .humanoid
+        .bones
+        .iter()
+        .filter_map(|(name, bone)| {
+            let world_position = world_positions.get(name)?;
+            let parent_position = nearest_humanoid_parent_position(name, &world_positions);
+            Some((
+                name.clone(),
+                vrm_core::PoseTransform {
+                    translation: parent_position
+                        .map_or(*world_position, |parent| *world_position - parent),
+                    rotation: bone.rest.rotation,
+                },
+            ))
+        })
+        .collect::<IndexMap<_, _>>();
+    Ok(pose_from_iter(entries))
+}
+
+fn nearest_humanoid_parent_position(
+    bone: &HumanBoneName,
+    positions: &HashMap<HumanBoneName, Vec3>,
+) -> Option<Vec3> {
+    let mut parent = bone.parent();
+    while let Some(parent_name) = parent {
+        if let Some(position) = positions.get(&parent_name).copied() {
+            return Some(position);
+        }
+        parent = parent_name.parent();
+    }
+    None
+}
+
+fn pose_from_iter<Space, Basis>(
+    bones: impl IntoIterator<Item = (HumanBoneName, vrm_core::PoseTransform)>,
+) -> vrm_core::HumanoidPose<Space, Basis> {
+    let mut pose = vrm_core::HumanoidPose::new();
+    for (name, transform) in bones {
+        pose.insert(name, transform);
+    }
+    pose
+}
+
+fn relative_pose<Space>(
+    absolute: &vrm_core::HumanoidPose<Space, vrm_core::AbsolutePoseBasis>,
+    rest: &vrm_core::HumanoidPose<Space, vrm_core::AbsolutePoseBasis>,
+) -> vrm_core::HumanoidPose<Space, vrm_core::RestRelativePoseBasis> {
+    pose_from_iter(absolute.bones.iter().filter_map(|(name, current)| {
+        rest.get(name).map(|rest| {
+            (
+                name.clone(),
+                vrm_core::PoseTransform {
+                    translation: current.translation - rest.translation,
+                    rotation: current.rotation * rest.rotation.inverse(),
+                },
+            )
+        })
+    }))
+}
+
+fn absolute_pose<Space>(
+    relative: &vrm_core::HumanoidPose<Space, vrm_core::RestRelativePoseBasis>,
+    rest: &vrm_core::HumanoidPose<Space, vrm_core::AbsolutePoseBasis>,
+) -> vrm_core::HumanoidPose<Space, vrm_core::AbsolutePoseBasis> {
+    pose_from_iter(relative.bones.iter().filter_map(|(name, current)| {
+        rest.get(name).map(|rest| {
+            (
+                name.clone(),
+                vrm_core::PoseTransform {
+                    translation: current.translation + rest.translation,
+                    rotation: current.rotation * rest.rotation,
+                },
+            )
+        })
+    }))
+}
+
+fn transform_matrix(transform: Transform) -> Mat4 {
+    Mat4::from_scale_rotation_translation(
+        transform.scale,
+        transform.rotation,
+        transform.translation,
+    )
 }
 
 impl ConstraintRestMap {
@@ -241,7 +577,7 @@ impl<'a> VrmRuntimeDriver<'a> {
             }
         }
         apply_mtoon_pipeline_hints(target, self.document)?;
-        apply_hdr_emissive_multipliers(target, self.document)?;
+        apply_emissive_strengths(target, self.document)?;
         apply_first_person_annotations(target, self.document, self.view_mode)
     }
 }
@@ -341,10 +677,21 @@ pub fn apply_hdr_emissive_multipliers<T, E>(
 where
     T: MaterialAccess<Error = E>,
 {
+    apply_emissive_strengths(target, document)
+}
+
+pub fn apply_emissive_strengths<T, E>(
+    target: &mut T,
+    document: &VrmDocument,
+) -> Result<(), AdapterError<E>>
+where
+    T: MaterialAccess<Error = E>,
+{
     for (index, material) in document.materials.iter().enumerate() {
-        if let Feature::Present(multiplier) = material.hdr_emissive_multiplier {
+        let (strength, source) = material.effective_emissive_strength();
+        if source != vrm_core::EmissiveStrengthSource::Default {
             target
-                .set_emissive_intensity(MaterialRef(index), multiplier.emissive_intensity())
+                .set_emissive_intensity(MaterialRef(index), strength.0)
                 .map_err(AdapterError::Target)?;
         }
     }
@@ -522,6 +869,9 @@ where
             let joint_world = target
                 .world_transform(joint.node)
                 .map_err(AdapterError::Target)?;
+            let joint_local = target
+                .local_transform(joint.node)
+                .map_err(AdapterError::Target)?;
             let child_world = target
                 .children(joint.node)
                 .map_err(AdapterError::Target)?
@@ -529,7 +879,8 @@ where
                 .copied()
                 .map(|child| target.world_transform(child).map_err(AdapterError::Target))
                 .transpose()?;
-            let (local_axis, bone_length) = spring_axis_and_length(joint_world, child_world);
+            let (local_axis, bone_length) =
+                spring_axis_and_length(joint_world, joint_local, child_world);
             let particle = state.get_mut(spring_index, joint_index).ok_or(
                 AdapterError::InvalidSpringJoint {
                     spring_index,
@@ -561,9 +912,13 @@ where
     Ok(())
 }
 
-fn spring_axis_and_length(joint_world: Transform, child_world: Option<Transform>) -> (Vec3, f32) {
+fn spring_axis_and_length(
+    joint_world: Transform,
+    joint_local: Transform,
+    child_world: Option<Transform>,
+) -> (Vec3, f32) {
     let Some(child_world) = child_world else {
-        return (Vec3::Y, 1.0);
+        return (joint_local.translation.normalize_or(Vec3::Y), 0.07);
     };
     let world_delta = child_world.translation - joint_world.translation;
     let bone_length = world_delta.length();
@@ -715,9 +1070,9 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use vrm_core::{
-        Expression, ExpressionSet, Feature, FirstPerson, FirstPersonMeshAnnotation,
-        HdrEmissiveMultiplier, HumanBone, Humanoid, MtoonMaterial, MtoonRenderQueue, RotationTrack,
-        VrmAnimation, VrmDocument,
+        EmissiveStrength, Expression, ExpressionSet, Feature, FirstPerson,
+        FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, MtoonMaterial,
+        MtoonRenderQueue, PoseTransform, RotationTrack, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -896,6 +1251,162 @@ mod tests {
             self.visibility.push((node, visible));
             Ok(())
         }
+    }
+
+    #[test]
+    fn humanoid_pose_rig_round_trips_raw_relative_pose() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Hips,
+                    HumanBone {
+                        node: NodeRef(0),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            local_transforms: [(
+                NodeRef(0),
+                Transform {
+                    translation: Vec3::Y,
+                    rotation: Quat::from_rotation_y(0.25),
+                    scale: Vec3::ONE,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            world_transforms: [(NodeRef(0), Transform::default())].into_iter().collect(),
+            ..Mock::default()
+        };
+        let rig = HumanoidPoseRig::capture(&mock, &document).unwrap();
+        mock.local_transforms.insert(
+            NodeRef(0),
+            Transform {
+                translation: Vec3::new(1.0, 2.0, 3.0),
+                rotation: Quat::from_rotation_y(0.75),
+                scale: Vec3::ONE,
+            },
+        );
+
+        let pose = rig.get_raw_pose(&mock).unwrap();
+        rig.set_raw_pose(&mut mock, &pose).unwrap();
+
+        assert_eq!(
+            pose.get(&HumanBoneName::Hips).unwrap().translation,
+            Vec3::new(1.0, 1.0, 3.0)
+        );
+        assert_eq!(mock.local_sets.last().unwrap().0, NodeRef(0));
+        assert!(
+            mock.local_sets
+                .last()
+                .unwrap()
+                .1
+                .translation
+                .abs_diff_eq(Vec3::new(1.0, 2.0, 3.0), 0.0001)
+        );
+    }
+
+    #[test]
+    fn humanoid_pose_rig_applies_normalized_pose_to_raw_bones() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [
+                    (
+                        HumanBoneName::Hips,
+                        HumanBone {
+                            node: NodeRef(1),
+                            rest: Transform::default(),
+                        },
+                    ),
+                    (
+                        HumanBoneName::Head,
+                        HumanBone {
+                            node: NodeRef(2),
+                            rest: Transform::default(),
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(1), NodeRef(0)), (NodeRef(2), NodeRef(1))]
+                .into_iter()
+                .collect(),
+            local_transforms: [
+                (NodeRef(1), Transform::default()),
+                (NodeRef(2), Transform::default()),
+            ]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (
+                    NodeRef(0),
+                    Transform {
+                        translation: Vec3::X,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(1),
+                    Transform {
+                        translation: Vec3::new(1.0, 1.0, 0.0),
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(2),
+                    Transform {
+                        translation: Vec3::new(1.0, 2.0, 0.0),
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let mut rig = HumanoidPoseRig::capture(&mock, &document).unwrap();
+        let mut normalized = rig.get_normalized_pose();
+        normalized.insert(
+            HumanBoneName::Hips,
+            PoseTransform {
+                translation: Vec3::new(0.0, 2.0, 0.0),
+                rotation: Quat::IDENTITY,
+            },
+        );
+        normalized.insert(
+            HumanBoneName::Head,
+            PoseTransform {
+                translation: Vec3::ZERO,
+                rotation: Quat::from_rotation_z(0.5),
+            },
+        );
+
+        rig.set_normalized_pose(&normalized);
+        rig.apply_normalized_to_raw(&mut mock).unwrap();
+
+        assert!(mock.local_sets.iter().any(|(node, transform)| {
+            *node == NodeRef(1)
+                && transform
+                    .translation
+                    .abs_diff_eq(Vec3::new(0.0, 3.0, 0.0), 0.0001)
+        }));
+        assert!(mock.local_sets.iter().any(|(node, transform)| {
+            *node == NodeRef(2)
+                && (transform.rotation * Vec3::X)
+                    .abs_diff_eq(Quat::from_rotation_z(0.5) * Vec3::X, 0.0001)
+        }));
     }
 
     #[test]
@@ -1093,6 +1604,7 @@ mod tests {
                 vrm_core::Material {
                     name: Some("glow".to_owned()),
                     hdr_emissive_multiplier: Feature::Present(HdrEmissiveMultiplier(4.0)),
+                    khr_emissive_strength: Feature::Present(EmissiveStrength(6.0)),
                     ..vrm_core::Material::default()
                 },
             ],
@@ -1102,7 +1614,7 @@ mod tests {
 
         apply_hdr_emissive_multipliers(&mut mock, &document).unwrap();
 
-        assert_eq!(mock.emissive_intensities, vec![(MaterialRef(1), 4.0)]);
+        assert_eq!(mock.emissive_intensities, vec![(MaterialRef(1), 6.0)]);
     }
 
     #[test]

@@ -350,6 +350,7 @@ name = "vrm-adapter"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "indexmap",
  "thiserror",
  "vrm-core",
  "vrm-runtime",
