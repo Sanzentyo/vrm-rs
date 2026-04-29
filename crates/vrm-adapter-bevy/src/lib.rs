@@ -4,7 +4,10 @@
 //! plugin marker types. Runtime systems can build on these without pulling
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
-use bevy::prelude::{App, Asset, Entity, Handle, Plugin, Resource};
+use bevy::prelude::{
+    App, Asset, Component, Entity, Handle, Plugin, Quat as BevyQuat, Query, Res, Resource,
+    Transform as BevyTransform, Update, Vec3 as BevyVec3,
+};
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
@@ -52,7 +55,37 @@ pub struct BevyTextureTransform {
     pub offset: Option<[f32; 2]>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
+pub struct VrmNode(pub NodeRef);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
+pub struct VrmMaterialBinding(pub MaterialRef);
+
+#[derive(Clone, Debug, Default, PartialEq, Component)]
+pub struct BevyVrmMorphWeights {
+    pub weights: HashMap<usize, f32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Component)]
+pub struct BevyVrmMaterialState {
+    pub colors: HashMap<String, Vec<f32>>,
+    pub texture_transform: Option<BevyTextureTransform>,
+    pub emissive_intensity: Option<f32>,
+    pub mtoon_pipeline_passes: Vec<MtoonPipelinePass>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
+pub struct BevyVrmVisibility {
+    pub visible: bool,
+}
+
+impl Default for BevyVrmVisibility {
+    fn default() -> Self {
+        Self { visible: true }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Resource)]
 pub struct BevyRuntimeSceneState {
     pub nodes: BevyNodeMap,
     parents: HashMap<NodeRef, NodeRef>,
@@ -324,6 +357,79 @@ impl MtoonPipelineAccess for BevyRuntimeSceneState {
     }
 }
 
+pub fn to_bevy_transform(transform: Transform) -> BevyTransform {
+    BevyTransform {
+        translation: BevyVec3::from_array(transform.translation.to_array()),
+        rotation: BevyQuat::from_array(transform.rotation.to_array()),
+        scale: BevyVec3::from_array(transform.scale.to_array()),
+    }
+}
+
+pub fn from_bevy_transform(transform: &BevyTransform) -> Transform {
+    Transform {
+        translation: Vec3::from_array(transform.translation.to_array()),
+        rotation: Quat::from_array(transform.rotation.to_array()),
+        scale: Vec3::from_array(transform.scale.to_array()),
+    }
+}
+
+pub fn write_scene_state_transforms(
+    scene: Res<BevyRuntimeSceneState>,
+    mut query: Query<(&VrmNode, &mut BevyTransform)>,
+) {
+    for (node, mut transform) in &mut query {
+        if let Ok(local) = scene.local_transform(node.0) {
+            *transform = to_bevy_transform(local);
+        }
+    }
+}
+
+pub fn write_scene_state_visibility(
+    scene: Res<BevyRuntimeSceneState>,
+    mut query: Query<(&VrmNode, &mut BevyVrmVisibility)>,
+) {
+    for (node, mut visibility) in &mut query {
+        if let Ok(visible) = scene.is_visible(node.0) {
+            visibility.visible = visible;
+        }
+    }
+}
+
+pub fn write_scene_state_morph_weights(
+    scene: Res<BevyRuntimeSceneState>,
+    mut query: Query<(&VrmNode, &mut BevyVrmMorphWeights)>,
+) {
+    for (node, mut morphs) in &mut query {
+        morphs.weights = scene
+            .morph_weights
+            .iter()
+            .filter_map(|((candidate, index), weight)| {
+                (*candidate == node.0).then_some((*index, *weight))
+            })
+            .collect();
+    }
+}
+
+pub fn write_scene_state_materials(
+    scene: Res<BevyRuntimeSceneState>,
+    mut query: Query<(&VrmMaterialBinding, &mut BevyVrmMaterialState)>,
+) {
+    for (binding, mut material) in &mut query {
+        material.colors = scene
+            .material_colors
+            .iter()
+            .filter_map(|((candidate, property), color)| {
+                (*candidate == binding.0).then_some((property.clone(), color.clone()))
+            })
+            .collect();
+        material.texture_transform = scene.texture_transform(binding.0);
+        material.emissive_intensity = scene.emissive_intensity(binding.0);
+        material.mtoon_pipeline_passes = scene
+            .mtoon_pipeline_passes(binding.0)
+            .map_or_else(Vec::new, ToOwned::to_owned);
+    }
+}
+
 fn compose_transform(parent: Transform, local: Transform) -> Transform {
     Transform {
         translation: parent.translation + parent.rotation * (parent.scale * local.translation),
@@ -499,7 +605,17 @@ pub struct VrmRuntimePlugin {
 
 impl Plugin for VrmRuntimePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(self.config.clone());
+        app.insert_resource(self.config.clone())
+            .init_resource::<BevyRuntimeSceneState>()
+            .add_systems(
+                Update,
+                (
+                    write_scene_state_transforms,
+                    write_scene_state_visibility,
+                    write_scene_state_morph_weights,
+                    write_scene_state_materials,
+                ),
+            );
     }
 }
 
@@ -828,5 +944,81 @@ mod tests {
         });
 
         assert_eq!(app.world().resource::<BevyVrmRuntimeConfig>(), &config);
+    }
+
+    #[test]
+    fn runtime_plugin_writes_scene_state_to_bevy_components() {
+        let mut app = App::new();
+        app.add_plugins(VrmRuntimePlugin::default());
+
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            Entity::from_raw_u32(1).unwrap(),
+            Transform {
+                translation: Vec3::new(1.0, 2.0, 3.0),
+                rotation: Quat::from_rotation_z(0.5),
+                scale: Vec3::splat(2.0),
+            },
+        );
+        scene.set_node_visible(NodeRef(0), false).unwrap();
+        scene.set_morph_weight(NodeRef(0), 4, 75.0).unwrap();
+        scene
+            .set_material_color(MaterialRef(2), "_Color", &[0.1, 0.2, 0.3, 0.4])
+            .unwrap();
+        scene.set_emissive_intensity(MaterialRef(2), 5.0).unwrap();
+        let passes = MtoonMaterial::default().pipeline_passes();
+        scene
+            .set_mtoon_pipeline_passes(MaterialRef(2), &passes)
+            .unwrap();
+        *app.world_mut().resource_mut::<BevyRuntimeSceneState>() = scene;
+
+        let node_entity = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(0)),
+                BevyTransform::default(),
+                BevyVrmVisibility::default(),
+                BevyVrmMorphWeights::default(),
+            ))
+            .id();
+        let material_entity = app
+            .world_mut()
+            .spawn((
+                VrmMaterialBinding(MaterialRef(2)),
+                BevyVrmMaterialState::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let node = app.world().entity(node_entity);
+        let transform = node.get::<BevyTransform>().unwrap();
+        assert_eq!(transform.translation, BevyVec3::new(1.0, 2.0, 3.0));
+        assert_eq!(transform.scale, BevyVec3::splat(2.0));
+        assert!(!node.get::<BevyVrmVisibility>().unwrap().visible);
+        assert_eq!(
+            node.get::<BevyVrmMorphWeights>()
+                .unwrap()
+                .weights
+                .get(&4)
+                .copied(),
+            Some(75.0)
+        );
+
+        let material = app
+            .world()
+            .entity(material_entity)
+            .get::<BevyVrmMaterialState>()
+            .unwrap();
+        assert_eq!(
+            material.colors.get("_Color").map(Vec::as_slice),
+            Some([0.1, 0.2, 0.3, 0.4].as_slice())
+        );
+        assert_eq!(material.emissive_intensity, Some(5.0));
+        assert!(matches!(
+            material.mtoon_pipeline_passes.as_slice(),
+            [MtoonPipelinePass::Base(_)]
+        ));
     }
 }

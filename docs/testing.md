@@ -78,8 +78,8 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 73.88% | 77.83% |
-| `vrm-adapter-bevy` | 90.97% | 92.04% |
+| Workspace total | 74.23% | 78.17% |
+| `vrm-adapter-bevy` | 91.73% | 93.63% |
 | `vrm-adapter` | 62.68% | 72.74% |
 | `vrm-core` | 70.95% | 78.06% |
 | `vrm-io` | 64.57% | 60.46% |
@@ -126,6 +126,7 @@ Latest VRM0 Alicia expansion:
 6. The Bevy adapter now drives both high-level runtime paths in tests: `tick` for expression, first-person, MToon, and emissive writeback, and `tick_with_spring_parity` for `SpringRestMap` capture, center-space spring state, joint rotation writeback, and synchronized child world transforms.
 7. The Bevy adapter scene state now records morph target weights, material color writes, texture transforms, emissive intensity writes, and MToon pipeline passes through the same adapter traits used by the runtime driver.
 8. The Bevy adapter now has a `VrmRuntimeDriver` integration test that ticks the driver against `BevyRuntimeSceneState` and observes expression, MToon, emissive, and first-person visibility side effects.
+9. The Bevy plugin now installs concrete ECS writeback systems tested through `App::update`, covering Bevy transform components plus lightweight visibility, morph-weight, and material-state components.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 

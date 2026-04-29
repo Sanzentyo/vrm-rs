@@ -107,6 +107,8 @@
 - Re-measured coverage after the Bevy runtime driver integration test: workspace line coverage is 77.64%, and `vrm-adapter-bevy` line coverage is 90.22%.
 - Added Bevy-side spring parity driver coverage. `BevyRuntimeSceneState` now has a test path that captures `SpringRestMap`, initializes center-space spring runtime state, runs `VrmRuntimeDriver::tick_with_spring_parity`, and observes both local joint rotation writeback and synchronized child world transforms.
 - Re-measured coverage after Bevy spring parity driver coverage: workspace line coverage is 77.83%, and `vrm-adapter-bevy` line coverage is 92.04%.
+- Added the first concrete Bevy ECS writeback systems. `VrmRuntimePlugin` now installs a `BevyRuntimeSceneState` resource plus systems that write local transforms, visibility, morph weights, material colors, texture transforms, emissive intensity, and MToon pass selections into lightweight Bevy components without enabling Bevy render features.
+- Re-measured coverage after Bevy ECS writeback systems: workspace line coverage is 78.17%, and `vrm-adapter-bevy` line coverage is 93.63%.
 
 Open work:
 
