@@ -122,7 +122,8 @@
 - Extended Bevy ECS readback to consume real `ChildOf` hierarchy components. `read_bevy_transforms_into_scene_state` now derives parent/child links from spawned `VrmNode` entities, and the spring parity integration test no longer seeds `BevyRuntimeSceneState` parents manually.
 - Added optional Bevy material asset writeback. Renderer integrations can implement `VrmBevyMaterialAsset` for their own Bevy `Asset` type, attach `BevyVrmMaterialAssetHandle`, and run `write_scene_state_to_material_assets` to apply colors, texture transforms, emissive intensity, and MToon pass state without making the default plugin depend on Bevy render assets.
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
-- Re-measured coverage after Bevy morph target asset writeback: workspace line coverage is 79.34%, and `vrm-adapter-bevy` line coverage is 95.30%.
+- Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
+- Re-measured coverage after Bevy first-person auto mesh handling: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%.
 
 Open work:
 

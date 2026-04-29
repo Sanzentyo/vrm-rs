@@ -12,13 +12,16 @@ use bevy::prelude::{
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
-    ConstraintRestAccess, MaterialAccess, MorphTargetAccess, MtoonMaterialDescriptor,
-    MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph, SpringRestMap, TransformAccess,
-    ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate,
+    ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess,
+    MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph,
+    SkinVertexInfluence, SpringRestMap, TransformAccess, ViewMode, VisibilityAccess,
+    VrmRuntimeDriver, WorldTransformAccess, WorldTransformUpdate, is_head_or_descendant,
+    plan_headless_mesh,
 };
 use vrm_core::Transform;
 use vrm_core::{
-    MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonPipelinePass, NodeRef, TextureRef, VrmDocument,
+    FirstPersonAnnotation, MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonPipelinePass, NodeRef,
+    TextureRef, VrmDocument,
 };
 use vrm_runtime::{CenterSpringRuntimeState, ConstraintRestState, RuntimeEvents};
 
@@ -79,6 +82,45 @@ pub struct BevyVrmMorphTargetAssetHandle<M: Asset> {
 impl<M: Asset> BevyVrmMorphTargetAssetHandle<M> {
     pub fn new(handle: Handle<M>) -> Self {
         Self { handle }
+    }
+}
+
+pub trait VrmBevyFirstPersonMeshAsset: Asset + Clone {
+    fn apply_headless_mesh_plan(&mut self, plan: &HeadlessMeshPlan);
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BevyVrmFirstPersonMeshMode {
+    #[default]
+    Both,
+    ThirdPersonOnly,
+}
+
+#[derive(Clone, Debug, PartialEq, Component)]
+pub struct BevyVrmFirstPersonMesh<M: Asset> {
+    pub source: Handle<M>,
+    pub first_person: Option<Handle<M>>,
+    pub skin_joints: Vec<NodeRef>,
+    pub indices: Vec<u32>,
+    pub influences: Vec<SkinVertexInfluence>,
+    pub mode: BevyVrmFirstPersonMeshMode,
+}
+
+impl<M: Asset> BevyVrmFirstPersonMesh<M> {
+    pub fn new(
+        source: Handle<M>,
+        skin_joints: Vec<NodeRef>,
+        indices: Vec<u32>,
+        influences: Vec<SkinVertexInfluence>,
+    ) -> Self {
+        Self {
+            source,
+            first_person: None,
+            skin_joints,
+            indices,
+            influences,
+            mode: BevyVrmFirstPersonMeshMode::Both,
+        }
     }
 }
 
@@ -640,6 +682,74 @@ pub fn write_scene_state_to_morph_assets<M: VrmBevyMorphTargetAsset>(
     }
 }
 
+pub type BevyFirstPersonMeshItem<'a, M> = (&'a VrmNode, &'a mut BevyVrmFirstPersonMesh<M>);
+
+pub fn apply_first_person_auto_to_mesh_assets<M: VrmBevyFirstPersonMeshAsset>(
+    scene: Res<BevyRuntimeSceneState>,
+    document: Res<BevyVrmDocument>,
+    config: Res<BevyVrmRuntimeConfig>,
+    mut assets: ResMut<Assets<M>>,
+    mut query: Query<BevyFirstPersonMeshItem<'_, M>>,
+) {
+    let Some(first_person) = document.document.first_person.as_ref() else {
+        return;
+    };
+
+    let auto_roots = first_person
+        .mesh_annotations
+        .iter()
+        .filter_map(|annotation| {
+            matches!(annotation.kind, FirstPersonAnnotation::Auto).then_some(annotation.node)
+        })
+        .collect::<Vec<_>>();
+    if auto_roots.is_empty() {
+        return;
+    }
+
+    for (node, mut mesh) in &mut query {
+        if !auto_roots
+            .iter()
+            .any(|root| is_same_or_descendant(&scene, node.0, *root))
+        {
+            continue;
+        }
+
+        if config.view_mode == ViewMode::ThirdPerson {
+            mesh.mode = BevyVrmFirstPersonMeshMode::Both;
+            continue;
+        }
+
+        let erase_joints = mesh
+            .skin_joints
+            .iter()
+            .enumerate()
+            .filter_map(|(index, joint)| {
+                is_head_or_descendant(&*scene, &document.document, *joint)
+                    .ok()
+                    .and_then(|erase| erase.then_some(index))
+            })
+            .collect::<HashSet<_>>();
+
+        if erase_joints.is_empty() {
+            mesh.mode = BevyVrmFirstPersonMeshMode::Both;
+            continue;
+        }
+
+        let plan = plan_headless_mesh(&mesh.indices, &mesh.influences, &erase_joints);
+        if let Some(mut headless) = assets.get(&mesh.source).cloned() {
+            headless.apply_headless_mesh_plan(&plan);
+            if let Some(handle) = &mesh.first_person
+                && let Some(existing) = assets.get_mut(handle.id())
+            {
+                *existing = headless;
+            } else {
+                mesh.first_person = Some(assets.add(headless));
+            }
+            mesh.mode = BevyVrmFirstPersonMeshMode::ThirdPersonOnly;
+        }
+    }
+}
+
 pub fn write_scene_state_materials(
     scene: Res<BevyRuntimeSceneState>,
     mut query: Query<(&VrmMaterialBinding, &mut BevyVrmMaterialState)>,
@@ -706,6 +816,21 @@ fn compose_transform(parent: Transform, local: Transform) -> Transform {
         rotation: parent.rotation * local.rotation,
         scale: parent.scale * local.scale,
     }
+}
+
+fn is_same_or_descendant(scene: &BevyRuntimeSceneState, node: NodeRef, ancestor: NodeRef) -> bool {
+    let mut current = Some(node);
+    let mut visited = HashSet::new();
+    while let Some(node) = current {
+        if node == ancestor {
+            return true;
+        }
+        if !visited.insert(node) {
+            return false;
+        }
+        current = scene.parent(node).ok().flatten();
+    }
+    false
 }
 
 #[derive(Clone, Debug)]
@@ -1714,6 +1839,141 @@ mod tests {
         assert_eq!(asset.weights.get(&1).copied(), Some(20.0));
         assert_eq!(asset.weights.get(&3).copied(), Some(80.0));
         assert!(!asset.weights.contains_key(&4));
+    }
+
+    #[derive(Asset, Clone, Debug, Default, PartialEq, TypePath)]
+    struct TestFirstPersonMeshAsset {
+        indices: Vec<u32>,
+        planned: Option<HeadlessMeshPlan>,
+    }
+
+    impl VrmBevyFirstPersonMeshAsset for TestFirstPersonMeshAsset {
+        fn apply_headless_mesh_plan(&mut self, plan: &HeadlessMeshPlan) {
+            self.indices = plan.indices.clone();
+            self.planned = Some(plan.clone());
+        }
+    }
+
+    #[test]
+    fn first_person_auto_clones_headless_mesh_asset() {
+        let mut app = App::new();
+        app.init_resource::<BevyRuntimeSceneState>()
+            .init_resource::<BevyVrmDocument>()
+            .init_resource::<BevyVrmRuntimeConfig>()
+            .init_resource::<Assets<TestFirstPersonMeshAsset>>()
+            .add_systems(
+                Update,
+                apply_first_person_auto_to_mesh_assets::<TestFirstPersonMeshAsset>,
+            );
+
+        *app.world_mut().resource_mut::<BevyVrmRuntimeConfig>() = BevyVrmRuntimeConfig {
+            view_mode: ViewMode::FirstPerson,
+            ..BevyVrmRuntimeConfig::default()
+        };
+        *app.world_mut().resource_mut::<BevyVrmDocument>() = BevyVrmDocument {
+            document: VrmDocument {
+                humanoid: vrm_core::Humanoid {
+                    bones: [(
+                        vrm_core::HumanBoneName::Head,
+                        vrm_core::HumanBone {
+                            node: NodeRef(2),
+                            rest: Transform::default(),
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+                first_person: Feature::Present(vrm_core::FirstPerson {
+                    mesh_annotations: vec![vrm_core::FirstPersonMeshAnnotation {
+                        node: NodeRef(0),
+                        kind: FirstPersonAnnotation::Auto,
+                    }],
+                }),
+                ..VrmDocument::default()
+            },
+        };
+
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            Entity::from_raw_u32(20).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(1),
+            Entity::from_raw_u32(21).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(2),
+            Entity::from_raw_u32(22).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(3),
+            Entity::from_raw_u32(23).unwrap(),
+            Transform::default(),
+        );
+        scene.set_parent(NodeRef(1), Some(NodeRef(0))).unwrap();
+        scene.set_parent(NodeRef(2), Some(NodeRef(0))).unwrap();
+        scene.set_parent(NodeRef(3), Some(NodeRef(0))).unwrap();
+        *app.world_mut().resource_mut::<BevyRuntimeSceneState>() = scene;
+
+        let source = app
+            .world_mut()
+            .resource_mut::<Assets<TestFirstPersonMeshAsset>>()
+            .add(TestFirstPersonMeshAsset {
+                indices: vec![0, 1, 2, 1, 2, 3],
+                planned: None,
+            });
+        let entity = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(1)),
+                BevyVrmFirstPersonMesh::new(
+                    source.clone(),
+                    vec![NodeRef(2), NodeRef(3)],
+                    vec![0, 1, 2, 1, 2, 3],
+                    vec![
+                        SkinVertexInfluence {
+                            joints: [0, 0, 0, 0],
+                            weights: [1.0, 0.0, 0.0, 0.0],
+                        },
+                        SkinVertexInfluence {
+                            joints: [1, 0, 0, 0],
+                            weights: [1.0, 0.0, 0.0, 0.0],
+                        },
+                        SkinVertexInfluence {
+                            joints: [1, 0, 0, 0],
+                            weights: [1.0, 0.0, 0.0, 0.0],
+                        },
+                        SkinVertexInfluence {
+                            joints: [1, 0, 0, 0],
+                            weights: [1.0, 0.0, 0.0, 0.0],
+                        },
+                    ],
+                ),
+            ))
+            .id();
+
+        app.update();
+
+        let mesh = app
+            .world()
+            .entity(entity)
+            .get::<BevyVrmFirstPersonMesh<TestFirstPersonMeshAsset>>()
+            .unwrap();
+        assert_eq!(mesh.mode, BevyVrmFirstPersonMeshMode::ThirdPersonOnly);
+        let first_person = mesh.first_person.clone().unwrap();
+
+        let assets = app.world().resource::<Assets<TestFirstPersonMeshAsset>>();
+        assert_eq!(assets.get(&source).unwrap().indices, vec![0, 1, 2, 1, 2, 3]);
+        let headless = assets.get(&first_person).unwrap();
+        assert_eq!(headless.indices, vec![1, 2, 3]);
+        assert_eq!(
+            headless.planned.as_ref().map(|plan| plan.removed_triangles),
+            Some(1)
+        );
     }
 
     #[test]
