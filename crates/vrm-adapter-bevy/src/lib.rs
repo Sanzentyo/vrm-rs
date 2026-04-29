@@ -128,6 +128,55 @@ impl BevyVrmSpringParityState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BevyVrmSpringRecaptureReason {
+    ModelChanged,
+    RestPoseChanged,
+    SpringSetupChanged,
+    ManualReset,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
+pub struct BevyVrmSpringParityRecapture {
+    reasons: Vec<BevyVrmSpringRecaptureReason>,
+}
+
+impl BevyVrmSpringParityRecapture {
+    pub fn request(&mut self, reason: BevyVrmSpringRecaptureReason) {
+        if !self.reasons.contains(&reason) {
+            self.reasons.push(reason);
+        }
+    }
+
+    pub fn request_model_changed(&mut self) {
+        self.request(BevyVrmSpringRecaptureReason::ModelChanged);
+    }
+
+    pub fn request_rest_pose_changed(&mut self) {
+        self.request(BevyVrmSpringRecaptureReason::RestPoseChanged);
+    }
+
+    pub fn request_spring_setup_changed(&mut self) {
+        self.request(BevyVrmSpringRecaptureReason::SpringSetupChanged);
+    }
+
+    pub fn request_manual_reset(&mut self) {
+        self.request(BevyVrmSpringRecaptureReason::ManualReset);
+    }
+
+    pub fn is_requested(&self) -> bool {
+        !self.reasons.is_empty()
+    }
+
+    pub fn reasons(&self) -> &[BevyVrmSpringRecaptureReason] {
+        &self.reasons
+    }
+
+    pub fn take(&mut self) -> Vec<BevyVrmSpringRecaptureReason> {
+        std::mem::take(&mut self.reasons)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Resource)]
 pub struct BevyVrmRuntimeError {
     pub message: Option<String>,
@@ -428,8 +477,14 @@ pub fn initialize_spring_parity_state(
     scene: Res<BevyRuntimeSceneState>,
     document: Res<BevyVrmDocument>,
     mut spring: ResMut<BevyVrmSpringParityState>,
+    mut recapture: ResMut<BevyVrmSpringParityRecapture>,
     mut last_error: ResMut<BevyVrmRuntimeError>,
 ) {
+    let recapture_requested = recapture.is_requested();
+    if recapture_requested {
+        spring.clear();
+        recapture.take();
+    }
     if spring.rest.is_some() && spring.runtime.is_some() {
         return;
     }
@@ -726,6 +781,7 @@ impl Plugin for VrmRuntimePlugin {
             .init_resource::<BevyVrmRuntimeEvents>()
             .init_resource::<BevyVrmRuntimeState>()
             .init_resource::<BevyVrmSpringParityState>()
+            .init_resource::<BevyVrmSpringParityRecapture>()
             .init_resource::<BevyVrmRuntimeError>()
             .add_systems(
                 Update,
@@ -1261,6 +1317,99 @@ mod tests {
             .get::<BevyTransform>()
             .unwrap();
         assert_ne!(transform.rotation, BevyQuat::IDENTITY);
+    }
+
+    #[test]
+    fn spring_parity_recapture_marker_rebuilds_state() {
+        let mut app = App::new();
+        app.init_resource::<BevyRuntimeSceneState>()
+            .init_resource::<BevyVrmDocument>()
+            .init_resource::<BevyVrmSpringParityState>()
+            .init_resource::<BevyVrmSpringParityRecapture>()
+            .init_resource::<BevyVrmRuntimeError>()
+            .add_systems(Update, initialize_spring_parity_state);
+
+        *app.world_mut().resource_mut::<BevyVrmDocument>() = BevyVrmDocument {
+            document: VrmDocument {
+                spring_bone: Feature::Present(SpringBoneSystem {
+                    springs: vec![Spring {
+                        joints: vec![SpringJoint {
+                            node: NodeRef(1),
+                            ..SpringJoint::default()
+                        }],
+                        ..Spring::default()
+                    }],
+                    ..SpringBoneSystem::default()
+                }),
+                ..VrmDocument::default()
+            },
+        };
+        {
+            let mut scene = app.world_mut().resource_mut::<BevyRuntimeSceneState>();
+            scene.insert_node(
+                NodeRef(1),
+                Entity::from_raw_u32(1).unwrap(),
+                Transform::default(),
+            );
+            scene.insert_node(
+                NodeRef(2),
+                Entity::from_raw_u32(2).unwrap(),
+                Transform {
+                    translation: Vec3::Y,
+                    ..Transform::default()
+                },
+            );
+            scene.set_parent(NodeRef(2), Some(NodeRef(1))).unwrap();
+            scene.update_world_transforms().unwrap();
+        }
+
+        app.update();
+        let first = app
+            .world()
+            .resource::<BevyVrmSpringParityState>()
+            .rest
+            .clone();
+        assert!(first.is_some());
+
+        {
+            let mut scene = app.world_mut().resource_mut::<BevyRuntimeSceneState>();
+            scene
+                .set_local_transform(
+                    NodeRef(2),
+                    Transform {
+                        translation: Vec3::Z,
+                        ..Transform::default()
+                    },
+                )
+                .unwrap();
+            scene.update_world_transforms().unwrap();
+        }
+        app.world_mut()
+            .resource_mut::<BevyVrmSpringParityRecapture>()
+            .request_rest_pose_changed();
+        assert!(
+            app.world()
+                .resource::<BevyVrmSpringParityRecapture>()
+                .is_requested()
+        );
+
+        app.update();
+
+        let recapture = app.world().resource::<BevyVrmSpringParityRecapture>();
+        assert!(!recapture.is_requested());
+        let second = app
+            .world()
+            .resource::<BevyVrmSpringParityState>()
+            .rest
+            .clone();
+        assert!(second.is_some());
+        assert_ne!(first, second);
+        assert!(
+            app.world()
+                .resource::<BevyVrmRuntimeError>()
+                .message
+                .is_none()
+        );
     }
 
     #[test]

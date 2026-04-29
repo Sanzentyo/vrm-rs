@@ -78,8 +78,8 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 74.89% | 78.84% |
-| `vrm-adapter-bevy` | 92.77% | 94.82% |
+| Workspace total | 75.02% | 79.01% |
+| `vrm-adapter-bevy` | 92.39% | 94.65% |
 | `vrm-adapter` | 63.07% | 72.97% |
 | `vrm-core` | 70.95% | 78.06% |
 | `vrm-io` | 64.57% | 60.46% |
@@ -130,6 +130,7 @@ Latest VRM0 Alicia expansion:
 10. Bevy ECS readback is covered by a helper-system test that copies `VrmNode`, `Transform`, and `BevyVrmVisibility` components into `BevyRuntimeSceneState` for driver input staging.
 11. Bevy runtime tick integration is covered by a full `App::update` path: read ECS transform state, run `VrmRuntimeDriver` from Bevy resources, then write expression, MToon, and emissive outputs back into lightweight Bevy components.
 12. Bevy spring parity integration is covered by a full `App::update` path that reads ECS transforms, captures `SpringRestMap`, initializes center-space spring state, runs the runtime tick, and writes the solved joint rotation back to a Bevy `Transform`.
+13. Bevy spring parity recapture is covered by a marker-resource test that requests a rest-pose recapture and verifies the captured `SpringRestMap` is rebuilt without callers manually clearing `BevyVrmSpringParityState`.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 

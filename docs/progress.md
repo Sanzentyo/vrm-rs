@@ -115,6 +115,8 @@
 - Re-measured coverage after Bevy runtime tick system integration: workspace line coverage is 78.68%, and `vrm-adapter-bevy` line coverage is 95.37%.
 - Added `BevyVrmSpringParityState` and `initialize_spring_parity_state` so Bevy apps can capture `SpringRestMap` plus center-space spring runtime state after ECS readback and feed it into `tick_scene_state_runtime`. The Bevy integration test now covers readback, spring rest capture, parity tick, and transform writeback through `App::update`.
 - Re-measured coverage after Bevy spring parity resource integration: workspace line coverage is 78.84%, and `vrm-adapter-bevy` line coverage is 94.82%.
+- Added `BevyVrmSpringParityRecapture` with explicit model/rest-pose/spring-setup/manual-reset reasons. `initialize_spring_parity_state` now consumes this marker resource to rebuild `SpringRestMap` and center-space runtime state instead of requiring callers to clear the spring state directly.
+- Re-measured coverage after Bevy spring recapture rules: workspace line coverage is 79.01%, and `vrm-adapter-bevy` line coverage is 94.65%.
 
 Open work:
 

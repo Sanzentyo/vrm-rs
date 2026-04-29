@@ -21,7 +21,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 - [ ] Read real Bevy hierarchy into `BevyRuntimeSceneState`.
   - Done when `VrmNode` entities can derive parent/child links from Bevy ECS hierarchy components and spring/constraint/first-person tests no longer need manual `set_parent` setup.
-- [ ] Make `BevyVrmSpringParityState` recapture rules explicit.
+- [x] Make `BevyVrmSpringParityState` recapture rules explicit.
   - Done when model changes, rest-pose changes, spring setup changes, and manual reset are represented by a small API or marker resource instead of requiring callers to remember `clear`.
 - [ ] Write `BevyVrmMaterialState` into renderer-facing material assets.
   - Done when at least one optional system maps material state into Bevy material assets while preserving the current render-feature-light default path.
