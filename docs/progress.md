@@ -97,6 +97,8 @@
 - Expanded renderer-facing MToon material descriptors with base color, emissive factor, cutoff, receive shadow rate, shading grade, light color attenuation, matcap, parametric rim, rim lighting, and outline lighting parameters.
 - Mapped those additional MToon parameters from VRM0 legacy material float/vector properties and VRMC_materials_mtoon 1.0 where the spec exposes them. Alicia external fixture assertions now check the VRM0 legacy values on a real material.
 - Re-measured coverage after the MToon descriptor expansion: workspace line coverage is 76.78%, with `vrm-sans-io` at 92.41% and `vrm-core` at 78.06%.
+- Added `BevyMtoonMaterialPlan` in `vrm-adapter-bevy` so Bevy integrations can consume renderer-agnostic MToon descriptors as Bevy-facing material plans with pass kind, render order, alpha/cull/depth state, colors, emissive intensity, cutoff, texture references, and outline width.
+- Re-measured coverage after the Bevy material plan: workspace line coverage is 77.06%, and `vrm-adapter-bevy` line coverage is 85.63%.
 
 Open work:
 
@@ -116,4 +118,4 @@ Open work:
 - Full VRMA model application parity now has one external numeric fixture comparison; remaining work is broader VRMA fixture coverage and stricter channel/path diagnostics.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.
 - MToon pipeline/shader generation per renderer.
-- Real Bevy runtime trait implementations beyond the current registry/descriptor skeleton.
+- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan skeleton.

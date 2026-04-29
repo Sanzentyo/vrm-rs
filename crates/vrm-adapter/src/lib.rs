@@ -770,6 +770,7 @@ pub struct MtoonMaterialDescriptor {
     pub rim_lighting_mix_factor: f32,
     pub parametric_rim_fresnel_power_factor: f32,
     pub parametric_rim_lift_factor: f32,
+    pub outline_width_factor: f32,
     pub outline_color_factor: [f32; 3],
     pub outline_lighting_mix_factor: f32,
     pub uv_animation: vrm_core::UvAnimation,
@@ -1259,6 +1260,7 @@ fn mtoon_material_descriptor(
         rim_lighting_mix_factor: mtoon.rim_lighting_mix_factor,
         parametric_rim_fresnel_power_factor: mtoon.parametric_rim_fresnel_power_factor,
         parametric_rim_lift_factor: mtoon.parametric_rim_lift_factor,
+        outline_width_factor: mtoon.outline_width_factor,
         outline_color_factor: mtoon.outline_color_factor,
         outline_lighting_mix_factor: mtoon.outline_lighting_mix_factor,
         uv_animation: mtoon.uv_animation,
@@ -3003,6 +3005,7 @@ mod tests {
         assert_eq!(descriptors[0].rim_lighting_mix_factor, 0.5);
         assert_eq!(descriptors[0].parametric_rim_fresnel_power_factor, 2.0);
         assert_eq!(descriptors[0].parametric_rim_lift_factor, 0.1);
+        assert_eq!(descriptors[0].outline_width_factor, 0.01);
         assert_eq!(descriptors[0].outline_lighting_mix_factor, 0.6);
     }
 
