@@ -99,6 +99,8 @@
 - Re-measured coverage after the MToon descriptor expansion: workspace line coverage is 76.78%, with `vrm-sans-io` at 92.41% and `vrm-core` at 78.06%.
 - Added `BevyMtoonMaterialPlan` in `vrm-adapter-bevy` so Bevy integrations can consume renderer-agnostic MToon descriptors as Bevy-facing material plans with pass kind, render order, alpha/cull/depth state, colors, emissive intensity, cutoff, texture references, and outline width.
 - Re-measured coverage after the Bevy material plan: workspace line coverage is 77.06%, and `vrm-adapter-bevy` line coverage is 85.63%.
+- Added `BevyRuntimeSceneState`, a lightweight Bevy `Entity` keyed scene state implementing `SceneGraph`, `TransformAccess`, `WorldTransformAccess`, `WorldTransformUpdate`, and `VisibilityAccess`. This keeps the adapter compileable without Bevy render/transform features while giving runtime driver integration a concrete Bevy-facing target.
+- Re-measured coverage after the Bevy runtime scene state: workspace line coverage is 77.32%, and `vrm-adapter-bevy` line coverage is 88.08%.
 
 Open work:
 
@@ -118,4 +120,4 @@ Open work:
 - Full VRMA model application parity now has one external numeric fixture comparison; remaining work is broader VRMA fixture coverage and stricter channel/path diagnostics.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.
 - MToon pipeline/shader generation per renderer.
-- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan skeleton.
+- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan/scene-state skeleton, especially morph target and material writeback into concrete Bevy assets.

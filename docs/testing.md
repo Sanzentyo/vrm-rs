@@ -78,8 +78,8 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 72.79% | 77.06% |
-| `vrm-adapter-bevy` | 86.14% | 85.63% |
+| Workspace total | 73.18% | 77.32% |
+| `vrm-adapter-bevy` | 86.10% | 88.08% |
 | `vrm-adapter` | 62.68% | 72.74% |
 | `vrm-core` | 70.95% | 78.06% |
 | `vrm-io` | 64.57% | 60.46% |
@@ -122,6 +122,7 @@ Latest VRM0 Alicia expansion:
 2. Ignored IO fixture assertions now cover normalized humanoid aliases, first-person mesh annotations, Bone lookAt, VRM0 MToon material mapping, and VRM0 secondary animation conversion.
 3. Renderer-facing MToon descriptors now include the main VRM0/VRM1 materialization factors needed by Bevy/wgpu/ash adapters: base color, emissive factor, cutoff, receive shadow, shading grade, light attenuation, matcap, rim, and outline lighting.
 4. The Bevy adapter now has a `BevyMtoonMaterialPlan` conversion test that checks descriptor pass state, alpha/depth/cull state, base/shade/emissive colors, cutoff, texture references, and outline width without requiring Bevy render features.
+5. The Bevy adapter now has a `BevyRuntimeSceneState` trait-implementation test that checks parent/child traversal, local/world transform synchronization, local translation writes, and visibility writes without enabling Bevy render/transform features.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 

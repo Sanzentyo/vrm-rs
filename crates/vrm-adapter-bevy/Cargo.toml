@@ -6,5 +6,6 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 bevy.workspace = true
+glam.workspace = true
 vrm-adapter = { path = "../vrm-adapter" }
 vrm-core = { path = "../vrm-core" }
