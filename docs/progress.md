@@ -71,13 +71,14 @@
 - Extended the same ignored three-vrm golden file with raw and normalized humanoid rest/current poses, added a Seed-san pose parity test, and fixed the thumb proximal parent map to match three-vrm/spec normalized hierarchy.
 - Added deterministic three-vrm posed humanoid writeback scenarios for raw and normalized pose APIs. The ignored parity test now verifies Rust raw-pose writeback and normalized-to-raw writeback against three-vrm raw absolute output on Seed-san.
 - Added ignored spring golden directory parity so multiple external three-vrm spring golden files can be compared together. The local set now covers Seed-san's center-node springs and VRM1_Constraint_Twist_Sample's collider-heavy springs.
+- Started VRMA full application parity by adding `LookAtAccess`, `apply_look_at_frame`, and `apply_animation_frame_with_look_at` so sampled VRMA lookAt rotations can be delivered through the renderer-agnostic adapter path alongside humanoid and expression tracks.
 
 Open work:
 
 - Current ordered parity push requested on 2026-04-29:
   1. Add posed humanoid writeback golden scenarios against three-vrm. Done for Seed-san raw and normalized writeback.
   2. Add collider-heavy, center-node, and additional fixture spring bone golden parity. Done for Seed-san plus VRM1_Constraint_Twist_Sample external golden files.
-  3. Add full VRMA model-application parity for humanoid, hips translation, expression, and lookAt tracks.
+  3. Add full VRMA model-application parity for humanoid, hips translation, expression, and lookAt tracks. In progress: adapter lookAt writeback exists; external three-vrm VRMA golden comparison is next.
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
 - Humanoid pose parity now has snapshot/diff helpers plus Seed-san raw/normalized rest-state and posed writeback golden coverage.
 - Spring bone parity now has stable-length multi-frame rotation comparison plus all-joint center-tail state comparison on Seed-san and directory-level coverage for the collider-heavy VRM1_Constraint_Twist_Sample fixture. Remaining spring work is deeper solver investigation for the small collider-heavy numeric tolerance and more official sample breadth.

@@ -742,6 +742,12 @@ pub trait VisibilityAccess {
     fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error>;
 }
 
+pub trait LookAtAccess {
+    type Error;
+
+    fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error>;
+}
+
 pub trait AnimationSink {
     type Error;
 
@@ -1561,6 +1567,22 @@ where
     Ok(())
 }
 
+pub fn apply_animation_frame_with_look_at<T, E>(
+    target: &mut T,
+    document: &VrmDocument,
+    frame: &VrmAnimationFrame,
+) -> Result<(), AdapterError<E>>
+where
+    T: TransformAccess<Error = E>
+        + MorphTargetAccess<Error = E>
+        + MaterialAccess<Error = E>
+        + LookAtAccess<Error = E>,
+{
+    apply_animation_frame(target, document, frame)?;
+    apply_look_at_frame(target, frame)?;
+    Ok(())
+}
+
 pub fn apply_humanoid_frame<T, E>(
     target: &mut T,
     document: &VrmDocument,
@@ -1620,6 +1642,21 @@ where
         }
     }
 
+    Ok(())
+}
+
+pub fn apply_look_at_frame<T, E>(
+    target: &mut T,
+    frame: &VrmAnimationFrame,
+) -> Result<(), AdapterError<E>>
+where
+    T: LookAtAccess<Error = E>,
+{
+    if let Some(rotation) = frame.look_at {
+        target
+            .set_look_at_rotation(rotation)
+            .map_err(AdapterError::Target)?;
+    }
     Ok(())
 }
 
@@ -1684,6 +1721,7 @@ mod tests {
         rotations: Vec<(NodeRef, Quat)>,
         translations: Vec<(NodeRef, Vec3)>,
         local_sets: Vec<(NodeRef, Transform)>,
+        look_at_rotations: Vec<Quat>,
         mtoon_passes: Vec<(MaterialRef, Vec<MtoonPipelinePass>)>,
         emissive_intensities: Vec<(MaterialRef, f32)>,
         visibility: Vec<(NodeRef, bool)>,
@@ -1868,6 +1906,15 @@ mod tests {
 
         fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error> {
             self.visibility.push((node, visible));
+            Ok(())
+        }
+    }
+
+    impl LookAtAccess for Mock {
+        type Error = Infallible;
+
+        fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
+            self.look_at_rotations.push(rotation);
             Ok(())
         }
     }
@@ -2326,12 +2373,16 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            look_at_track: Some(RotationTrack {
+                times: vec![0.0],
+                values: vec![Quat::from_rotation_x(0.125)],
+            }),
             ..VrmAnimation::default()
         };
         let frame = sample_vrm_animation(&animation, 0.0);
         let mut mock = Mock::default();
 
-        apply_animation_frame(&mut mock, &document, &frame).unwrap();
+        apply_animation_frame_with_look_at(&mut mock, &document, &frame).unwrap();
 
         assert_eq!(mock.rotations.len(), 1);
         assert_eq!(mock.rotations[0].0, NodeRef(1));
@@ -2340,6 +2391,7 @@ mod tests {
         assert_eq!(mock.local_sets[0].0, NodeRef(0));
         assert_eq!(mock.local_sets[0].1.translation, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(mock.morphs, vec![(NodeRef(1), 0, 25.0)]);
+        assert_eq!(mock.look_at_rotations, vec![Quat::from_rotation_x(0.125)]);
     }
 
     #[test]
