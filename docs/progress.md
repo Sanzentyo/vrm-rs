@@ -120,7 +120,8 @@
 - Added `examples/mtoon_renderer_skeletons.rs`, a compile-run example that maps renderer-agnostic MToon descriptors into wgpu-like and ash-like pipeline keys/material tables without depending on either renderer crate. This completes the current TODO item for wgpu/ash MToon integration skeleton examples.
 - Re-measured coverage after the MToon renderer skeleton example: workspace line coverage remains 79.01%, and `vrm-adapter-bevy` line coverage remains 94.65%. The example is verified separately with `cargo run --example mtoon_renderer_skeletons`.
 - Extended Bevy ECS readback to consume real `ChildOf` hierarchy components. `read_bevy_transforms_into_scene_state` now derives parent/child links from spawned `VrmNode` entities, and the spring parity integration test no longer seeds `BevyRuntimeSceneState` parents manually.
-- Re-measured coverage after Bevy hierarchy readback: workspace line coverage is 79.07%, and `vrm-adapter-bevy` line coverage is 94.78%.
+- Added optional Bevy material asset writeback. Renderer integrations can implement `VrmBevyMaterialAsset` for their own Bevy `Asset` type, attach `BevyVrmMaterialAssetHandle`, and run `write_scene_state_to_material_assets` to apply colors, texture transforms, emissive intensity, and MToon pass state without making the default plugin depend on Bevy render assets.
+- Re-measured coverage after Bevy material asset writeback: workspace line coverage is 79.22%, and `vrm-adapter-bevy` line coverage is 95.08%.
 
 Open work:
 

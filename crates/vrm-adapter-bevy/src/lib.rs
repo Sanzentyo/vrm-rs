@@ -5,8 +5,9 @@
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
 use bevy::prelude::{
-    App, Asset, ChildOf, Component, Entity, Handle, IntoScheduleConfigs, Plugin, Quat as BevyQuat,
-    Query, Res, ResMut, Resource, Transform as BevyTransform, Update, Vec3 as BevyVec3,
+    App, Asset, Assets, ChildOf, Component, Entity, Handle, IntoScheduleConfigs, Plugin,
+    Quat as BevyQuat, Query, Res, ResMut, Resource, Transform as BevyTransform, Update,
+    Vec3 as BevyVec3,
 };
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
@@ -72,6 +73,21 @@ pub struct BevyVrmMaterialState {
     pub texture_transform: Option<BevyTextureTransform>,
     pub emissive_intensity: Option<f32>,
     pub mtoon_pipeline_passes: Vec<MtoonPipelinePass>,
+}
+
+pub trait VrmBevyMaterialAsset: Asset {
+    fn apply_vrm_material_state(&mut self, material: MaterialRef, state: &BevyVrmMaterialState);
+}
+
+#[derive(Clone, Debug, PartialEq, Component)]
+pub struct BevyVrmMaterialAssetHandle<M: Asset> {
+    pub handle: Handle<M>,
+}
+
+impl<M: Asset> BevyVrmMaterialAssetHandle<M> {
+    pub fn new(handle: Handle<M>) -> Self {
+        Self { handle }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
@@ -239,6 +255,23 @@ impl BevyRuntimeSceneState {
 
     pub fn mtoon_pipeline_passes(&self, material: MaterialRef) -> Option<&[MtoonPipelinePass]> {
         self.mtoon_pipeline_passes.get(&material).map(Vec::as_slice)
+    }
+
+    pub fn material_state(&self, material: MaterialRef) -> BevyVrmMaterialState {
+        BevyVrmMaterialState {
+            colors: self
+                .material_colors
+                .iter()
+                .filter_map(|((candidate, property), color)| {
+                    (*candidate == material).then_some((property.clone(), color.clone()))
+                })
+                .collect(),
+            texture_transform: self.texture_transform(material),
+            emissive_intensity: self.emissive_intensity(material),
+            mtoon_pipeline_passes: self
+                .mtoon_pipeline_passes(material)
+                .map_or_else(Vec::new, ToOwned::to_owned),
+        }
     }
 
     fn entity(&self, node: NodeRef) -> Result<Entity, BevyAdapterError> {
@@ -580,18 +613,22 @@ pub fn write_scene_state_materials(
     mut query: Query<(&VrmMaterialBinding, &mut BevyVrmMaterialState)>,
 ) {
     for (binding, mut material) in &mut query {
-        material.colors = scene
-            .material_colors
-            .iter()
-            .filter_map(|((candidate, property), color)| {
-                (*candidate == binding.0).then_some((property.clone(), color.clone()))
-            })
-            .collect();
-        material.texture_transform = scene.texture_transform(binding.0);
-        material.emissive_intensity = scene.emissive_intensity(binding.0);
-        material.mtoon_pipeline_passes = scene
-            .mtoon_pipeline_passes(binding.0)
-            .map_or_else(Vec::new, ToOwned::to_owned);
+        *material = scene.material_state(binding.0);
+    }
+}
+
+pub type BevyMaterialAssetWriteItem<'a, M> =
+    (&'a VrmMaterialBinding, &'a BevyVrmMaterialAssetHandle<M>);
+
+pub fn write_scene_state_to_material_assets<M: VrmBevyMaterialAsset>(
+    scene: Res<BevyRuntimeSceneState>,
+    mut assets: ResMut<Assets<M>>,
+    query: Query<BevyMaterialAssetWriteItem<'_, M>>,
+) {
+    for (binding, material_asset) in &query {
+        if let Some(asset) = assets.get_mut(material_asset.handle.id()) {
+            asset.apply_vrm_material_state(binding.0, &scene.material_state(binding.0));
+        }
     }
 }
 
@@ -833,6 +870,7 @@ impl Plugin for VrmRuntimePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::prelude::TypePath;
     use vrm_adapter::{SpringRestMap, VrmRuntimeDriver, apply_mtoon_pipeline_hints};
     use vrm_core::{
         Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue, MtoonTextureSet, Spring,
@@ -1505,6 +1543,82 @@ mod tests {
         assert_eq!(material.emissive_intensity, Some(5.0));
         assert!(matches!(
             material.mtoon_pipeline_passes.as_slice(),
+            [MtoonPipelinePass::Base(_)]
+        ));
+    }
+
+    #[derive(Asset, Clone, Debug, Default, PartialEq, TypePath)]
+    struct TestBevyMaterialAsset {
+        material: Option<MaterialRef>,
+        state: BevyVrmMaterialState,
+    }
+
+    impl VrmBevyMaterialAsset for TestBevyMaterialAsset {
+        fn apply_vrm_material_state(
+            &mut self,
+            material: MaterialRef,
+            state: &BevyVrmMaterialState,
+        ) {
+            self.material = Some(material);
+            self.state = state.clone();
+        }
+    }
+
+    #[test]
+    fn scene_state_can_write_renderer_facing_material_assets() {
+        let mut app = App::new();
+        app.init_resource::<BevyRuntimeSceneState>()
+            .init_resource::<Assets<TestBevyMaterialAsset>>()
+            .add_systems(
+                Update,
+                write_scene_state_to_material_assets::<TestBevyMaterialAsset>,
+            );
+
+        let mut scene = BevyRuntimeSceneState::default();
+        scene
+            .set_material_color(MaterialRef(3), "_Color", &[0.25, 0.5, 0.75, 1.0])
+            .unwrap();
+        scene
+            .set_texture_transform(MaterialRef(3), Some([2.0, 3.0]), Some([0.1, 0.2]))
+            .unwrap();
+        scene.set_emissive_intensity(MaterialRef(3), 4.0).unwrap();
+        let passes = MtoonMaterial::default().pipeline_passes();
+        scene
+            .set_mtoon_pipeline_passes(MaterialRef(3), &passes)
+            .unwrap();
+        *app.world_mut().resource_mut::<BevyRuntimeSceneState>() = scene;
+
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<TestBevyMaterialAsset>>()
+            .add(TestBevyMaterialAsset::default());
+        app.world_mut().spawn((
+            VrmMaterialBinding(MaterialRef(3)),
+            BevyVrmMaterialAssetHandle::new(handle.clone()),
+        ));
+
+        app.update();
+
+        let asset = app
+            .world()
+            .resource::<Assets<TestBevyMaterialAsset>>()
+            .get(&handle)
+            .unwrap();
+        assert_eq!(asset.material, Some(MaterialRef(3)));
+        assert_eq!(
+            asset.state.colors.get("_Color").map(Vec::as_slice),
+            Some([0.25, 0.5, 0.75, 1.0].as_slice())
+        );
+        assert_eq!(
+            asset.state.texture_transform,
+            Some(BevyTextureTransform {
+                scale: Some([2.0, 3.0]),
+                offset: Some([0.1, 0.2]),
+            })
+        );
+        assert_eq!(asset.state.emissive_intensity, Some(4.0));
+        assert!(matches!(
+            asset.state.mtoon_pipeline_passes.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
     }
