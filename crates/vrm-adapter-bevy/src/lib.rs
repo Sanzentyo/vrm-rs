@@ -5,7 +5,7 @@
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
 use bevy::prelude::{
-    App, Asset, Component, Entity, Handle, Plugin, Quat as BevyQuat, Query, Res, Resource,
+    App, Asset, Component, Entity, Handle, Plugin, Quat as BevyQuat, Query, Res, ResMut, Resource,
     Transform as BevyTransform, Update, Vec3 as BevyVec3,
 };
 use glam::{Quat, Vec3};
@@ -371,6 +371,24 @@ pub fn from_bevy_transform(transform: &BevyTransform) -> Transform {
         rotation: Quat::from_array(transform.rotation.to_array()),
         scale: Vec3::from_array(transform.scale.to_array()),
     }
+}
+
+pub fn read_bevy_transforms_into_scene_state(
+    mut scene: ResMut<BevyRuntimeSceneState>,
+    query: Query<(Entity, &VrmNode, &BevyTransform, Option<&BevyVrmVisibility>)>,
+) {
+    for (entity, node, transform, visibility) in &query {
+        let local = from_bevy_transform(transform);
+        scene.nodes.insert(node.0, entity);
+        scene.local_transforms.insert(entity, local);
+        scene.world_transforms.insert(entity, local);
+        if let Some(visibility) = visibility {
+            scene.visibility.insert(entity, visibility.visible);
+        } else {
+            scene.visibility.entry(entity).or_insert(true);
+        }
+    }
+    let _ = scene.update_world_transforms();
 }
 
 pub fn write_scene_state_transforms(
@@ -1020,5 +1038,39 @@ mod tests {
             material.mtoon_pipeline_passes.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[test]
+    fn scene_state_can_read_bevy_transform_components() {
+        let mut app = App::new();
+        app.init_resource::<BevyRuntimeSceneState>()
+            .add_systems(Update, read_bevy_transforms_into_scene_state);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(7)),
+                BevyTransform {
+                    translation: BevyVec3::new(4.0, 5.0, 6.0),
+                    rotation: BevyQuat::from_rotation_y(0.25),
+                    scale: BevyVec3::splat(0.5),
+                },
+                BevyVrmVisibility { visible: false },
+            ))
+            .id();
+
+        app.update();
+
+        let scene = app.world().resource::<BevyRuntimeSceneState>();
+        assert_eq!(scene.nodes.entity(NodeRef(7)), Some(entity));
+        assert_eq!(
+            scene.local_transform(NodeRef(7)).unwrap().translation,
+            Vec3::new(4.0, 5.0, 6.0)
+        );
+        assert_eq!(
+            scene.local_transform(NodeRef(7)).unwrap().scale,
+            Vec3::splat(0.5)
+        );
+        assert!(!scene.is_visible(NodeRef(7)).unwrap());
     }
 }
