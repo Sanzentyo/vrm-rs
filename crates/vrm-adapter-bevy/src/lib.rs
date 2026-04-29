@@ -506,9 +506,12 @@ impl Plugin for VrmRuntimePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vrm_adapter::{VrmRuntimeDriver, apply_mtoon_pipeline_hints};
-    use vrm_core::{Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue, MtoonTextureSet};
-    use vrm_runtime::{AppliedExpression, RuntimeEvents};
+    use vrm_adapter::{SpringRestMap, VrmRuntimeDriver, apply_mtoon_pipeline_hints};
+    use vrm_core::{
+        Feature, MtoonAlphaMode, MtoonMaterial, MtoonRenderQueue, MtoonTextureSet, Spring,
+        SpringBoneSystem, SpringJoint,
+    };
+    use vrm_runtime::{AppliedExpression, DeltaTime, RuntimeEvents};
 
     #[test]
     fn node_map_round_trips_entity() {
@@ -682,6 +685,70 @@ mod tests {
         ));
         assert_eq!(scene.emissive_intensity(MaterialRef(0)), Some(4.0));
         assert!(!scene.is_visible(NodeRef(1)).unwrap());
+    }
+
+    #[test]
+    fn runtime_driver_ticks_spring_parity_against_bevy_scene_state() {
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            Entity::from_raw_u32(1).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(1),
+            Entity::from_raw_u32(2).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(2),
+            Entity::from_raw_u32(3).unwrap(),
+            Transform {
+                translation: Vec3::Y,
+                ..Transform::default()
+            },
+        );
+        scene.set_parent(NodeRef(1), Some(NodeRef(0))).unwrap();
+        scene.set_parent(NodeRef(2), Some(NodeRef(1))).unwrap();
+        scene.update_world_transforms().unwrap();
+
+        let document = VrmDocument {
+            spring_bone: Feature::Present(SpringBoneSystem {
+                springs: vec![Spring {
+                    joints: vec![SpringJoint {
+                        node: NodeRef(1),
+                        stiffness: 0.0,
+                        gravity_power: 1.0,
+                        gravity_dir: Vec3::X,
+                        drag_force: 1.0,
+                        ..SpringJoint::default()
+                    }],
+                    ..Spring::default()
+                }],
+                ..SpringBoneSystem::default()
+            }),
+            ..VrmDocument::default()
+        };
+        let system = document.spring_bone.as_ref().unwrap();
+        let rest = SpringRestMap::capture(&scene, system).unwrap();
+        let mut spring_state = rest.runtime_state(system);
+        let events = RuntimeEvents {
+            delta: DeltaTime(1.0),
+            ..RuntimeEvents::default()
+        };
+        let mut driver = VrmRuntimeDriver::new(&document).with_runtime_events(&events);
+
+        driver
+            .tick_with_spring_parity(&mut scene, Some((&rest, &mut spring_state)))
+            .unwrap();
+
+        assert_ne!(
+            scene.local_transform(NodeRef(1)).unwrap().rotation,
+            Quat::IDENTITY
+        );
+        let child_world = scene.world_transform(NodeRef(2)).unwrap().translation;
+        assert!(child_world.x > 0.6);
+        assert!(child_world.y > 0.6);
     }
 
     #[test]

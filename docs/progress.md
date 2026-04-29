@@ -105,6 +105,8 @@
 - Re-measured coverage after Bevy morph/material writeback state: workspace line coverage is 77.59%, and `vrm-adapter-bevy` line coverage is 90.91%.
 - Added `ConstraintRestAccess` to `BevyRuntimeSceneState` and a Bevy-side `VrmRuntimeDriver` integration test. A single driver tick now applies expression morph writes, MToon pipeline passes, emissive strength, and first-person visibility through the Bevy adapter skeleton.
 - Re-measured coverage after the Bevy runtime driver integration test: workspace line coverage is 77.64%, and `vrm-adapter-bevy` line coverage is 90.22%.
+- Added Bevy-side spring parity driver coverage. `BevyRuntimeSceneState` now has a test path that captures `SpringRestMap`, initializes center-space spring runtime state, runs `VrmRuntimeDriver::tick_with_spring_parity`, and observes both local joint rotation writeback and synchronized child world transforms.
+- Re-measured coverage after Bevy spring parity driver coverage: workspace line coverage is 77.83%, and `vrm-adapter-bevy` line coverage is 92.04%.
 
 Open work:
 
