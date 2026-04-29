@@ -684,4 +684,135 @@ mod tests {
         let err = parse_root_extensions(&extensions).unwrap_err();
         assert!(matches!(err, ProtocolError::UnsupportedSpecVersion { .. }));
     }
+
+    #[test]
+    fn vrm0_round_trips_blend_shape_and_extras() {
+        let input = serde_json::json!({
+            "meta": { "title": "legacy" },
+            "humanoid": { "humanBones": [{ "bone": "hips", "node": 0 }] },
+            "blendShapeMaster": {
+                "blendShapeGroups": [{
+                    "name": "blink",
+                    "presetName": "blink",
+                    "binds": [{ "mesh": 1, "index": 2, "weight": 75.0 }],
+                    "materialValues": [{
+                        "materialName": "face",
+                        "propertyName": "_Color",
+                        "targetValue": [1.0, 0.0, 0.0, 1.0]
+                    }]
+                }]
+            },
+            "materialProperties": [{ "name": "face", "extras": { "kept": true } }]
+        });
+
+        let vrm: vrm0::Vrm = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(vrm).unwrap();
+
+        assert_eq!(
+            value["blendShapeMaster"]["blendShapeGroups"][0]["presetName"],
+            "blink"
+        );
+        assert_eq!(value["materialProperties"][0]["extras"]["kept"], true);
+    }
+
+    #[test]
+    fn spring_bone_round_trips_collider_shapes() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "colliders": [{
+                "node": 0,
+                "shape": {
+                    "capsule": {
+                        "offset": [0.0, 1.0, 0.0],
+                        "radius": 0.25,
+                        "tail": [0.0, 2.0, 0.0]
+                    }
+                }
+            }],
+            "colliderGroups": [{ "colliders": [0] }],
+            "springs": [{ "joints": [{ "node": 0 }], "colliderGroups": [0] }]
+        });
+
+        let spring: spring_bone::VrmcSpringBone = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(spring).unwrap();
+
+        assert_eq!(value["colliders"][0]["shape"]["capsule"]["radius"], 0.25);
+        assert_eq!(value["springs"][0]["joints"][0]["node"], 0);
+    }
+
+    #[test]
+    fn node_constraint_round_trips_aim_constraint() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "constraint": { "aim": { "source": 1, "aimAxis": "PositiveZ", "weight": 0.5 } }
+        });
+
+        let constraint: node_constraint::VrmcNodeConstraint =
+            serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(constraint).unwrap();
+
+        assert_eq!(value["constraint"]["aim"]["source"], 1);
+        assert_eq!(value["constraint"]["aim"]["aimAxis"], "PositiveZ");
+    }
+
+    #[test]
+    fn materials_mtoon_round_trips_texture_infos() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "transparentWithZWrite": true,
+            "shadeMultiplyTexture": { "index": 2, "texCoord": 1 },
+            "outlineWidthMode": "worldCoordinates",
+            "outlineWidthFactor": 0.01,
+            "extras": { "note": "ok" }
+        });
+
+        let material: materials_mtoon::VrmcMaterialsMtoon = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(material).unwrap();
+
+        assert_eq!(value["shadeMultiplyTexture"]["index"], 2);
+        assert_eq!(value["extras"]["note"], "ok");
+    }
+
+    #[test]
+    fn vrm_animation_round_trips_node_maps() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "humanoid": { "humanBones": { "hips": { "node": 0 } } },
+            "expressions": { "preset": { "blink": { "node": 1 } } },
+            "lookAt": { "node": 2 },
+            "extras": { "clip": "test" }
+        });
+
+        let animation: vrma::VrmcVrmAnimation = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(animation).unwrap();
+
+        assert_eq!(value["humanoid"]["humanBones"]["hips"]["node"], 0);
+        assert_eq!(value["extras"]["clip"], "test");
+    }
+
+    #[test]
+    fn root_parser_retains_unknown_extensions() {
+        let mut extensions = ExtensionMap::new();
+        extensions.insert("VENDOR_extension".to_owned(), serde_json::json!({ "x": 1 }));
+
+        let bundle = parse_root_extensions(&extensions).unwrap();
+
+        assert_eq!(bundle.unknown["VENDOR_extension"]["x"], 1);
+    }
+
+    #[test]
+    fn root_parser_reports_invalid_extension_shape() {
+        let mut extensions = ExtensionMap::new();
+        extensions.insert(
+            "VRMC_springBone".to_owned(),
+            serde_json::json!({ "specVersion": 1 }),
+        );
+
+        let err = parse_root_extensions(&extensions).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ProtocolError::InvalidExtension { extension, .. } if extension == "VRMC_springBone"
+        ));
+    }
 }

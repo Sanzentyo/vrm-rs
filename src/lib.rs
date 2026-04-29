@@ -12,7 +12,7 @@ pub use vrm_runtime as runtime;
 pub use vrm_sans_io as sans_io;
 
 pub use vrm_core::{Parsed, Raw, Resolved, Validated, VrmAsset, VrmModel};
-pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_slice};
+pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
 pub use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
 /// Parse, validate, and resolve a VRM/VRMA payload from a `.gltf`, `.glb`,

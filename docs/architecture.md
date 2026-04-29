@@ -33,6 +33,30 @@ Runtime preserves the `three-vrm` order:
 
 The current implementation produces deterministic runtime events and update orders. Engine-specific mutation belongs in adapters.
 
+## Animation Extraction
+
+VRMA files can contain multiple glTF animation clips. `vrm-io` classifies glTF animation channels by the `VRMC_vrm_animation` node map and stores extracted clips in `VrmDocument::animations`; `VrmDocument::animation` mirrors the first clip as a convenience value.
+
+Current channel mapping:
+
+- Humanoid `rotation` channels become per-bone `RotationTrack`s after rest-pose aware remapping.
+- `hips` `translation` channels become `hips_translation` after mapping through the hips parent rest matrix.
+- Expression `translation` channels use the X component as scalar expression weight.
+- lookAt `rotation` channels become `look_at_track`.
+
+`VrmAnimation::rest_hips_position` captures the hips node rest world position. `vrm-runtime` samples clips into `VrmAnimationFrame`, and `vrm-adapter` applies those frames through `TransformAccess`, `MorphTargetAccess`, and `MaterialAccess` without depending on Bevy, wgpu, ash, or glTF node objects.
+
+## Runtime Solvers
+
+Runtime math remains renderer-agnostic. Engine adapters are expected to provide current transforms and apply returned rotations/positions.
+
+- Node constraints expose pure solvers for rotation, roll, and aim constraints.
+- Spring bone exposes particle state, a Verlet-style step helper, and sphere/capsule/plane collision correction.
+- LookAt exposes azimuth/altitude calculation and expression-weight mapping for `lookLeft`, `lookRight`, `lookUp`, and `lookDown`.
+- MToon exposes renderer hints such as render order and outline enablement, but not backend-specific shader generation.
+- Adapter code provides `VrmRuntimeDriver` for engines that want one high-level tick over animation frames, runtime events, constraints, spring bone, first-person visibility, VRM0 orientation compatibility, and MToon pipeline hints.
+- MToon pipeline data is exposed as pass hints for renderer-side pipeline selection; shader generation remains outside `vrm-core`.
+
 ## Test Fixture Policy
 
 Concrete sample data is generated in tests rather than committed as model files. This gives us repeatable VRM-shaped data without adding binary assets or license baggage to the repository.

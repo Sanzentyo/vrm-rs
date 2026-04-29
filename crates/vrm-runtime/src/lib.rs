@@ -1,6 +1,6 @@
 //! Renderer-agnostic runtime algorithms for VRM components.
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
 use thiserror::Error;
 use vrm_core::*;
@@ -240,14 +240,108 @@ impl ConstraintManager {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ConstraintRestState {
+    pub destination_rest_rotation: Quat,
+    pub source_rest_rotation: Quat,
+}
+
+impl ConstraintRestState {
+    pub fn new(destination_rest_rotation: Quat, source_rest_rotation: Quat) -> Self {
+        Self {
+            destination_rest_rotation,
+            source_rest_rotation,
+        }
+    }
+}
+
+pub fn solve_rotation_constraint(
+    state: ConstraintRestState,
+    source_rotation: Quat,
+    weight: f32,
+) -> Quat {
+    let src_delta = state.source_rest_rotation.inverse() * source_rotation;
+    let target = state.destination_rest_rotation * src_delta;
+    state
+        .destination_rest_rotation
+        .slerp(target, weight.clamp(0.0, 1.0))
+}
+
+pub fn solve_roll_constraint(
+    state: ConstraintRestState,
+    source_rotation: Quat,
+    axis: Axis,
+    weight: f32,
+) -> Quat {
+    let dst_rest = state.destination_rest_rotation;
+    let quat_delta =
+        dst_rest.inverse() * source_rotation * state.source_rest_rotation.inverse() * dst_rest;
+    let axis = axis.unsigned_vector();
+    let n1 = quat_delta * axis;
+    let quat_from_to = Quat::from_rotation_arc(n1.normalize_or_zero(), axis);
+    let target = dst_rest * quat_from_to * quat_delta;
+    dst_rest.slerp(target.normalize(), weight.clamp(0.0, 1.0))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AimConstraintInput {
+    pub destination_rest_rotation: Quat,
+    pub destination_world_position: Vec3,
+    pub source_world_position: Vec3,
+    pub destination_parent_world_rotation: Quat,
+    pub axis: Axis,
+    pub weight: f32,
+}
+
+pub fn solve_aim_constraint(input: AimConstraintInput) -> Quat {
+    let parent = input.destination_parent_world_rotation;
+    let inv_parent = parent.inverse();
+    let a0 = parent * (input.destination_rest_rotation * input.axis.vector());
+    let a1 = (input.source_world_position - input.destination_world_position).normalize_or_zero();
+    let from_to = Quat::from_rotation_arc(a0.normalize_or_zero(), a1);
+    let target = inv_parent * from_to * parent * input.destination_rest_rotation;
+    input
+        .destination_rest_rotation
+        .slerp(target.normalize(), input.weight.clamp(0.0, 1.0))
+}
+
+trait RuntimeAxisExt {
+    fn vector(self) -> Vec3;
+    fn unsigned_vector(self) -> Vec3;
+}
+
+impl RuntimeAxisExt for Axis {
+    fn vector(self) -> Vec3 {
+        match self {
+            Axis::PositiveX => Vec3::X,
+            Axis::NegativeX => Vec3::NEG_X,
+            Axis::PositiveY => Vec3::Y,
+            Axis::NegativeY => Vec3::NEG_Y,
+            Axis::PositiveZ => Vec3::Z,
+            Axis::NegativeZ => Vec3::NEG_Z,
+        }
+    }
+
+    fn unsigned_vector(self) -> Vec3 {
+        match self {
+            Axis::PositiveX | Axis::NegativeX => Vec3::X,
+            Axis::PositiveY | Axis::NegativeY => Vec3::Y,
+            Axis::PositiveZ | Axis::NegativeZ => Vec3::Z,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SpringBoneManager {
     system: SpringBoneSystem,
+    particles: SpringRuntimeState,
 }
 
 impl SpringBoneManager {
     pub fn new(system: SpringBoneSystem) -> Self {
-        Self { system }
+        let particles =
+            SpringRuntimeState::from_system(&system, |_, _, _| SpringParticleState::default());
+        Self { system, particles }
     }
 
     pub fn update_order(&self) -> Vec<SpringJointStep> {
@@ -269,6 +363,32 @@ impl SpringBoneManager {
             })
             .collect()
     }
+
+    pub fn particles(&self) -> &SpringRuntimeState {
+        &self.particles
+    }
+
+    pub fn particles_mut(&mut self) -> &mut SpringRuntimeState {
+        &mut self.particles
+    }
+
+    pub fn system(&self) -> &SpringBoneSystem {
+        &self.system
+    }
+
+    pub fn spring_colliders(&self, spring_index: usize) -> Vec<&SpringCollider> {
+        let Some(spring) = self.system.springs.get(spring_index) else {
+            return Vec::new();
+        };
+
+        spring
+            .collider_groups
+            .iter()
+            .filter_map(|group_index| self.system.collider_groups.get(*group_index))
+            .flat_map(|group| &group.colliders)
+            .filter_map(|collider_index| self.system.colliders.get(*collider_index))
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -279,11 +399,328 @@ pub struct SpringJointStep {
     pub gravity: Vec3,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringParticleState {
+    pub current_tail: Vec3,
+    pub previous_tail: Vec3,
+}
+
+impl Default for SpringParticleState {
+    fn default() -> Self {
+        Self {
+            current_tail: Vec3::ZERO,
+            previous_tail: Vec3::ZERO,
+        }
+    }
+}
+
+impl SpringParticleState {
+    pub fn at_rest(parent_position: Vec3, local_axis: Vec3, bone_length: f32) -> Self {
+        let tail = parent_position + local_axis.normalize_or_zero() * bone_length;
+        Self {
+            current_tail: tail,
+            previous_tail: tail,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpringRuntimeState {
+    states: Vec<Vec<SpringParticleState>>,
+    initial_states: Vec<Vec<SpringParticleState>>,
+}
+
+impl SpringRuntimeState {
+    pub fn from_system(
+        system: &SpringBoneSystem,
+        mut init: impl FnMut(usize, usize, &SpringJoint) -> SpringParticleState,
+    ) -> Self {
+        let states = system
+            .springs
+            .iter()
+            .enumerate()
+            .map(|(spring_index, spring)| {
+                spring
+                    .joints
+                    .iter()
+                    .enumerate()
+                    .map(|(joint_index, joint)| init(spring_index, joint_index, joint))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        Self {
+            initial_states: states.clone(),
+            states,
+        }
+    }
+
+    pub fn get(&self, spring_index: usize, joint_index: usize) -> Option<&SpringParticleState> {
+        self.states
+            .get(spring_index)
+            .and_then(|spring| spring.get(joint_index))
+    }
+
+    pub fn get_mut(
+        &mut self,
+        spring_index: usize,
+        joint_index: usize,
+    ) -> Option<&mut SpringParticleState> {
+        self.states
+            .get_mut(spring_index)
+            .and_then(|spring| spring.get_mut(joint_index))
+    }
+
+    pub fn reset(&mut self) {
+        self.states.clone_from(&self.initial_states);
+    }
+
+    pub fn set_init_state(&mut self) {
+        self.initial_states.clone_from(&self.states);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpringParticleStep<'a> {
+    pub joint: &'a SpringJoint,
+    pub parent_position: Vec3,
+    pub parent_rotation: Quat,
+    pub local_axis: Vec3,
+    pub bone_length: f32,
+    pub colliders: &'a [ColliderShape],
+    pub delta: DeltaTime,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringJointSimulationInput<'a> {
+    pub joint: &'a SpringJoint,
+    pub parent_position: Vec3,
+    pub parent_rotation: Quat,
+    pub local_axis: Vec3,
+    pub bone_length: f32,
+    pub colliders: &'a [ColliderShape],
+    pub delta: DeltaTime,
+}
+
+impl<'a> From<SpringJointSimulationInput<'a>> for SpringParticleStep<'a> {
+    fn from(value: SpringJointSimulationInput<'a>) -> Self {
+        Self {
+            joint: value.joint,
+            parent_position: value.parent_position,
+            parent_rotation: value.parent_rotation,
+            local_axis: value.local_axis,
+            bone_length: value.bone_length,
+            colliders: value.colliders,
+            delta: value.delta,
+        }
+    }
+}
+
+pub fn step_spring_particle(state: &mut SpringParticleState, step: SpringParticleStep<'_>) -> Vec3 {
+    let axis = (step.parent_rotation * step.local_axis).normalize_or_zero();
+    let inertia = state.current_tail
+        + (state.current_tail - state.previous_tail) * (1.0 - step.joint.drag_force);
+    let stiffness = axis * step.joint.stiffness * step.delta.0;
+    let gravity =
+        step.joint.gravity_dir.normalize_or_zero() * step.joint.gravity_power * step.delta.0;
+    let mut next_tail = inertia + stiffness + gravity;
+
+    next_tail = constrain_length(step.parent_position, next_tail, step.bone_length);
+    for collider in step.colliders {
+        next_tail = resolve_collision(next_tail, step.joint.hit_radius, collider);
+    }
+
+    state.previous_tail = state.current_tail;
+    state.current_tail = next_tail;
+    next_tail
+}
+
+pub fn step_spring_joint(
+    state: &mut SpringParticleState,
+    input: SpringJointSimulationInput<'_>,
+) -> Vec3 {
+    step_spring_particle(state, input.into())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringJointRotationInput {
+    pub parent_world_rotation: Quat,
+    pub joint_rest_rotation: Quat,
+    pub local_axis: Vec3,
+    pub parent_world_position: Vec3,
+    pub tail_world_position: Vec3,
+}
+
+pub fn solve_spring_joint_rotation(input: SpringJointRotationInput) -> Quat {
+    let rest_direction = input.parent_world_rotation
+        * (input.joint_rest_rotation * input.local_axis).normalize_or_zero();
+    let target_direction =
+        (input.tail_world_position - input.parent_world_position).normalize_or_zero();
+    if rest_direction.length_squared() <= f32::EPSILON
+        || target_direction.length_squared() <= f32::EPSILON
+    {
+        return input.joint_rest_rotation;
+    }
+
+    let from_to = Quat::from_rotation_arc(rest_direction, target_direction);
+    (input.parent_world_rotation.inverse()
+        * from_to
+        * input.parent_world_rotation
+        * input.joint_rest_rotation)
+        .normalize()
+}
+
+pub fn collider_shape_in_simulation_space(
+    collider: &SpringCollider,
+    collider_world: Transform,
+    center_world: Option<Transform>,
+) -> ColliderShape {
+    let collider_matrix = transform_matrix(collider_world);
+    let center_inverse = center_world
+        .map(transform_matrix)
+        .map(|matrix| matrix.inverse())
+        .unwrap_or(Mat4::IDENTITY);
+    let to_simulation_space = center_inverse * collider_matrix;
+    let radius_scale = collider_world.scale.max_element().abs();
+
+    match &collider.shape {
+        ColliderShape::Sphere { offset, radius } => ColliderShape::Sphere {
+            offset: to_simulation_space.transform_point3(*offset),
+            radius: *radius * radius_scale,
+        },
+        ColliderShape::Capsule {
+            offset,
+            radius,
+            tail,
+        } => ColliderShape::Capsule {
+            offset: to_simulation_space.transform_point3(*offset),
+            radius: *radius * radius_scale,
+            tail: to_simulation_space.transform_point3(*tail),
+        },
+        ColliderShape::Plane { offset, normal } => ColliderShape::Plane {
+            offset: to_simulation_space.transform_point3(*offset),
+            normal: to_simulation_space
+                .transform_vector3(*normal)
+                .normalize_or_zero(),
+        },
+    }
+}
+
+fn transform_matrix(transform: Transform) -> Mat4 {
+    Mat4::from_scale_rotation_translation(
+        transform.scale,
+        transform.rotation,
+        transform.translation,
+    )
+}
+
+pub fn resolve_collision(position: Vec3, particle_radius: f32, collider: &ColliderShape) -> Vec3 {
+    match collider {
+        ColliderShape::Sphere { offset, radius } => {
+            push_out_of_sphere(position, *offset, particle_radius + *radius)
+        }
+        ColliderShape::Capsule {
+            offset,
+            radius,
+            tail,
+        } => {
+            let closest = closest_point_on_segment(position, *offset, *tail);
+            push_out_of_sphere(position, closest, particle_radius + *radius)
+        }
+        ColliderShape::Plane { offset, normal } => {
+            let normal = normal.normalize_or_zero();
+            let signed_distance = (position - *offset).dot(normal);
+            if signed_distance < particle_radius {
+                position + normal * (particle_radius - signed_distance)
+            } else {
+                position
+            }
+        }
+    }
+}
+
+fn constrain_length(parent_position: Vec3, tail: Vec3, bone_length: f32) -> Vec3 {
+    parent_position + (tail - parent_position).normalize_or_zero() * bone_length
+}
+
+fn push_out_of_sphere(position: Vec3, center: Vec3, min_distance: f32) -> Vec3 {
+    let delta = position - center;
+    let distance = delta.length();
+    if distance < min_distance {
+        center + delta.normalize_or(Vec3::Y) * min_distance
+    } else {
+        position
+    }
+}
+
+fn closest_point_on_segment(point: Vec3, start: Vec3, end: Vec3) -> Vec3 {
+    let segment = end - start;
+    let length_squared = segment.length_squared();
+    if length_squared <= f32::EPSILON {
+        return start;
+    }
+    let t = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
+    start + segment * t
+}
+
 pub fn calc_azimuth_altitude(direction: Vec3) -> (f32, f32) {
     let normalized = direction.normalize_or_zero();
     let azimuth = normalized.x.atan2(-normalized.z).to_degrees();
     let altitude = normalized.y.asin().to_degrees();
     (azimuth, altitude)
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LookAtExpressionWeights {
+    pub values: IndexMap<ExpressionName, f32>,
+}
+
+impl LookAtExpressionWeights {
+    pub fn get(&self, name: &ExpressionName) -> f32 {
+        self.values.get(name).copied().unwrap_or(0.0)
+    }
+}
+
+pub fn calc_look_at_expression_weights(
+    look_at: &LookAt,
+    target_direction: Vec3,
+) -> LookAtExpressionWeights {
+    let (azimuth, altitude) = calc_azimuth_altitude(target_direction);
+    let horizontal_inner = map_range(azimuth.abs(), look_at.horizontal_inner);
+    let horizontal_outer = map_range(azimuth.abs(), look_at.horizontal_outer);
+    let horizontal = horizontal_inner.max(horizontal_outer);
+    let vertical_up = map_range(altitude.max(0.0), look_at.vertical_up);
+    let vertical_down = map_range((-altitude).max(0.0), look_at.vertical_down);
+
+    let values = [
+        (
+            ExpressionName::LookLeft,
+            (azimuth < 0.0).then_some(horizontal),
+        ),
+        (
+            ExpressionName::LookRight,
+            (azimuth > 0.0).then_some(horizontal),
+        ),
+        (
+            ExpressionName::LookUp,
+            (altitude > 0.0).then_some(vertical_up),
+        ),
+        (
+            ExpressionName::LookDown,
+            (altitude < 0.0).then_some(vertical_down),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.map(|value| (name, value)))
+    .collect();
+
+    LookAtExpressionWeights { values }
+}
+
+fn map_range(input: f32, range: RangeMap) -> f32 {
+    if range.input_max_value <= f32::EPSILON {
+        return 0.0;
+    }
+    (input / range.input_max_value).clamp(0.0, 1.0) * range.output_scale
 }
 
 pub fn sample_rotation_track(track: &RotationTrack, time: f32) -> Option<Quat> {
@@ -296,6 +733,49 @@ pub fn sample_translation_track(track: &TranslationTrack, time: f32) -> Option<V
 
 pub fn sample_scalar_track(track: &ScalarTrack, time: f32) -> Option<f32> {
     sample_track(&track.times, &track.values, time, |a, b, t| a + (b - a) * t)
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VrmAnimationFrame {
+    pub humanoid_rotations: IndexMap<HumanBoneName, Quat>,
+    pub hips_translation: Option<Vec3>,
+    pub preset_expressions: IndexMap<ExpressionName, f32>,
+    pub custom_expressions: IndexMap<String, f32>,
+    pub look_at: Option<Quat>,
+}
+
+pub fn sample_vrm_animation(animation: &VrmAnimation, time: f32) -> VrmAnimationFrame {
+    VrmAnimationFrame {
+        humanoid_rotations: animation
+            .humanoid_rotation_tracks
+            .iter()
+            .filter_map(|(bone, track)| {
+                sample_rotation_track(track, time).map(|rotation| (bone.clone(), rotation))
+            })
+            .collect(),
+        hips_translation: animation
+            .hips_translation
+            .as_ref()
+            .and_then(|track| sample_translation_track(track, time)),
+        preset_expressions: animation
+            .preset_expression_tracks
+            .iter()
+            .filter_map(|(name, track)| {
+                sample_scalar_track(track, time).map(|value| (name.clone(), value))
+            })
+            .collect(),
+        custom_expressions: animation
+            .custom_expression_tracks
+            .iter()
+            .filter_map(|(name, track)| {
+                sample_scalar_track(track, time).map(|value| (name.clone(), value))
+            })
+            .collect(),
+        look_at: animation
+            .look_at_track
+            .as_ref()
+            .and_then(|track| sample_rotation_track(track, time)),
+    }
 }
 
 fn sample_track<T: Copy>(
@@ -361,5 +841,199 @@ mod tests {
             values: vec![0.0, 10.0],
         };
         assert_eq!(sample_scalar_track(&track, 0.25), Some(2.5));
+    }
+
+    #[test]
+    fn maps_look_at_direction_to_expression_weights() {
+        let look_at = LookAt {
+            horizontal_inner: RangeMap {
+                input_max_value: 45.0,
+                output_scale: 1.0,
+            },
+            horizontal_outer: RangeMap {
+                input_max_value: 90.0,
+                output_scale: 0.5,
+            },
+            vertical_up: RangeMap {
+                input_max_value: 45.0,
+                output_scale: 1.0,
+            },
+            vertical_down: RangeMap {
+                input_max_value: 45.0,
+                output_scale: 1.0,
+            },
+            ..LookAt::default()
+        };
+
+        let weights = calc_look_at_expression_weights(&look_at, Vec3::new(1.0, 1.0, -1.0));
+
+        assert!(weights.get(&ExpressionName::LookRight) > 0.0);
+        assert!(weights.get(&ExpressionName::LookUp) > 0.0);
+        assert_eq!(weights.get(&ExpressionName::LookLeft), 0.0);
+        assert_eq!(weights.get(&ExpressionName::LookDown), 0.0);
+    }
+
+    #[test]
+    fn spring_particle_is_pushed_out_of_sphere_collider() {
+        let joint = SpringJoint {
+            hit_radius: 0.1,
+            stiffness: 0.0,
+            gravity_power: 0.0,
+            drag_force: 1.0,
+            ..SpringJoint::default()
+        };
+        let mut state = SpringParticleState {
+            current_tail: Vec3::new(0.0, 0.0, 0.0),
+            previous_tail: Vec3::new(0.0, 0.0, 0.0),
+        };
+        let tail = step_spring_particle(
+            &mut state,
+            SpringParticleStep {
+                joint: &joint,
+                parent_position: Vec3::ZERO,
+                parent_rotation: Quat::IDENTITY,
+                local_axis: Vec3::Y,
+                bone_length: 1.0,
+                colliders: &[ColliderShape::Sphere {
+                    offset: Vec3::Y,
+                    radius: 0.5,
+                }],
+                delta: DeltaTime(1.0),
+            },
+        );
+
+        assert!(tail.distance(Vec3::Y) >= 0.6 - f32::EPSILON);
+    }
+
+    #[test]
+    fn solves_spring_joint_rotation_from_tail_direction() {
+        let rotation = solve_spring_joint_rotation(SpringJointRotationInput {
+            parent_world_rotation: Quat::IDENTITY,
+            joint_rest_rotation: Quat::IDENTITY,
+            local_axis: Vec3::Y,
+            parent_world_position: Vec3::ZERO,
+            tail_world_position: Vec3::X,
+        });
+
+        assert!((rotation * Vec3::Y).abs_diff_eq(Vec3::X, 0.0001));
+    }
+
+    #[test]
+    fn collider_shape_can_be_converted_to_center_space() {
+        let collider = SpringCollider {
+            node: NodeRef(1),
+            shape: ColliderShape::Sphere {
+                offset: Vec3::X,
+                radius: 0.5,
+            },
+        };
+        let collider_world = Transform {
+            translation: Vec3::new(3.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(2.0),
+        };
+        let center_world = Transform {
+            translation: Vec3::new(1.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+
+        let shape =
+            collider_shape_in_simulation_space(&collider, collider_world, Some(center_world));
+
+        assert_eq!(
+            shape,
+            ColliderShape::Sphere {
+                offset: Vec3::new(4.0, 0.0, 0.0),
+                radius: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn spring_manager_resolves_colliders_for_spring_groups() {
+        let system = SpringBoneSystem {
+            colliders: vec![SpringCollider {
+                node: NodeRef(1),
+                shape: ColliderShape::Sphere {
+                    offset: Vec3::ZERO,
+                    radius: 1.0,
+                },
+            }],
+            collider_groups: vec![SpringColliderGroup {
+                name: Some("head".to_owned()),
+                colliders: vec![0],
+            }],
+            springs: vec![Spring {
+                collider_groups: vec![0],
+                ..Spring::default()
+            }],
+        };
+
+        let manager = SpringBoneManager::new(system);
+
+        assert_eq!(manager.spring_colliders(0).len(), 1);
+        assert!(manager.spring_colliders(99).is_empty());
+    }
+
+    #[test]
+    fn samples_vrm_animation_frame() {
+        let mut animation = VrmAnimation {
+            hips_translation: Some(TranslationTrack {
+                times: vec![0.0, 1.0],
+                values: vec![Vec3::ZERO, Vec3::Y],
+            }),
+            ..VrmAnimation::default()
+        };
+        animation.preset_expression_tracks.insert(
+            ExpressionName::Blink,
+            ScalarTrack {
+                times: vec![0.0, 1.0],
+                values: vec![0.0, 1.0],
+            },
+        );
+
+        let frame = sample_vrm_animation(&animation, 0.5);
+        assert_eq!(frame.hips_translation, Some(Vec3::new(0.0, 0.5, 0.0)));
+        assert_eq!(frame.preset_expressions[&ExpressionName::Blink], 0.5);
+    }
+
+    #[test]
+    fn spring_runtime_state_can_reset_to_init() {
+        let system = SpringBoneSystem {
+            springs: vec![Spring {
+                joints: vec![SpringJoint::default()],
+                ..Spring::default()
+            }],
+            ..SpringBoneSystem::default()
+        };
+        let mut state = SpringRuntimeState::from_system(&system, |_, _, _| {
+            SpringParticleState::at_rest(Vec3::ZERO, Vec3::Y, 1.0)
+        });
+        state.get_mut(0, 0).unwrap().current_tail = Vec3::X;
+        state.reset();
+        assert_eq!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
+    fn rotation_constraint_transfers_source_delta() {
+        let state = ConstraintRestState::new(Quat::IDENTITY, Quat::IDENTITY);
+        let source = Quat::from_rotation_y(1.0);
+        let solved = solve_rotation_constraint(state, source, 1.0);
+        assert!(solved.abs_diff_eq(source, 1e-6));
+    }
+
+    #[test]
+    fn aim_constraint_points_axis_toward_source() {
+        let solved = solve_aim_constraint(AimConstraintInput {
+            destination_rest_rotation: Quat::IDENTITY,
+            destination_world_position: Vec3::ZERO,
+            source_world_position: Vec3::Y,
+            destination_parent_world_rotation: Quat::IDENTITY,
+            axis: Axis::PositiveX,
+            weight: 1.0,
+        });
+        let aimed = solved * Vec3::X;
+        assert!(aimed.abs_diff_eq(Vec3::Y, 1e-5));
     }
 }

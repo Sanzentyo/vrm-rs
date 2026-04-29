@@ -71,6 +71,7 @@ impl<State> VrmModel<State> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VrmDocument {
     pub kind: VrmKind,
+    pub compatibility: Compatibility,
     pub meta: Meta,
     pub humanoid: Humanoid,
     pub first_person: Feature<FirstPerson>,
@@ -80,6 +81,29 @@ pub struct VrmDocument {
     pub node_constraints: Vec<NodeConstraint>,
     pub materials: Vec<Material>,
     pub animation: Feature<VrmAnimation>,
+    pub animations: Vec<VrmAnimation>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Compatibility {
+    pub vrm0: Option<Vrm0Compatibility>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Vrm0Compatibility {
+    pub orientation_correction: Transform,
+}
+
+impl Default for Vrm0Compatibility {
+    fn default() -> Self {
+        Self {
+            orientation_correction: Transform {
+                translation: Vec3::ZERO,
+                rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                scale: Vec3::ONE,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -256,6 +280,38 @@ impl From<&str> for HumanBoneName {
             "rightUpperArm" => Self::RightUpperArm,
             "rightLowerArm" => Self::RightLowerArm,
             "rightHand" => Self::RightHand,
+            "leftThumbMetacarpal" => Self::LeftThumbMetacarpal,
+            "leftThumbProximal" => Self::LeftThumbProximal,
+            "leftThumbIntermediate" => Self::LeftThumbProximal,
+            "leftThumbDistal" => Self::LeftThumbDistal,
+            "leftIndexProximal" => Self::LeftIndexProximal,
+            "leftIndexIntermediate" => Self::LeftIndexIntermediate,
+            "leftIndexDistal" => Self::LeftIndexDistal,
+            "leftMiddleProximal" => Self::LeftMiddleProximal,
+            "leftMiddleIntermediate" => Self::LeftMiddleIntermediate,
+            "leftMiddleDistal" => Self::LeftMiddleDistal,
+            "leftRingProximal" => Self::LeftRingProximal,
+            "leftRingIntermediate" => Self::LeftRingIntermediate,
+            "leftRingDistal" => Self::LeftRingDistal,
+            "leftLittleProximal" => Self::LeftLittleProximal,
+            "leftLittleIntermediate" => Self::LeftLittleIntermediate,
+            "leftLittleDistal" => Self::LeftLittleDistal,
+            "rightThumbMetacarpal" => Self::RightThumbMetacarpal,
+            "rightThumbProximal" => Self::RightThumbProximal,
+            "rightThumbIntermediate" => Self::RightThumbProximal,
+            "rightThumbDistal" => Self::RightThumbDistal,
+            "rightIndexProximal" => Self::RightIndexProximal,
+            "rightIndexIntermediate" => Self::RightIndexIntermediate,
+            "rightIndexDistal" => Self::RightIndexDistal,
+            "rightMiddleProximal" => Self::RightMiddleProximal,
+            "rightMiddleIntermediate" => Self::RightMiddleIntermediate,
+            "rightMiddleDistal" => Self::RightMiddleDistal,
+            "rightRingProximal" => Self::RightRingProximal,
+            "rightRingIntermediate" => Self::RightRingIntermediate,
+            "rightRingDistal" => Self::RightRingDistal,
+            "rightLittleProximal" => Self::RightLittleProximal,
+            "rightLittleIntermediate" => Self::RightLittleIntermediate,
+            "rightLittleDistal" => Self::RightLittleDistal,
             other => Self::Custom(other.to_owned()),
         }
     }
@@ -616,6 +672,9 @@ pub struct Material {
 pub struct MtoonMaterial {
     pub transparent_with_z_write: bool,
     pub render_queue_offset_number: i32,
+    pub render_queue: MtoonRenderQueue,
+    pub cull_mode: MtoonCullMode,
+    pub textures: MtoonTextureSet,
     pub shade_color_factor: [f32; 3],
     pub shading_shift_factor: f32,
     pub shading_toony_factor: f32,
@@ -624,6 +683,113 @@ pub struct MtoonMaterial {
     pub outline_width_factor: f32,
     pub outline_color_factor: [f32; 3],
     pub uv_animation: UvAnimation,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MtoonCullMode {
+    Off,
+    Front,
+    #[default]
+    Back,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MtoonTextureSet {
+    pub main_texture: Option<TextureRef>,
+    pub shade_multiply_texture: Option<TextureRef>,
+    pub normal_texture: Option<TextureRef>,
+    pub matcap_texture: Option<TextureRef>,
+    pub rim_multiply_texture: Option<TextureRef>,
+    pub outline_width_multiply_texture: Option<TextureRef>,
+    pub uv_animation_mask_texture: Option<TextureRef>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MtoonRenderQueue {
+    #[default]
+    Auto,
+    Opaque,
+    AlphaTest,
+    Transparent,
+}
+
+impl MtoonMaterial {
+    pub fn outline_enabled(&self) -> bool {
+        self.outline_width_mode != OutlineWidthMode::None && self.outline_width_factor > 0.0
+    }
+
+    pub fn render_order(&self) -> i32 {
+        let base = match self.render_queue {
+            MtoonRenderQueue::Auto | MtoonRenderQueue::Opaque => 2000,
+            MtoonRenderQueue::AlphaTest => 2450,
+            MtoonRenderQueue::Transparent => 3000,
+        };
+        base + self.render_queue_offset_number
+    }
+
+    pub fn pipeline_hints(&self) -> MtoonPipelineHints {
+        let alpha_mode = match self.render_queue {
+            MtoonRenderQueue::Transparent => MtoonAlphaMode::Blend,
+            MtoonRenderQueue::AlphaTest => MtoonAlphaMode::Mask,
+            MtoonRenderQueue::Auto | MtoonRenderQueue::Opaque => MtoonAlphaMode::Opaque,
+        };
+        let depth_write = match alpha_mode {
+            MtoonAlphaMode::Blend => self.transparent_with_z_write,
+            MtoonAlphaMode::Opaque | MtoonAlphaMode::Mask => true,
+        };
+        MtoonPipelineHints {
+            render_order: self.render_order(),
+            alpha_mode,
+            cull_mode: self.cull_mode,
+            depth_test: true,
+            depth_write,
+            blend: alpha_mode == MtoonAlphaMode::Blend,
+            outline: self.outline_enabled().then(|| MtoonOutlinePipelineHint {
+                width_mode: self.outline_width_mode,
+                render_order: self.render_order() + 1,
+                cull_mode: MtoonCullMode::Front,
+            }),
+        }
+    }
+
+    pub fn pipeline_passes(&self) -> Vec<MtoonPipelinePass> {
+        let hints = self.pipeline_hints();
+        std::iter::once(MtoonPipelinePass::Base(hints))
+            .chain(hints.outline.map(MtoonPipelinePass::Outline))
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MtoonPipelineHints {
+    pub render_order: i32,
+    pub alpha_mode: MtoonAlphaMode,
+    pub cull_mode: MtoonCullMode,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub blend: bool,
+    pub outline: Option<MtoonOutlinePipelineHint>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MtoonOutlinePipelineHint {
+    pub width_mode: OutlineWidthMode,
+    pub render_order: i32,
+    pub cull_mode: MtoonCullMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MtoonPipelinePass {
+    Base(MtoonPipelineHints),
+    Outline(MtoonOutlinePipelineHint),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MtoonAlphaMode {
+    #[default]
+    Opaque,
+    Mask,
+    Blend,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -705,5 +871,50 @@ mod tests {
     fn expression_override_amount_is_saturated() {
         assert_eq!(OverrideMode::Block.amount(2.0), 1.0);
         assert_eq!(OverrideMode::None.amount(1.0), 0.0);
+    }
+
+    #[test]
+    fn vrm0_compatibility_rotates_forward_axis() {
+        let compatibility = Vrm0Compatibility::default();
+        assert!(
+            (compatibility.orientation_correction.rotation * Vec3::Z)
+                .abs_diff_eq(Vec3::NEG_Z, 0.0001)
+        );
+    }
+
+    #[test]
+    fn mtoon_pipeline_hints_include_transparency_and_outline() {
+        let material = MtoonMaterial {
+            transparent_with_z_write: true,
+            render_queue: MtoonRenderQueue::Transparent,
+            render_queue_offset_number: 2,
+            cull_mode: MtoonCullMode::Off,
+            outline_width_mode: OutlineWidthMode::WorldCoordinates,
+            outline_width_factor: 0.01,
+            ..MtoonMaterial::default()
+        };
+
+        let hints = material.pipeline_hints();
+
+        assert_eq!(hints.render_order, 3002);
+        assert_eq!(hints.alpha_mode, MtoonAlphaMode::Blend);
+        assert_eq!(hints.cull_mode, MtoonCullMode::Off);
+        assert!(hints.depth_write);
+        assert!(hints.blend);
+        assert_eq!(
+            hints.outline,
+            Some(MtoonOutlinePipelineHint {
+                width_mode: OutlineWidthMode::WorldCoordinates,
+                render_order: 3003,
+                cull_mode: MtoonCullMode::Front,
+            })
+        );
+        assert_eq!(
+            material.pipeline_passes(),
+            vec![
+                MtoonPipelinePass::Base(hints),
+                MtoonPipelinePass::Outline(hints.outline.unwrap())
+            ]
+        );
     }
 }

@@ -1,12 +1,19 @@
 //! glTF/GLB IO for VRM and VRMA assets.
 
+use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::path::Path;
 use thiserror::Error;
-use vrm_core::{Resolved, VrmModel};
+use vrm_core::{
+    ExpressionName, Feature, HumanBoneName, Resolved, RotationTrack, ScalarTrack, TranslationTrack,
+    VrmAnimation, VrmModel,
+};
 use vrm_protocol::{
-    ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, parse_root_extensions,
+    ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
+    parse_root_extensions,
 };
 use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
@@ -38,6 +45,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let mut bundle = parse_root_extensions(&extension_map(document.as_json().extensions.as_ref()))?;
     extract_node_constraints(&document, &mut bundle)?;
     extract_mtoon_materials(&document, &mut bundle)?;
+    let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle)?;
 
     let image_data = images
         .into_iter()
@@ -49,17 +57,442 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
 
     let node_count = document.nodes().count();
     let material_count = document.materials().count();
-    let model = ValidatedAssetBuilder::new()
+    let mut asset = ValidatedAssetBuilder::new()
         .with_node_count(node_count)
         .with_material_count(material_count)
-        .build(bundle)?
-        .resolve();
+        .build(bundle)?;
+    if let Some(animations) = vrma_animations {
+        asset.document.animation = animations
+            .first()
+            .cloned()
+            .map_or(Feature::Absent, Feature::Present);
+        asset.document.animations = animations;
+    }
+    let model = asset.resolve();
 
     Ok(LoadedVrm {
         model,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
         images: image_data,
     })
+}
+
+fn extract_vrma_animations(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    bundle: &ExtensionBundle,
+) -> Result<Option<Vec<VrmAnimation>>, VrmIoError> {
+    let Some(VrmExtension::Vrma(vrma)) = &bundle.vrm else {
+        return Ok(None);
+    };
+
+    let node_map = VrmaNodeMap::from_extension(vrma);
+    let rest_pose = VrmaRestPose::from_document(document, &node_map);
+    let animations = document
+        .animations()
+        .map(|animation| {
+            let mut result = VrmAnimation {
+                rest_hips_position: rest_pose.hips_world_position,
+                ..VrmAnimation::default()
+            };
+
+            for channel in animation.channels() {
+                let node_index = channel.target().node().index();
+                let reader = channel
+                    .reader(|buffer| buffers.get(buffer.index()).map(|data| data.0.as_slice()));
+                let times = reader
+                    .read_inputs()
+                    .ok_or(VrmIoError::InvalidAnimationChannel {
+                        message: "missing animation input accessor".to_owned(),
+                    })?
+                    .collect::<Vec<_>>();
+
+                if let Some(bone_name) = node_map.humanoid.get(&node_index) {
+                    match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Translations(values))
+                            if *bone_name == HumanBoneName::Hips =>
+                        {
+                            result.hips_translation = Some(TranslationTrack {
+                                times: times.clone(),
+                                values: values
+                                    .map(Vec3::from_array)
+                                    .map(|translation| {
+                                        rest_pose
+                                            .hips_parent_world_matrix
+                                            .transform_point3(translation)
+                                    })
+                                    .collect(),
+                            });
+                        }
+                        Some(gltf::animation::util::ReadOutputs::Translations(_)) => {}
+                        Some(gltf::animation::util::ReadOutputs::Rotations(values)) => {
+                            let bone_rest = rest_pose
+                                .bone_world_rotations
+                                .get(bone_name)
+                                .copied()
+                                .unwrap_or(Quat::IDENTITY);
+                            let parent_rest = rest_pose.parent_world_rotation(bone_name);
+                            result.humanoid_rotation_tracks.insert(
+                                bone_name.clone(),
+                                RotationTrack {
+                                    times: times.clone(),
+                                    values: values
+                                        .into_f32()
+                                        .map(|[x, y, z, w]| {
+                                            parent_rest
+                                                * Quat::from_xyzw(x, y, z, w)
+                                                * bone_rest.inverse()
+                                        })
+                                        .collect(),
+                                },
+                            );
+                        }
+                        Some(_) => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: format!(
+                                    "invalid humanoid animation path for node {node_index}"
+                                ),
+                            });
+                        }
+                        None => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: "missing animation output accessor".to_owned(),
+                            });
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(expression) = node_map.expressions.get(&node_index) {
+                    match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Translations(values)) => {
+                            let track = ScalarTrack {
+                                times: times.clone(),
+                                values: values.map(|value| value[0]).collect(),
+                            };
+                            match expression {
+                                VrmaExpressionTarget::Preset(name) => {
+                                    result.preset_expression_tracks.insert(name.clone(), track);
+                                }
+                                VrmaExpressionTarget::Custom(name) => {
+                                    result.custom_expression_tracks.insert(name.clone(), track);
+                                }
+                            }
+                        }
+                        Some(_) => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: format!(
+                                    "invalid expression animation path for node {node_index}"
+                                ),
+                            });
+                        }
+                        None => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: "missing animation output accessor".to_owned(),
+                            });
+                        }
+                    }
+                    continue;
+                }
+
+                if Some(node_index) == node_map.look_at {
+                    match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Rotations(values)) => {
+                            result.look_at_track = Some(RotationTrack {
+                                times: times.clone(),
+                                values: values
+                                    .into_f32()
+                                    .map(|[x, y, z, w]| Quat::from_xyzw(x, y, z, w))
+                                    .collect(),
+                            });
+                        }
+                        Some(_) => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: format!(
+                                    "invalid lookAt animation path for node {node_index}"
+                                ),
+                            });
+                        }
+                        None => {
+                            return Err(VrmIoError::InvalidAnimationChannel {
+                                message: "missing animation output accessor".to_owned(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            result.duration = result
+                .hips_translation
+                .as_ref()
+                .and_then(|track| track.times.last().copied())
+                .into_iter()
+                .chain(
+                    result
+                        .humanoid_rotation_tracks
+                        .values()
+                        .filter_map(|track| track.times.last().copied()),
+                )
+                .chain(
+                    result
+                        .preset_expression_tracks
+                        .values()
+                        .filter_map(|track| track.times.last().copied()),
+                )
+                .chain(
+                    result
+                        .custom_expression_tracks
+                        .values()
+                        .filter_map(|track| track.times.last().copied()),
+                )
+                .chain(
+                    result
+                        .look_at_track
+                        .as_ref()
+                        .and_then(|track| track.times.last().copied()),
+                )
+                .fold(0.0, f32::max);
+
+            Ok(result)
+        })
+        .collect::<Result<Vec<_>, VrmIoError>>()?;
+
+    Ok(Some(animations))
+}
+
+#[derive(Clone, Debug, Default)]
+struct VrmaNodeMap {
+    humanoid: HashMap<usize, HumanBoneName>,
+    expressions: HashMap<usize, VrmaExpressionTarget>,
+    look_at: Option<usize>,
+}
+
+impl VrmaNodeMap {
+    fn from_extension(vrma: &vrm_protocol::vrma::VrmcVrmAnimation) -> Self {
+        let mut map = Self::default();
+
+        if let Some(humanoid) = &vrma.humanoid {
+            for (name, value) in &humanoid.human_bones {
+                if let Some(node) = node_from_value(value) {
+                    map.humanoid
+                        .insert(node, HumanBoneName::from(name.as_str()));
+                }
+            }
+        }
+
+        if let Some(expressions) = &vrma.expressions {
+            for (name, value) in expressions.preset.as_ref().into_iter().flatten() {
+                if let Some(node) = node_from_value(value) {
+                    map.expressions.insert(
+                        node,
+                        VrmaExpressionTarget::Preset(ExpressionName::from(name.as_str())),
+                    );
+                }
+            }
+            for (name, value) in expressions.custom.as_ref().into_iter().flatten() {
+                if let Some(node) = node_from_value(value) {
+                    map.expressions
+                        .insert(node, VrmaExpressionTarget::Custom(name.clone()));
+                }
+            }
+        }
+
+        map.look_at = vrma.look_at.map(|look_at| look_at.node);
+        map
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct VrmaRestPose {
+    bone_world_rotations: HashMap<HumanBoneName, Quat>,
+    hips_parent_world_rotation: Quat,
+    hips_parent_world_matrix: Mat4,
+    hips_world_position: Vec3,
+}
+
+impl VrmaRestPose {
+    fn from_document(document: &gltf::Document, node_map: &VrmaNodeMap) -> Self {
+        let graph = NodeRestGraph::from_document(document);
+        let bone_world_rotations = node_map
+            .humanoid
+            .iter()
+            .filter_map(|(node, bone)| {
+                graph
+                    .world_rotations
+                    .get(*node)
+                    .copied()
+                    .map(|rotation| (bone.clone(), rotation))
+            })
+            .collect::<HashMap<_, _>>();
+        let hips_parent_world_rotation = node_map
+            .humanoid
+            .iter()
+            .find_map(|(node, bone)| {
+                (*bone == HumanBoneName::Hips)
+                    .then(|| graph.parents.get(*node).and_then(|parent| *parent))
+                    .flatten()
+            })
+            .and_then(|parent| graph.world_rotations.get(parent).copied())
+            .unwrap_or(Quat::IDENTITY);
+        let hips_node = node_map
+            .humanoid
+            .iter()
+            .find_map(|(node, bone)| (*bone == HumanBoneName::Hips).then_some(*node));
+        let hips_parent_world_matrix = hips_node
+            .and_then(|node| graph.parents.get(node).and_then(|parent| *parent))
+            .and_then(|parent| graph.world_matrices.get(parent).copied())
+            .unwrap_or(Mat4::IDENTITY);
+        let hips_world_position = hips_node
+            .and_then(|node| graph.world_matrices.get(node).copied())
+            .map(|matrix| matrix.transform_point3(Vec3::ZERO))
+            .unwrap_or(Vec3::ZERO);
+
+        Self {
+            bone_world_rotations,
+            hips_parent_world_rotation,
+            hips_parent_world_matrix,
+            hips_world_position,
+        }
+    }
+
+    fn parent_world_rotation(&self, bone: &HumanBoneName) -> Quat {
+        let mut parent = human_bone_parent(bone);
+        while let Some(parent_bone) = parent.as_ref() {
+            if let Some(rotation) = self.bone_world_rotations.get(parent_bone) {
+                return *rotation;
+            }
+            parent = human_bone_parent(parent_bone);
+        }
+        self.hips_parent_world_rotation
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NodeRestGraph {
+    parents: Vec<Option<usize>>,
+    world_rotations: Vec<Quat>,
+    world_matrices: Vec<Mat4>,
+}
+
+impl NodeRestGraph {
+    fn from_document(document: &gltf::Document) -> Self {
+        let node_count = document.nodes().count();
+        let mut graph = Self {
+            parents: vec![None; node_count],
+            world_rotations: vec![Quat::IDENTITY; node_count],
+            world_matrices: vec![Mat4::IDENTITY; node_count],
+        };
+
+        for scene in document.scenes() {
+            for node in scene.nodes() {
+                graph.visit_node(node, None, Mat4::IDENTITY, Quat::IDENTITY);
+            }
+        }
+
+        graph
+    }
+
+    fn visit_node(
+        &mut self,
+        node: gltf::Node<'_>,
+        parent: Option<usize>,
+        parent_matrix: Mat4,
+        parent_rotation: Quat,
+    ) {
+        let index = node.index();
+        let (translation, rotation, scale) = node.transform().decomposed();
+        let local_rotation = Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
+        let local_matrix = Mat4::from_scale_rotation_translation(
+            Vec3::from_array(scale),
+            local_rotation,
+            Vec3::from_array(translation),
+        );
+        let world_matrix = parent_matrix * local_matrix;
+        let world_rotation = parent_rotation * local_rotation;
+        self.parents[index] = parent;
+        self.world_rotations[index] = world_rotation;
+        self.world_matrices[index] = world_matrix;
+
+        for child in node.children() {
+            self.visit_node(child, Some(index), world_matrix, world_rotation);
+        }
+    }
+}
+
+fn human_bone_parent(bone: &HumanBoneName) -> Option<HumanBoneName> {
+    use HumanBoneName::*;
+    match bone {
+        Hips => None,
+        Spine => Some(Hips),
+        Chest => Some(Spine),
+        UpperChest => Some(Chest),
+        Neck => Some(UpperChest),
+        Head => Some(Neck),
+        LeftEye | RightEye | Jaw => Some(Head),
+        LeftUpperLeg => Some(Hips),
+        LeftLowerLeg => Some(LeftUpperLeg),
+        LeftFoot => Some(LeftLowerLeg),
+        LeftToes => Some(LeftFoot),
+        RightUpperLeg => Some(Hips),
+        RightLowerLeg => Some(RightUpperLeg),
+        RightFoot => Some(RightLowerLeg),
+        RightToes => Some(RightFoot),
+        LeftShoulder => Some(UpperChest),
+        LeftUpperArm => Some(LeftShoulder),
+        LeftLowerArm => Some(LeftUpperArm),
+        LeftHand => Some(LeftLowerArm),
+        RightShoulder => Some(UpperChest),
+        RightUpperArm => Some(RightShoulder),
+        RightLowerArm => Some(RightUpperArm),
+        RightHand => Some(RightLowerArm),
+        LeftThumbMetacarpal | LeftThumbProximal => Some(LeftHand),
+        LeftThumbDistal => Some(LeftThumbProximal),
+        LeftIndexProximal => Some(LeftHand),
+        LeftIndexIntermediate => Some(LeftIndexProximal),
+        LeftIndexDistal => Some(LeftIndexIntermediate),
+        LeftMiddleProximal => Some(LeftHand),
+        LeftMiddleIntermediate => Some(LeftMiddleProximal),
+        LeftMiddleDistal => Some(LeftMiddleIntermediate),
+        LeftRingProximal => Some(LeftHand),
+        LeftRingIntermediate => Some(LeftRingProximal),
+        LeftRingDistal => Some(LeftRingIntermediate),
+        LeftLittleProximal => Some(LeftHand),
+        LeftLittleIntermediate => Some(LeftLittleProximal),
+        LeftLittleDistal => Some(LeftLittleIntermediate),
+        RightThumbMetacarpal | RightThumbProximal => Some(RightHand),
+        RightThumbDistal => Some(RightThumbProximal),
+        RightIndexProximal => Some(RightHand),
+        RightIndexIntermediate => Some(RightIndexProximal),
+        RightIndexDistal => Some(RightIndexIntermediate),
+        RightMiddleProximal => Some(RightHand),
+        RightMiddleIntermediate => Some(RightMiddleProximal),
+        RightMiddleDistal => Some(RightMiddleIntermediate),
+        RightRingProximal => Some(RightHand),
+        RightRingIntermediate => Some(RightRingProximal),
+        RightRingDistal => Some(RightRingIntermediate),
+        RightLittleProximal => Some(RightHand),
+        RightLittleIntermediate => Some(RightLittleProximal),
+        RightLittleDistal => Some(RightLittleIntermediate),
+        Custom(_) => None,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum VrmaExpressionTarget {
+    Preset(ExpressionName),
+    Custom(String),
+}
+
+fn node_from_value(value: &Value) -> Option<usize> {
+    value
+        .get("node")
+        .and_then(Value::as_u64)
+        .and_then(|node| usize::try_from(node).ok())
+}
+
+pub fn load_vrm_from_path(path: impl AsRef<Path>) -> Result<LoadedVrm, VrmIoError> {
+    let bytes = std::fs::read(path)?;
+    load_vrm_from_slice(&bytes)
 }
 
 fn extension_map<T>(source: Option<&T>) -> ExtensionMap
@@ -126,6 +559,8 @@ fn extract_mtoon_materials(
 #[derive(Debug, Error)]
 pub enum VrmIoError {
     #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
     Gltf(#[from] gltf::Error),
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
@@ -133,6 +568,8 @@ pub enum VrmIoError {
     Build(#[from] BuildError),
     #[error("invalid extension {extension}: {message}")]
     InvalidExtension { extension: String, message: String },
+    #[error("invalid animation channel: {message}")]
+    InvalidAnimationChannel { message: String },
 }
 
 trait ImageFormatExt {
@@ -163,6 +600,7 @@ fn _preserve_indexmap_dependency(_: IndexMap<String, Value>) {}
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    use std::{env, fs, path::PathBuf};
     use vrm_core::{Feature, HumanBoneName, LookAtKind, OutlineWidthMode, VrmKind};
 
     #[test]
@@ -319,5 +757,113 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    #[ignore = "requires local external fixtures; set VRM_RS_FIXTURE_DIR"]
+    fn loads_external_fixture_directory() {
+        let fixture_dir = env::var_os("VRM_RS_FIXTURE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".external-fixtures/official"));
+        let entries = fs::read_dir(&fixture_dir)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", fixture_dir.display()));
+
+        let mut loaded = Vec::new();
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if !is_supported_fixture(&path) {
+                continue;
+            }
+            let result = load_vrm_from_path(&path);
+            assert!(
+                result.is_ok(),
+                "failed to load external fixture {}: {:?}",
+                path.display(),
+                result.err()
+            );
+            let result = result.unwrap();
+            assert_external_fixture_semantics(&path, &result);
+            loaded.push(path);
+        }
+
+        assert!(
+            !loaded.is_empty(),
+            "no .vrm/.vrma/.glb/.gltf fixtures found in {}",
+            fixture_dir.display()
+        );
+    }
+
+    fn assert_external_fixture_semantics(path: &std::path::Path, loaded: &LoadedVrm) {
+        let document = loaded.model().document();
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("vrma"))
+        {
+            assert!(
+                !document.animations.is_empty(),
+                "VRMA fixture did not produce animations: {}",
+                path.display()
+            );
+            let animation = &document.animations[0];
+            assert!(
+                animation.duration > 0.0,
+                "VRMA fixture has zero duration: {}",
+                path.display()
+            );
+            assert!(
+                animation.hips_translation.is_some()
+                    || !animation.humanoid_rotation_tracks.is_empty()
+                    || !animation.preset_expression_tracks.is_empty()
+                    || !animation.custom_expression_tracks.is_empty()
+                    || animation.look_at_track.is_some(),
+                "VRMA fixture has no extracted tracks: {}",
+                path.display()
+            );
+            return;
+        }
+
+        assert!(
+            !document.meta.name.is_empty(),
+            "VRM fixture has empty meta name: {}",
+            path.display()
+        );
+        assert!(
+            !document.humanoid.bones.is_empty(),
+            "VRM fixture has no humanoid bones: {}",
+            path.display()
+        );
+        if file_name.eq_ignore_ascii_case("Seed-san.vrm") {
+            assert!(
+                !document.materials.is_empty(),
+                "Seed-san should expose material data"
+            );
+            assert!(
+                document.spring_bone.is_present(),
+                "Seed-san should expose spring bone data"
+            );
+        }
+        if file_name.eq_ignore_ascii_case("VRM1_Constraint_Twist_Sample.vrm") {
+            assert!(
+                !document.node_constraints.is_empty(),
+                "constraint sample should expose node constraints"
+            );
+        }
+    }
+
+    fn is_supported_fixture(path: &std::path::Path) -> bool {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "vrm" | "vrma" | "glb" | "gltf"
+                )
+            })
     }
 }

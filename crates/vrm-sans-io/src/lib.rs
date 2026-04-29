@@ -49,20 +49,22 @@ impl ValidatedAssetBuilder {
             })
             .collect::<Result<_, _>>()?;
 
-        document.materials = bundle
-            .mtoon_materials
-            .into_iter()
-            .map(|(index, material)| {
-                let mut core = Material {
-                    name: Some(format!("material_{index}")),
-                    mtoon: Feature::Present(map_mtoon(material)),
-                };
-                if let Some(count) = self.material_count {
-                    ensure_ref("material", index, count)?;
-                }
-                Ok::<_, BuildError>(std::mem::take(&mut core))
-            })
-            .collect::<Result<_, _>>()?;
+        document.materials.extend(
+            bundle
+                .mtoon_materials
+                .into_iter()
+                .map(|(index, material)| {
+                    let mut core = Material {
+                        name: Some(format!("material_{index}")),
+                        mtoon: Feature::Present(map_mtoon(material)),
+                    };
+                    if let Some(count) = self.material_count {
+                        ensure_ref("material", index, count)?;
+                    }
+                    Ok::<_, BuildError>(std::mem::take(&mut core))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
 
         if !document.humanoid.bones.is_empty() && !document.humanoid.required_bones_present() {
             return Err(BuildError::Core(CoreError::MissingRequiredHumanBones));
@@ -262,8 +264,24 @@ fn map_expression(expression: vrm1::Expression) -> Expression {
 fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
     let meta = vrm.meta.unwrap_or_default();
     let humanoid = vrm.humanoid.unwrap_or_default();
+    let first_person = vrm.first_person;
+    let secondary_animation = vrm.secondary_animation;
+    let material_properties = vrm.material_properties;
+    let material_name_to_index = material_properties
+        .as_ref()
+        .map(|materials| {
+            materials
+                .iter()
+                .enumerate()
+                .filter_map(|(index, material)| material.name.clone().map(|name| (name, index)))
+                .collect::<std::collections::HashMap<_, _>>()
+        })
+        .unwrap_or_default();
     let mut document = VrmDocument {
         kind: VrmKind::Vrm0Compat,
+        compatibility: Compatibility {
+            vrm0: Some(Vrm0Compatibility::default()),
+        },
         meta: Meta {
             name: meta.title.unwrap_or_else(|| "VRM 0.0 Avatar".to_owned()),
             version: meta.version,
@@ -290,38 +308,291 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
         ..VrmDocument::default()
     };
 
-    if let Some(blend_shape) = vrm.blend_shape_master {
-        document.expressions = Feature::Present(ExpressionSet {
-            preset: blend_shape
-                .blend_shape_groups
+    if let Some(first_person) = first_person {
+        document.first_person = Feature::Present(FirstPerson {
+            mesh_annotations: first_person
+                .mesh_annotations
+                .unwrap_or_default()
                 .into_iter()
-                .filter_map(|group| {
-                    group.preset_name.map(|name| {
-                        (
-                            ExpressionName::from(name.as_str()),
-                            Expression {
-                                is_binary: group.is_binary.unwrap_or(false),
-                                binds: group
-                                    .binds
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|bind| ExpressionBind::MorphTarget {
-                                        node: NodeRef(bind.mesh),
-                                        index: bind.index,
-                                        weight: bind.weight,
-                                    })
-                                    .collect(),
-                                ..Expression::default()
-                            },
-                        )
-                    })
+                .map(|annotation| FirstPersonMeshAnnotation {
+                    node: NodeRef(annotation.mesh),
+                    kind: FirstPersonAnnotation::from(annotation.first_person_flag.as_str()),
                 })
                 .collect(),
-            custom: Default::default(),
+        });
+        document.look_at = Feature::Present(LookAt {
+            offset_from_head: vec3(first_person.first_person_bone_offset),
+            kind: match first_person.look_at_type_name.as_deref() {
+                Some("BlendShape") => LookAtKind::Expression,
+                Some("Bone") | None => LookAtKind::Bone,
+                Some(other) => LookAtKind::Unknown(other.to_owned()),
+            },
+            horizontal_inner: map_vrm0_degree_map(first_person.look_at_horizontal_inner),
+            horizontal_outer: map_vrm0_degree_map(first_person.look_at_horizontal_outer),
+            vertical_down: map_vrm0_degree_map(first_person.look_at_vertical_down),
+            vertical_up: map_vrm0_degree_map(first_person.look_at_vertical_up),
         });
     }
 
+    if let Some(blend_shape) = vrm.blend_shape_master {
+        document.expressions =
+            Feature::Present(map_vrm0_blend_shape(blend_shape, &material_name_to_index));
+    }
+
+    if let Some(secondary_animation) = secondary_animation {
+        document.spring_bone = Feature::Present(map_vrm0_secondary_animation(secondary_animation));
+    }
+
+    document.materials = material_properties
+        .unwrap_or_default()
+        .into_iter()
+        .map(map_vrm0_material)
+        .collect();
+
     Ok(document)
+}
+
+fn map_vrm0_blend_shape(
+    blend_shape: vrm0::BlendShape,
+    material_name_to_index: &std::collections::HashMap<String, usize>,
+) -> ExpressionSet {
+    let mut expressions = ExpressionSet::default();
+
+    for group in blend_shape.blend_shape_groups {
+        let name = group
+            .preset_name
+            .clone()
+            .or_else(|| group.name.clone())
+            .unwrap_or_else(|| "unknown".to_owned());
+        let expression = map_vrm0_blend_shape_group(group, material_name_to_index);
+        if let Some(preset_name) = expression_preset_name(&name) {
+            expressions.preset.insert(preset_name, expression);
+        } else {
+            expressions.custom.insert(name, expression);
+        }
+    }
+
+    expressions
+}
+
+fn expression_preset_name(name: &str) -> Option<ExpressionName> {
+    let expression = ExpressionName::from(name);
+    (!matches!(expression, ExpressionName::Unknown(_))).then_some(expression)
+}
+
+fn map_vrm0_blend_shape_group(
+    group: vrm0::BlendShapeGroup,
+    material_name_to_index: &std::collections::HashMap<String, usize>,
+) -> Expression {
+    let morphs =
+        group
+            .binds
+            .unwrap_or_default()
+            .into_iter()
+            .map(|bind| ExpressionBind::MorphTarget {
+                node: NodeRef(bind.mesh),
+                index: bind.index,
+                weight: bind.weight,
+            });
+    let material_colors = group
+        .material_values
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|bind| {
+            material_name_to_index
+                .get(&bind.material_name)
+                .copied()
+                .map(|material| map_vrm0_material_value_bind(material, bind))
+        });
+
+    Expression {
+        is_binary: group.is_binary.unwrap_or(false),
+        binds: morphs.chain(material_colors).collect(),
+        ..Expression::default()
+    }
+}
+
+fn map_vrm0_material_value_bind(
+    material: usize,
+    bind: vrm0::BlendShapeMaterialBind,
+) -> ExpressionBind {
+    if is_vrm0_texture_transform_property(&bind.property_name) {
+        let scale =
+            (bind.target_value.len() >= 2).then(|| [bind.target_value[0], bind.target_value[1]]);
+        let offset =
+            (bind.target_value.len() >= 4).then(|| [bind.target_value[2], bind.target_value[3]]);
+        ExpressionBind::TextureTransform {
+            material: MaterialRef(material),
+            scale,
+            offset,
+        }
+    } else {
+        ExpressionBind::MaterialColor {
+            material: MaterialRef(material),
+            kind: bind.property_name,
+            target_value: bind.target_value,
+        }
+    }
+}
+
+fn is_vrm0_texture_transform_property(property: &str) -> bool {
+    matches!(property, "_MainTex_ST" | "_ShadeTexture_ST" | "_BumpMap_ST")
+}
+
+fn map_vrm0_degree_map(range: Option<vrm0::FirstPersonDegreeMap>) -> RangeMap {
+    range.map_or_else(RangeMap::default, |range| RangeMap {
+        input_max_value: range.x_range.unwrap_or(90.0),
+        output_scale: range.y_range.unwrap_or(10.0),
+    })
+}
+
+fn map_vrm0_secondary_animation(animation: vrm0::SecondaryAnimation) -> SpringBoneSystem {
+    let mut colliders = Vec::new();
+    let collider_groups = animation
+        .collider_groups
+        .unwrap_or_default()
+        .into_iter()
+        .map(|group| {
+            let start = colliders.len();
+            colliders.extend(group.colliders.into_iter().map(|collider| SpringCollider {
+                node: NodeRef(group.node),
+                shape: ColliderShape::Sphere {
+                    offset: vec3(collider.offset),
+                    radius: collider.radius.unwrap_or(0.0),
+                },
+            }));
+            SpringColliderGroup {
+                name: None,
+                colliders: (start..colliders.len()).collect(),
+            }
+        })
+        .collect();
+
+    let springs = animation
+        .bone_groups
+        .unwrap_or_default()
+        .into_iter()
+        .map(|spring| Spring {
+            name: spring.comment,
+            joints: spring
+                .bones
+                .unwrap_or_default()
+                .into_iter()
+                .map(|node| SpringJoint {
+                    node: NodeRef(node),
+                    hit_radius: spring.hit_radius.unwrap_or(0.0),
+                    stiffness: spring.stiffiness.unwrap_or(1.0),
+                    gravity_power: spring.gravity_power.unwrap_or(0.0),
+                    gravity_dir: spring.gravity_dir.map_or(Vec3::NEG_Y, Vec3::from_array),
+                    drag_force: spring.drag_force.unwrap_or(0.4),
+                })
+                .collect(),
+            collider_groups: spring.collider_groups.unwrap_or_default(),
+            center: spring.center.map(NodeRef),
+        })
+        .collect();
+
+    SpringBoneSystem {
+        colliders,
+        collider_groups,
+        springs,
+    }
+}
+
+fn map_vrm0_material(material: vrm0::Material) -> Material {
+    let render_queue = material.render_queue.unwrap_or(2000);
+    let queue = if render_queue >= 3000 {
+        MtoonRenderQueue::Transparent
+    } else if render_queue >= 2450 {
+        MtoonRenderQueue::AlphaTest
+    } else {
+        MtoonRenderQueue::Opaque
+    };
+    let render_queue_offset_number = render_queue
+        - match queue {
+            MtoonRenderQueue::Auto | MtoonRenderQueue::Opaque => 2000,
+            MtoonRenderQueue::AlphaTest => 2450,
+            MtoonRenderQueue::Transparent => 3000,
+        };
+
+    let float_properties = material.float_properties.unwrap_or_default();
+    let vector_properties = material.vector_properties.unwrap_or_default();
+    let texture_properties = material.texture_properties.unwrap_or_default();
+    let shader = material.shader.unwrap_or_default();
+    let mtoon = shader.contains("MToon").then(|| MtoonMaterial {
+        transparent_with_z_write: float_property(&float_properties, "_ZWrite").unwrap_or(0.0) > 0.0,
+        render_queue_offset_number,
+        render_queue: queue,
+        cull_mode: map_vrm0_cull_mode(float_property(&float_properties, "_CullMode")),
+        textures: MtoonTextureSet {
+            main_texture: texture_property(&texture_properties, "_MainTex"),
+            shade_multiply_texture: texture_property(&texture_properties, "_ShadeTexture"),
+            normal_texture: texture_property(&texture_properties, "_BumpMap"),
+            matcap_texture: texture_property(&texture_properties, "_SphereAdd"),
+            rim_multiply_texture: texture_property(&texture_properties, "_RimTexture"),
+            outline_width_multiply_texture: texture_property(
+                &texture_properties,
+                "_OutlineWidthTexture",
+            ),
+            uv_animation_mask_texture: texture_property(&texture_properties, "_UvAnimMaskTexture"),
+        },
+        shade_color_factor: vec3_property(&vector_properties, "_ShadeColor")
+            .unwrap_or([0.97, 0.81, 0.86]),
+        shading_shift_factor: float_property(&float_properties, "_ShadeShift").unwrap_or(0.0),
+        shading_toony_factor: float_property(&float_properties, "_ShadeToony").unwrap_or(0.9),
+        gi_equalization_factor: float_property(&float_properties, "_IndirectLightIntensity")
+            .unwrap_or(0.9),
+        outline_width_mode: match float_property(&float_properties, "_OutlineWidthMode")
+            .unwrap_or(0.0) as i32
+        {
+            1 => OutlineWidthMode::WorldCoordinates,
+            2 => OutlineWidthMode::ScreenCoordinates,
+            _ => OutlineWidthMode::None,
+        },
+        outline_width_factor: float_property(&float_properties, "_OutlineWidth").unwrap_or(0.0),
+        outline_color_factor: vec3_property(&vector_properties, "_OutlineColor")
+            .unwrap_or([0.0, 0.0, 0.0]),
+        uv_animation: UvAnimation {
+            scroll_x_speed: float_property(&float_properties, "_UvAnimScrollX").unwrap_or(0.0),
+            scroll_y_speed: float_property(&float_properties, "_UvAnimScrollY").unwrap_or(0.0),
+            rotation_speed: float_property(&float_properties, "_UvAnimRotation").unwrap_or(0.0),
+        },
+    });
+
+    Material {
+        name: material.name,
+        mtoon: mtoon.map_or(Feature::Absent, Feature::Present),
+    }
+}
+
+fn map_vrm0_cull_mode(value: Option<f32>) -> MtoonCullMode {
+    match value.unwrap_or(2.0) as i32 {
+        0 => MtoonCullMode::Off,
+        1 => MtoonCullMode::Front,
+        _ => MtoonCullMode::Back,
+    }
+}
+
+fn float_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<f32> {
+    map.get(key)
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32)
+}
+
+fn vec3_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 3]> {
+    let values = map.get(key)?.as_array()?;
+    Some([
+        values.first()?.as_f64()? as f32,
+        values.get(1)?.as_f64()? as f32,
+        values.get(2)?.as_f64()? as f32,
+    ])
+}
+
+fn texture_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<TextureRef> {
+    map.get(key)
+        .and_then(|value| value.as_u64())
+        .and_then(|value| usize::try_from(value).ok())
+        .map(TextureRef)
 }
 
 fn map_spring_bone(spring_bone: spring_bone::VrmcSpringBone) -> SpringBoneSystem {
@@ -436,6 +707,27 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
     MtoonMaterial {
         transparent_with_z_write: material.transparent_with_z_write.unwrap_or(false),
         render_queue_offset_number: material.render_queue_offset_number.unwrap_or(0),
+        render_queue: MtoonRenderQueue::Auto,
+        cull_mode: MtoonCullMode::Back,
+        textures: MtoonTextureSet {
+            main_texture: None,
+            shade_multiply_texture: material
+                .shade_multiply_texture
+                .map(|texture| TextureRef(texture.index)),
+            normal_texture: None,
+            matcap_texture: material
+                .matcap_texture
+                .map(|texture| TextureRef(texture.index)),
+            rim_multiply_texture: material
+                .rim_multiply_texture
+                .map(|texture| TextureRef(texture.index)),
+            outline_width_multiply_texture: material
+                .outline_width_multiply_texture
+                .map(|texture| TextureRef(texture.index)),
+            uv_animation_mask_texture: material
+                .uv_animation_mask_texture
+                .map(|texture| TextureRef(texture.index)),
+        },
         shade_color_factor: material.shade_color_factor.unwrap_or([0.97, 0.81, 0.86]),
         shading_shift_factor: material.shading_shift_factor.unwrap_or(0.0),
         shading_toony_factor: material.shading_toony_factor.unwrap_or(0.9),
@@ -620,5 +912,224 @@ mod tests {
             err,
             BuildError::Core(CoreError::MissingRequiredHumanBones)
         ));
+    }
+
+    #[test]
+    fn maps_vrm0_secondary_animation_to_spring_bone() {
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                meta: Some(vrm0::Meta {
+                    title: Some("legacy".to_owned()),
+                    ..Default::default()
+                }),
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: required_vrm0_bones(),
+                    ..Default::default()
+                }),
+                secondary_animation: Some(vrm0::SecondaryAnimation {
+                    collider_groups: Some(vec![vrm0::SecondaryAnimationColliderGroup {
+                        node: 2,
+                        colliders: vec![vrm0::SecondaryAnimationCollider {
+                            offset: Some([0.0, 1.0, 0.0]),
+                            radius: Some(0.25),
+                        }],
+                    }]),
+                    bone_groups: Some(vec![vrm0::SecondaryAnimationSpring {
+                        comment: Some("hair".to_owned()),
+                        hit_radius: Some(0.05),
+                        bones: Some(vec![2]),
+                        collider_groups: Some(vec![0]),
+                        ..Default::default()
+                    }]),
+                }),
+                material_properties: Some(vec![vrm0::Material {
+                    name: Some("legacy-mtoon".to_owned()),
+                    shader: Some("VRM/MToon".to_owned()),
+                    render_queue: Some(3001),
+                    float_properties: Some(
+                        [
+                            ("_OutlineWidthMode".to_owned(), serde_json::json!(1.0)),
+                            ("_OutlineWidth".to_owned(), serde_json::json!(0.02)),
+                            ("_UvAnimScrollX".to_owned(), serde_json::json!(0.5)),
+                            ("_CullMode".to_owned(), serde_json::json!(0.0)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    vector_properties: Some(
+                        [(
+                            "_ShadeColor".to_owned(),
+                            serde_json::json!([0.1, 0.2, 0.3, 1.0]),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    texture_properties: Some(
+                        [
+                            ("_MainTex".to_owned(), serde_json::json!(3)),
+                            ("_ShadeTexture".to_owned(), serde_json::json!(4)),
+                            ("_UvAnimMaskTexture".to_owned(), serde_json::json!(5)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap();
+        let spring_bone = asset.document.spring_bone.as_ref().unwrap();
+        assert!(asset.document.compatibility.vrm0.is_some());
+        assert_eq!(spring_bone.colliders.len(), 1);
+        assert_eq!(spring_bone.collider_groups[0].colliders, vec![0]);
+        assert_eq!(spring_bone.springs[0].joints[0].node, NodeRef(2));
+        let mtoon = asset.document.materials[0].mtoon.as_ref().unwrap();
+        assert!(mtoon.outline_enabled());
+        assert_eq!(mtoon.render_order(), 3001);
+        assert_eq!(mtoon.cull_mode, MtoonCullMode::Off);
+        assert_eq!(mtoon.pipeline_hints().alpha_mode, MtoonAlphaMode::Blend);
+        assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
+        assert_eq!(mtoon.textures.main_texture, Some(TextureRef(3)));
+        assert_eq!(mtoon.textures.shade_multiply_texture, Some(TextureRef(4)));
+        assert_eq!(
+            mtoon.textures.uv_animation_mask_texture,
+            Some(TextureRef(5))
+        );
+    }
+
+    #[test]
+    fn maps_vrm0_blend_shape_material_values_and_thumb_aliases() {
+        let mut bones = required_vrm0_bones();
+        bones.push(vrm0::HumanBone {
+            bone: "leftThumbIntermediate".to_owned(),
+            node: 15,
+            use_default_values: None,
+            min: None,
+            max: None,
+            center: None,
+            axis_length: None,
+        });
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: bones,
+                    ..Default::default()
+                }),
+                blend_shape_master: Some(vrm0::BlendShape {
+                    blend_shape_groups: vec![
+                        vrm0::BlendShapeGroup {
+                            name: Some("Blink".to_owned()),
+                            preset_name: Some("blink".to_owned()),
+                            binds: Some(vec![vrm0::BlendShapeBind {
+                                mesh: 2,
+                                index: 1,
+                                weight: 75.0,
+                            }]),
+                            material_values: Some(vec![
+                                vrm0::BlendShapeMaterialBind {
+                                    material_name: "face".to_owned(),
+                                    property_name: "_Color".to_owned(),
+                                    target_value: vec![1.0, 0.5, 0.25, 1.0],
+                                },
+                                vrm0::BlendShapeMaterialBind {
+                                    material_name: "face".to_owned(),
+                                    property_name: "_MainTex_ST".to_owned(),
+                                    target_value: vec![2.0, 3.0, 0.1, 0.2],
+                                },
+                            ]),
+                            is_binary: Some(true),
+                        },
+                        vrm0::BlendShapeGroup {
+                            name: Some("customSmile".to_owned()),
+                            preset_name: None,
+                            binds: None,
+                            material_values: None,
+                            is_binary: None,
+                        },
+                    ],
+                }),
+                material_properties: Some(vec![vrm0::Material {
+                    name: Some("face".to_owned()),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(16)
+            .with_material_count(1)
+            .build(bundle)
+            .unwrap();
+
+        assert!(
+            asset
+                .document
+                .humanoid
+                .bones
+                .contains_key(&HumanBoneName::LeftThumbProximal)
+        );
+        let expressions = asset.document.expressions.as_ref().unwrap();
+        let blink = expressions.preset.get(&ExpressionName::Blink).unwrap();
+        assert!(blink.is_binary);
+        assert!(matches!(
+            blink.binds.as_slice(),
+            [
+                ExpressionBind::MorphTarget {
+                    node: NodeRef(2),
+                    index: 1,
+                    weight
+                },
+                ExpressionBind::MaterialColor {
+                    material: MaterialRef(0),
+                    kind,
+                    target_value
+                },
+                ExpressionBind::TextureTransform {
+                    material: MaterialRef(0),
+                    scale: Some([2.0, 3.0]),
+                    offset: Some([0.1, 0.2])
+                }
+            ] if *weight == 75.0 && kind == "_Color" && target_value == &vec![1.0, 0.5, 0.25, 1.0]
+        ));
+        assert!(expressions.custom.contains_key("customSmile"));
+    }
+
+    fn required_vrm0_bones() -> Vec<vrm0::HumanBone> {
+        [
+            ("hips", 0),
+            ("spine", 1),
+            ("head", 2),
+            ("leftUpperLeg", 3),
+            ("leftLowerLeg", 4),
+            ("leftFoot", 5),
+            ("rightUpperLeg", 6),
+            ("rightLowerLeg", 7),
+            ("rightFoot", 8),
+            ("leftUpperArm", 9),
+            ("leftLowerArm", 10),
+            ("leftHand", 11),
+            ("rightUpperArm", 12),
+            ("rightLowerArm", 13),
+            ("rightHand", 14),
+        ]
+        .into_iter()
+        .map(|(bone, node)| vrm0::HumanBone {
+            bone: bone.to_owned(),
+            node,
+            use_default_values: None,
+            min: None,
+            max: None,
+            center: None,
+            axis_length: None,
+        })
+        .collect()
     }
 }

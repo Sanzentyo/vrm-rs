@@ -369,6 +369,7 @@ dependencies = [
 name = "vrm-io"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "gltf",
  "indexmap",
  "serde",
