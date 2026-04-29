@@ -78,17 +78,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 75.57% | 79.42% |
+| Workspace total | 75.65% | 79.43% |
 | `vrm-adapter-bevy` | 93.32% | 95.05% |
 | `vrm-adapter` | 62.38% | 72.41% |
 | `vrm-core` | 70.28% | 77.47% |
-| `vrm-io` | 64.57% | 60.46% |
+| `vrm-io` | 64.32% | 59.82% |
 | `vrm-protocol` | 86.45% | 85.40% |
 | `vrm-runtime` | 82.02% | 82.69% |
-| `vrm-sans-io` | 89.65% | 92.52% |
+| `vrm-sans-io` | 89.96% | 92.80% |
 | `facade src/lib.rs` | 96.30% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, and secondary animation spring/collider counts. The next test-effort priority is broader fixture breadth, stricter diagnostics, additional VRMA clips, the long tail of legacy material value edge cases, and spring/constraint fixture parity.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, and `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds. The next test-effort priority is broader fixture breadth, stricter diagnostics, additional VRMA clips, and spring/constraint fixture parity.
 
 ## Ordered Parity Milestones
 

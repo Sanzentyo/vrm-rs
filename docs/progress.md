@@ -127,7 +127,8 @@
 - Re-measured coverage after the Bevy MToon materialization example: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%. The example is verified separately with `cargo run --example bevy_mtoon_materialization`.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
-- Re-measured coverage after Alicia VRM0 numeric humanoid parity: workspace line coverage is 79.42%, and `vrm-adapter-bevy` line coverage is 95.05%.
+- Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.
+- Re-measured coverage after workspace coverage refresh on 2026-04-30: workspace line coverage is 79.43%, and `vrm-adapter-bevy` line coverage is 95.05%.
 
 Open work:
 

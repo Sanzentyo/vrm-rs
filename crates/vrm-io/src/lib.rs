@@ -1480,13 +1480,21 @@ mod tests {
                 "VRM0 fixture should expose first-person or expression compatibility data"
             );
             assert_eq!(document.meta.name, "Alicia Solid");
-            assert_eq!(document.humanoid.bones.len(), 53);
+            assert_eq!(document.humanoid.bones.len(), 55);
             assert!(
                 document.humanoid.bones.contains_key(&HumanBoneName::Head)
                     && document
                         .humanoid
                         .bones
+                        .contains_key(&HumanBoneName::LeftThumbMetacarpal)
+                    && document
+                        .humanoid
+                        .bones
                         .contains_key(&HumanBoneName::LeftThumbProximal)
+                    && document
+                        .humanoid
+                        .bones
+                        .contains_key(&HumanBoneName::RightThumbMetacarpal)
                     && document
                         .humanoid
                         .bones
@@ -1574,8 +1582,19 @@ mod tests {
                 body_mtoon.textures.main_texture,
                 Some(vrm_core::TextureRef(0))
             );
-            assert!(body_mtoon.textures.shade_multiply_texture.is_some());
-            assert!(body_mtoon.textures.matcap_texture.is_some());
+            assert_eq!(
+                body_mtoon.textures.shade_multiply_texture,
+                Some(vrm_core::TextureRef(0))
+            );
+            assert_eq!(
+                body_mtoon.textures.matcap_texture,
+                Some(vrm_core::TextureRef(1))
+            );
+            assert_eq!(body_mtoon.textures.normal_texture, None);
+            assert_eq!(body_mtoon.textures.outline_width_multiply_texture, None);
+            assert_eq!(body_mtoon.uv_animation.scroll_x_speed, 0.0);
+            assert_eq!(body_mtoon.uv_animation.scroll_y_speed, 0.0);
+            assert_eq!(body_mtoon.uv_animation.rotation_speed, 0.0);
 
             let spring_bone = document.spring_bone.as_ref().unwrap_or_else(|| {
                 panic!("Alicia VRM0 fixture should expose secondary animation as spring bone")

@@ -1143,9 +1143,17 @@ mod tests {
                             ("_Cutoff".to_owned(), serde_json::json!(0.42)),
                             ("_ReceiveShadowRate".to_owned(), serde_json::json!(0.8)),
                             ("_ShadingGradeRate".to_owned(), serde_json::json!(0.7)),
+                            ("_ShadeShift".to_owned(), serde_json::json!(-0.2)),
+                            ("_ShadeToony".to_owned(), serde_json::json!(0.65)),
                             ("_UvAnimScrollX".to_owned(), serde_json::json!(0.5)),
+                            ("_UvAnimScrollY".to_owned(), serde_json::json!(-0.25)),
+                            ("_UvAnimRotation".to_owned(), serde_json::json!(0.125)),
                             ("_LightColorAttenuation".to_owned(), serde_json::json!(0.6)),
+                            ("_IndirectLightIntensity".to_owned(), serde_json::json!(0.4)),
                             ("_OutlineLightingMix".to_owned(), serde_json::json!(0.3)),
+                            ("_RimLightingMix".to_owned(), serde_json::json!(0.35)),
+                            ("_RimFresnelPower".to_owned(), serde_json::json!(2.5)),
+                            ("_RimLift".to_owned(), serde_json::json!(0.15)),
                             ("_CullMode".to_owned(), serde_json::json!(0.0)),
                         ]
                         .into_iter()
@@ -1166,6 +1174,14 @@ mod tests {
                                 "_OutlineColor".to_owned(),
                                 serde_json::json!([0.7, 0.6, 0.5, 1.0]),
                             ),
+                            (
+                                "_MatcapColor".to_owned(),
+                                serde_json::json!([0.2, 0.3, 0.4, 1.0]),
+                            ),
+                            (
+                                "_RimColor".to_owned(),
+                                serde_json::json!([0.9, 0.8, 0.7, 1.0]),
+                            ),
                         ]
                         .into_iter()
                         .collect(),
@@ -1174,7 +1190,11 @@ mod tests {
                         [
                             ("_MainTex".to_owned(), serde_json::json!(3)),
                             ("_ShadeTexture".to_owned(), serde_json::json!(4)),
-                            ("_UvAnimMaskTexture".to_owned(), serde_json::json!(5)),
+                            ("_BumpMap".to_owned(), serde_json::json!(5)),
+                            ("_SphereAdd".to_owned(), serde_json::json!(6)),
+                            ("_RimTexture".to_owned(), serde_json::json!(7)),
+                            ("_OutlineWidthTexture".to_owned(), serde_json::json!(8)),
+                            ("_UvAnimMaskTexture".to_owned(), serde_json::json!(9)),
                         ]
                         .into_iter()
                         .collect(),
@@ -1206,14 +1226,32 @@ mod tests {
         assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
         assert_eq!(mtoon.receive_shadow_rate_factor, 0.8);
         assert_eq!(mtoon.shading_grade_rate_factor, 0.7);
+        assert_eq!(mtoon.shading_shift_factor, -0.2);
+        assert_eq!(mtoon.shading_toony_factor, 0.65);
         assert_eq!(mtoon.light_color_attenuation_factor, 0.6);
+        assert_eq!(mtoon.gi_equalization_factor, 0.4);
+        assert_eq!(mtoon.matcap_factor, [0.2, 0.3, 0.4]);
+        assert_eq!(mtoon.parametric_rim_color_factor, [0.9, 0.8, 0.7]);
+        assert_eq!(mtoon.rim_lighting_mix_factor, 0.35);
+        assert_eq!(mtoon.parametric_rim_fresnel_power_factor, 2.5);
+        assert_eq!(mtoon.parametric_rim_lift_factor, 0.15);
         assert_eq!(mtoon.outline_color_factor, [0.7, 0.6, 0.5]);
         assert_eq!(mtoon.outline_lighting_mix_factor, 0.3);
+        assert_eq!(mtoon.uv_animation.scroll_x_speed, 0.5);
+        assert_eq!(mtoon.uv_animation.scroll_y_speed, -0.25);
+        assert_eq!(mtoon.uv_animation.rotation_speed, 0.125);
         assert_eq!(mtoon.textures.main_texture, Some(TextureRef(3)));
         assert_eq!(mtoon.textures.shade_multiply_texture, Some(TextureRef(4)));
+        assert_eq!(mtoon.textures.normal_texture, Some(TextureRef(5)));
+        assert_eq!(mtoon.textures.matcap_texture, Some(TextureRef(6)));
+        assert_eq!(mtoon.textures.rim_multiply_texture, Some(TextureRef(7)));
+        assert_eq!(
+            mtoon.textures.outline_width_multiply_texture,
+            Some(TextureRef(8))
+        );
         assert_eq!(
             mtoon.textures.uv_animation_mask_texture,
-            Some(TextureRef(5))
+            Some(TextureRef(9))
         );
     }
 
@@ -1264,6 +1302,16 @@ mod tests {
                                     material_name: "face".to_owned(),
                                     property_name: "_MainTex_ST".to_owned(),
                                     target_value: vec![2.0, 3.0, 0.1, 0.2],
+                                },
+                                vrm0::BlendShapeMaterialBind {
+                                    material_name: "face".to_owned(),
+                                    property_name: "_ShadeTexture_ST".to_owned(),
+                                    target_value: vec![4.0, 5.0, 0.3, 0.4],
+                                },
+                                vrm0::BlendShapeMaterialBind {
+                                    material_name: "face".to_owned(),
+                                    property_name: "_BumpMap_ST".to_owned(),
+                                    target_value: vec![6.0, 7.0, 0.5, 0.6],
                                 },
                             ]),
                             is_binary: Some(true),
@@ -1326,6 +1374,16 @@ mod tests {
                     material: MaterialRef(0),
                     scale: Some([2.0, 3.0]),
                     offset: Some([0.1, -2.2])
+                },
+                ExpressionBind::TextureTransform {
+                    material: MaterialRef(0),
+                    scale: Some([4.0, 5.0]),
+                    offset: Some([0.3, 0.4])
+                },
+                ExpressionBind::TextureTransform {
+                    material: MaterialRef(0),
+                    scale: Some([6.0, 7.0]),
+                    offset: Some([0.5, 0.6])
                 }
             ] if *weight == 75.0 && kind == "_Color" && target_value == &vec![1.0, 0.5, 0.25, 1.0]
         ));
