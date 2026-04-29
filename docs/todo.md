@@ -25,7 +25,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
   - Done when model changes, rest-pose changes, spring setup changes, and manual reset are represented by a small API or marker resource instead of requiring callers to remember `clear`.
 - [x] Write `BevyVrmMaterialState` into renderer-facing material assets.
   - Done when at least one optional system maps material state into Bevy material assets while preserving the current render-feature-light default path.
-- [ ] Write morph weights into real Bevy mesh/skinned-mesh state.
+- [x] Write morph weights into real Bevy mesh/skinned-mesh state.
   - Done when a Bevy app can drive expression morph targets without reading the lightweight staging component directly.
 - [ ] Implement Bevy first-person `auto` mesh handling.
   - Done when headless mesh planning can clone or update Bevy mesh assets for first-person view while keeping third-person meshes intact.

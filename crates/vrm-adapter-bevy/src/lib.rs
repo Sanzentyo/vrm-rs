@@ -67,6 +67,21 @@ pub struct BevyVrmMorphWeights {
     pub weights: HashMap<usize, f32>,
 }
 
+pub trait VrmBevyMorphTargetAsset: Asset {
+    fn apply_vrm_morph_weights(&mut self, node: NodeRef, weights: &HashMap<usize, f32>);
+}
+
+#[derive(Clone, Debug, PartialEq, Component)]
+pub struct BevyVrmMorphTargetAssetHandle<M: Asset> {
+    pub handle: Handle<M>,
+}
+
+impl<M: Asset> BevyVrmMorphTargetAssetHandle<M> {
+    pub fn new(handle: Handle<M>) -> Self {
+        Self { handle }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Component)]
 pub struct BevyVrmMaterialState {
     pub colors: HashMap<String, Vec<f32>>,
@@ -237,6 +252,15 @@ impl BevyRuntimeSceneState {
 
     pub fn morph_weight(&self, node: NodeRef, morph_index: usize) -> Option<f32> {
         self.morph_weights.get(&(node, morph_index)).copied()
+    }
+
+    pub fn morph_weights_for_node(&self, node: NodeRef) -> HashMap<usize, f32> {
+        self.morph_weights
+            .iter()
+            .filter_map(|((candidate, index), weight)| {
+                (*candidate == node).then_some((*index, *weight))
+            })
+            .collect()
     }
 
     pub fn material_color(&self, material: MaterialRef, property: &str) -> Option<&[f32]> {
@@ -598,13 +622,21 @@ pub fn write_scene_state_morph_weights(
     mut query: Query<(&VrmNode, &mut BevyVrmMorphWeights)>,
 ) {
     for (node, mut morphs) in &mut query {
-        morphs.weights = scene
-            .morph_weights
-            .iter()
-            .filter_map(|((candidate, index), weight)| {
-                (*candidate == node.0).then_some((*index, *weight))
-            })
-            .collect();
+        morphs.weights = scene.morph_weights_for_node(node.0);
+    }
+}
+
+pub type BevyMorphAssetWriteItem<'a, M> = (&'a VrmNode, &'a BevyVrmMorphTargetAssetHandle<M>);
+
+pub fn write_scene_state_to_morph_assets<M: VrmBevyMorphTargetAsset>(
+    scene: Res<BevyRuntimeSceneState>,
+    mut assets: ResMut<Assets<M>>,
+    query: Query<BevyMorphAssetWriteItem<'_, M>>,
+) {
+    for (node, morph_asset) in &query {
+        if let Some(asset) = assets.get_mut(morph_asset.handle.id()) {
+            asset.apply_vrm_morph_weights(node.0, &scene.morph_weights_for_node(node.0));
+        }
     }
 }
 
@@ -1621,6 +1653,67 @@ mod tests {
             asset.state.mtoon_pipeline_passes.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[derive(Asset, Clone, Debug, Default, PartialEq, TypePath)]
+    struct TestBevyMorphAsset {
+        node: Option<NodeRef>,
+        weights: HashMap<usize, f32>,
+    }
+
+    impl VrmBevyMorphTargetAsset for TestBevyMorphAsset {
+        fn apply_vrm_morph_weights(&mut self, node: NodeRef, weights: &HashMap<usize, f32>) {
+            self.node = Some(node);
+            self.weights = weights.clone();
+        }
+    }
+
+    #[test]
+    fn scene_state_can_write_renderer_facing_morph_assets() {
+        let mut app = App::new();
+        app.init_resource::<BevyRuntimeSceneState>()
+            .init_resource::<Assets<TestBevyMorphAsset>>()
+            .add_systems(
+                Update,
+                write_scene_state_to_morph_assets::<TestBevyMorphAsset>,
+            );
+
+        let mut scene = BevyRuntimeSceneState::default();
+        scene.insert_node(
+            NodeRef(9),
+            Entity::from_raw_u32(9).unwrap(),
+            Transform::default(),
+        );
+        scene.insert_node(
+            NodeRef(10),
+            Entity::from_raw_u32(10).unwrap(),
+            Transform::default(),
+        );
+        scene.set_morph_weight(NodeRef(9), 1, 20.0).unwrap();
+        scene.set_morph_weight(NodeRef(9), 3, 80.0).unwrap();
+        scene.set_morph_weight(NodeRef(10), 4, 100.0).unwrap();
+        *app.world_mut().resource_mut::<BevyRuntimeSceneState>() = scene;
+
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<TestBevyMorphAsset>>()
+            .add(TestBevyMorphAsset::default());
+        app.world_mut().spawn((
+            VrmNode(NodeRef(9)),
+            BevyVrmMorphTargetAssetHandle::new(handle.clone()),
+        ));
+
+        app.update();
+
+        let asset = app
+            .world()
+            .resource::<Assets<TestBevyMorphAsset>>()
+            .get(&handle)
+            .unwrap();
+        assert_eq!(asset.node, Some(NodeRef(9)));
+        assert_eq!(asset.weights.get(&1).copied(), Some(20.0));
+        assert_eq!(asset.weights.get(&3).copied(), Some(80.0));
+        assert!(!asset.weights.contains_key(&4));
     }
 
     #[test]
