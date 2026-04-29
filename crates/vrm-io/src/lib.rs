@@ -801,7 +801,10 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use std::{env, fs, path::PathBuf};
-    use vrm_core::{Feature, HumanBoneName, LookAtKind, OutlineWidthMode, VrmKind};
+    use vrm_core::{
+        ExpressionName, Feature, FirstPersonAnnotation, HumanBoneName, LookAtKind,
+        MtoonRenderQueue, OutlineWidthMode, VrmKind,
+    };
 
     #[test]
     fn loads_generated_vrm1_gltf_without_repo_fixture_asset() {
@@ -1475,6 +1478,102 @@ mod tests {
             assert!(
                 document.first_person.is_present() || document.expressions.is_present(),
                 "VRM0 fixture should expose first-person or expression compatibility data"
+            );
+            assert_eq!(document.meta.name, "Alicia Solid");
+            assert_eq!(document.humanoid.bones.len(), 53);
+            assert!(
+                document.humanoid.bones.contains_key(&HumanBoneName::Head)
+                    && document
+                        .humanoid
+                        .bones
+                        .contains_key(&HumanBoneName::LeftThumbProximal)
+                    && document
+                        .humanoid
+                        .bones
+                        .contains_key(&HumanBoneName::RightThumbProximal),
+                "Alicia VRM0 humanoid bones should include normalized head and thumb aliases"
+            );
+
+            let first_person = document.first_person.as_ref().unwrap_or_else(|| {
+                panic!("Alicia VRM0 fixture should expose first-person annotations")
+            });
+            assert_eq!(first_person.mesh_annotations.len(), 12);
+            assert!(
+                first_person
+                    .mesh_annotations
+                    .iter()
+                    .all(|annotation| annotation.kind == FirstPersonAnnotation::Auto),
+                "Alicia VRM0 mesh annotations should preserve Auto flags"
+            );
+
+            let look_at = document
+                .look_at
+                .as_ref()
+                .unwrap_or_else(|| panic!("Alicia VRM0 fixture should expose lookAt data"));
+            assert_eq!(look_at.kind, LookAtKind::Bone);
+            assert!((look_at.offset_from_head.y - 0.059999943).abs() < 0.000001);
+            assert_eq!(look_at.horizontal_inner.input_max_value, 20.0);
+            assert_eq!(look_at.horizontal_inner.output_scale, 5.0);
+
+            let expressions = document
+                .expressions
+                .as_ref()
+                .unwrap_or_else(|| panic!("Alicia VRM0 fixture should expose expressions"));
+            assert_eq!(expressions.preset.len(), 17);
+            for preset in [
+                ExpressionName::Aa,
+                ExpressionName::Ih,
+                ExpressionName::Ou,
+                ExpressionName::Ee,
+                ExpressionName::Oh,
+                ExpressionName::Happy,
+                ExpressionName::Sad,
+                ExpressionName::Relaxed,
+                ExpressionName::BlinkLeft,
+                ExpressionName::BlinkRight,
+            ] {
+                assert!(
+                    expressions.preset.contains_key(&preset),
+                    "Alicia VRM0 preset {} should map to canonical expression",
+                    preset.as_str()
+                );
+            }
+
+            assert_eq!(document.materials.len(), 12);
+            assert!(
+                document
+                    .materials
+                    .iter()
+                    .all(|material| material.mtoon.is_present()),
+                "Alicia VRM0 materials should map legacy VRM/MToon properties"
+            );
+            let body_mtoon = document.materials[0].mtoon.as_ref().unwrap();
+            assert_eq!(body_mtoon.render_queue, MtoonRenderQueue::Opaque);
+            assert!(body_mtoon.outline_enabled());
+            assert_eq!(
+                body_mtoon.textures.main_texture,
+                Some(vrm_core::TextureRef(0))
+            );
+            assert!(body_mtoon.textures.shade_multiply_texture.is_some());
+            assert!(body_mtoon.textures.matcap_texture.is_some());
+
+            let spring_bone = document.spring_bone.as_ref().unwrap_or_else(|| {
+                panic!("Alicia VRM0 fixture should expose secondary animation as spring bone")
+            });
+            assert_eq!(spring_bone.springs.len(), 3);
+            assert_eq!(spring_bone.collider_groups.len(), 6);
+            assert!(
+                spring_bone
+                    .springs
+                    .iter()
+                    .all(|spring| spring.center.is_none())
+            );
+            assert!(
+                spring_bone
+                    .springs
+                    .iter()
+                    .any(|spring| spring.joints.len() >= 5),
+                "Alicia VRM0 spring groups should retain multi-joint chains"
             );
         }
     }

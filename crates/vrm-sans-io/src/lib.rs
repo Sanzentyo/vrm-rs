@@ -395,7 +395,24 @@ fn map_vrm0_blend_shape(
 }
 
 fn expression_preset_name(name: &str) -> Option<ExpressionName> {
-    let expression = ExpressionName::from(name);
+    let canonical = match name {
+        "a" => "aa",
+        "i" => "ih",
+        "u" => "ou",
+        "e" => "ee",
+        "o" => "oh",
+        "joy" => "happy",
+        "sorrow" => "sad",
+        "fun" => "relaxed",
+        "lookup" => "lookUp",
+        "lookdown" => "lookDown",
+        "lookleft" => "lookLeft",
+        "lookright" => "lookRight",
+        "blink_l" => "blinkLeft",
+        "blink_r" => "blinkRight",
+        other => other,
+    };
+    let expression = ExpressionName::from(canonical);
     (!matches!(expression, ExpressionName::Unknown(_))).then_some(expression)
 }
 
@@ -1205,6 +1222,70 @@ mod tests {
             ] if *weight == 75.0 && kind == "_Color" && target_value == &vec![1.0, 0.5, 0.25, 1.0]
         ));
         assert!(expressions.custom.contains_key("customSmile"));
+    }
+
+    #[test]
+    fn maps_vrm0_legacy_expression_preset_aliases() {
+        let legacy_presets = [
+            ("Neutral", "neutral", ExpressionName::Neutral),
+            ("A", "a", ExpressionName::Aa),
+            ("I", "i", ExpressionName::Ih),
+            ("U", "u", ExpressionName::Ou),
+            ("E", "e", ExpressionName::Ee),
+            ("O", "o", ExpressionName::Oh),
+            ("Blink", "blink", ExpressionName::Blink),
+            ("Joy", "joy", ExpressionName::Happy),
+            ("Angry", "angry", ExpressionName::Angry),
+            ("Sorrow", "sorrow", ExpressionName::Sad),
+            ("Fun", "fun", ExpressionName::Relaxed),
+            ("LookUp", "lookup", ExpressionName::LookUp),
+            ("LookDown", "lookdown", ExpressionName::LookDown),
+            ("LookLeft", "lookleft", ExpressionName::LookLeft),
+            ("LookRight", "lookright", ExpressionName::LookRight),
+            ("Blink_L", "blink_l", ExpressionName::BlinkLeft),
+            ("Blink_R", "blink_r", ExpressionName::BlinkRight),
+        ];
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: required_vrm0_bones(),
+                    ..Default::default()
+                }),
+                blend_shape_master: Some(vrm0::BlendShape {
+                    blend_shape_groups: legacy_presets
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (name, preset_name, _))| vrm0::BlendShapeGroup {
+                            name: Some((*name).to_owned()),
+                            preset_name: Some((*preset_name).to_owned()),
+                            binds: Some(vec![vrm0::BlendShapeBind {
+                                mesh: 1,
+                                index,
+                                weight: 100.0,
+                            }]),
+                            ..Default::default()
+                        })
+                        .collect(),
+                }),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap();
+        let expressions = asset.document.expressions.as_ref().unwrap();
+
+        for (_, _, expected) in legacy_presets {
+            assert!(
+                expressions.preset.contains_key(&expected),
+                "missing mapped VRM0 preset {}",
+                expected.as_str()
+            );
+        }
+        assert!(expressions.custom.is_empty());
     }
 
     #[test]
