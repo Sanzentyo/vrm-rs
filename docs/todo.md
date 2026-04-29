@@ -34,7 +34,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 - [ ] Add concrete MToon materialization examples for Bevy.
   - Done when base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs are demonstrated against Bevy-facing assets or example components.
-- [ ] Add wgpu and ash integration skeleton examples.
+- [x] Add wgpu and ash integration skeleton examples.
   - Done when renderer owners can map `MtoonPipelinePass`, `MaterialRef`, and `TextureRef` into their own pipeline/material tables without depending on Bevy.
 - [ ] Keep shader generation out of core crates.
   - Done when any renderer-specific shader work lives in examples, optional adapters, or downstream crates, with `vrm-core` and `vrm-adapter` remaining renderer-agnostic.

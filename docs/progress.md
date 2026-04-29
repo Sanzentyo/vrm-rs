@@ -117,6 +117,8 @@
 - Re-measured coverage after Bevy spring parity resource integration: workspace line coverage is 78.84%, and `vrm-adapter-bevy` line coverage is 94.82%.
 - Added `BevyVrmSpringParityRecapture` with explicit model/rest-pose/spring-setup/manual-reset reasons. `initialize_spring_parity_state` now consumes this marker resource to rebuild `SpringRestMap` and center-space runtime state instead of requiring callers to clear the spring state directly.
 - Re-measured coverage after Bevy spring recapture rules: workspace line coverage is 79.01%, and `vrm-adapter-bevy` line coverage is 94.65%.
+- Added `examples/mtoon_renderer_skeletons.rs`, a compile-run example that maps renderer-agnostic MToon descriptors into wgpu-like and ash-like pipeline keys/material tables without depending on either renderer crate. This completes the current TODO item for wgpu/ash MToon integration skeleton examples.
+- Re-measured coverage after the MToon renderer skeleton example: workspace line coverage remains 79.01%, and `vrm-adapter-bevy` line coverage remains 94.65%. The example is verified separately with `cargo run --example mtoon_renderer_skeletons`.
 
 Open work:
 
