@@ -35,3 +35,7 @@ vrm-io = { path = "crates/vrm-io" }
 vrm-protocol = { path = "crates/vrm-protocol" }
 vrm-runtime = { path = "crates/vrm-runtime" }
 vrm-sans-io = { path = "crates/vrm-sans-io" }
+
+[dev-dependencies]
+bevy.workspace = true
+vrm-adapter-bevy = { path = "crates/vrm-adapter-bevy" }

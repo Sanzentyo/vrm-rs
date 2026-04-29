@@ -123,7 +123,8 @@
 - Added optional Bevy material asset writeback. Renderer integrations can implement `VrmBevyMaterialAsset` for their own Bevy `Asset` type, attach `BevyVrmMaterialAssetHandle`, and run `write_scene_state_to_material_assets` to apply colors, texture transforms, emissive intensity, and MToon pass state without making the default plugin depend on Bevy render assets.
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
-- Re-measured coverage after Bevy first-person auto mesh handling: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%.
+- Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
+- Re-measured coverage after the Bevy MToon materialization example: workspace line coverage is 79.62%, and `vrm-adapter-bevy` line coverage is 95.05%. The example is verified separately with `cargo run --example bevy_mtoon_materialization`.
 
 Open work:
 
