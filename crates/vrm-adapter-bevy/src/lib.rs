@@ -1,12 +1,12 @@
 //! Bevy integration skeleton for `vrm-rs`.
 //!
-//! This crate intentionally starts with registry and descriptor bridge types.
-//! Runtime systems can build on these without pulling renderer policy into
-//! `vrm-core` or `vrm-adapter`.
+//! This crate intentionally starts with registry, descriptor bridge, and runtime
+//! plugin marker types. Runtime systems can build on these without pulling
+//! renderer policy into `vrm-core` or `vrm-adapter`.
 
-use bevy::prelude::{Asset, Entity, Handle};
+use bevy::prelude::{App, Asset, Entity, Handle, Plugin, Resource};
 use std::collections::HashMap;
-use vrm_adapter::{MtoonMaterialDescriptor, MtoonMaterializationOptions};
+use vrm_adapter::{MtoonMaterialDescriptor, MtoonMaterializationOptions, ViewMode};
 use vrm_core::{MaterialRef, NodeRef, TextureRef, VrmDocument};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -72,6 +72,34 @@ pub fn bevy_mtoon_descriptors(
         .collect()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Resource)]
+pub struct BevyVrmRuntimeConfig {
+    pub view_mode: ViewMode,
+    pub apply_vrm0_orientation: bool,
+    pub use_spring_parity: bool,
+}
+
+impl Default for BevyVrmRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            view_mode: ViewMode::ThirdPerson,
+            apply_vrm0_orientation: true,
+            use_spring_parity: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VrmRuntimePlugin {
+    pub config: BevyVrmRuntimeConfig,
+}
+
+impl Plugin for VrmRuntimePlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(self.config.clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +130,21 @@ mod tests {
 
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0].descriptor.material, MaterialRef(0));
+    }
+
+    #[test]
+    fn runtime_plugin_installs_config_resource() {
+        let mut app = App::new();
+        let config = BevyVrmRuntimeConfig {
+            view_mode: ViewMode::FirstPerson,
+            apply_vrm0_orientation: false,
+            use_spring_parity: true,
+        };
+
+        app.add_plugins(VrmRuntimePlugin {
+            config: config.clone(),
+        });
+
+        assert_eq!(app.world().resource::<BevyVrmRuntimeConfig>(), &config);
     }
 }

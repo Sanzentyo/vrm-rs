@@ -8,7 +8,7 @@
 - `vrm-io`: glTF/GLB IO through the `gltf` crate, extension extraction, rest scene graph extraction, buffer/image collection, and model construction.
 - `vrm-runtime`: renderer-independent update orchestration and algorithms.
 - `vrm-adapter`: traits for scene graph, transforms, morph targets, materials, textures, and animation sinks.
-- `vrm-adapter-bevy`: Bevy 0.18.1 registry and descriptor bridge skeleton.
+- `vrm-adapter-bevy`: Bevy 0.18.1 registry, descriptor bridge, and runtime plugin config skeleton.
 - `vrm-rs`: facade crate.
 
 ## Type State

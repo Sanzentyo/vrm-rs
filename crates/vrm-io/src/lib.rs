@@ -1362,6 +1362,26 @@ mod tests {
                 "VRMA fixture has no extracted tracks: {}",
                 path.display()
             );
+            if file_name.eq_ignore_ascii_case("test.vrma") {
+                let track_classes = [
+                    !animation.humanoid_rotation_tracks.is_empty(),
+                    animation.hips_translation.is_some(),
+                    !animation.preset_expression_tracks.is_empty()
+                        || !animation.custom_expression_tracks.is_empty(),
+                    animation.look_at_track.is_some(),
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+                assert!(
+                    !animation.humanoid_rotation_tracks.is_empty(),
+                    "test.vrma should expose humanoid rotation tracks"
+                );
+                assert!(
+                    track_classes >= 2,
+                    "test.vrma should expose multiple VRMA track classes"
+                );
+            }
             return;
         }
 
@@ -1389,6 +1409,70 @@ mod tests {
             assert!(
                 !document.node_constraints.is_empty(),
                 "constraint sample should expose node constraints"
+            );
+            assert!(
+                document.spring_bone.is_present(),
+                "constraint sample should expose spring bone data"
+            );
+        }
+        if file_name.eq_ignore_ascii_case("VRMC_materials_mtoon_UV_Animation_Test.vrm") {
+            let animated_mtoon = document
+                .materials
+                .iter()
+                .filter_map(|material| material.mtoon.as_ref())
+                .find(|mtoon| {
+                    mtoon.uv_animation.scroll_x_speed != 0.0
+                        || mtoon.uv_animation.scroll_y_speed != 0.0
+                        || mtoon.uv_animation.rotation_speed != 0.0
+                        || mtoon.textures.uv_animation_mask_texture.is_some()
+                });
+            assert!(
+                animated_mtoon.is_some(),
+                "MToon UV animation sample should expose UV animation parameters"
+            );
+        }
+        if file_name.eq_ignore_ascii_case("VRMC_vrm_expressions_isBinary_Overrides.vrm")
+            || file_name.eq_ignore_ascii_case("VRMC_vrm_expressions_isBinary_Overridden.vrm")
+        {
+            let expressions = document.expressions.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "expression override sample should expose expressions: {}",
+                    path.display()
+                )
+            });
+            let preset_count = expressions.preset.len();
+            let has_binary = expressions
+                .preset
+                .values()
+                .chain(expressions.custom.values())
+                .any(|expression| expression.is_binary);
+            let has_override = expressions
+                .preset
+                .values()
+                .chain(expressions.custom.values())
+                .any(|expression| {
+                    expression.override_blink != vrm_core::OverrideMode::None
+                        || expression.override_look_at != vrm_core::OverrideMode::None
+                        || expression.override_mouth != vrm_core::OverrideMode::None
+                });
+            assert!(
+                preset_count > 0,
+                "expression override sample should expose preset expressions"
+            );
+            assert!(
+                has_binary || has_override,
+                "expression override sample should expose binary or override metadata"
+            );
+        }
+        if file_name.eq_ignore_ascii_case("VRM0_AliciaSolid.vrm") {
+            assert_eq!(document.kind, vrm_core::VrmKind::Vrm0Compat);
+            assert!(
+                document.compatibility.vrm0.is_some(),
+                "VRM0 fixture should expose compatibility metadata"
+            );
+            assert!(
+                document.first_person.is_present() || document.expressions.is_present(),
+                "VRM0 fixture should expose first-person or expression compatibility data"
             );
         }
     }

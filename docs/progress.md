@@ -78,6 +78,11 @@
   2. Deepened VRM0 compatibility coverage for legacy first-person flag spelling and lookAt range mapping.
   3. Tightened spring numeric parity reporting by collecting per-golden maximum tail and rotation deltas, with stricter tail tolerance for normal fixtures and documented wider tolerance for collider-heavy fixtures.
 - Addressed pessimistic gpt-5.4 review findings for that push: spring tail reporting now uses component-wise deltas to match the assertion semantics, VRMA normalized pose parity is reconstructed from the written raw scene, VRMA expression parity rejects unexpected Rust-only expression keys, VRM0 compatibility tests cover lowercase/unknown first-person flags plus all lookAt range directions/defaults, and testing docs now describe current coverage instead of stale next-priority text.
+- Started the next implementation slice:
+  1. Broaden external fixture semantic assertions for VRM0/VRMA/MToon/expression official samples without committing model binaries.
+  2. Keep VRMA breadth extensible by asserting track-class coverage per external `.vrma` file.
+  3. Add a minimal Bevy runtime plugin/config marker so downstream Bevy integrations have an ECS entry point before full transform/material writeback exists.
+- Completed that slice by extending ignored external IO fixture assertions for MToon UV animation, expression override samples, constraints, spring bones, optional VRM0 samples, and VRMA multi-track extraction, and by adding `VrmRuntimePlugin` plus `BevyVrmRuntimeConfig` to `vrm-adapter-bevy`.
 
 Open work:
 

@@ -77,11 +77,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 72.62% | 77.13% |
-| `vrm-adapter-bevy` | 69.14% | 66.04% |
+| Workspace total | 71.93% | 76.45% |
+| `vrm-adapter-bevy` | 72.82% | 66.67% |
 | `vrm-adapter` | 62.27% | 72.46% |
 | `vrm-core` | 67.63% | 76.73% |
-| `vrm-io` | 73.71% | 69.81% |
+| `vrm-io` | 69.45% | 65.66% |
 | `vrm-protocol` | 89.01% | 85.20% |
 | `vrm-runtime` | 79.56% | 79.79% |
 | `vrm-sans-io` | 88.70% | 91.57% |
@@ -102,6 +102,12 @@ Latest completed ordered work queue:
 1. VRMA parity breadth: compare normalized pose reconstructed from raw scene writeback as well as raw application output, assert that Rust does not emit unexpected expression keys, and support directory-level VRMA golden files for future fixture expansion.
 2. VRM0 compatibility depth: add generated compatibility tests for legacy first-person flag spelling, lowercase fallback spellings, unknown flags, all lookAt range directions, and default range values.
 3. Spring numeric precision: report and assert per-golden maximum tail/rotation component deltas so simple fixtures can remain tight while collider-heavy fixtures carry an explicit wider tolerance.
+
+Latest completed implementation slice:
+
+1. External fixture semantic breadth: assert known official fixture features for MToon UV animation, expression override samples, constraints, spring bones, and VRMA track classes.
+2. VRMA fixture breadth: keep ignored directory tests ready for additional `.vrma` files by checking humanoid rotation, hips translation, expression, and lookAt track categories when present.
+3. Bevy adapter skeleton: provide a minimal plugin/config marker as the first ECS entry point before concrete transform, morph, material, and mesh writeback systems are implemented.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 
