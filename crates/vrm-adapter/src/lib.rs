@@ -1449,7 +1449,10 @@ pub fn step_spring_bone_system_parity<T, E>(
     delta: DeltaTime,
 ) -> Result<(), AdapterError<E>>
 where
-    T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+    T: TransformAccess<Error = E>
+        + WorldTransformAccess<Error = E>
+        + WorldTransformUpdate<Error = E>
+        + SceneGraph<Error = E>,
 {
     if delta.0 <= 0.0 {
         return Ok(());
@@ -1502,6 +1505,9 @@ where
             );
             target
                 .set_local_rotation(joint.node, rotation)
+                .map_err(AdapterError::Target)?;
+            target
+                .update_world_transforms()
                 .map_err(AdapterError::Target)?;
         }
     }
@@ -1915,6 +1921,8 @@ mod tests {
 
     struct FixtureScene {
         scene: vrm_io::GltfSceneRest,
+        local_overrides: HashMap<NodeRef, Transform>,
+        world_overrides: HashMap<NodeRef, Transform>,
         rotations: Vec<(NodeRef, Quat)>,
     }
 
@@ -1922,6 +1930,8 @@ mod tests {
         fn new(scene: vrm_io::GltfSceneRest) -> Self {
             Self {
                 scene,
+                local_overrides: HashMap::new(),
+                world_overrides: HashMap::new(),
                 rotations: Vec::new(),
             }
         }
@@ -1931,13 +1941,35 @@ mod tests {
                 .node(node.0)
                 .unwrap_or_else(|| panic!("missing fixture node {}", node.0))
         }
+
+        fn local(&self, node: NodeRef) -> Transform {
+            self.local_overrides
+                .get(&node)
+                .copied()
+                .unwrap_or_else(|| self.node(node).local)
+        }
+
+        fn refresh_node_world(&mut self, node: NodeRef) {
+            let local = self.local(node);
+            let world = self
+                .node(node)
+                .parent
+                .map(NodeRef)
+                .and_then(|parent| self.world_overrides.get(&parent).copied())
+                .map(|parent| compose_transform(parent, local))
+                .unwrap_or(local);
+            self.world_overrides.insert(node, world);
+            for child in self.node(node).children.clone() {
+                self.refresh_node_world(NodeRef(child));
+            }
+        }
     }
 
     impl TransformAccess for FixtureScene {
         type Error = Infallible;
 
         fn local_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
-            Ok(self.node(node).local)
+            Ok(self.local(node))
         }
 
         fn set_local_transform(
@@ -1949,6 +1981,9 @@ mod tests {
         }
 
         fn set_local_rotation(&mut self, node: NodeRef, rotation: Quat) -> Result<(), Self::Error> {
+            let mut local = self.local(node);
+            local.rotation = rotation;
+            self.local_overrides.insert(node, local);
             self.rotations.push((node, rotation));
             Ok(())
         }
@@ -1966,7 +2001,11 @@ mod tests {
         type Error = Infallible;
 
         fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
-            Ok(self.node(node).world)
+            Ok(self
+                .world_overrides
+                .get(&node)
+                .copied()
+                .unwrap_or_else(|| self.node(node).world))
         }
     }
 
@@ -1974,6 +2013,11 @@ mod tests {
         type Error = Infallible;
 
         fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
+            for index in 0..self.scene.nodes.len() {
+                if self.scene.nodes[index].parent.is_none() {
+                    self.refresh_node_world(NodeRef(index));
+                }
+            }
             Ok(())
         }
     }
@@ -1993,6 +2037,16 @@ mod tests {
                 .copied()
                 .map(NodeRef)
                 .collect())
+        }
+    }
+
+    fn compose_transform(parent: Transform, child: Transform) -> Transform {
+        let matrix = transform_matrix(parent) * transform_matrix(child);
+        let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+        Transform {
+            translation,
+            rotation,
+            scale,
         }
     }
 
@@ -3119,6 +3173,90 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
+    fn spring_parity_matches_three_vrm_golden_rotations() {
+        let golden_path = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(".external-fixtures/golden/Seed-san.spring.json")
+            });
+        let golden: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&golden_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
+        )
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
+        let fixture = golden["fixture"]
+            .as_str()
+            .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
+        let delta = golden["delta"]
+            .as_f64()
+            .unwrap_or_else(|| panic!("golden delta is missing in {}", golden_path.display()))
+            as f32;
+        let loaded = vrm_io::load_vrm_from_path(fixture)
+            .unwrap_or_else(|err| panic!("failed to load golden fixture {fixture}: {err:?}"));
+        let document = loaded.model().document();
+        let system = document
+            .spring_bone
+            .as_ref()
+            .expect("golden fixture must have spring bone");
+        let mut scene = FixtureScene::new(loaded.scene().clone());
+        let rest = SpringRestMap::capture(&scene, system).unwrap();
+        let mut state = rest.runtime_state(system);
+
+        step_spring_bone_system_parity(&mut scene, system, &rest, &mut state, DeltaTime(delta))
+            .unwrap();
+
+        let actual = scene.rotations.into_iter().collect::<HashMap<_, _>>();
+        let mut compared = 0;
+        for joint in golden["springJoints"]
+            .as_array()
+            .expect("golden springJoints must be an array")
+        {
+            if vec3_len_from_json(&joint["initialLocalChildPosition"]) <= 0.001 {
+                continue;
+            }
+            let node = NodeRef(
+                joint["node"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("golden joint node is missing: {joint}"))
+                    as usize,
+            );
+            let expected = quat_from_json(&joint["localRotation"]);
+            let actual = actual
+                .get(&node)
+                .copied()
+                .unwrap_or_else(|| panic!("node {} was not written by spring parity", node.0));
+            assert!(
+                actual.abs_diff_eq(expected, 0.0005) || actual.abs_diff_eq(-expected, 0.0005),
+                "node {} rotation mismatch: actual={actual:?} expected={expected:?}",
+                node.0
+            );
+            compared += 1;
+        }
+        assert!(compared > 0, "golden did not contain stable spring joints");
+    }
+
+    fn quat_from_json(value: &serde_json::Value) -> Quat {
+        let values = value
+            .as_array()
+            .unwrap_or_else(|| panic!("expected quaternion array, got {value}"))
+            .iter()
+            .map(|value| value.as_f64().expect("quaternion component must be number") as f32)
+            .collect::<Vec<_>>();
+        Quat::from_xyzw(values[0], values[1], values[2], values[3])
+    }
+
+    fn vec3_len_from_json(value: &serde_json::Value) -> f32 {
+        let values = value
+            .as_array()
+            .unwrap_or_else(|| panic!("expected vector array, got {value}"))
+            .iter()
+            .map(|value| value.as_f64().expect("vector component must be number") as f32)
+            .collect::<Vec<_>>();
+        Vec3::new(values[0], values[1], values[2]).length()
+    }
+
+    #[test]
     fn fixture_file_discovery_recurses_for_external_adapter_tests() {
         let root = std::env::temp_dir().join(format!(
             "vrm-rs-adapter-fixture-discovery-{}",
@@ -3364,7 +3502,7 @@ mod tests {
             .tick_with_spring_parity(&mut mock, Some((&rest, &mut spring_state)))
             .unwrap();
 
-        assert_eq!(mock.world_updates, 1);
+        assert!(mock.world_updates >= 1);
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
     }
 

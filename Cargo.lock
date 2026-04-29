@@ -1899,6 +1899,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.32.1",
  "indexmap",
+ "serde_json",
  "thiserror 2.0.18",
  "vrm-core",
  "vrm-io",

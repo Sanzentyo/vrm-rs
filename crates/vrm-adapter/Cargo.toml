@@ -15,4 +15,5 @@ vrm-core = { path = "../vrm-core" }
 vrm-runtime = { path = "../vrm-runtime" }
 
 [dev-dependencies]
+serde_json.workspace = true
 vrm-io = { path = "../vrm-io" }
