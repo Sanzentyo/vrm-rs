@@ -13,7 +13,7 @@ Current generated coverage:
 - Per-material archived `VRMC_materials_hdr_emissiveMultiplier` extension.
 - Per-material `KHR_materials_emissive_strength` extension, including invalid shape handling, present-but-empty defaulting, and precedence over archived HDR multiplier.
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
-- First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, VRMA warning policy, MToon descriptor generation, and Bevy adapter skeleton compile tests.
+- First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, VRMA warning policy, MToon descriptor generation, Bevy adapter skeleton compile tests, and Bevy ECS hierarchy readback.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -65,12 +65,12 @@ Current known coverage gaps:
 - Protocol roundtrip tests cover representative extension shapes, but not every optional schema field.
 - External fixture tests assert semantic presence for official samples and compare Seed-san humanoid rest-state, posed humanoid writeback, spring center-space output, collider-heavy spring output, and VRMA application output against three-vrm.
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
-- Adapter tests use mock engines; Bevy/wgpu/ash compile examples are still pending.
+- Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
 
 ## Current Coverage Snapshot
 
-Measured locally on 2026-04-29 with:
+Measured locally on 2026-04-30 with:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
@@ -78,17 +78,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 75.02% | 79.01% |
-| `vrm-adapter-bevy` | 92.39% | 94.65% |
+| Workspace total | 75.16% | 79.07% |
+| `vrm-adapter-bevy` | 92.74% | 94.78% |
 | `vrm-adapter` | 63.07% | 72.97% |
 | `vrm-core` | 70.95% | 78.06% |
 | `vrm-io` | 64.57% | 60.46% |
 | `vrm-protocol` | 86.45% | 85.40% |
 | `vrm-runtime` | 82.02% | 82.69% |
 | `vrm-sans-io` | 89.62% | 92.41% |
-| facade `src/lib.rs` | 96.30% | 100.00% |
+| `facade src/lib.rs` | 96.30% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, and secondary animation spring/collider counts. The next test-effort priority is broader fixture breadth and stricter diagnostics, especially additional VRMA clips, numeric VRM0 humanoid-axis parity, the long tail of legacy material value edge cases, and renderer adapter examples.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, collider-heavy spring directory comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, and secondary animation spring/collider counts. The next test-effort priority is concrete Bevy render-asset writeback, broader fixture breadth, stricter diagnostics, additional VRMA clips, numeric VRM0 humanoid-axis parity, and the long tail of legacy material value edge cases.
 
 ## Ordered Parity Milestones
 
@@ -132,6 +132,7 @@ Latest VRM0 Alicia expansion:
 12. Bevy spring parity integration is covered by a full `App::update` path that reads ECS transforms, captures `SpringRestMap`, initializes center-space spring state, runs the runtime tick, and writes the solved joint rotation back to a Bevy `Transform`.
 13. Bevy spring parity recapture is covered by a marker-resource test that requests a rest-pose recapture and verifies the captured `SpringRestMap` is rebuilt without callers manually clearing `BevyVrmSpringParityState`.
 14. MToon renderer skeleton coverage now includes `cargo run --example mtoon_renderer_skeletons`, which maps descriptors into wgpu-like and ash-like pipeline/material tables without renderer dependencies.
+15. Bevy hierarchy readback now covers real `ChildOf` ECS hierarchy components, deriving `BevyRuntimeSceneState` parent/child links before spring parity and runtime-driver ticks.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 

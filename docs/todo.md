@@ -19,7 +19,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 ## P0: Bevy Adapter Integration
 
-- [ ] Read real Bevy hierarchy into `BevyRuntimeSceneState`.
+- [x] Read real Bevy hierarchy into `BevyRuntimeSceneState`.
   - Done when `VrmNode` entities can derive parent/child links from Bevy ECS hierarchy components and spring/constraint/first-person tests no longer need manual `set_parent` setup.
 - [x] Make `BevyVrmSpringParityState` recapture rules explicit.
   - Done when model changes, rest-pose changes, spring setup changes, and manual reset are represented by a small API or marker resource instead of requiring callers to remember `clear`.

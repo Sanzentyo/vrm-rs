@@ -5,8 +5,8 @@
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
 use bevy::prelude::{
-    App, Asset, Component, Entity, Handle, IntoScheduleConfigs, Plugin, Quat as BevyQuat, Query,
-    Res, ResMut, Resource, Transform as BevyTransform, Update, Vec3 as BevyVec3,
+    App, Asset, ChildOf, Component, Entity, Handle, IntoScheduleConfigs, Plugin, Quat as BevyQuat,
+    Query, Res, ResMut, Resource, Transform as BevyTransform, Update, Vec3 as BevyVec3,
 };
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
@@ -455,19 +455,52 @@ pub fn from_bevy_transform(transform: &BevyTransform) -> Transform {
     }
 }
 
+pub type BevyTransformReadItem<'a> = (
+    Entity,
+    &'a VrmNode,
+    &'a BevyTransform,
+    Option<&'a BevyVrmVisibility>,
+    Option<&'a ChildOf>,
+);
+
 pub fn read_bevy_transforms_into_scene_state(
     mut scene: ResMut<BevyRuntimeSceneState>,
-    query: Query<(Entity, &VrmNode, &BevyTransform, Option<&BevyVrmVisibility>)>,
+    query: Query<BevyTransformReadItem<'_>>,
 ) {
-    for (entity, node, transform, visibility) in &query {
-        let local = from_bevy_transform(transform);
-        scene.nodes.insert(node.0, entity);
-        scene.local_transforms.insert(entity, local);
-        scene.world_transforms.insert(entity, local);
-        if let Some(visibility) = visibility {
-            scene.visibility.insert(entity, visibility.visible);
+    let rows = query
+        .iter()
+        .map(|(entity, node, transform, visibility, child_of)| {
+            (
+                entity,
+                node.0,
+                from_bevy_transform(transform),
+                visibility.map(|visibility| visibility.visible),
+                child_of.map(|child_of| child_of.0),
+            )
+        })
+        .collect::<Vec<_>>();
+    let nodes_by_entity = rows
+        .iter()
+        .map(|(entity, node, _, _, _)| (*entity, *node))
+        .collect::<HashMap<_, _>>();
+
+    scene.parents.clear();
+    scene.children.clear();
+    for (entity, node, local, visibility, _) in &rows {
+        scene.nodes.insert(*node, *entity);
+        scene.local_transforms.insert(*entity, *local);
+        scene.world_transforms.insert(*entity, *local);
+        if let Some(visible) = visibility {
+            scene.visibility.insert(*entity, *visible);
         } else {
-            scene.visibility.entry(entity).or_insert(true);
+            scene.visibility.entry(*entity).or_insert(true);
+        }
+    }
+
+    for (_, node, _, _, parent_entity) in rows {
+        if let Some(parent) = parent_entity.and_then(|entity| nodes_by_entity.get(&entity).copied())
+        {
+            let _ = scene.set_parent(node, Some(parent));
         }
     }
     let _ = scene.update_world_transforms();
@@ -1273,32 +1306,20 @@ mod tests {
             .world_mut()
             .spawn((VrmNode(NodeRef(1)), BevyTransform::default()))
             .id();
-        let child_entity = app
-            .world_mut()
-            .spawn((
-                VrmNode(NodeRef(2)),
-                BevyTransform {
-                    translation: BevyVec3::Y,
-                    ..BevyTransform::default()
-                },
-            ))
-            .id();
-        {
-            let mut scene = app.world_mut().resource_mut::<BevyRuntimeSceneState>();
-            scene.insert_node(NodeRef(1), joint_entity, Transform::default());
-            scene.insert_node(
-                NodeRef(2),
-                child_entity,
-                Transform {
-                    translation: Vec3::Y,
-                    ..Transform::default()
-                },
-            );
-            scene.set_parent(NodeRef(2), Some(NodeRef(1))).unwrap();
-        }
+        app.world_mut().spawn((
+            VrmNode(NodeRef(2)),
+            BevyTransform {
+                translation: BevyVec3::Y,
+                ..BevyTransform::default()
+            },
+            ChildOf(joint_entity),
+        ));
 
         app.update();
 
+        let scene = app.world().resource::<BevyRuntimeSceneState>();
+        assert_eq!(scene.parent(NodeRef(2)).unwrap(), Some(NodeRef(1)));
+        assert_eq!(scene.children(NodeRef(1)).unwrap(), vec![NodeRef(2)]);
         assert!(
             app.world()
                 .resource::<BevyVrmSpringParityState>()
@@ -1494,6 +1515,16 @@ mod tests {
         app.init_resource::<BevyRuntimeSceneState>()
             .add_systems(Update, read_bevy_transforms_into_scene_state);
 
+        let root = app
+            .world_mut()
+            .spawn((
+                VrmNode(NodeRef(6)),
+                BevyTransform {
+                    translation: BevyVec3::new(1.0, 0.0, 0.0),
+                    ..BevyTransform::default()
+                },
+            ))
+            .id();
         let entity = app
             .world_mut()
             .spawn((
@@ -1504,16 +1535,24 @@ mod tests {
                     scale: BevyVec3::splat(0.5),
                 },
                 BevyVrmVisibility { visible: false },
+                ChildOf(root),
             ))
             .id();
 
         app.update();
 
         let scene = app.world().resource::<BevyRuntimeSceneState>();
+        assert_eq!(scene.nodes.entity(NodeRef(6)), Some(root));
         assert_eq!(scene.nodes.entity(NodeRef(7)), Some(entity));
+        assert_eq!(scene.parent(NodeRef(7)).unwrap(), Some(NodeRef(6)));
+        assert_eq!(scene.children(NodeRef(6)).unwrap(), vec![NodeRef(7)]);
         assert_eq!(
             scene.local_transform(NodeRef(7)).unwrap().translation,
             Vec3::new(4.0, 5.0, 6.0)
+        );
+        assert_eq!(
+            scene.world_transform(NodeRef(7)).unwrap().translation,
+            Vec3::new(5.0, 5.0, 6.0)
         );
         assert_eq!(
             scene.local_transform(NodeRef(7)).unwrap().scale,
