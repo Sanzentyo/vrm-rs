@@ -3175,16 +3175,7 @@ mod tests {
     #[test]
     #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
     fn spring_parity_matches_three_vrm_golden_rotations() {
-        let golden_path = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(".external-fixtures/golden/Seed-san.spring.json")
-            });
-        let golden: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&golden_path)
-                .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
-        )
-        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
+        let (golden_path, golden) = load_three_vrm_golden();
         let fixture = golden["fixture"]
             .as_str()
             .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
@@ -3253,6 +3244,121 @@ mod tests {
             }
         }
         assert!(compared > 0, "golden did not contain stable spring joints");
+    }
+
+    #[test]
+    #[ignore = "requires three-vrm golden JSON; set VRM_RS_THREE_VRM_GOLDEN"]
+    fn humanoid_pose_matches_three_vrm_golden_rest_state() {
+        let (golden_path, golden) = load_three_vrm_golden();
+        let fixture = golden["fixture"]
+            .as_str()
+            .unwrap_or_else(|| panic!("golden fixture is missing in {}", golden_path.display()));
+        let humanoid = golden["humanoid"].as_object().unwrap_or_else(|| {
+            panic!(
+                "golden humanoid snapshot is missing in {}",
+                golden_path.display()
+            )
+        });
+        let loaded = vrm_io::load_vrm_from_path(fixture)
+            .unwrap_or_else(|err| panic!("failed to load golden fixture {fixture}: {err:?}"));
+        let document = loaded.model().document();
+        let scene = FixtureScene::new(loaded.scene().clone());
+        let rig = HumanoidPoseRig::capture(&scene, document).unwrap();
+
+        assert_pose_matches_json(
+            rig.raw_rest_pose(),
+            &humanoid["rawRestPose"],
+            PoseTolerance::default(),
+            "rawRestPose",
+        );
+        assert_pose_matches_json(
+            &rig.get_raw_pose(&scene).unwrap(),
+            &humanoid["rawPose"],
+            PoseTolerance::default(),
+            "rawPose",
+        );
+        assert_pose_matches_json(
+            rig.normalized_rest_pose(),
+            &humanoid["normalizedRestPose"],
+            PoseTolerance::default(),
+            "normalizedRestPose",
+        );
+        assert_pose_matches_json(
+            &rig.get_normalized_pose(),
+            &humanoid["normalizedPose"],
+            PoseTolerance::default(),
+            "normalizedPose",
+        );
+    }
+
+    fn load_three_vrm_golden() -> (std::path::PathBuf, serde_json::Value) {
+        let golden_path = std::env::var_os("VRM_RS_THREE_VRM_GOLDEN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(".external-fixtures/golden/Seed-san.spring.json")
+            });
+        let golden: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&golden_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
+        )
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
+        (golden_path, golden)
+    }
+
+    fn assert_pose_matches_json<Space, Basis>(
+        actual: &vrm_core::HumanoidPose<Space, Basis>,
+        expected: &serde_json::Value,
+        tolerance: PoseTolerance,
+        label: &str,
+    ) {
+        let expected = expected
+            .as_object()
+            .unwrap_or_else(|| panic!("{label} must be a pose object"));
+        let mut compared = 0;
+        for (bone_name, transform) in expected {
+            let bone: HumanBoneName =
+                serde_json::from_value(serde_json::Value::String(bone_name.clone()))
+                    .unwrap_or_else(|err| {
+                        panic!("{label} has unsupported bone name {bone_name}: {err}")
+                    });
+            let expected_transform = pose_transform_from_json(transform);
+            let actual_transform = actual
+                .get(&bone)
+                .unwrap_or_else(|| panic!("{label} missing bone {bone_name}"));
+            let translation_delta = actual_transform
+                .translation
+                .distance(expected_transform.translation);
+            let rotation_matches = actual_transform
+                .rotation
+                .abs_diff_eq(expected_transform.rotation, tolerance.rotation_radians)
+                || actual_transform
+                    .rotation
+                    .abs_diff_eq(-expected_transform.rotation, tolerance.rotation_radians);
+            assert!(
+                translation_delta <= tolerance.translation,
+                "{label} {bone_name} translation mismatch: actual={:?} expected={:?}",
+                actual_transform.translation,
+                expected_transform.translation
+            );
+            assert!(
+                rotation_matches,
+                "{label} {bone_name} rotation mismatch: actual={:?} expected={:?}",
+                actual_transform.rotation, expected_transform.rotation
+            );
+            compared += 1;
+        }
+        assert!(compared > 0, "{label} did not contain any bones");
+    }
+
+    fn pose_transform_from_json(value: &serde_json::Value) -> vrm_core::PoseTransform {
+        vrm_core::PoseTransform {
+            translation: vec3_from_json_array(
+                value["position"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("pose position must be an array: {value}")),
+            ),
+            rotation: quat_from_json(&value["rotation"]),
+        }
     }
 
     fn center_tail_map(

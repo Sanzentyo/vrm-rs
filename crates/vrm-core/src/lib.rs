@@ -277,7 +277,8 @@ impl HumanBoneName {
             RightUpperArm => Some(RightShoulder),
             RightLowerArm => Some(RightUpperArm),
             RightHand => Some(RightLowerArm),
-            LeftThumbMetacarpal | LeftThumbProximal => Some(LeftHand),
+            LeftThumbMetacarpal => Some(LeftHand),
+            LeftThumbProximal => Some(LeftThumbMetacarpal),
             LeftThumbDistal => Some(LeftThumbProximal),
             LeftIndexProximal => Some(LeftHand),
             LeftIndexIntermediate => Some(LeftIndexProximal),
@@ -291,7 +292,8 @@ impl HumanBoneName {
             LeftLittleProximal => Some(LeftHand),
             LeftLittleIntermediate => Some(LeftLittleProximal),
             LeftLittleDistal => Some(LeftLittleIntermediate),
-            RightThumbMetacarpal | RightThumbProximal => Some(RightHand),
+            RightThumbMetacarpal => Some(RightHand),
+            RightThumbProximal => Some(RightThumbMetacarpal),
             RightThumbDistal => Some(RightThumbProximal),
             RightIndexProximal => Some(RightHand),
             RightIndexIntermediate => Some(RightIndexProximal),
@@ -1105,6 +1107,14 @@ mod tests {
         assert_eq!(
             HumanBoneName::RightHand.parent(),
             Some(HumanBoneName::RightLowerArm)
+        );
+        assert_eq!(
+            HumanBoneName::LeftThumbProximal.parent(),
+            Some(HumanBoneName::LeftThumbMetacarpal)
+        );
+        assert_eq!(
+            HumanBoneName::RightThumbProximal.parent(),
+            Some(HumanBoneName::RightThumbMetacarpal)
         );
     }
 

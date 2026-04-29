@@ -63,7 +63,7 @@ cargo llvm-cov --workspace --all-features --html
 Current known coverage gaps:
 
 - Protocol roundtrip tests cover representative extension shapes, but not every optional schema field.
-- External fixture tests assert semantic presence for official samples and compare Seed-san spring output against three-vrm; humanoid pose numeric golden coverage is still pending.
+- External fixture tests assert semantic presence for official samples and compare Seed-san spring and humanoid rest-state output against three-vrm; posed humanoid writeback coverage is still pending.
 - Adapter tests use mock engines; Bevy/wgpu/ash compile examples are still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
 
@@ -77,17 +77,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 77.91% | 81.65% |
+| Workspace total | 76.84% | 80.67% |
 | `vrm-adapter-bevy` | 69.14% | 66.04% |
-| `vrm-adapter` | 76.19% | 84.25% |
-| `vrm-core` | 67.18% | 76.43% |
-| `vrm-io` | 73.69% | 69.79% |
+| `vrm-adapter` | 73.25% | 81.78% |
+| `vrm-core` | 67.63% | 76.73% |
+| `vrm-io` | 73.71% | 69.81% |
 | `vrm-protocol` | 89.01% | 85.20% |
 | `vrm-runtime` | 79.32% | 79.70% |
 | `vrm-sans-io` | 85.82% | 88.89% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is additional real-avatar numeric golden comparison against three-vrm, especially humanoid pose behavior and collider-heavy spring fixtures. The current external fixture tests now cover recursive fixture discovery, semantic IO loading, adapter spring rest capture/stepping, and Seed-san center-space spring golden comparison on real VRM files without committing those binaries.
+The next test-effort priority is additional real-avatar numeric golden comparison against three-vrm, especially posed humanoid writeback behavior and collider-heavy spring fixtures. The current external fixture tests now cover recursive fixture discovery, semantic IO loading, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, and Seed-san raw/normalized humanoid rest-state comparison on real VRM files without committing those binaries.
 
 ## three-vrm Golden Generation
 
@@ -104,9 +104,10 @@ Run the ignored comparison with:
 ```powershell
 $env:VRM_RS_THREE_VRM_GOLDEN = "D:\git\vrm-rs\.external-fixtures\golden\Seed-san.spring.json"
 cargo test -p vrm-adapter spring_parity_matches_three_vrm_golden_rotations -- --ignored
+cargo test -p vrm-adapter humanoid_pose_matches_three_vrm_golden_rest_state -- --ignored
 ```
 
-The golden output records both public local rotations and three-vrm's private center-space spring tail state. The comparison checks center tails for all joints over multiple frames, including tiny-tail joints, and compares rotations only for stable-length joints. Extremely tiny tail vectors (`<= 0.001`) are skipped for quaternion comparison because their normalized direction is numerically sensitive, but their simulation state remains covered by the center-tail assertion.
+The golden output records public local rotations, three-vrm's private center-space spring tail state, and humanoid raw/normalized rest/current poses. The spring comparison checks center tails for all joints over multiple frames, including tiny-tail joints, and compares rotations only for stable-length joints. Extremely tiny tail vectors (`<= 0.001`) are skipped for quaternion comparison because their normalized direction is numerically sensitive, but their simulation state remains covered by the center-tail assertion.
 
 ## Current External Official Samples
 

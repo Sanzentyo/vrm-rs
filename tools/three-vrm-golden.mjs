@@ -65,6 +65,13 @@ const rounded = (value) => Number(value.toFixed(8));
 const vector = (value) => value.toArray().map(rounded);
 const privateVector = (value) => value?.toArray ? vector(value) : null;
 const quaternion = (value) => [value.x, value.y, value.z, value.w].map(rounded);
+const pose = (value) => Object.fromEntries(Object.entries(value ?? {}).map(([bone, transform]) => [
+  bone,
+  {
+    position: transform.position?.map(rounded) ?? null,
+    rotation: transform.rotation?.map(rounded) ?? null,
+  },
+]));
 
 const snapshotSpringJoints = () => [...vrm.springBoneManager.joints]
   .map((joint, index) => ({
@@ -91,12 +98,20 @@ for (let frame = 0; frame < frames; frame += 1) {
   });
 }
 
+const humanoid = vrm.humanoid ? {
+  rawRestPose: pose(vrm.humanoid.rawRestPose),
+  rawPose: pose(vrm.humanoid.getRawPose()),
+  normalizedRestPose: pose(vrm.humanoid.normalizedRestPose),
+  normalizedPose: pose(vrm.humanoid.getNormalizedPose()),
+} : null;
+
 const result = {
   generator: 'vrm-rs tools/three-vrm-golden.mjs',
   threeVrmVersion: vrm.constructor?.name ?? 'VRM',
   fixture: path.resolve(fixture),
   delta,
   frames,
+  humanoid,
   springJoints: frameSnapshots.at(-1)?.springJoints ?? [],
   frameSnapshots,
 };

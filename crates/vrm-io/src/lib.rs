@@ -558,7 +558,8 @@ fn human_bone_parent(bone: &HumanBoneName) -> Option<HumanBoneName> {
         RightUpperArm => Some(RightShoulder),
         RightLowerArm => Some(RightUpperArm),
         RightHand => Some(RightLowerArm),
-        LeftThumbMetacarpal | LeftThumbProximal => Some(LeftHand),
+        LeftThumbMetacarpal => Some(LeftHand),
+        LeftThumbProximal => Some(LeftThumbMetacarpal),
         LeftThumbDistal => Some(LeftThumbProximal),
         LeftIndexProximal => Some(LeftHand),
         LeftIndexIntermediate => Some(LeftIndexProximal),
@@ -572,7 +573,8 @@ fn human_bone_parent(bone: &HumanBoneName) -> Option<HumanBoneName> {
         LeftLittleProximal => Some(LeftHand),
         LeftLittleIntermediate => Some(LeftLittleProximal),
         LeftLittleDistal => Some(LeftLittleIntermediate),
-        RightThumbMetacarpal | RightThumbProximal => Some(RightHand),
+        RightThumbMetacarpal => Some(RightHand),
+        RightThumbProximal => Some(RightThumbMetacarpal),
         RightThumbDistal => Some(RightThumbProximal),
         RightIndexProximal => Some(RightHand),
         RightIndexIntermediate => Some(RightIndexProximal),
@@ -1108,6 +1110,10 @@ mod tests {
         assert_eq!(
             human_bone_parent(&HumanBoneName::LeftIndexDistal),
             Some(HumanBoneName::LeftIndexIntermediate)
+        );
+        assert_eq!(
+            human_bone_parent(&HumanBoneName::LeftThumbProximal),
+            Some(HumanBoneName::LeftThumbMetacarpal)
         );
         assert_eq!(
             human_bone_parent(&HumanBoneName::Custom("x".to_owned())),
