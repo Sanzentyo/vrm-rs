@@ -1583,6 +1583,70 @@ where
     Ok(())
 }
 
+pub fn apply_vrma_animation_frame_with_look_at<T, E>(
+    target: &mut T,
+    rig: &mut HumanoidPoseRig,
+    document: &VrmDocument,
+    frame: &VrmAnimationFrame,
+) -> Result<(), AdapterError<E>>
+where
+    T: TransformAccess<Error = E>
+        + WorldTransformAccess<Error = E>
+        + SceneGraph<Error = E>
+        + MorphTargetAccess<Error = E>
+        + MaterialAccess<Error = E>
+        + LookAtAccess<Error = E>,
+{
+    apply_vrma_humanoid_frame(target, rig, frame)?;
+    apply_expression_frame(target, document, frame)?;
+    apply_look_at_frame(target, frame)?;
+    Ok(())
+}
+
+pub fn apply_vrma_humanoid_frame<T, E>(
+    target: &mut T,
+    rig: &mut HumanoidPoseRig,
+    frame: &VrmAnimationFrame,
+) -> Result<(), AdapterError<E>>
+where
+    T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+{
+    let mut pose = rig.get_normalized_pose();
+    for (bone, rotation) in &frame.humanoid_rotations {
+        let translation = pose
+            .get(bone)
+            .map(|transform| transform.translation)
+            .unwrap_or(Vec3::ZERO);
+        pose.insert(
+            bone.clone(),
+            vrm_core::PoseTransform {
+                translation,
+                rotation: *rotation,
+            },
+        );
+    }
+    if let Some(translation) = frame.hips_translation {
+        let rest_translation = rig
+            .normalized_rest_pose()
+            .get(&HumanBoneName::Hips)
+            .map(|transform| transform.translation)
+            .unwrap_or(Vec3::ZERO);
+        let rotation = pose
+            .get(&HumanBoneName::Hips)
+            .map(|transform| transform.rotation)
+            .unwrap_or(Quat::IDENTITY);
+        pose.insert(
+            HumanBoneName::Hips,
+            vrm_core::PoseTransform {
+                translation: translation - rest_translation,
+                rotation,
+            },
+        );
+    }
+    rig.set_normalized_pose(&pose);
+    rig.apply_normalized_to_raw(target)
+}
+
 pub fn apply_humanoid_frame<T, E>(
     target: &mut T,
     document: &VrmDocument,
@@ -1971,6 +2035,8 @@ mod tests {
         local_overrides: HashMap<NodeRef, Transform>,
         world_overrides: HashMap<NodeRef, Transform>,
         rotations: Vec<(NodeRef, Quat)>,
+        morphs: Vec<(NodeRef, usize, f32)>,
+        look_at_rotations: Vec<Quat>,
     }
 
     impl FixtureScene {
@@ -1980,6 +2046,8 @@ mod tests {
                 local_overrides: HashMap::new(),
                 world_overrides: HashMap::new(),
                 rotations: Vec::new(),
+                morphs: Vec::new(),
+                look_at_rotations: Vec::new(),
             }
         }
 
@@ -2084,6 +2152,59 @@ mod tests {
                 .copied()
                 .map(NodeRef)
                 .collect())
+        }
+    }
+
+    impl MorphTargetAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn set_morph_weight(
+            &mut self,
+            node: NodeRef,
+            morph_index: usize,
+            weight: f32,
+        ) -> Result<(), Self::Error> {
+            self.morphs.push((node, morph_index, weight));
+            Ok(())
+        }
+    }
+
+    impl MaterialAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn set_material_color(
+            &mut self,
+            _material: MaterialRef,
+            _property: &str,
+            _value: &[f32],
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn set_texture_transform(
+            &mut self,
+            _material: MaterialRef,
+            _scale: Option<[f32; 2]>,
+            _offset: Option<[f32; 2]>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn set_emissive_intensity(
+            &mut self,
+            _material: MaterialRef,
+            _intensity: f32,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl LookAtAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
+            self.look_at_rotations.push(rotation);
+            Ok(())
         }
     }
 
@@ -2392,6 +2513,104 @@ mod tests {
         assert_eq!(mock.local_sets[0].1.translation, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(mock.morphs, vec![(NodeRef(1), 0, 25.0)]);
         assert_eq!(mock.look_at_rotations, vec![Quat::from_rotation_x(0.125)]);
+    }
+
+    #[test]
+    fn vrma_humanoid_frame_applies_through_normalized_pose_rig() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [
+                    (
+                        HumanBoneName::Hips,
+                        HumanBone {
+                            node: NodeRef(0),
+                            rest: Transform::default(),
+                        },
+                    ),
+                    (
+                        HumanBoneName::Head,
+                        HumanBone {
+                            node: NodeRef(1),
+                            rest: Transform::default(),
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            local_transforms: [
+                (
+                    NodeRef(0),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(1),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (
+                    NodeRef(0),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(1),
+                    Transform {
+                        translation: Vec3::new(0.0, 2.0, 0.0),
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            parents: [(NodeRef(1), NodeRef(0))].into_iter().collect(),
+            ..Mock::default()
+        };
+        let mut rig = HumanoidPoseRig::capture(&mock, &document).unwrap();
+        let frame = VrmAnimationFrame {
+            humanoid_rotations: [(HumanBoneName::Head, Quat::from_rotation_y(0.25))]
+                .into_iter()
+                .collect(),
+            hips_translation: Some(Vec3::new(0.0, 1.25, 0.0)),
+            ..VrmAnimationFrame::default()
+        };
+
+        apply_vrma_humanoid_frame(&mut mock, &mut rig, &frame).unwrap();
+
+        let hips = mock
+            .local_sets
+            .iter()
+            .find(|(node, _)| *node == NodeRef(0))
+            .expect("hips writeback");
+        let head = mock
+            .local_sets
+            .iter()
+            .find(|(node, _)| *node == NodeRef(1))
+            .expect("head writeback");
+        assert_eq!(hips.1.translation, Vec3::new(0.0, 1.25, 0.0));
+        assert!(
+            head.1
+                .rotation
+                .abs_diff_eq(Quat::from_rotation_y(0.25), 0.0001)
+        );
     }
 
     #[test]
@@ -3441,6 +3660,101 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "requires three-vrm VRMA golden JSON; set VRM_RS_THREE_VRM_VRMA_GOLDEN"]
+    fn vrma_application_matches_three_vrm_golden() {
+        let (golden_path, golden) = load_three_vrm_vrma_golden();
+        let fixture = golden["fixture"].as_str().unwrap_or_else(|| {
+            panic!(
+                "VRMA golden fixture is missing in {}",
+                golden_path.display()
+            )
+        });
+        let vrma = golden["vrma"].as_str().unwrap_or_else(|| {
+            panic!(
+                "VRMA golden clip path is missing in {}",
+                golden_path.display()
+            )
+        });
+        let loaded_vrm = vrm_io::load_vrm_from_path(fixture)
+            .unwrap_or_else(|err| panic!("failed to load VRM fixture {fixture}: {err:?}"));
+        let loaded_vrma = vrm_io::load_vrm_from_path(vrma)
+            .unwrap_or_else(|err| panic!("failed to load VRMA fixture {vrma}: {err:?}"));
+        let document = loaded_vrm.model().document();
+        let animation = loaded_vrma
+            .model()
+            .document()
+            .animation
+            .as_ref()
+            .unwrap_or_else(|| panic!("VRMA fixture has no animation: {vrma}"));
+        let tolerance = PoseTolerance {
+            translation: 0.001,
+            rotation_radians: 0.0015,
+        };
+        let samples = golden["samples"]
+            .as_array()
+            .unwrap_or_else(|| panic!("VRMA golden samples must be an array"));
+
+        for sample in samples {
+            let time = sample["time"]
+                .as_f64()
+                .unwrap_or_else(|| panic!("VRMA golden sample missing time: {sample}"))
+                as f32;
+            let frame = sample_vrm_animation(animation, time);
+            let mut scene = FixtureScene::new(loaded_vrm.scene().clone());
+            let mut rig = HumanoidPoseRig::capture(&scene, document).unwrap();
+            apply_vrma_animation_frame_with_look_at(&mut scene, &mut rig, document, &frame)
+                .unwrap();
+            assert_pose_matches_json(
+                &rig.get_raw_absolute_pose(&scene).unwrap(),
+                &sample["rawAbsolutePose"],
+                tolerance,
+                &format!("vrma@{time}.rawAbsolutePose"),
+            );
+            assert_expression_weights_match(&frame, &sample["expressionWeights"], time);
+            if let Some(expected) = sample["lookAtQuaternion"].as_array() {
+                let expected = quat_from_json_array(expected);
+                let actual = scene
+                    .look_at_rotations
+                    .last()
+                    .copied()
+                    .unwrap_or_else(|| panic!("VRMA sample at {time} did not write lookAt"));
+                assert!(
+                    actual.abs_diff_eq(expected, tolerance.rotation_radians)
+                        || actual.abs_diff_eq(-expected, tolerance.rotation_radians),
+                    "vrma@{time} lookAt mismatch: actual={actual:?} expected={expected:?}"
+                );
+            }
+        }
+        assert!(!samples.is_empty(), "VRMA golden did not contain samples");
+    }
+
+    fn assert_expression_weights_match(
+        frame: &VrmAnimationFrame,
+        expected: &serde_json::Value,
+        time: f32,
+    ) {
+        let expected = expected
+            .as_object()
+            .unwrap_or_else(|| panic!("VRMA expressionWeights must be an object"));
+        for (name, value) in expected {
+            let expected_weight = value
+                .as_f64()
+                .unwrap_or_else(|| panic!("VRMA expression weight must be number: {value}"))
+                as f32;
+            let actual = frame
+                .preset_expressions
+                .get(&ExpressionName::from(name.as_str()))
+                .copied()
+                .or_else(|| frame.custom_expressions.get(name).copied())
+                .unwrap_or(0.0);
+            assert!(
+                (actual - expected_weight).abs() <= 0.0005,
+                "vrma@{time} expression {name} mismatch: actual={actual} expected={expected_weight}"
+            );
+        }
+    }
+
     fn golden_pose_scenario<'a>(
         golden: &'a serde_json::Value,
         name: &str,
@@ -3458,6 +3772,20 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 std::path::PathBuf::from(".external-fixtures/golden/Seed-san.spring.json")
+            });
+        let golden: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&golden_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
+        )
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
+        (golden_path, golden)
+    }
+
+    fn load_three_vrm_vrma_golden() -> (std::path::PathBuf, serde_json::Value) {
+        let golden_path = std::env::var_os("VRM_RS_THREE_VRM_VRMA_GOLDEN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(".external-fixtures/golden/Seed-san.test-vrma.json")
             });
         let golden: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&golden_path)
@@ -3570,9 +3898,15 @@ mod tests {
     }
 
     fn quat_from_json(value: &serde_json::Value) -> Quat {
-        let values = value
-            .as_array()
-            .unwrap_or_else(|| panic!("expected quaternion array, got {value}"))
+        quat_from_json_array(
+            value
+                .as_array()
+                .unwrap_or_else(|| panic!("expected quaternion array, got {value}")),
+        )
+    }
+
+    fn quat_from_json_array(values: &[serde_json::Value]) -> Quat {
+        let values = values
             .iter()
             .map(|value| value.as_f64().expect("quaternion component must be number") as f32)
             .collect::<Vec<_>>();
