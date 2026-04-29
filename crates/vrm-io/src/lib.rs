@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
-    ExpressionName, Feature, HumanBoneName, Resolved, RotationTrack, ScalarTrack, TranslationTrack,
-    VrmAnimation, VrmModel,
+    ExpressionName, Feature, HumanBoneName, Resolved, RotationTrack, ScalarTrack, Transform,
+    TranslationTrack, VrmAnimation, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -20,6 +20,7 @@ use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 #[derive(Clone, Debug)]
 pub struct LoadedVrm {
     model: VrmModel<Resolved>,
+    pub scene: GltfSceneRest,
     pub buffers: Vec<Vec<u8>>,
     pub images: Vec<ImageData>,
     pub warnings: Vec<VrmIoWarning>,
@@ -37,12 +38,41 @@ impl LoadedVrm {
     pub fn warnings(&self) -> &[VrmIoWarning] {
         &self.warnings
     }
+
+    pub fn scene(&self) -> &GltfSceneRest {
+        &self.scene
+    }
+}
+
+impl GltfSceneRest {
+    fn from_document(document: &gltf::Document) -> Self {
+        NodeRestGraph::from_document(document).into_scene_rest(document.nodes().count())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageData {
     pub mime_type: Option<String>,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfSceneRest {
+    pub nodes: Vec<GltfNodeRest>,
+}
+
+impl GltfSceneRest {
+    pub fn node(&self, index: usize) -> Option<&GltfNodeRest> {
+        self.nodes.get(index)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfNodeRest {
+    pub parent: Option<usize>,
+    pub children: Vec<usize>,
+    pub local: Transform,
+    pub world: Transform,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +106,7 @@ fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
 
 pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
+    let scene = GltfSceneRest::from_document(&document);
     let root_extensions = extension_map(document.as_json().extensions.as_ref());
     let mut warnings = vrma_extension_warnings(&root_extensions);
     let mut bundle = parse_root_extensions(&root_extensions)?;
@@ -111,6 +142,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
 
     Ok(LoadedVrm {
         model,
+        scene,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
         images: image_data,
         warnings,
@@ -416,6 +448,9 @@ impl VrmaRestPose {
 #[derive(Clone, Debug, Default)]
 struct NodeRestGraph {
     parents: Vec<Option<usize>>,
+    children: Vec<Vec<usize>>,
+    local_transforms: Vec<Transform>,
+    world_transforms: Vec<Transform>,
     world_rotations: Vec<Quat>,
     world_matrices: Vec<Mat4>,
 }
@@ -425,6 +460,9 @@ impl NodeRestGraph {
         let node_count = document.nodes().count();
         let mut graph = Self {
             parents: vec![None; node_count],
+            children: vec![Vec::new(); node_count],
+            local_transforms: vec![Transform::default(); node_count],
+            world_transforms: vec![Transform::default(); node_count],
             world_rotations: vec![Quat::IDENTITY; node_count],
             world_matrices: vec![Mat4::IDENTITY; node_count],
         };
@@ -438,6 +476,19 @@ impl NodeRestGraph {
         graph
     }
 
+    fn into_scene_rest(self, node_count: usize) -> GltfSceneRest {
+        GltfSceneRest {
+            nodes: (0..node_count)
+                .map(|index| GltfNodeRest {
+                    parent: self.parents[index],
+                    children: self.children[index].clone(),
+                    local: self.local_transforms[index],
+                    world: self.world_transforms[index],
+                })
+                .collect(),
+        }
+    }
+
     fn visit_node(
         &mut self,
         node: gltf::Node<'_>,
@@ -448,14 +499,30 @@ impl NodeRestGraph {
         let index = node.index();
         let (translation, rotation, scale) = node.transform().decomposed();
         let local_rotation = Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
+        let local_transform = Transform {
+            translation: Vec3::from_array(translation),
+            rotation: local_rotation,
+            scale: Vec3::from_array(scale),
+        };
         let local_matrix = Mat4::from_scale_rotation_translation(
-            Vec3::from_array(scale),
-            local_rotation,
-            Vec3::from_array(translation),
+            local_transform.scale,
+            local_transform.rotation,
+            local_transform.translation,
         );
         let world_matrix = parent_matrix * local_matrix;
         let world_rotation = parent_rotation * local_rotation;
+        let (world_scale, world_rotation_decomposed, world_translation) =
+            world_matrix.to_scale_rotation_translation();
         self.parents[index] = parent;
+        if let Some(parent) = parent {
+            self.children[parent].push(index);
+        }
+        self.local_transforms[index] = local_transform;
+        self.world_transforms[index] = Transform {
+            translation: world_translation,
+            rotation: world_rotation_decomposed,
+            scale: world_scale,
+        };
         self.world_rotations[index] = world_rotation;
         self.world_matrices[index] = world_matrix;
 
@@ -740,6 +807,7 @@ mod tests {
         let loaded = load_vrm_from_slice(&bytes).unwrap();
         let document = loaded.model().document();
 
+        assert!(loaded.scene().node(0).is_some());
         assert_eq!(document.kind, VrmKind::Vrm1);
         assert_eq!(document.meta.name, "Generated Test Avatar");
         assert!(document.humanoid.bones.contains_key(&HumanBoneName::Hips));
@@ -989,6 +1057,17 @@ mod tests {
         let graph = NodeRestGraph::from_document(&document);
 
         assert_eq!(graph.parents[1], Some(0));
+        assert_eq!(graph.children[0], vec![1]);
+        assert!(
+            graph.local_transforms[1]
+                .translation
+                .abs_diff_eq(Vec3::new(0.0, 2.0, 0.0), 0.0001)
+        );
+        assert!(
+            graph.world_transforms[1]
+                .translation
+                .abs_diff_eq(Vec3::new(1.0, 2.0, 0.0), 0.0001)
+        );
         assert!(
             graph.world_matrices[1]
                 .transform_point3(Vec3::ZERO)
@@ -1049,6 +1128,26 @@ mod tests {
         assert!(is_supported_fixture(std::path::Path::new("clip.VRMA")));
         assert!(!is_supported_fixture(std::path::Path::new("texture.png")));
         assert!(!is_supported_fixture(std::path::Path::new("README")));
+    }
+
+    #[test]
+    fn supported_fixture_discovery_recurses_into_subdirectories() {
+        let root =
+            std::env::temp_dir().join(format!("vrm-rs-fixture-discovery-{}", std::process::id()));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("top.vrm"), b"").unwrap();
+        fs::write(nested.join("clip.vrma"), b"").unwrap();
+        fs::write(nested.join("note.txt"), b"").unwrap();
+
+        let mut fixtures = supported_fixtures_under(&root)
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        fixtures.sort();
+
+        assert_eq!(fixtures, vec!["clip.vrma", "top.vrm"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn generated_vrm1_gltf() -> Value {
@@ -1201,12 +1300,8 @@ mod tests {
         let fixture_dir = env::var_os("VRM_RS_FIXTURE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(".external-fixtures/official"));
-        let entries = fs::read_dir(&fixture_dir)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", fixture_dir.display()));
-
         let mut loaded = Vec::new();
-        for entry in entries {
-            let path = entry.unwrap().path();
+        for path in supported_fixtures_under(&fixture_dir) {
             if !is_supported_fixture(&path) {
                 continue;
             }
@@ -1301,5 +1396,26 @@ mod tests {
                     "vrm" | "vrma" | "glb" | "gltf"
                 )
             })
+    }
+
+    fn supported_fixtures_under(root: &std::path::Path) -> Vec<PathBuf> {
+        let mut result = Vec::new();
+        collect_supported_fixtures(root, &mut result);
+        result
+    }
+
+    fn collect_supported_fixtures(path: &std::path::Path, result: &mut Vec<PathBuf>) {
+        if path.is_file() {
+            if is_supported_fixture(path) {
+                result.push(path.to_owned());
+            }
+            return;
+        }
+
+        let entries = fs::read_dir(path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        for entry in entries {
+            collect_supported_fixtures(&entry.unwrap().path(), result);
+        }
     }
 }

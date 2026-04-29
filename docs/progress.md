@@ -62,12 +62,15 @@
 - Added `CenterSpringRuntimeState`, `SpringRestMap`, `step_spring_bone_system_parity`, and `VrmRuntimeDriver::tick_with_spring_parity` so engine adapters can drive spring bones through the center-space three-vrm parity path instead of the older world-space particle path.
 - Spring rest capture now records sparse spring-chain children, first scene-child fallback, center-space initial tails, center node references, and the VRM0 7cm final-joint fallback separately from mutable runtime state.
 - Fixed spring parity rest capture to use selected child local translation like three-vrm's `child.position`, made zero-delta parity stepping a no-op at the adapter layer, and added `WorldTransformUpdate` so high-level parity ticks can synchronize engine world matrices before spring simulation.
+- Added `vrm-io` rest scene graph output (`GltfSceneRest`) with parent/children/local/world transforms so adapter parity tests can use real glTF/VRM node data.
+- Made external fixture tests recursive and added an ignored adapter test that captures `SpringRestMap` and steps center-space spring parity on real external VRM files.
+- Recorded additional external-only official sample files and license notes. Even when embedded VRM metadata permits redistribution, these binary assets are kept out of the MIT/Apache repository.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
 - Humanoid pose parity now has snapshot/diff helpers, but still needs golden values generated from three-vrm on real avatars.
-- Spring bone parity now has the adapter-level center-space driver path, but still needs real three-vrm golden numeric comparisons on official multi-joint fixtures.
+- Spring bone parity now has real external fixture rest-capture coverage, but still needs three-vrm golden numeric comparisons on official multi-joint fixtures.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
 - First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.

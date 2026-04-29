@@ -20,7 +20,7 @@ This keeps licensing simple while still exercising `gltf::import_slice`, extensi
 Later fixture strategy:
 
 - Keep generated samples for unit and integration tests.
-- Optional ignored tests read local user-provided assets from `VRM_RS_FIXTURE_DIR`, defaulting to `.external-fixtures/official`.
+- Optional ignored tests read local user-provided assets recursively from `VRM_RS_FIXTURE_DIR`, defaulting to `.external-fixtures/official`.
 - Do not commit proprietary or third-party avatar assets unless their license explicitly allows redistribution.
 
 Run external fixture tests with:
@@ -77,17 +77,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.41% | 84.73% |
+| Workspace total | 80.71% | 83.79% |
 | `vrm-adapter-bevy` | 69.14% | 66.04% |
-| `vrm-adapter` | 88.06% | 93.28% |
+| `vrm-adapter` | 84.42% | 89.87% |
 | `vrm-core` | 67.18% | 76.43% |
-| `vrm-io` | 70.95% | 66.94% |
+| `vrm-io` | 73.69% | 69.79% |
 | `vrm-protocol` | 89.01% | 85.20% |
 | `vrm-runtime` | 79.32% | 79.70% |
 | `vrm-sans-io` | 85.82% | 88.89% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
-The next test-effort priority is real-avatar numeric parity tests against three-vrm for the new center-space spring driver and humanoid pose behavior, followed by Bevy/wgpu/ash compile examples.
+The next test-effort priority is real-avatar numeric golden comparison against three-vrm for the center-space spring driver and humanoid pose behavior. The current external fixture tests now cover recursive fixture discovery, semantic IO loading, and adapter spring rest capture/stepping on real VRM files without committing those binaries.
 
 ## Current External Official Samples
 
@@ -95,8 +95,11 @@ Spark downloaded the current local fixture set into `.external-fixtures/official
 
 | File | Source | Local use note |
 | --- | --- | --- |
-| `Seed-san.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/Seed-san/vrm/Seed-san.vrm` | VRM Public License 1.0 sample, model by VirtualCast, Inc. |
-| `VRM1_Constraint_Twist_Sample.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm` | VRM Public License 1.0 sample, copyright note from upstream sample README. |
-| `test.vrma` | `https://raw.githubusercontent.com/pixiv/three-vrm/9d125586f6d7da094b0ac5f204cebf19586f2397/packages/three-vrm-animation/examples/models/test.vrma` | Local testing only until upstream redistribution status is confirmed. |
+| `Seed-san.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/Seed-san/vrm/Seed-san.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `VirtualCast, Inc.`; keep external because it is not MIT/Apache source code. |
+| `VRM1_Constraint_Twist_Sample.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; keep external. The three-vrm mirror is byte-identical. |
+| `VRMC_materials_mtoon_UV_Animation_Test.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_materials_mtoon_UV_Animation_Test/vrm/VRMC_materials_mtoon_UV_Animation_Test.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for MToon UV animation parity, external only. |
+| `VRMC_vrm_expressions_isBinary_Overridden.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_vrm_expressions_isBinary_Overridden/vrm/VRMC_vrm_expressions_isBinary_Overridden.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for expression override parity, external only. |
+| `VRMC_vrm_expressions_isBinary_Overrides.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_vrm_expressions_isBinary_Overrides/vrm/VRMC_vrm_expressions_isBinary_Overrides.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for expression override parity, external only. |
+| `test.vrma` | `https://raw.githubusercontent.com/pixiv/three-vrm/9d125586f6d7da094b0ac5f204cebf19586f2397/packages/three-vrm-animation/examples/models/test.vrma` | Local testing only until upstream redistribution status is confirmed; no embedded asset license/provenance found. |
 
 The URLs are commit-pinned to avoid branch drift.

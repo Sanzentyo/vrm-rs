@@ -1901,6 +1901,7 @@ dependencies = [
  "indexmap",
  "thiserror 2.0.18",
  "vrm-core",
+ "vrm-io",
  "vrm-runtime",
 ]
 

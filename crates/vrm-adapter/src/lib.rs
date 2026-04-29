@@ -1913,6 +1913,89 @@ mod tests {
         }
     }
 
+    struct FixtureScene {
+        scene: vrm_io::GltfSceneRest,
+        rotations: Vec<(NodeRef, Quat)>,
+    }
+
+    impl FixtureScene {
+        fn new(scene: vrm_io::GltfSceneRest) -> Self {
+            Self {
+                scene,
+                rotations: Vec::new(),
+            }
+        }
+
+        fn node(&self, node: NodeRef) -> &vrm_io::GltfNodeRest {
+            self.scene
+                .node(node.0)
+                .unwrap_or_else(|| panic!("missing fixture node {}", node.0))
+        }
+    }
+
+    impl TransformAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn local_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+            Ok(self.node(node).local)
+        }
+
+        fn set_local_transform(
+            &mut self,
+            _node: NodeRef,
+            _transform: Transform,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn set_local_rotation(&mut self, node: NodeRef, rotation: Quat) -> Result<(), Self::Error> {
+            self.rotations.push((node, rotation));
+            Ok(())
+        }
+
+        fn translate_local(
+            &mut self,
+            _node: NodeRef,
+            _translation: Vec3,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl WorldTransformAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+            Ok(self.node(node).world)
+        }
+    }
+
+    impl WorldTransformUpdate for FixtureScene {
+        type Error = Infallible;
+
+        fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl SceneGraph for FixtureScene {
+        type Error = Infallible;
+
+        fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error> {
+            Ok(self.node(node).parent.map(NodeRef))
+        }
+
+        fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error> {
+            Ok(self
+                .node(node)
+                .children
+                .iter()
+                .copied()
+                .map(NodeRef)
+                .collect())
+        }
+    }
+
     #[test]
     fn humanoid_pose_rig_round_trips_raw_relative_pose() {
         let document = VrmDocument {
@@ -2972,6 +3055,107 @@ mod tests {
 
         assert!(mock.rotations.is_empty());
         assert_eq!(state.get(0, 0).unwrap().current_tail, Vec3::Y);
+    }
+
+    #[test]
+    #[ignore = "requires local external fixtures; set VRM_RS_FIXTURE_DIR"]
+    fn spring_parity_rest_map_captures_external_fixture_scenes() {
+        let fixture_dir = std::env::var_os("VRM_RS_FIXTURE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(".external-fixtures/official"));
+        let mut checked = 0;
+
+        for path in fixture_files_under(&fixture_dir) {
+            let is_vrm = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("vrm"));
+            if !is_vrm {
+                continue;
+            }
+            let Ok(loaded) = vrm_io::load_vrm_from_path(&path) else {
+                continue;
+            };
+            let document = loaded.model().document();
+            let Feature::Present(system) = &document.spring_bone else {
+                continue;
+            };
+            let mut scene = FixtureScene::new(loaded.scene().clone());
+            let rest = SpringRestMap::capture(&scene, system).unwrap_or_else(|err| {
+                panic!(
+                    "failed to capture spring rest for {}: {err:?}",
+                    path.display()
+                )
+            });
+            let mut state = rest.runtime_state(system);
+
+            step_spring_bone_system_parity(
+                &mut scene,
+                system,
+                &rest,
+                &mut state,
+                DeltaTime(1.0 / 60.0),
+            )
+            .unwrap_or_else(|err| panic!("failed to step spring for {}: {err:?}", path.display()));
+
+            let joint_count: usize = system
+                .springs
+                .iter()
+                .map(|spring| spring.joints.len())
+                .sum();
+            assert!(
+                scene.rotations.len() <= joint_count,
+                "fixture wrote more rotations than spring joints: {}",
+                path.display()
+            );
+            checked += 1;
+        }
+
+        assert!(
+            checked > 0,
+            "no external VRM fixture with spring bone found in {}",
+            fixture_dir.display()
+        );
+    }
+
+    #[test]
+    fn fixture_file_discovery_recurses_for_external_adapter_tests() {
+        let root = std::env::temp_dir().join(format!(
+            "vrm-rs-adapter-fixture-discovery-{}",
+            std::process::id()
+        ));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.join("top.vrm"), b"").unwrap();
+        std::fs::write(nested.join("clip.vrma"), b"").unwrap();
+
+        let mut files = fixture_files_under(&root)
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        files.sort();
+
+        assert_eq!(files, vec!["clip.vrma", "top.vrm"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn fixture_files_under(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut result = Vec::new();
+        collect_fixture_files(root, &mut result);
+        result
+    }
+
+    fn collect_fixture_files(path: &std::path::Path, result: &mut Vec<std::path::PathBuf>) {
+        if path.is_file() {
+            result.push(path.to_owned());
+            return;
+        }
+
+        let entries = std::fs::read_dir(path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        for entry in entries {
+            collect_fixture_files(&entry.unwrap().path(), result);
+        }
     }
 
     #[test]

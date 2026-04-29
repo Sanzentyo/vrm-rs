@@ -13,3 +13,6 @@ indexmap.workspace = true
 thiserror.workspace = true
 vrm-core = { path = "../vrm-core" }
 vrm-runtime = { path = "../vrm-runtime" }
+
+[dev-dependencies]
+vrm-io = { path = "../vrm-io" }

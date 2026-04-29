@@ -5,7 +5,7 @@
 - `vrm-protocol`: serde wire types for VRM 0.0, VRMC_vrm 1.0, VRMC_springBone, VRMC_node_constraint, VRMC_materials_mtoon, KHR emissive strength, and VRMC_vrm_animation.
 - `vrm-core`: pure domain types. This crate defines `VrmAsset<State>`, `VrmModel<State>`, `NodeRef`, `MaterialRef`, `TextureRef`, humanoid, expressions, lookAt, spring bone, constraints, material parameters, and animation tracks.
 - `vrm-sans-io`: side-effect-free conversion from protocol data into validated core data.
-- `vrm-io`: glTF/GLB IO through the `gltf` crate, extension extraction, buffer/image collection, and model construction.
+- `vrm-io`: glTF/GLB IO through the `gltf` crate, extension extraction, rest scene graph extraction, buffer/image collection, and model construction.
 - `vrm-runtime`: renderer-independent update orchestration and algorithms.
 - `vrm-adapter`: traits for scene graph, transforms, morph targets, materials, textures, and animation sinks.
 - `vrm-adapter-bevy`: Bevy 0.18.1 registry and descriptor bridge skeleton.
@@ -37,6 +37,8 @@ The current implementation produces deterministic runtime events and update orde
 ## Animation Extraction
 
 VRMA files can contain multiple glTF animation clips. `vrm-io` classifies glTF animation channels by the `VRMC_vrm_animation` node map and stores extracted clips in `VrmDocument::animations`; `VrmDocument::animation` mirrors the first clip as a convenience value.
+
+`LoadedVrm::scene` exposes `GltfSceneRest`, a renderer-independent snapshot of glTF node parent/child relationships plus local and world rest transforms. This keeps IO useful for adapter setup, fixture-driven parity tests, and custom engines that want a starting scene map without depending on Bevy, wgpu, ash, or three.js objects.
 
 Current channel mapping:
 
