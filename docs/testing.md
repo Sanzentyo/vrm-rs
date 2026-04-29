@@ -13,6 +13,7 @@ Current generated coverage:
 - Per-material archived `VRMC_materials_hdr_emissiveMultiplier` extension.
 - Per-material `KHR_materials_emissive_strength` extension, including invalid shape handling, present-but-empty defaulting, and precedence over archived HDR multiplier.
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
+- First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, VRMA warning policy, MToon descriptor generation, and Bevy adapter skeleton compile tests.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -76,13 +77,14 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.28% | 83.16% |
-| `vrm-adapter` | 88.50% | 92.93% |
+| Workspace total | 80.90% | 83.70% |
+| `vrm-adapter-bevy` | 69.14% | 66.04% |
+| `vrm-adapter` | 88.19% | 92.59% |
 | `vrm-core` | 67.18% | 76.43% |
-| `vrm-io` | 69.58% | 65.76% |
-| `vrm-protocol` | 86.74% | 81.87% |
-| `vrm-runtime` | 78.67% | 78.61% |
-| `vrm-sans-io` | 85.28% | 88.52% |
+| `vrm-io` | 70.95% | 66.94% |
+| `vrm-protocol` | 89.01% | 85.20% |
+| `vrm-runtime` | 78.62% | 78.66% |
+| `vrm-sans-io` | 85.82% | 88.89% |
 | facade `src/lib.rs` | 96.30% | 100.00% |
 
 The next test-effort priority is real-avatar numeric parity tests against three-vrm for humanoid pose and spring bone behavior, followed by Bevy/wgpu/ash compile examples.

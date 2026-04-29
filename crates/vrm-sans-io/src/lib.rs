@@ -438,8 +438,15 @@ fn map_vrm0_material_value_bind(
     if is_vrm0_texture_transform_property(&bind.property_name) {
         let scale =
             (bind.target_value.len() >= 2).then(|| [bind.target_value[0], bind.target_value[1]]);
-        let offset =
-            (bind.target_value.len() >= 4).then(|| [bind.target_value[2], bind.target_value[3]]);
+        let offset = (bind.target_value.len() >= 4).then(|| {
+            let x = bind.target_value[2];
+            let y = if bind.property_name == "_MainTex_ST" && bind.target_value.len() >= 2 {
+                1.0 - bind.target_value[3] - bind.target_value[1]
+            } else {
+                bind.target_value[3]
+            };
+            [x, y]
+        });
         ExpressionBind::TextureTransform {
             material: MaterialRef(material),
             scale,
@@ -478,6 +485,7 @@ fn map_vrm0_secondary_animation(animation: vrm0::SecondaryAnimation) -> SpringBo
                 shape: ColliderShape::Sphere {
                     offset: vec3(collider.offset),
                     radius: collider.radius.unwrap_or(0.0),
+                    inside: false,
                 },
             }));
             SpringColliderGroup {
@@ -622,12 +630,14 @@ fn map_spring_bone(spring_bone: spring_bone::VrmcSpringBone) -> SpringBoneSystem
             .unwrap_or_default()
             .into_iter()
             .filter_map(|collider| {
+                let inside = spring_collider_inside(&collider);
                 let shape = collider
                     .shape
                     .sphere
                     .map(|sphere| ColliderShape::Sphere {
                         offset: vec3(sphere.offset),
                         radius: sphere.radius.unwrap_or(0.0),
+                        inside,
                     })
                     .or_else(|| {
                         collider
@@ -637,12 +647,14 @@ fn map_spring_bone(spring_bone: spring_bone::VrmcSpringBone) -> SpringBoneSystem
                                 offset: vec3(capsule.offset),
                                 radius: capsule.radius.unwrap_or(0.0),
                                 tail: Vec3::from_array(capsule.tail),
+                                inside,
                             })
                     })
                     .or_else(|| {
                         collider.shape.plane.map(|plane| ColliderShape::Plane {
                             offset: vec3(plane.offset),
                             normal: plane.normal.map_or(Vec3::Y, Vec3::from_array),
+                            inside,
                         })
                     })?;
                 Some(SpringCollider {
@@ -683,6 +695,19 @@ fn map_spring_bone(spring_bone: spring_bone::VrmcSpringBone) -> SpringBoneSystem
             })
             .collect(),
     }
+}
+
+fn spring_collider_inside(collider: &spring_bone::SpringBoneCollider) -> bool {
+    collider
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.get("VRMC_springBone_extended_collider"))
+        .and_then(|value| {
+            serde_json::from_value::<spring_bone::VrmcSpringBoneExtendedCollider>(value.clone())
+                .ok()
+        })
+        .and_then(|extension| extension.inside)
+        .unwrap_or(false)
 }
 
 fn map_node_constraint(
@@ -1165,7 +1190,7 @@ mod tests {
                 ExpressionBind::TextureTransform {
                     material: MaterialRef(0),
                     scale: Some([2.0, 3.0]),
-                    offset: Some([0.1, 0.2])
+                    offset: Some([0.1, -2.2])
                 }
             ] if *weight == 75.0 && kind == "_Color" && target_value == &vec![1.0, 0.5, 0.25, 1.0]
         ));
@@ -1317,6 +1342,52 @@ mod tests {
 
         assert!(
             matches!(err, BuildError::Protocol(message) if message.contains("VRMC_springBone") && message.contains("2.0"))
+        );
+    }
+
+    #[test]
+    fn maps_spring_extended_collider_inside_flag() {
+        let mut bundle = vrm1_bundle();
+        bundle.spring_bone = Some(vrm_protocol::spring_bone::VrmcSpringBone {
+            spec_version: "1.0".to_owned(),
+            colliders: Some(vec![vrm_protocol::spring_bone::SpringBoneCollider {
+                node: 1,
+                shape: vrm_protocol::spring_bone::SpringBoneColliderShape {
+                    sphere: Some(vrm_protocol::spring_bone::SpringBoneColliderSphere {
+                        offset: Some([0.0, 1.0, 0.0]),
+                        radius: Some(0.5),
+                    }),
+                    capsule: None,
+                    plane: None,
+                },
+                extensions: Some(
+                    [(
+                        "VRMC_springBone_extended_collider".to_owned(),
+                        serde_json::json!({
+                            "specVersion": "1.0",
+                            "inside": true
+                        }),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                extras: None,
+            }]),
+            ..Default::default()
+        });
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap();
+
+        assert_eq!(
+            asset.document.spring_bone.as_ref().unwrap().colliders[0].shape,
+            ColliderShape::Sphere {
+                offset: Vec3::Y,
+                radius: 0.5,
+                inside: true,
+            }
         );
     }
 

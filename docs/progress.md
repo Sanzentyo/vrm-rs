@@ -53,14 +53,20 @@
 - Added `KHR_materials_emissive_strength` protocol/IO/sans-IO/core/adapter support and made it take precedence over archived `VRMC_materials_hdr_emissiveMultiplier`.
 - Raised generated/unit/doc coverage to 83.16% line coverage after pose, spring parity, KHR emissive, and first-person auto tests.
 - Added first-person `auto` topology handling in `vrm-adapter`: head descendants are hidden in first-person view and visible in third-person view.
+- Added renderer-agnostic first-person headless skinned-mesh planning APIs: skin influence inspection, triangle erasure planning, and adapter operations for third-person original plus first-person clone.
+- Added `VRMC_springBone_extended_collider` `inside` mapping and inside collision resolution for spring colliders.
+- Added humanoid pose parity snapshot/diff helpers for real-avatar raw/normalized numeric comparisons.
+- Added VRMA loader warning diagnostics for missing/draft/unknown `specVersion` and ignored non-hips humanoid translation tracks.
+- Added MToon material descriptor generation and a Bevy 0.18.1 adapter skeleton crate with node/asset registries and MToon descriptor bridge.
+- Raised generated/unit/doc coverage to 83.70% line coverage after parity API and Bevy skeleton tests.
 
 Open work:
 
 - Deep VRM0 compatibility parity beyond root orientation, especially fixture-driven edge cases.
-- Humanoid pose parity still needs numeric fixture comparison against three-vrm on real avatars.
-- Spring bone parity still needs multi-joint sparse-chain numeric comparison against three-vrm.
+- Humanoid pose parity now has snapshot/diff helpers, but still needs golden values generated from three-vrm on real avatars.
+- Spring bone parity now has extended collider `inside` support, but still needs multi-joint sparse-chain numeric comparison against three-vrm.
 - Renderer-specific MToon shader materialization in downstream adapters.
 - Full VRMA model application parity with stricter channel/path diagnostics and numeric fixture comparisons.
-- First-person `auto` mesh splitting for skinned meshes by skin-index/skin-weight triangle erasure.
+- First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.
 - MToon pipeline/shader generation per renderer.
-- Real Bevy adapter crate once a Bevy version is selected.
+- Real Bevy runtime trait implementations beyond the current registry/descriptor skeleton.

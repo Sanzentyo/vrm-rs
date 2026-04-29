@@ -357,6 +357,15 @@ pub mod spring_bone {
         pub extras: Option<serde_json::Value>,
     }
 
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct VrmcSpringBoneExtendedCollider {
+        pub spec_version: Option<String>,
+        pub inside: Option<bool>,
+        pub extensions: Option<ExtensionMap>,
+        pub extras: Option<serde_json::Value>,
+    }
+
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SpringBoneColliderShape {
@@ -549,12 +558,17 @@ pub mod vrma {
     #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct VrmcVrmAnimation {
+        #[serde(default = "default_spec_version")]
         pub spec_version: String,
         pub humanoid: Option<Humanoid>,
         pub expressions: Option<Expressions>,
         pub look_at: Option<LookAt>,
         pub extensions: Option<ExtensionMap>,
         pub extras: Option<serde_json::Value>,
+    }
+
+    fn default_spec_version() -> String {
+        "1.0".to_owned()
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -662,12 +676,6 @@ pub fn parse_root_extensions(extensions: &ExtensionMap) -> Result<ExtensionBundl
                             message: err.to_string(),
                         }
                     })?;
-                if !matches!(vrma.spec_version.as_str(), "1.0" | "1.0-draft") {
-                    return Err(ProtocolError::UnsupportedSpecVersion {
-                        extension: name.clone(),
-                        version: vrma.spec_version,
-                    });
-                }
                 bundle.vrm = Some(VrmExtension::Vrma(Box::new(vrma)));
             }
             _ => {
@@ -848,6 +856,17 @@ mod tests {
 
         assert_eq!(value["humanoid"]["humanBones"]["hips"]["node"], 0);
         assert_eq!(value["extras"]["clip"], "test");
+    }
+
+    #[test]
+    fn vrm_animation_defaults_missing_spec_version_to_one() {
+        let input = serde_json::json!({
+            "humanoid": { "humanBones": { "hips": { "node": 0 } } }
+        });
+
+        let animation: vrma::VrmcVrmAnimation = serde_json::from_value(input).unwrap();
+
+        assert_eq!(animation.spec_version, "1.0");
     }
 
     #[test]

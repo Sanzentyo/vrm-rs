@@ -5,9 +5,10 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use vrm_core::{
-    ColliderShape, ConstraintKind, ExpressionBind, ExpressionName, Feature, FirstPersonAnnotation,
-    HumanBoneName, MaterialRef, MtoonPipelinePass, NodeConstraint, NodeRef, RawAbsolutePose,
-    RawPose, Spring, SpringBoneSystem, TextureRef, Transform, VrmDocument,
+    ColliderShape, ConstraintKind, EmissiveStrength, ExpressionBind, ExpressionName, Feature,
+    FirstPersonAnnotation, HumanBoneName, MaterialRef, MtoonMaterial, MtoonPipelinePass,
+    MtoonTextureSet, NodeConstraint, NodeRef, RawAbsolutePose, RawPose, Spring, SpringBoneSystem,
+    TextureRef, Transform, VrmDocument,
 };
 use vrm_runtime::{
     AimConstraintInput, AppliedExpression, ConstraintRestState, DeltaTime, RuntimeEvents,
@@ -65,6 +66,34 @@ pub struct HumanoidPoseRig {
     parent_world_rotations: HashMap<HumanBoneName, Quat>,
     raw_rest_rotations: HashMap<HumanBoneName, Quat>,
     raw_nodes: HashMap<HumanBoneName, NodeRef>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HumanoidPoseSnapshot {
+    pub raw: RawPose,
+    pub normalized: vrm_core::NormalizedPose,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PoseTolerance {
+    pub translation: f32,
+    pub rotation_radians: f32,
+}
+
+impl Default for PoseTolerance {
+    fn default() -> Self {
+        Self {
+            translation: 0.0001,
+            rotation_radians: 0.0001,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoseMismatch {
+    pub bone: HumanBoneName,
+    pub translation_delta: f32,
+    pub rotation_delta: f32,
 }
 
 impl HumanoidPoseRig {
@@ -188,6 +217,16 @@ impl HumanoidPoseRig {
         self.normalized_current = self.normalized_rest.clone();
     }
 
+    pub fn snapshot<T, E>(&self, target: &T) -> Result<HumanoidPoseSnapshot, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>,
+    {
+        Ok(HumanoidPoseSnapshot {
+            raw: self.get_raw_pose(target)?,
+            normalized: self.get_normalized_pose(),
+        })
+    }
+
     pub fn apply_normalized_to_raw<T, E>(&self, target: &mut T) -> Result<(), AdapterError<E>>
     where
         T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
@@ -257,6 +296,48 @@ impl HumanoidPoseRig {
         }
         Ok(())
     }
+}
+
+impl HumanoidPoseSnapshot {
+    pub fn mismatches(
+        &self,
+        expected: &HumanoidPoseSnapshot,
+        tolerance: PoseTolerance,
+    ) -> Vec<PoseMismatch> {
+        self.raw
+            .bones
+            .iter()
+            .filter_map(|(bone, actual)| {
+                expected
+                    .raw
+                    .get(bone)
+                    .and_then(|expected| pose_mismatch(bone, actual, expected, tolerance))
+            })
+            .chain(self.normalized.bones.iter().filter_map(|(bone, actual)| {
+                expected
+                    .normalized
+                    .get(bone)
+                    .and_then(|expected| pose_mismatch(bone, actual, expected, tolerance))
+            }))
+            .collect()
+    }
+}
+
+fn pose_mismatch(
+    bone: &HumanBoneName,
+    actual: &vrm_core::PoseTransform,
+    expected: &vrm_core::PoseTransform,
+    tolerance: PoseTolerance,
+) -> Option<PoseMismatch> {
+    let translation_delta = actual.translation.distance(expected.translation);
+    let rotation_delta = actual.rotation.angle_between(expected.rotation).abs();
+    (translation_delta > tolerance.translation || rotation_delta > tolerance.rotation_radians).then(
+        || PoseMismatch {
+            bone: bone.clone(),
+            translation_delta,
+            rotation_delta,
+        },
+    )
 }
 
 fn capture_raw_absolute_pose<T, E>(
@@ -469,6 +550,48 @@ pub trait MtoonPipelineAccess {
         material: MaterialRef,
         passes: &[MtoonPipelinePass],
     ) -> Result<(), Self::Error>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MtoonMaterialDescriptor {
+    pub material: MaterialRef,
+    pub name: Option<String>,
+    pub pass: MtoonPipelinePass,
+    pub textures: MtoonTextureSet,
+    pub shade_color_factor: [f32; 3],
+    pub shading_shift_factor: f32,
+    pub shading_toony_factor: f32,
+    pub gi_equalization_factor: f32,
+    pub outline_color_factor: [f32; 3],
+    pub uv_animation: vrm_core::UvAnimation,
+    pub emissive_strength: EmissiveStrength,
+    pub debug_mode: MtoonDebugMode,
+    pub v0_compat_shade: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MtoonDebugMode {
+    #[default]
+    None,
+    LitShadeRate,
+    Lighting,
+    Normal,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MtoonMaterializationOptions {
+    pub debug_mode: MtoonDebugMode,
+    pub v0_compat_shade: bool,
+}
+
+pub trait MtoonMaterializer {
+    type Descriptor;
+    type Error;
+
+    fn materialize_mtoon(
+        &mut self,
+        descriptor: &MtoonMaterialDescriptor,
+    ) -> Result<Self::Descriptor, Self::Error>;
 }
 
 pub trait TextureResolver {
@@ -688,6 +811,122 @@ where
     Ok(false)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkinVertexInfluence {
+    pub joints: [usize; 4],
+    pub weights: [f32; 4],
+}
+
+impl SkinVertexInfluence {
+    pub fn references_any(self, erase_joints: &HashSet<usize>) -> bool {
+        self.joints
+            .into_iter()
+            .zip(self.weights)
+            .any(|(joint, weight)| weight > 0.0 && erase_joints.contains(&joint))
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeadlessMeshPlan {
+    pub indices: Vec<u32>,
+    pub removed_triangles: usize,
+}
+
+pub trait FirstPersonMeshAccess {
+    type Error;
+    type Mesh: Clone;
+
+    fn skinned_meshes_under(&self, node: NodeRef) -> Result<Vec<Self::Mesh>, Self::Error>;
+    fn skin_joints(&self, mesh: &Self::Mesh) -> Result<Vec<NodeRef>, Self::Error>;
+    fn mesh_indices(&self, mesh: &Self::Mesh) -> Result<Vec<u32>, Self::Error>;
+    fn skin_influences(&self, mesh: &Self::Mesh) -> Result<Vec<SkinVertexInfluence>, Self::Error>;
+    fn set_third_person_only(&mut self, mesh: &Self::Mesh) -> Result<(), Self::Error>;
+    fn set_first_person_and_third_person(&mut self, mesh: &Self::Mesh) -> Result<(), Self::Error>;
+    fn create_first_person_headless_clone(
+        &mut self,
+        source: &Self::Mesh,
+        plan: &HeadlessMeshPlan,
+    ) -> Result<(), Self::Error>;
+}
+
+pub fn plan_headless_mesh(
+    indices: &[u32],
+    influences: &[SkinVertexInfluence],
+    erase_joints: &HashSet<usize>,
+) -> HeadlessMeshPlan {
+    let mut kept = Vec::with_capacity(indices.len());
+    let mut removed_triangles = 0;
+
+    for triangle in indices.chunks_exact(3) {
+        let erase = triangle.iter().any(|index| {
+            influences
+                .get(*index as usize)
+                .copied()
+                .is_some_and(|influence| influence.references_any(erase_joints))
+        });
+        if erase {
+            removed_triangles += 1;
+        } else {
+            kept.extend_from_slice(triangle);
+        }
+    }
+
+    HeadlessMeshPlan {
+        indices: kept,
+        removed_triangles,
+    }
+}
+
+pub fn apply_first_person_auto_headless_meshes<T, E>(
+    target: &mut T,
+    document: &VrmDocument,
+    annotation_node: NodeRef,
+) -> Result<(), AdapterError<E>>
+where
+    T: FirstPersonMeshAccess<Error = E> + SceneGraph<Error = E>,
+{
+    for mesh in target
+        .skinned_meshes_under(annotation_node)
+        .map_err(AdapterError::Target)?
+    {
+        let erase_joints = target
+            .skin_joints(&mesh)
+            .map_err(AdapterError::Target)?
+            .into_iter()
+            .enumerate()
+            .filter_map(
+                |(index, joint)| match is_head_or_descendant(target, document, joint) {
+                    Ok(true) => Some(Ok(index)),
+                    Ok(false) => None,
+                    Err(err) => Some(Err(err)),
+                },
+            )
+            .collect::<Result<HashSet<_>, AdapterError<E>>>()?;
+
+        if erase_joints.is_empty() {
+            target
+                .set_first_person_and_third_person(&mesh)
+                .map_err(AdapterError::Target)?;
+            continue;
+        }
+
+        let plan = plan_headless_mesh(
+            &target.mesh_indices(&mesh).map_err(AdapterError::Target)?,
+            &target
+                .skin_influences(&mesh)
+                .map_err(AdapterError::Target)?,
+            &erase_joints,
+        );
+        target
+            .set_third_person_only(&mesh)
+            .map_err(AdapterError::Target)?;
+        target
+            .create_first_person_headless_clone(&mesh, &plan)
+            .map_err(AdapterError::Target)?;
+    }
+    Ok(())
+}
+
 pub fn apply_mtoon_pipeline_hints<T, E>(
     target: &mut T,
     document: &VrmDocument,
@@ -703,6 +942,58 @@ where
         }
     }
     Ok(())
+}
+
+pub fn mtoon_material_descriptors(
+    document: &VrmDocument,
+    options: MtoonMaterializationOptions,
+) -> Vec<MtoonMaterialDescriptor> {
+    document
+        .materials
+        .iter()
+        .enumerate()
+        .flat_map(|(index, material)| {
+            let material_ref = MaterialRef(index);
+            let (emissive_strength, _) = material.effective_emissive_strength();
+            material.mtoon.as_ref().into_iter().flat_map(move |mtoon| {
+                mtoon.pipeline_passes().into_iter().map(move |pass| {
+                    mtoon_material_descriptor(
+                        material_ref,
+                        material.name.clone(),
+                        mtoon,
+                        pass,
+                        emissive_strength,
+                        options,
+                    )
+                })
+            })
+        })
+        .collect()
+}
+
+fn mtoon_material_descriptor(
+    material: MaterialRef,
+    name: Option<String>,
+    mtoon: &MtoonMaterial,
+    pass: MtoonPipelinePass,
+    emissive_strength: EmissiveStrength,
+    options: MtoonMaterializationOptions,
+) -> MtoonMaterialDescriptor {
+    MtoonMaterialDescriptor {
+        material,
+        name,
+        pass,
+        textures: mtoon.textures.clone(),
+        shade_color_factor: mtoon.shade_color_factor,
+        shading_shift_factor: mtoon.shading_shift_factor,
+        shading_toony_factor: mtoon.shading_toony_factor,
+        gi_equalization_factor: mtoon.gi_equalization_factor,
+        outline_color_factor: mtoon.outline_color_factor,
+        uv_animation: mtoon.uv_animation,
+        emissive_strength,
+        debug_mode: options.debug_mode,
+        v0_compat_shade: options.v0_compat_shade,
+    }
 }
 
 pub fn apply_hdr_emissive_multipliers<T, E>(
@@ -1120,6 +1411,13 @@ mod tests {
         mtoon_passes: Vec<(MaterialRef, Vec<MtoonPipelinePass>)>,
         emissive_intensities: Vec<(MaterialRef, f32)>,
         visibility: Vec<(NodeRef, bool)>,
+        first_person_meshes: Vec<usize>,
+        third_person_meshes: Vec<usize>,
+        headless_meshes: Vec<(usize, HeadlessMeshPlan)>,
+        skinned_meshes: std::collections::HashMap<NodeRef, Vec<usize>>,
+        mesh_joints: std::collections::HashMap<usize, Vec<NodeRef>>,
+        mesh_indices: std::collections::HashMap<usize, Vec<u32>>,
+        mesh_influences: std::collections::HashMap<usize, Vec<SkinVertexInfluence>>,
         parents: std::collections::HashMap<NodeRef, NodeRef>,
         local_transforms: std::collections::HashMap<NodeRef, Transform>,
         world_transforms: std::collections::HashMap<NodeRef, Transform>,
@@ -1288,6 +1586,53 @@ mod tests {
         }
     }
 
+    impl FirstPersonMeshAccess for Mock {
+        type Error = Infallible;
+        type Mesh = usize;
+
+        fn skinned_meshes_under(&self, node: NodeRef) -> Result<Vec<Self::Mesh>, Self::Error> {
+            Ok(self.skinned_meshes.get(&node).cloned().unwrap_or_default())
+        }
+
+        fn skin_joints(&self, mesh: &Self::Mesh) -> Result<Vec<NodeRef>, Self::Error> {
+            Ok(self.mesh_joints.get(mesh).cloned().unwrap_or_default())
+        }
+
+        fn mesh_indices(&self, mesh: &Self::Mesh) -> Result<Vec<u32>, Self::Error> {
+            Ok(self.mesh_indices.get(mesh).cloned().unwrap_or_default())
+        }
+
+        fn skin_influences(
+            &self,
+            mesh: &Self::Mesh,
+        ) -> Result<Vec<SkinVertexInfluence>, Self::Error> {
+            Ok(self.mesh_influences.get(mesh).cloned().unwrap_or_default())
+        }
+
+        fn set_third_person_only(&mut self, mesh: &Self::Mesh) -> Result<(), Self::Error> {
+            self.third_person_meshes.push(*mesh);
+            Ok(())
+        }
+
+        fn set_first_person_and_third_person(
+            &mut self,
+            mesh: &Self::Mesh,
+        ) -> Result<(), Self::Error> {
+            self.first_person_meshes.push(*mesh);
+            self.third_person_meshes.push(*mesh);
+            Ok(())
+        }
+
+        fn create_first_person_headless_clone(
+            &mut self,
+            source: &Self::Mesh,
+            plan: &HeadlessMeshPlan,
+        ) -> Result<(), Self::Error> {
+            self.headless_meshes.push((*source, plan.clone()));
+            Ok(())
+        }
+    }
+
     #[test]
     fn humanoid_pose_rig_round_trips_raw_relative_pose() {
         let document = VrmDocument {
@@ -1344,6 +1689,46 @@ mod tests {
                 .translation
                 .abs_diff_eq(Vec3::new(1.0, 2.0, 3.0), 0.0001)
         );
+    }
+
+    #[test]
+    fn humanoid_pose_snapshot_reports_numeric_mismatches() {
+        let mut actual = RawPose::new();
+        actual.insert(
+            HumanBoneName::Hips,
+            PoseTransform {
+                translation: Vec3::X,
+                rotation: Quat::IDENTITY,
+            },
+        );
+        let mut expected = RawPose::new();
+        expected.insert(
+            HumanBoneName::Hips,
+            PoseTransform {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+            },
+        );
+        let snapshot = HumanoidPoseSnapshot {
+            raw: actual,
+            normalized: vrm_core::NormalizedPose::new(),
+        };
+        let expected = HumanoidPoseSnapshot {
+            raw: expected,
+            normalized: vrm_core::NormalizedPose::new(),
+        };
+
+        let mismatches = snapshot.mismatches(
+            &expected,
+            PoseTolerance {
+                translation: 0.5,
+                rotation_radians: 0.001,
+            },
+        );
+
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(mismatches[0].bone, HumanBoneName::Hips);
+        assert_eq!(mismatches[0].translation_delta, 1.0);
     }
 
     #[test]
@@ -1683,6 +2068,86 @@ mod tests {
     }
 
     #[test]
+    fn headless_mesh_plan_removes_triangles_weighted_to_erase_joints() {
+        let influences = vec![
+            SkinVertexInfluence {
+                joints: [0, 1, 0, 0],
+                weights: [1.0, 0.0, 0.0, 0.0],
+            },
+            SkinVertexInfluence {
+                joints: [1, 0, 0, 0],
+                weights: [1.0, 0.0, 0.0, 0.0],
+            },
+            SkinVertexInfluence {
+                joints: [0, 0, 0, 0],
+                weights: [1.0, 0.0, 0.0, 0.0],
+            },
+            SkinVertexInfluence {
+                joints: [0, 0, 0, 0],
+                weights: [1.0, 0.0, 0.0, 0.0],
+            },
+        ];
+        let plan = plan_headless_mesh(&[0, 2, 3, 0, 1, 2], &influences, &[1].into_iter().collect());
+
+        assert_eq!(plan.indices, vec![0, 2, 3]);
+        assert_eq!(plan.removed_triangles, 1);
+    }
+
+    #[test]
+    fn first_person_headless_meshes_create_clone_for_head_weighted_mesh() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Head,
+                    HumanBone {
+                        node: NodeRef(10),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(11), NodeRef(10))].into_iter().collect(),
+            skinned_meshes: [(NodeRef(1), vec![7])].into_iter().collect(),
+            mesh_joints: [(7, vec![NodeRef(0), NodeRef(11)])].into_iter().collect(),
+            mesh_indices: [(7, vec![0, 1, 2, 2, 3, 0])].into_iter().collect(),
+            mesh_influences: [(
+                7,
+                vec![
+                    SkinVertexInfluence {
+                        joints: [0, 0, 0, 0],
+                        weights: [1.0, 0.0, 0.0, 0.0],
+                    },
+                    SkinVertexInfluence {
+                        joints: [1, 0, 0, 0],
+                        weights: [1.0, 0.0, 0.0, 0.0],
+                    },
+                    SkinVertexInfluence {
+                        joints: [0, 0, 0, 0],
+                        weights: [1.0, 0.0, 0.0, 0.0],
+                    },
+                    SkinVertexInfluence {
+                        joints: [0, 0, 0, 0],
+                        weights: [1.0, 0.0, 0.0, 0.0],
+                    },
+                ],
+            )]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+
+        apply_first_person_auto_headless_meshes(&mut mock, &document, NodeRef(1)).unwrap();
+
+        assert_eq!(mock.third_person_meshes, vec![7]);
+        assert_eq!(mock.headless_meshes[0].0, 7);
+        assert_eq!(mock.headless_meshes[0].1.indices, vec![2, 3, 0]);
+    }
+
+    #[test]
     fn mtoon_pipeline_hints_apply_to_material_refs() {
         let document = VrmDocument {
             materials: vec![vrm_core::Material {
@@ -1705,6 +2170,42 @@ mod tests {
             mock.mtoon_passes[0].1.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[test]
+    fn mtoon_material_descriptors_include_pipeline_passes_and_parameters() {
+        let document = VrmDocument {
+            materials: vec![vrm_core::Material {
+                name: Some("mtoon".to_owned()),
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    outline_width_mode: vrm_core::OutlineWidthMode::WorldCoordinates,
+                    outline_width_factor: 0.01,
+                    shade_color_factor: [0.5, 0.6, 0.7],
+                    ..MtoonMaterial::default()
+                }),
+                ..vrm_core::Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+
+        let descriptors = mtoon_material_descriptors(
+            &document,
+            MtoonMaterializationOptions {
+                debug_mode: MtoonDebugMode::Lighting,
+                v0_compat_shade: true,
+            },
+        );
+
+        assert_eq!(descriptors.len(), 2);
+        assert!(matches!(descriptors[0].pass, MtoonPipelinePass::Base(_)));
+        assert!(matches!(descriptors[1].pass, MtoonPipelinePass::Outline(_)));
+        assert_eq!(descriptors[0].material, MaterialRef(0));
+        assert_eq!(descriptors[0].emissive_strength, EmissiveStrength(2.0));
+        assert_eq!(descriptors[0].debug_mode, MtoonDebugMode::Lighting);
+        assert!(descriptors[0].v0_compat_shade);
+        assert_eq!(descriptors[0].shade_color_factor, [0.5, 0.6, 0.7]);
     }
 
     #[test]
@@ -1764,6 +2265,7 @@ mod tests {
                 shape: ColliderShape::Sphere {
                     offset: Vec3::X,
                     radius: 0.5,
+                    inside: false,
                 },
             }],
             collider_groups: vec![vrm_core::SpringColliderGroup {
@@ -1807,6 +2309,7 @@ mod tests {
             vec![ColliderShape::Sphere {
                 offset: Vec3::new(3.0, 0.0, 0.0),
                 radius: 0.5,
+                inside: false,
             }]
         );
     }

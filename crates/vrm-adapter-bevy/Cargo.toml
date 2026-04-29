@@ -1,0 +1,10 @@
+[package]
+name = "vrm-adapter-bevy"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bevy.workspace = true
+vrm-adapter = { path = "../vrm-adapter" }
+vrm-core = { path = "../vrm-core" }

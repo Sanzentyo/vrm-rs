@@ -22,6 +22,7 @@ pub struct LoadedVrm {
     model: VrmModel<Resolved>,
     pub buffers: Vec<Vec<u8>>,
     pub images: Vec<ImageData>,
+    pub warnings: Vec<VrmIoWarning>,
 }
 
 impl LoadedVrm {
@@ -32,6 +33,10 @@ impl LoadedVrm {
     pub fn into_model(self) -> VrmModel<Resolved> {
         self.model
     }
+
+    pub fn warnings(&self) -> &[VrmIoWarning] {
+        &self.warnings
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,15 +45,46 @@ pub struct ImageData {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VrmIoWarning {
+    MissingSpecVersion { extension: String, assumed: String },
+    DraftSpecVersion { extension: String, version: String },
+    UnknownSpecVersion { extension: String, version: String },
+    IgnoredAnimationChannel { node: usize, message: String },
+}
+
+fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
+    let Some(value) = extensions.get("VRMC_vrm_animation") else {
+        return Vec::new();
+    };
+    match value.get("specVersion").and_then(|value| value.as_str()) {
+        None => vec![VrmIoWarning::MissingSpecVersion {
+            extension: "VRMC_vrm_animation".to_owned(),
+            assumed: "1.0".to_owned(),
+        }],
+        Some("1.0") => Vec::new(),
+        Some("1.0-draft") => vec![VrmIoWarning::DraftSpecVersion {
+            extension: "VRMC_vrm_animation".to_owned(),
+            version: "1.0-draft".to_owned(),
+        }],
+        Some(version) => vec![VrmIoWarning::UnknownSpecVersion {
+            extension: "VRMC_vrm_animation".to_owned(),
+            version: version.to_owned(),
+        }],
+    }
+}
+
 pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
-    let mut bundle = parse_root_extensions(&extension_map(document.as_json().extensions.as_ref()))?;
+    let root_extensions = extension_map(document.as_json().extensions.as_ref());
+    let mut warnings = vrma_extension_warnings(&root_extensions);
+    let mut bundle = parse_root_extensions(&root_extensions)?;
     extract_node_constraints(&document, &mut bundle)?;
     extract_mtoon_materials(&document, &mut bundle)?;
     extract_hdr_emissive_multipliers(&document, &mut bundle)?;
     extract_khr_emissive_strengths(&document, &mut bundle)?;
     validate_vrmc_extension_versions(&bundle)?;
-    let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle)?;
+    let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle, &mut warnings)?;
 
     let image_data = images
         .into_iter()
@@ -77,6 +113,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         model,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
         images: image_data,
+        warnings,
     })
 }
 
@@ -84,6 +121,7 @@ fn extract_vrma_animations(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
     bundle: &ExtensionBundle,
+    warnings: &mut Vec<VrmIoWarning>,
 ) -> Result<Option<Vec<VrmAnimation>>, VrmIoError> {
     let Some(VrmExtension::Vrma(vrma)) = &bundle.vrm else {
         return Ok(None);
@@ -127,7 +165,12 @@ fn extract_vrma_animations(
                                     .collect(),
                             });
                         }
-                        Some(gltf::animation::util::ReadOutputs::Translations(_)) => {}
+                        Some(gltf::animation::util::ReadOutputs::Translations(_)) => {
+                            warnings.push(VrmIoWarning::IgnoredAnimationChannel {
+                                node: node_index,
+                                message: "ignored non-hips humanoid translation track".to_owned(),
+                            });
+                        }
                         Some(gltf::animation::util::ReadOutputs::Rotations(values)) => {
                             let bone_rest = rest_pose
                                 .bone_world_rotations
@@ -901,6 +944,42 @@ mod tests {
             Some(&VrmaExpressionTarget::Custom("custom".to_owned()))
         );
         assert_eq!(map.look_at, Some(4));
+    }
+
+    #[test]
+    fn vrma_extension_warnings_follow_three_vrm_fallback_policy() {
+        let mut missing = ExtensionMap::new();
+        missing.insert(
+            "VRMC_vrm_animation".to_owned(),
+            json!({ "humanoid": { "humanBones": {} } }),
+        );
+        assert_eq!(
+            vrma_extension_warnings(&missing),
+            vec![VrmIoWarning::MissingSpecVersion {
+                extension: "VRMC_vrm_animation".to_owned(),
+                assumed: "1.0".to_owned(),
+            }]
+        );
+
+        let mut draft = ExtensionMap::new();
+        draft.insert(
+            "VRMC_vrm_animation".to_owned(),
+            json!({ "specVersion": "1.0-draft" }),
+        );
+        assert!(matches!(
+            vrma_extension_warnings(&draft).as_slice(),
+            [VrmIoWarning::DraftSpecVersion { .. }]
+        ));
+
+        let mut unknown = ExtensionMap::new();
+        unknown.insert(
+            "VRMC_vrm_animation".to_owned(),
+            json!({ "specVersion": "2.0" }),
+        );
+        assert!(matches!(
+            vrma_extension_warnings(&unknown).as_slice(),
+            [VrmIoWarning::UnknownSpecVersion { version, .. }] if version == "2.0"
+        ));
     }
 
     #[test]

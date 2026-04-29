@@ -683,15 +683,18 @@ pub enum ColliderShape {
     Sphere {
         offset: Vec3,
         radius: f32,
+        inside: bool,
     },
     Capsule {
         offset: Vec3,
         radius: f32,
         tail: Vec3,
+        inside: bool,
     },
     Plane {
         offset: Vec3,
         normal: Vec3,
+        inside: bool,
     },
 }
 

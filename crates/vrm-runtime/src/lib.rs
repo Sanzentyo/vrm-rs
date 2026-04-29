@@ -704,24 +704,36 @@ pub fn collider_shape_in_simulation_space(
     let radius_scale = collider_world.scale.max_element().abs();
 
     match &collider.shape {
-        ColliderShape::Sphere { offset, radius } => ColliderShape::Sphere {
+        ColliderShape::Sphere {
+            offset,
+            radius,
+            inside,
+        } => ColliderShape::Sphere {
             offset: to_simulation_space.transform_point3(*offset),
             radius: *radius * radius_scale,
+            inside: *inside,
         },
         ColliderShape::Capsule {
             offset,
             radius,
             tail,
+            inside,
         } => ColliderShape::Capsule {
             offset: to_simulation_space.transform_point3(*offset),
             radius: *radius * radius_scale,
             tail: to_simulation_space.transform_point3(*tail),
+            inside: *inside,
         },
-        ColliderShape::Plane { offset, normal } => ColliderShape::Plane {
+        ColliderShape::Plane {
+            offset,
+            normal,
+            inside,
+        } => ColliderShape::Plane {
             offset: to_simulation_space.transform_point3(*offset),
             normal: to_simulation_space
                 .transform_vector3(*normal)
                 .normalize_or_zero(),
+            inside: *inside,
         },
     }
 }
@@ -736,21 +748,42 @@ fn transform_matrix(transform: Transform) -> Mat4 {
 
 pub fn resolve_collision(position: Vec3, particle_radius: f32, collider: &ColliderShape) -> Vec3 {
     match collider {
-        ColliderShape::Sphere { offset, radius } => {
-            push_out_of_sphere(position, *offset, particle_radius + *radius)
+        ColliderShape::Sphere {
+            offset,
+            radius,
+            inside,
+        } => {
+            let radius = if *inside {
+                (*radius - particle_radius).max(0.0)
+            } else {
+                particle_radius + *radius
+            };
+            resolve_sphere_collision(position, *offset, radius, *inside)
         }
         ColliderShape::Capsule {
             offset,
             radius,
             tail,
+            inside,
         } => {
             let closest = closest_point_on_segment(position, *offset, *tail);
-            push_out_of_sphere(position, closest, particle_radius + *radius)
+            let radius = if *inside {
+                (*radius - particle_radius).max(0.0)
+            } else {
+                particle_radius + *radius
+            };
+            resolve_sphere_collision(position, closest, radius, *inside)
         }
-        ColliderShape::Plane { offset, normal } => {
+        ColliderShape::Plane {
+            offset,
+            normal,
+            inside,
+        } => {
             let normal = normal.normalize_or_zero();
             let signed_distance = (position - *offset).dot(normal);
-            if signed_distance < particle_radius {
+            if *inside && signed_distance > -particle_radius {
+                position - normal * (particle_radius + signed_distance)
+            } else if !inside && signed_distance < particle_radius {
                 position + normal * (particle_radius - signed_distance)
             } else {
                 position
@@ -763,11 +796,13 @@ fn constrain_length(parent_position: Vec3, tail: Vec3, bone_length: f32) -> Vec3
     parent_position + (tail - parent_position).normalize_or_zero() * bone_length
 }
 
-fn push_out_of_sphere(position: Vec3, center: Vec3, min_distance: f32) -> Vec3 {
+fn resolve_sphere_collision(position: Vec3, center: Vec3, radius: f32, inside: bool) -> Vec3 {
     let delta = position - center;
     let distance = delta.length();
-    if distance < min_distance {
-        center + delta.normalize_or(Vec3::Y) * min_distance
+    if !inside && distance < radius {
+        center + delta.normalize_or(Vec3::Y) * radius
+    } else if inside && distance > radius && distance > f32::EPSILON {
+        center + delta / distance * radius
     } else {
         position
     }
@@ -1053,6 +1088,7 @@ mod tests {
                 colliders: &[ColliderShape::Sphere {
                     offset: Vec3::Y,
                     radius: 0.5,
+                    inside: false,
                 }],
                 delta: DeltaTime(1.0),
             },
@@ -1067,6 +1103,7 @@ mod tests {
             offset: Vec3::ZERO,
             radius: 0.5,
             tail: Vec3::Y,
+            inside: false,
         };
         let capsule_result = resolve_collision(Vec3::new(0.1, 0.5, 0.0), 0.1, &capsule);
         assert!(capsule_result.distance(Vec3::new(0.0, 0.5, 0.0)) >= 0.6 - f32::EPSILON);
@@ -1074,9 +1111,23 @@ mod tests {
         let plane = ColliderShape::Plane {
             offset: Vec3::ZERO,
             normal: Vec3::Y,
+            inside: false,
         };
         let plane_result = resolve_collision(Vec3::new(0.0, -0.2, 0.0), 0.1, &plane);
         assert!(plane_result.y >= 0.1 - f32::EPSILON);
+    }
+
+    #[test]
+    fn spring_inside_sphere_collider_keeps_particle_inside_volume() {
+        let collider = ColliderShape::Sphere {
+            offset: Vec3::ZERO,
+            radius: 1.0,
+            inside: true,
+        };
+
+        let result = resolve_collision(Vec3::new(2.0, 0.0, 0.0), 0.1, &collider);
+
+        assert!(result.abs_diff_eq(Vec3::new(0.9, 0.0, 0.0), 0.0001));
     }
 
     #[test]
@@ -1099,6 +1150,7 @@ mod tests {
             shape: ColliderShape::Sphere {
                 offset: Vec3::X,
                 radius: 0.5,
+                inside: true,
             },
         };
         let collider_world = Transform {
@@ -1119,7 +1171,8 @@ mod tests {
             shape,
             ColliderShape::Sphere {
                 offset: Vec3::new(4.0, 0.0, 0.0),
-                radius: 1.0
+                radius: 1.0,
+                inside: true
             }
         );
     }
@@ -1132,6 +1185,7 @@ mod tests {
                 shape: ColliderShape::Sphere {
                     offset: Vec3::ZERO,
                     radius: 1.0,
+                    inside: false,
                 },
             }],
             collider_groups: vec![SpringColliderGroup {

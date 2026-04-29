@@ -29,7 +29,9 @@ Known risks:
 - VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation and humanoid pose API shape are covered, but real-avatar numeric parity is still pending.
 - MToon shader/pipeline behavior is renderer-specific; the first Rust API exposes parameters and hints only.
 - Spring bone physics now has center-space parity helpers, but still needs real three-vrm numeric fixture comparison.
-- First-person `auto` now handles head-subtree visibility, but skinned-mesh headless clone generation still needs a mesh adapter API.
+- First-person `auto` now handles head-subtree visibility and exposes headless skinned-mesh triangle-erasure planning; downstream engines still need concrete clone implementations.
+- `VRMC_springBone_extended_collider` `inside` behavior is now represented and resolved in runtime collision math.
+- VRMA missing/draft/unknown `specVersion` behavior is now exposed as loader warnings instead of only hard failures.
 - Node constraints should error on circular dependencies.
 
 Compatibility checkpoints added:
@@ -42,3 +44,5 @@ Compatibility checkpoints added:
 - `VrmRuntimeDriver` treats VRM0 root orientation compensation as a one-shot driver state, matching loader-style behavior instead of compounding every runtime tick.
 - VRMA hips translation writeback is absolute per sampled frame, matching animation-track semantics instead of accumulating deltas.
 - First-person `auto` annotations now use humanoid head topology to hide head descendants in first-person mode while keeping them visible in third-person mode.
+- MToon descriptors expose pass, texture slots, shading factors, UV animation, emissive strength, debug mode, and v0 compatibility flags for renderer materialization.
+- `vrm-adapter-bevy` pins Bevy 0.18.1 and provides the first entity/asset registry skeleton plus MToon descriptor bridge.
