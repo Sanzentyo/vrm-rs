@@ -827,21 +827,65 @@ impl Material {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MtoonMaterial {
     pub transparent_with_z_write: bool,
     pub render_queue_offset_number: i32,
     pub render_queue: MtoonRenderQueue,
     pub cull_mode: MtoonCullMode,
     pub textures: MtoonTextureSet,
+    pub base_color_factor: [f32; 4],
+    pub emissive_factor: [f32; 3],
+    pub cutoff_factor: f32,
     pub shade_color_factor: [f32; 3],
+    pub receive_shadow_rate_factor: f32,
+    pub shading_grade_rate_factor: f32,
     pub shading_shift_factor: f32,
     pub shading_toony_factor: f32,
+    pub light_color_attenuation_factor: f32,
     pub gi_equalization_factor: f32,
+    pub matcap_factor: [f32; 3],
+    pub parametric_rim_color_factor: [f32; 3],
+    pub rim_lighting_mix_factor: f32,
+    pub parametric_rim_fresnel_power_factor: f32,
+    pub parametric_rim_lift_factor: f32,
     pub outline_width_mode: OutlineWidthMode,
     pub outline_width_factor: f32,
     pub outline_color_factor: [f32; 3],
+    pub outline_lighting_mix_factor: f32,
     pub uv_animation: UvAnimation,
+}
+
+impl Default for MtoonMaterial {
+    fn default() -> Self {
+        Self {
+            transparent_with_z_write: false,
+            render_queue_offset_number: 0,
+            render_queue: MtoonRenderQueue::Auto,
+            cull_mode: MtoonCullMode::Back,
+            textures: MtoonTextureSet::default(),
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+            emissive_factor: [0.0, 0.0, 0.0],
+            cutoff_factor: 0.5,
+            shade_color_factor: [0.97, 0.81, 0.86],
+            receive_shadow_rate_factor: 1.0,
+            shading_grade_rate_factor: 1.0,
+            shading_shift_factor: 0.0,
+            shading_toony_factor: 0.9,
+            light_color_attenuation_factor: 0.0,
+            gi_equalization_factor: 0.9,
+            matcap_factor: [1.0, 1.0, 1.0],
+            parametric_rim_color_factor: [0.0, 0.0, 0.0],
+            rim_lighting_mix_factor: 1.0,
+            parametric_rim_fresnel_power_factor: 5.0,
+            parametric_rim_lift_factor: 0.0,
+            outline_width_mode: OutlineWidthMode::None,
+            outline_width_factor: 0.0,
+            outline_color_factor: [0.0, 0.0, 0.0],
+            outline_lighting_mix_factor: 1.0,
+            uv_animation: UvAnimation::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -94,6 +94,9 @@
 - Continued the Alicia VRM0 compatibility pass with semantic assertions for normalized humanoid aliases, Auto first-person mesh annotations, Bone lookAt ranges, legacy expression preset aliases, VRM0 MToon material slots/outline, and secondary animation spring/collider counts.
 - Fixed VRM0 expression preset alias mapping so legacy names such as `a`, `i`, `u`, `joy`, `sorrow`, `fun`, `lookup`, and `blink_l` map to canonical VRM1-style expression keys instead of becoming custom expressions.
 - Re-measured coverage after the ignored Alicia semantic assertions: workspace line coverage is 76.45%, still above the conservative 70% CI gate. `vrm-sans-io` coverage rose to 91.90% while `vrm-io` line coverage dropped because the new external-only assertions are intentionally ignored in normal coverage runs.
+- Expanded renderer-facing MToon material descriptors with base color, emissive factor, cutoff, receive shadow rate, shading grade, light color attenuation, matcap, parametric rim, rim lighting, and outline lighting parameters.
+- Mapped those additional MToon parameters from VRM0 legacy material float/vector properties and VRMC_materials_mtoon 1.0 where the spec exposes them. Alicia external fixture assertions now check the VRM0 legacy values on a real material.
+- Re-measured coverage after the MToon descriptor expansion: workspace line coverage is 76.78%, with `vrm-sans-io` at 92.41% and `vrm-core` at 78.06%.
 
 Open work:
 
@@ -105,7 +108,7 @@ Open work:
   1. Expand VRMA parity. Done with normalized pose comparison plus directory-level VRMA golden test.
   2. Expand VRM0 compatibility parity. Done for legacy first-person flags and lookAt ranges.
   3. Improve spring numeric parity. Done with per-golden max-delta reporting and explicit tolerance classes.
-- Deep VRM0 compatibility parity beyond root orientation now has an external Alicia fixture semantic check for normalized humanoid aliases, mesh annotations, lookAt, expression aliases, MToon material properties, and secondary animation. Remaining work is numeric humanoid-axis parity and deeper legacy material value edge cases.
+- Deep VRM0 compatibility parity beyond root orientation now has an external Alicia fixture semantic check for normalized humanoid aliases, mesh annotations, lookAt, expression aliases, MToon material properties, and secondary animation. Remaining work is numeric humanoid-axis parity and the long tail of legacy material value edge cases not yet represented in the renderer-facing descriptor.
 - Humanoid pose parity now has snapshot/diff helpers plus Seed-san raw/normalized rest-state and posed writeback golden coverage.
 - Spring bone parity now has stable-length multi-frame rotation comparison plus all-joint center-tail state comparison on Seed-san and directory-level coverage for the collider-heavy VRM1_Constraint_Twist_Sample fixture. Remaining spring work is deeper solver investigation for the small collider-heavy numeric tolerance and more official sample breadth.
 - Node constraint parity now includes direct three-vrm quaternion cases for rotation, roll, and aim solvers. Remaining work is fixture-driven manager ordering/writeback parity on complete VRM scenes.

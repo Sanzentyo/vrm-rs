@@ -26,7 +26,7 @@ Design translation:
 
 Known risks:
 
-- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation, humanoid pose API shape, and an ignored Alicia VRM0 compatibility fixture semantic check are covered, including expression preset aliases, first-person annotations, lookAt ranges, MToon materials, and secondary animation. Deeper real-avatar numeric humanoid-axis/material-value parity is still pending.
+- VRM0 compatibility has axis/name quirks and needs fixture-heavy testing; root orientation, humanoid pose API shape, and an ignored Alicia VRM0 compatibility fixture semantic check are covered, including expression preset aliases, first-person annotations, lookAt ranges, MToon material factors, and secondary animation. Deeper real-avatar numeric humanoid-axis parity and the remaining material-value edge cases are still pending.
 - MToon shader/pipeline behavior is renderer-specific; the first Rust API exposes parameters and hints only.
 - Spring bone physics has center-space parity helpers and real three-vrm numeric fixture comparison for Seed-san plus the collider-heavy constraint sample; remaining work is broader official sample breadth and tighter investigation of small collider-heavy deltas.
 - First-person `auto` now handles head-subtree visibility and exposes headless skinned-mesh triangle-erasure planning; downstream engines still need concrete clone implementations.
@@ -45,6 +45,6 @@ Compatibility checkpoints added:
 - `VrmRuntimeDriver` treats VRM0 root orientation compensation as a one-shot driver state, matching loader-style behavior instead of compounding every runtime tick.
 - VRMA hips translation writeback is absolute per sampled frame, matching animation-track semantics instead of accumulating deltas.
 - First-person `auto` annotations now use humanoid head topology to hide head descendants in first-person mode while keeping them visible in third-person mode.
-- MToon descriptors expose pass, texture slots, shading factors, UV animation, emissive strength, debug mode, and v0 compatibility flags for renderer materialization.
+- MToon descriptors expose pass, texture slots, base/emissive/cutoff factors, shadow/shading/lighting factors, matcap/rim factors, outline factors, UV animation, emissive strength, debug mode, and v0 compatibility flags for renderer materialization.
 - VRM0 expression aliases now map legacy preset names (`a`, `i`, `u`, `e`, `o`, `joy`, `sorrow`, `fun`, `lookup`, `blink_l`, `blink_r`) into canonical core expression names.
 - `vrm-adapter-bevy` pins Bevy 0.18.1 and provides the first entity/asset registry skeleton plus MToon descriptor bridge.

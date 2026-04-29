@@ -590,12 +590,34 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
             ),
             uv_animation_mask_texture: texture_property(&texture_properties, "_UvAnimMaskTexture"),
         },
+        base_color_factor: vec4_property(&vector_properties, "_Color")
+            .unwrap_or(MtoonMaterial::default().base_color_factor),
+        emissive_factor: vec3_property(&vector_properties, "_EmissionColor")
+            .unwrap_or(MtoonMaterial::default().emissive_factor),
+        cutoff_factor: float_property(&float_properties, "_Cutoff")
+            .unwrap_or(MtoonMaterial::default().cutoff_factor),
         shade_color_factor: vec3_property(&vector_properties, "_ShadeColor")
             .unwrap_or([0.97, 0.81, 0.86]),
+        receive_shadow_rate_factor: float_property(&float_properties, "_ReceiveShadowRate")
+            .unwrap_or(MtoonMaterial::default().receive_shadow_rate_factor),
+        shading_grade_rate_factor: float_property(&float_properties, "_ShadingGradeRate")
+            .unwrap_or(MtoonMaterial::default().shading_grade_rate_factor),
         shading_shift_factor: float_property(&float_properties, "_ShadeShift").unwrap_or(0.0),
         shading_toony_factor: float_property(&float_properties, "_ShadeToony").unwrap_or(0.9),
+        light_color_attenuation_factor: float_property(&float_properties, "_LightColorAttenuation")
+            .unwrap_or(MtoonMaterial::default().light_color_attenuation_factor),
         gi_equalization_factor: float_property(&float_properties, "_IndirectLightIntensity")
             .unwrap_or(0.9),
+        matcap_factor: vec3_property(&vector_properties, "_MatcapColor")
+            .unwrap_or(MtoonMaterial::default().matcap_factor),
+        parametric_rim_color_factor: vec3_property(&vector_properties, "_RimColor")
+            .unwrap_or(MtoonMaterial::default().parametric_rim_color_factor),
+        rim_lighting_mix_factor: float_property(&float_properties, "_RimLightingMix")
+            .unwrap_or(MtoonMaterial::default().rim_lighting_mix_factor),
+        parametric_rim_fresnel_power_factor: float_property(&float_properties, "_RimFresnelPower")
+            .unwrap_or(MtoonMaterial::default().parametric_rim_fresnel_power_factor),
+        parametric_rim_lift_factor: float_property(&float_properties, "_RimLift")
+            .unwrap_or(MtoonMaterial::default().parametric_rim_lift_factor),
         outline_width_mode: match float_property(&float_properties, "_OutlineWidthMode")
             .unwrap_or(0.0) as i32
         {
@@ -606,6 +628,8 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
         outline_width_factor: float_property(&float_properties, "_OutlineWidth").unwrap_or(0.0),
         outline_color_factor: vec3_property(&vector_properties, "_OutlineColor")
             .unwrap_or([0.0, 0.0, 0.0]),
+        outline_lighting_mix_factor: float_property(&float_properties, "_OutlineLightingMix")
+            .unwrap_or(MtoonMaterial::default().outline_lighting_mix_factor),
         uv_animation: UvAnimation {
             scroll_x_speed: float_property(&float_properties, "_UvAnimScrollX").unwrap_or(0.0),
             scroll_y_speed: float_property(&float_properties, "_UvAnimScrollY").unwrap_or(0.0),
@@ -640,6 +664,16 @@ fn vec3_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 3]> {
         values.first()?.as_f64()? as f32,
         values.get(1)?.as_f64()? as f32,
         values.get(2)?.as_f64()? as f32,
+    ])
+}
+
+fn vec4_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 4]> {
+    let values = map.get(key)?.as_array()?;
+    Some([
+        values.first()?.as_f64()? as f32,
+        values.get(1)?.as_f64()? as f32,
+        values.get(2)?.as_f64()? as f32,
+        values.get(3)?.as_f64()? as f32,
     ])
 }
 
@@ -800,10 +834,31 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
                 .uv_animation_mask_texture
                 .map(|texture| TextureRef(texture.index)),
         },
+        base_color_factor: MtoonMaterial::default().base_color_factor,
+        emissive_factor: MtoonMaterial::default().emissive_factor,
+        cutoff_factor: MtoonMaterial::default().cutoff_factor,
         shade_color_factor: material.shade_color_factor.unwrap_or([0.97, 0.81, 0.86]),
+        receive_shadow_rate_factor: MtoonMaterial::default().receive_shadow_rate_factor,
+        shading_grade_rate_factor: MtoonMaterial::default().shading_grade_rate_factor,
         shading_shift_factor: material.shading_shift_factor.unwrap_or(0.0),
         shading_toony_factor: material.shading_toony_factor.unwrap_or(0.9),
+        light_color_attenuation_factor: MtoonMaterial::default().light_color_attenuation_factor,
         gi_equalization_factor: material.gi_equalization_factor.unwrap_or(0.9),
+        matcap_factor: material
+            .matcap_factor
+            .unwrap_or(MtoonMaterial::default().matcap_factor),
+        parametric_rim_color_factor: material
+            .parametric_rim_color_factor
+            .unwrap_or(MtoonMaterial::default().parametric_rim_color_factor),
+        rim_lighting_mix_factor: material
+            .rim_lighting_mix_factor
+            .unwrap_or(MtoonMaterial::default().rim_lighting_mix_factor),
+        parametric_rim_fresnel_power_factor: material
+            .parametric_rim_fresnel_power_factor
+            .unwrap_or(MtoonMaterial::default().parametric_rim_fresnel_power_factor),
+        parametric_rim_lift_factor: material
+            .parametric_rim_lift_factor
+            .unwrap_or(MtoonMaterial::default().parametric_rim_lift_factor),
         outline_width_mode: match material.outline_width_mode.as_deref() {
             Some("worldCoordinates") => OutlineWidthMode::WorldCoordinates,
             Some("screenCoordinates") => OutlineWidthMode::ScreenCoordinates,
@@ -812,6 +867,9 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
         },
         outline_width_factor: material.outline_width_factor.unwrap_or(0.0),
         outline_color_factor: material.outline_color_factor.unwrap_or([0.0, 0.0, 0.0]),
+        outline_lighting_mix_factor: material
+            .outline_lighting_mix_factor
+            .unwrap_or(MtoonMaterial::default().outline_lighting_mix_factor),
         uv_animation: UvAnimation {
             scroll_x_speed: material.uv_animation_scroll_x_speed_factor.unwrap_or(0.0),
             scroll_y_speed: material.uv_animation_scroll_y_speed_factor.unwrap_or(0.0),
@@ -1072,17 +1130,33 @@ mod tests {
                         [
                             ("_OutlineWidthMode".to_owned(), serde_json::json!(1.0)),
                             ("_OutlineWidth".to_owned(), serde_json::json!(0.02)),
+                            ("_Cutoff".to_owned(), serde_json::json!(0.42)),
+                            ("_ReceiveShadowRate".to_owned(), serde_json::json!(0.8)),
+                            ("_ShadingGradeRate".to_owned(), serde_json::json!(0.7)),
                             ("_UvAnimScrollX".to_owned(), serde_json::json!(0.5)),
+                            ("_LightColorAttenuation".to_owned(), serde_json::json!(0.6)),
+                            ("_OutlineLightingMix".to_owned(), serde_json::json!(0.3)),
                             ("_CullMode".to_owned(), serde_json::json!(0.0)),
                         ]
                         .into_iter()
                         .collect(),
                     ),
                     vector_properties: Some(
-                        [(
-                            "_ShadeColor".to_owned(),
-                            serde_json::json!([0.1, 0.2, 0.3, 1.0]),
-                        )]
+                        [
+                            ("_Color".to_owned(), serde_json::json!([1.0, 0.9, 0.8, 0.7])),
+                            (
+                                "_EmissionColor".to_owned(),
+                                serde_json::json!([0.4, 0.5, 0.6, 1.0]),
+                            ),
+                            (
+                                "_ShadeColor".to_owned(),
+                                serde_json::json!([0.1, 0.2, 0.3, 1.0]),
+                            ),
+                            (
+                                "_OutlineColor".to_owned(),
+                                serde_json::json!([0.7, 0.6, 0.5, 1.0]),
+                            ),
+                        ]
                         .into_iter()
                         .collect(),
                     ),
@@ -1116,7 +1190,15 @@ mod tests {
         assert_eq!(mtoon.render_order(), 3001);
         assert_eq!(mtoon.cull_mode, MtoonCullMode::Off);
         assert_eq!(mtoon.pipeline_hints().alpha_mode, MtoonAlphaMode::Blend);
+        assert_eq!(mtoon.base_color_factor, [1.0, 0.9, 0.8, 0.7]);
+        assert_eq!(mtoon.emissive_factor, [0.4, 0.5, 0.6]);
+        assert_eq!(mtoon.cutoff_factor, 0.42);
         assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
+        assert_eq!(mtoon.receive_shadow_rate_factor, 0.8);
+        assert_eq!(mtoon.shading_grade_rate_factor, 0.7);
+        assert_eq!(mtoon.light_color_attenuation_factor, 0.6);
+        assert_eq!(mtoon.outline_color_factor, [0.7, 0.6, 0.5]);
+        assert_eq!(mtoon.outline_lighting_mix_factor, 0.3);
         assert_eq!(mtoon.textures.main_texture, Some(TextureRef(3)));
         assert_eq!(mtoon.textures.shade_multiply_texture, Some(TextureRef(4)));
         assert_eq!(
@@ -1421,8 +1503,19 @@ mod tests {
                 2,
                 vrm_protocol::materials_mtoon::VrmcMaterialsMtoon {
                     spec_version: "1.0".to_owned(),
+                    shade_color_factor: Some([0.1, 0.2, 0.3]),
+                    shading_shift_factor: Some(-0.2),
+                    shading_toony_factor: Some(0.7),
+                    gi_equalization_factor: Some(0.4),
+                    matcap_factor: Some([0.5, 0.6, 0.7]),
+                    parametric_rim_color_factor: Some([0.8, 0.9, 1.0]),
+                    rim_lighting_mix_factor: Some(0.25),
+                    parametric_rim_fresnel_power_factor: Some(3.0),
+                    parametric_rim_lift_factor: Some(0.15),
                     outline_width_mode: Some("worldCoordinates".to_owned()),
                     outline_width_factor: Some(0.01),
+                    outline_color_factor: Some([0.2, 0.3, 0.4]),
+                    outline_lighting_mix_factor: Some(0.35),
                     ..Default::default()
                 },
             )]
@@ -1462,7 +1555,18 @@ mod tests {
         let (strength, source) = asset.document.materials[1].effective_emissive_strength();
         assert_eq!(strength.0, 5.0);
         assert_eq!(source, EmissiveStrengthSource::KhrMaterialsEmissiveStrength);
-        assert!(asset.document.materials[2].mtoon.as_ref().is_some());
+        let mtoon = asset.document.materials[2].mtoon.as_ref().unwrap();
+        assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
+        assert_eq!(mtoon.shading_shift_factor, -0.2);
+        assert_eq!(mtoon.shading_toony_factor, 0.7);
+        assert_eq!(mtoon.gi_equalization_factor, 0.4);
+        assert_eq!(mtoon.matcap_factor, [0.5, 0.6, 0.7]);
+        assert_eq!(mtoon.parametric_rim_color_factor, [0.8, 0.9, 1.0]);
+        assert_eq!(mtoon.rim_lighting_mix_factor, 0.25);
+        assert_eq!(mtoon.parametric_rim_fresnel_power_factor, 3.0);
+        assert_eq!(mtoon.parametric_rim_lift_factor, 0.15);
+        assert_eq!(mtoon.outline_color_factor, [0.2, 0.3, 0.4]);
+        assert_eq!(mtoon.outline_lighting_mix_factor, 0.35);
     }
 
     #[test]

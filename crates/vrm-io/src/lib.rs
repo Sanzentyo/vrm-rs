@@ -1550,6 +1550,26 @@ mod tests {
             let body_mtoon = document.materials[0].mtoon.as_ref().unwrap();
             assert_eq!(body_mtoon.render_queue, MtoonRenderQueue::Opaque);
             assert!(body_mtoon.outline_enabled());
+            assert_eq!(body_mtoon.base_color_factor, [1.0, 1.0, 1.0, 1.0]);
+            assert_eq!(body_mtoon.emissive_factor, [0.0, 0.0, 0.0]);
+            assert_eq!(body_mtoon.cutoff_factor, 0.5);
+            assert_eq!(body_mtoon.shade_color_factor, [1.0, 0.8666667, 0.84000003]);
+            assert_eq!(body_mtoon.receive_shadow_rate_factor, 1.0);
+            assert_eq!(body_mtoon.shading_grade_rate_factor, 1.0);
+            assert_eq!(body_mtoon.shading_shift_factor, 0.0);
+            assert_eq!(body_mtoon.shading_toony_factor, 0.9);
+            assert_eq!(body_mtoon.light_color_attenuation_factor, 0.0);
+            assert_eq!(body_mtoon.gi_equalization_factor, 0.1);
+            assert_eq!(
+                body_mtoon.outline_width_mode,
+                OutlineWidthMode::WorldCoordinates
+            );
+            assert_eq!(body_mtoon.outline_width_factor, 0.05);
+            assert_eq!(
+                body_mtoon.outline_color_factor,
+                [0.671, 0.55702585, 0.53478694]
+            );
+            assert_eq!(body_mtoon.outline_lighting_mix_factor, 1.0);
             assert_eq!(
                 body_mtoon.textures.main_texture,
                 Some(vrm_core::TextureRef(0))

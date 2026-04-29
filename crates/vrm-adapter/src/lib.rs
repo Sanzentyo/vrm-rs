@@ -755,11 +755,23 @@ pub struct MtoonMaterialDescriptor {
     pub name: Option<String>,
     pub pass: MtoonPipelinePass,
     pub textures: MtoonTextureSet,
+    pub base_color_factor: [f32; 4],
+    pub emissive_factor: [f32; 3],
+    pub cutoff_factor: f32,
     pub shade_color_factor: [f32; 3],
+    pub receive_shadow_rate_factor: f32,
+    pub shading_grade_rate_factor: f32,
     pub shading_shift_factor: f32,
     pub shading_toony_factor: f32,
+    pub light_color_attenuation_factor: f32,
     pub gi_equalization_factor: f32,
+    pub matcap_factor: [f32; 3],
+    pub parametric_rim_color_factor: [f32; 3],
+    pub rim_lighting_mix_factor: f32,
+    pub parametric_rim_fresnel_power_factor: f32,
+    pub parametric_rim_lift_factor: f32,
     pub outline_color_factor: [f32; 3],
+    pub outline_lighting_mix_factor: f32,
     pub uv_animation: vrm_core::UvAnimation,
     pub emissive_strength: EmissiveStrength,
     pub debug_mode: MtoonDebugMode,
@@ -1232,11 +1244,23 @@ fn mtoon_material_descriptor(
         name,
         pass,
         textures: mtoon.textures.clone(),
+        base_color_factor: mtoon.base_color_factor,
+        emissive_factor: mtoon.emissive_factor,
+        cutoff_factor: mtoon.cutoff_factor,
         shade_color_factor: mtoon.shade_color_factor,
+        receive_shadow_rate_factor: mtoon.receive_shadow_rate_factor,
+        shading_grade_rate_factor: mtoon.shading_grade_rate_factor,
         shading_shift_factor: mtoon.shading_shift_factor,
         shading_toony_factor: mtoon.shading_toony_factor,
+        light_color_attenuation_factor: mtoon.light_color_attenuation_factor,
         gi_equalization_factor: mtoon.gi_equalization_factor,
+        matcap_factor: mtoon.matcap_factor,
+        parametric_rim_color_factor: mtoon.parametric_rim_color_factor,
+        rim_lighting_mix_factor: mtoon.rim_lighting_mix_factor,
+        parametric_rim_fresnel_power_factor: mtoon.parametric_rim_fresnel_power_factor,
+        parametric_rim_lift_factor: mtoon.parametric_rim_lift_factor,
         outline_color_factor: mtoon.outline_color_factor,
+        outline_lighting_mix_factor: mtoon.outline_lighting_mix_factor,
         uv_animation: mtoon.uv_animation,
         emissive_strength,
         debug_mode: options.debug_mode,
@@ -2932,7 +2956,19 @@ mod tests {
                     render_queue: MtoonRenderQueue::Transparent,
                     outline_width_mode: vrm_core::OutlineWidthMode::WorldCoordinates,
                     outline_width_factor: 0.01,
+                    base_color_factor: [1.0, 0.9, 0.8, 0.7],
+                    emissive_factor: [0.1, 0.2, 0.3],
+                    cutoff_factor: 0.42,
                     shade_color_factor: [0.5, 0.6, 0.7],
+                    receive_shadow_rate_factor: 0.8,
+                    shading_grade_rate_factor: 0.75,
+                    light_color_attenuation_factor: 0.25,
+                    matcap_factor: [0.4, 0.3, 0.2],
+                    parametric_rim_color_factor: [0.2, 0.3, 0.4],
+                    rim_lighting_mix_factor: 0.5,
+                    parametric_rim_fresnel_power_factor: 2.0,
+                    parametric_rim_lift_factor: 0.1,
+                    outline_lighting_mix_factor: 0.6,
                     ..MtoonMaterial::default()
                 }),
                 ..vrm_core::Material::default()
@@ -2955,7 +2991,19 @@ mod tests {
         assert_eq!(descriptors[0].emissive_strength, EmissiveStrength(2.0));
         assert_eq!(descriptors[0].debug_mode, MtoonDebugMode::Lighting);
         assert!(descriptors[0].v0_compat_shade);
+        assert_eq!(descriptors[0].base_color_factor, [1.0, 0.9, 0.8, 0.7]);
+        assert_eq!(descriptors[0].emissive_factor, [0.1, 0.2, 0.3]);
+        assert_eq!(descriptors[0].cutoff_factor, 0.42);
         assert_eq!(descriptors[0].shade_color_factor, [0.5, 0.6, 0.7]);
+        assert_eq!(descriptors[0].receive_shadow_rate_factor, 0.8);
+        assert_eq!(descriptors[0].shading_grade_rate_factor, 0.75);
+        assert_eq!(descriptors[0].light_color_attenuation_factor, 0.25);
+        assert_eq!(descriptors[0].matcap_factor, [0.4, 0.3, 0.2]);
+        assert_eq!(descriptors[0].parametric_rim_color_factor, [0.2, 0.3, 0.4]);
+        assert_eq!(descriptors[0].rim_lighting_mix_factor, 0.5);
+        assert_eq!(descriptors[0].parametric_rim_fresnel_power_factor, 2.0);
+        assert_eq!(descriptors[0].parametric_rim_lift_factor, 0.1);
+        assert_eq!(descriptors[0].outline_lighting_mix_factor, 0.6);
     }
 
     #[test]
