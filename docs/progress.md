@@ -136,7 +136,9 @@
 - Expanded `vrm-io` generated coverage for invalid glTF payloads, filesystem IO errors, retained embedded VRMA buffers, humanoid scale-channel rejection, and valid VRMA humanoid rotation, expression, and lookAt track extraction. This closes the current `vrm-io` low-water coverage TODO before the next protocol roundtrip slice.
 - Started the P2 protocol roundtrip slice. The focus is representative unknown `extensions` and `extras` retention across VRM1, spring bone, node constraint, MToon, and VRMA schema families.
 - Expanded protocol roundtrip coverage for nested VRM1 metadata/humanoid/first-person/lookAt/expression payloads, spring bone colliders/groups/springs plus extended collider metadata, node constraint metadata, all major MToon texture slots, and VRMA custom track maps. Unknown vendor `extensions` and `extras` retention is now covered across the major schema families.
-- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 80.44%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Started the P2 facade polish slice. The root crate currently exposes direct lower-crate re-exports plus `load(bytes)`, so the next step is a small session type and helpers that connect loading, resolved documents, runtime state, and `VrmRuntimeDriver` without forcing users to import each lower crate manually.
+- Polished the root facade with a `Vrm` session type, `load_full`, `load_full_path`, `load_runtime`, `load_runtime_path`, `runtime_for`, and `driver_for`. The facade now covers the common path from `.vrm`/`.vrma` bytes or paths to resolved documents, rest-scene access, runtime events, and high-level adapter drivers.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 81.34%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 
