@@ -2202,6 +2202,7 @@ mod tests {
         local_overrides: HashMap<NodeRef, Transform>,
         world_overrides: HashMap<NodeRef, Transform>,
         world_matrix_overrides: HashMap<NodeRef, Mat4>,
+        constraint_rest: ConstraintRestMap,
         rotations: Vec<(NodeRef, Quat)>,
         morphs: Vec<(NodeRef, usize, f32)>,
         look_at_rotations: Vec<Quat>,
@@ -2214,6 +2215,7 @@ mod tests {
                 local_overrides: HashMap::new(),
                 world_overrides: HashMap::new(),
                 world_matrix_overrides: HashMap::new(),
+                constraint_rest: ConstraintRestMap::default(),
                 rotations: Vec::new(),
                 morphs: Vec::new(),
                 look_at_rotations: Vec::new(),
@@ -2224,6 +2226,11 @@ mod tests {
             self.scene
                 .node(node.0)
                 .unwrap_or_else(|| panic!("missing fixture node {}", node.0))
+        }
+
+        fn with_constraint_rest(mut self, rest: ConstraintRestMap) -> Self {
+            self.constraint_rest = rest;
+            self
         }
 
         fn local(&self, node: NodeRef) -> Transform {
@@ -2341,6 +2348,19 @@ mod tests {
                 .copied()
                 .map(NodeRef)
                 .collect())
+        }
+    }
+
+    impl ConstraintRestAccess for FixtureScene {
+        type Error = Infallible;
+
+        fn constraint_rest_state(
+            &self,
+            destination: NodeRef,
+            source: NodeRef,
+        ) -> Result<ConstraintRestState, Self::Error> {
+            self.constraint_rest
+                .constraint_rest_state(destination, source)
         }
     }
 
@@ -3696,6 +3716,106 @@ mod tests {
             "expected at least Seed-san and a collider-heavy spring golden in {}",
             golden_dir.display()
         );
+    }
+
+    #[test]
+    #[ignore = "requires three-vrm node constraint golden JSON; set VRM_RS_THREE_VRM_CONSTRAINT_GOLDEN"]
+    fn node_constraint_manager_matches_three_vrm_golden() {
+        let golden_path = std::env::var_os("VRM_RS_THREE_VRM_CONSTRAINT_GOLDEN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                workspace_path(
+                    ".external-fixtures/golden/VRM1_Constraint_Twist_Sample.constraint.json",
+                )
+            });
+        let golden: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&golden_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", golden_path.display())),
+        )
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", golden_path.display()));
+        compare_constraint_golden(&golden_path, &golden);
+    }
+
+    fn compare_constraint_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {
+        let fixture = golden["fixture"].as_str().unwrap_or_else(|| {
+            panic!(
+                "constraint golden fixture is missing in {}",
+                golden_path.display()
+            )
+        });
+        let loaded = vrm_io::load_vrm_from_path(fixture)
+            .unwrap_or_else(|err| panic!("failed to load constraint fixture {fixture}: {err:?}"));
+        let document = loaded.model().document();
+        let rest = ConstraintRestMap::capture(
+            &FixtureScene::new(loaded.scene().clone()),
+            &document.node_constraints,
+        )
+        .unwrap();
+        let mut scene = FixtureScene::new(loaded.scene().clone()).with_constraint_rest(rest);
+        for input in golden["sourceInputs"]
+            .as_array()
+            .unwrap_or_else(|| panic!("constraint golden sourceInputs must be an array"))
+        {
+            let node = NodeRef(
+                input["node"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("constraint source input missing node: {input}"))
+                    as usize,
+            );
+            scene
+                .set_local_rotation(node, quat_from_json(&input["localRotation"]))
+                .unwrap();
+        }
+        scene.update_world_transforms().unwrap();
+        scene.rotations.clear();
+
+        let order = vrm_runtime::ConstraintManager::new(document.node_constraints.clone())
+            .update_order()
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to order constraints for {}: {err:?}",
+                    golden_path.display()
+                )
+            });
+        let actual_order = order
+            .iter()
+            .map(|constraint| constraint.destination.0 as u64)
+            .collect::<Vec<_>>();
+        let expected_order = golden["updateOrder"]
+            .as_array()
+            .unwrap_or_else(|| panic!("constraint golden updateOrder must be an array"))
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .expect("constraint updateOrder entries must be nodes")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual_order, expected_order);
+
+        for constraint in &order {
+            apply_node_constraint(&mut scene, constraint).unwrap();
+            scene.update_world_transforms().unwrap();
+        }
+        let actual = scene.rotations.iter().copied().collect::<HashMap<_, _>>();
+        for expected in golden["constraints"]
+            .as_array()
+            .unwrap_or_else(|| panic!("constraint golden constraints must be an array"))
+        {
+            let destination =
+                NodeRef(expected["destination"].as_u64().unwrap_or_else(|| {
+                    panic!("constraint expected destination missing: {expected}")
+                }) as usize);
+            let expected_rotation = quat_from_json(&expected["localRotation"]);
+            let actual_rotation = actual.get(&destination).copied().unwrap_or_else(|| {
+                panic!("constraint destination {} was not written", destination.0)
+            });
+            assert!(
+                quat_component_delta(actual_rotation, expected_rotation) <= 0.0001,
+                "constraint destination {} mismatch: actual={actual_rotation:?} expected={expected_rotation:?}",
+                destination.0
+            );
+        }
     }
 
     fn compare_spring_golden(golden_path: &std::path::Path, golden: &serde_json::Value) {

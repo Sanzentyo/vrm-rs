@@ -129,7 +129,8 @@
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.
 - Improved spring bone numeric parity and fixture breadth. VRM0 secondary animation loaded through `vrm-io` now expands root bones by scene traversal like three-vrm, VRM0 collider offsets flip Z to match three-vrm's legacy loader, parity colliders can use exact world matrices, the Alicia VRM0 spring golden now passes in the directory comparison, and the collider-heavy Constraint sample tail tolerance is tightened from `0.003` to `0.0022`.
-- Re-measured coverage after workspace coverage refresh on 2026-04-30: workspace line coverage is 78.79%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Added fixture-driven node constraint manager parity. `tools/three-vrm-constraint-golden.mjs` records three-vrm source inputs, manager update order, and destination local rotations for complete VRM scenes, and the ignored adapter test now verifies Rust ordering/writeback against the `VRM1_Constraint_Twist_Sample` golden.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 78.02%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 
