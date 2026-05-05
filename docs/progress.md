@@ -134,7 +134,9 @@
 - Tightened VRMA diagnostics with generated VRMA glTF tests. Non-hips humanoid translation now has a stable ignored-channel warning assertion, and invalid expression/lookAt animation paths have fixed `InvalidAnimationChannel` message tests.
 - Started the P2 IO coverage slice. The focus is invalid payload/path handling, retained embedded buffers, and generated VRMA accessor/channel error paths before moving on to protocol roundtrip breadth.
 - Expanded `vrm-io` generated coverage for invalid glTF payloads, filesystem IO errors, retained embedded VRMA buffers, humanoid scale-channel rejection, and valid VRMA humanoid rotation, expression, and lookAt track extraction. This closes the current `vrm-io` low-water coverage TODO before the next protocol roundtrip slice.
-- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 80.15%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Started the P2 protocol roundtrip slice. The focus is representative unknown `extensions` and `extras` retention across VRM1, spring bone, node constraint, MToon, and VRMA schema families.
+- Expanded protocol roundtrip coverage for nested VRM1 metadata/humanoid/first-person/lookAt/expression payloads, spring bone colliders/groups/springs plus extended collider metadata, node constraint metadata, all major MToon texture slots, and VRMA custom track maps. Unknown vendor `extensions` and `extras` retention is now covered across the major schema families.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 80.44%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 

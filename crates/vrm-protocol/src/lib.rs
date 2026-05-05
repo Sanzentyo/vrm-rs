@@ -762,6 +762,89 @@ mod tests {
     }
 
     #[test]
+    fn vrm1_nested_extensions_and_extras_round_trip() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "meta": {
+                "name": "avatar",
+                "authors": ["pixiv"],
+                "extensions": { "VENDOR_meta": { "flag": true } },
+                "extras": { "metaNote": "kept" }
+            },
+            "humanoid": {
+                "humanBones": {
+                    "hips": {
+                        "node": 0,
+                        "extensions": { "VENDOR_bone": { "axis": "y" } },
+                        "extras": { "boneNote": 7 }
+                    }
+                },
+                "extensions": { "VENDOR_humanoid": { "rig": "normalized" } },
+                "extras": { "humanoidNote": [1, 2, 3] }
+            },
+            "firstPerson": {
+                "meshAnnotations": [{
+                    "node": 1,
+                    "type": "auto",
+                    "extensions": { "VENDOR_annotation": { "split": true } },
+                    "extras": { "annotationNote": "head" }
+                }],
+                "extensions": { "VENDOR_firstPerson": { "mode": "auto" } },
+                "extras": { "firstPersonNote": true }
+            },
+            "lookAt": {
+                "type": "expression",
+                "extensions": { "VENDOR_lookAt": { "driver": "camera" } },
+                "extras": { "lookAtNote": 2 }
+            },
+            "expressions": {
+                "preset": {
+                    "blink": {
+                        "morphTargetBinds": [{ "node": 2, "index": 0, "weight": 1.0 }],
+                        "extensions": { "VENDOR_expression": { "priority": 1 } },
+                        "extras": { "expressionNote": "blink" }
+                    }
+                },
+                "extensions": { "VENDOR_expressions": { "set": "face" } },
+                "extras": { "expressionsNote": "kept" }
+            },
+            "extensions": { "VENDOR_root": { "root": true } },
+            "extras": { "rootNote": "kept" }
+        });
+
+        let vrm: vrm1::VrmcVrm = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(vrm).unwrap();
+
+        assert_eq!(value["extensions"]["VENDOR_root"]["root"], true);
+        assert_eq!(value["extras"]["rootNote"], "kept");
+        assert_eq!(value["meta"]["extensions"]["VENDOR_meta"]["flag"], true);
+        assert_eq!(
+            value["humanoid"]["extensions"]["VENDOR_humanoid"]["rig"],
+            "normalized"
+        );
+        assert_eq!(
+            value["humanoid"]["humanBones"]["hips"]["extensions"]["VENDOR_bone"]["axis"],
+            "y"
+        );
+        assert_eq!(
+            value["firstPerson"]["meshAnnotations"][0]["extras"]["annotationNote"],
+            "head"
+        );
+        assert_eq!(
+            value["lookAt"]["extensions"]["VENDOR_lookAt"]["driver"],
+            "camera"
+        );
+        assert_eq!(
+            value["expressions"]["preset"]["blink"]["extras"]["expressionNote"],
+            "blink"
+        );
+        assert_eq!(
+            value["expressions"]["extensions"]["VENDOR_expressions"]["set"],
+            "face"
+        );
+    }
+
+    #[test]
     fn root_extensions_detect_unsupported_vrm1() {
         let mut extensions = ExtensionMap::new();
         extensions.insert(
@@ -889,6 +972,66 @@ mod tests {
     }
 
     #[test]
+    fn spring_bone_round_trips_extensions_and_extras() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "colliders": [{
+                "node": 0,
+                "shape": { "sphere": { "radius": 0.1 } },
+                "extensions": { "VENDOR_collider": { "inside": false } },
+                "extras": { "colliderNote": "kept" }
+            }],
+            "colliderGroups": [{
+                "name": "hair",
+                "colliders": [0],
+                "extensions": { "VENDOR_group": { "layer": 1 } },
+                "extras": { "groupNote": true }
+            }],
+            "springs": [{
+                "name": "bangs",
+                "joints": [{ "node": 1, "hitRadius": 0.02 }],
+                "colliderGroups": [0],
+                "extensions": { "VENDOR_spring": { "solver": "legacy" } },
+                "extras": { "springNote": "kept" }
+            }],
+            "extensions": { "VENDOR_root": { "spring": true } },
+            "extras": { "rootNote": "kept" }
+        });
+
+        let spring: spring_bone::VrmcSpringBone = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(spring).unwrap();
+
+        assert_eq!(value["extensions"]["VENDOR_root"]["spring"], true);
+        assert_eq!(
+            value["colliders"][0]["extensions"]["VENDOR_collider"]["inside"],
+            false
+        );
+        assert_eq!(value["colliderGroups"][0]["extras"]["groupNote"], true);
+        assert_eq!(
+            value["springs"][0]["extensions"]["VENDOR_spring"]["solver"],
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn spring_extended_collider_round_trips_extensions_and_extras() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "inside": true,
+            "extensions": { "VENDOR_extended": { "shape": "sphere" } },
+            "extras": { "note": "inside collider" }
+        });
+
+        let collider: spring_bone::VrmcSpringBoneExtendedCollider =
+            serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(collider).unwrap();
+
+        assert_eq!(value["inside"], true);
+        assert_eq!(value["extensions"]["VENDOR_extended"]["shape"], "sphere");
+        assert_eq!(value["extras"]["note"], "inside collider");
+    }
+
+    #[test]
     fn node_constraint_round_trips_aim_constraint() {
         let input = serde_json::json!({
             "specVersion": "1.0",
@@ -901,6 +1044,24 @@ mod tests {
 
         assert_eq!(value["constraint"]["aim"]["source"], 1);
         assert_eq!(value["constraint"]["aim"]["aimAxis"], "PositiveZ");
+    }
+
+    #[test]
+    fn node_constraint_round_trips_extensions_and_extras() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "constraint": { "rotation": { "source": 3, "weight": 0.25 } },
+            "extensions": { "VENDOR_constraint": { "order": 4 } },
+            "extras": { "constraintNote": "kept" }
+        });
+
+        let constraint: node_constraint::VrmcNodeConstraint =
+            serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(constraint).unwrap();
+
+        assert_eq!(value["constraint"]["rotation"]["source"], 3);
+        assert_eq!(value["extensions"]["VENDOR_constraint"]["order"], 4);
+        assert_eq!(value["extras"]["constraintNote"], "kept");
     }
 
     #[test]
@@ -919,6 +1080,32 @@ mod tests {
 
         assert_eq!(value["shadeMultiplyTexture"]["index"], 2);
         assert_eq!(value["extras"]["note"], "ok");
+    }
+
+    #[test]
+    fn materials_mtoon_round_trips_extensions_and_all_texture_slots() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "shadeMultiplyTexture": { "index": 1, "texCoord": 0 },
+            "shadingShiftTexture": { "index": 2, "texCoord": 1, "scale": 0.5 },
+            "matcapTexture": { "index": 3 },
+            "rimMultiplyTexture": { "index": 4, "texCoord": 2 },
+            "outlineWidthMultiplyTexture": { "index": 5 },
+            "uvAnimationMaskTexture": { "index": 6 },
+            "extensions": { "VENDOR_mtoon": { "shader": "custom" } },
+            "extras": { "mtoonNote": "kept" }
+        });
+
+        let material: materials_mtoon::VrmcMaterialsMtoon = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(material).unwrap();
+
+        assert_eq!(value["shadingShiftTexture"]["scale"], 0.5);
+        assert_eq!(value["matcapTexture"]["index"], 3);
+        assert_eq!(value["rimMultiplyTexture"]["texCoord"], 2);
+        assert_eq!(value["outlineWidthMultiplyTexture"]["index"], 5);
+        assert_eq!(value["uvAnimationMaskTexture"]["index"], 6);
+        assert_eq!(value["extensions"]["VENDOR_mtoon"]["shader"], "custom");
+        assert_eq!(value["extras"]["mtoonNote"], "kept");
     }
 
     #[test]
@@ -966,6 +1153,41 @@ mod tests {
 
         assert_eq!(value["humanoid"]["humanBones"]["hips"]["node"], 0);
         assert_eq!(value["extras"]["clip"], "test");
+    }
+
+    #[test]
+    fn vrm_animation_round_trips_extensions_and_custom_tracks() {
+        let input = serde_json::json!({
+            "specVersion": "1.0",
+            "humanoid": {
+                "humanBones": {
+                    "hips": { "node": 0 },
+                    "leftUpperArm": { "node": 1, "extras": { "raw": true } }
+                }
+            },
+            "expressions": {
+                "preset": { "happy": { "node": 2 } },
+                "custom": { "smirk": { "node": 3, "extensions": { "VENDOR_track": true } } }
+            },
+            "lookAt": { "node": 4 },
+            "extensions": { "VENDOR_vrma": { "clip": "extra" } },
+            "extras": { "vrmaNote": "kept" }
+        });
+
+        let animation: vrma::VrmcVrmAnimation = serde_json::from_value(input).unwrap();
+        let value = serde_json::to_value(animation).unwrap();
+
+        assert_eq!(
+            value["humanoid"]["humanBones"]["leftUpperArm"]["extras"]["raw"],
+            true
+        );
+        assert_eq!(
+            value["expressions"]["custom"]["smirk"]["extensions"]["VENDOR_track"],
+            true
+        );
+        assert_eq!(value["lookAt"]["node"], 4);
+        assert_eq!(value["extensions"]["VENDOR_vrma"]["clip"], "extra");
+        assert_eq!(value["extras"]["vrmaNote"], "kept");
     }
 
     #[test]

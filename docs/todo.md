@@ -60,7 +60,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 - [x] Raise `vrm-io` coverage.
   - Done when invalid GLB/glTF, buffer/image/accessor extraction, extension shape, and VRMA error paths are covered enough to materially raise line coverage from the current low-water mark.
-- [ ] Expand protocol roundtrip coverage.
+- [x] Expand protocol roundtrip coverage.
   - Done when representative unknown extension and `extras` retention tests exist for each major schema family.
 - [ ] Polish the root facade.
   - Done when the root crate has an ergonomic load/validate/runtime-driver path for common `.vrm`, `.vrma`, `.gltf`, and `.glb` use.
