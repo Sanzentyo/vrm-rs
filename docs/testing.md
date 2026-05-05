@@ -78,9 +78,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 74.09% | 78.02% |
+| Workspace total | 73.95% | 77.90% |
 | `vrm-adapter-bevy` | 92.71% | 94.46% |
-| `vrm-adapter` | 59.62% | 69.93% |
+| `vrm-adapter` | 59.28% | 69.66% |
 | `vrm-core` | 70.28% | 77.47% |
 | `vrm-io` | 62.31% | 57.70% |
 | `vrm-protocol` | 86.45% | 85.40% |
@@ -88,7 +88,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 | `vrm-sans-io` | 90.02% | 92.84% |
 | `facade src/lib.rs` | 96.30% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and Seed-san plus `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, VRM0 spring root traversal expansion, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds, and legacy spring collider Z-axis conversion. The next test-effort priority is stricter VRMA diagnostics and additional VRMA clip breadth.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and baseline plus dense Seed-san `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, VRM0 spring root traversal expansion, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds, and legacy spring collider Z-axis conversion. The next test-effort priority is stricter VRMA diagnostics and additional independent VRMA clip breadth when another redistributable official clip is available.
 
 ## Ordered Parity Milestones
 
@@ -149,6 +149,7 @@ node tools\three-vrm-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\offic
 node tools\three-vrm-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\VRM1_Constraint_Twist_Sample.vrm --three-vrm-root D:\git\three-vrm --frames 8 --out D:\git\vrm-rs\.external-fixtures\golden\VRM1_Constraint_Twist_Sample.spring.json
 node tools\three-vrm-constraint-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\VRM1_Constraint_Twist_Sample.vrm --three-vrm-root D:\git\three-vrm --out D:\git\vrm-rs\.external-fixtures\golden\VRM1_Constraint_Twist_Sample.constraint.json
 node tools\three-vrm-vrma-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --vrma D:\git\vrm-rs\.external-fixtures\official\test.vrma --three-vrm-root D:\git\three-vrm --times 0,0.5,1 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.test-vrma.json
+node tools\three-vrm-vrma-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --vrma D:\git\vrm-rs\.external-fixtures\official\test.vrma --three-vrm-root D:\git\three-vrm --times 0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.test-vrma-dense.json
 ```
 
 Run the ignored comparison with:

@@ -4141,8 +4141,8 @@ mod tests {
             checked += 1;
         }
         assert!(
-            checked > 0,
-            "expected at least one VRMA golden in {}",
+            checked >= 2,
+            "expected at least baseline and dense VRMA goldens in {}",
             golden_dir.display()
         );
     }
@@ -4171,6 +4171,18 @@ mod tests {
             .animation
             .as_ref()
             .unwrap_or_else(|| panic!("VRMA fixture has no animation: {vrma}"));
+        let expected_duration = golden["duration"].as_f64().unwrap_or_else(|| {
+            panic!(
+                "VRMA golden duration is missing in {}",
+                golden_path.display()
+            )
+        }) as f32;
+        assert!(
+            (animation.duration - expected_duration).abs() <= 0.0005,
+            "VRMA duration mismatch for {}: actual={} expected={expected_duration}",
+            golden_path.display(),
+            animation.duration
+        );
         let tolerance = PoseTolerance {
             translation: 0.001,
             rotation_radians: 0.0015,
@@ -4178,6 +4190,15 @@ mod tests {
         let samples = golden["samples"]
             .as_array()
             .unwrap_or_else(|| panic!("VRMA golden samples must be an array"));
+        let times = golden["times"]
+            .as_array()
+            .unwrap_or_else(|| panic!("VRMA golden times must be an array"));
+        assert_eq!(
+            samples.len(),
+            times.len(),
+            "VRMA golden sample/time count mismatch in {}",
+            golden_path.display()
+        );
 
         for sample in samples {
             let time = sample["time"]
