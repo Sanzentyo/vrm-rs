@@ -1107,6 +1107,59 @@ mod tests {
     }
 
     #[test]
+    fn vrma_non_hips_humanoid_translation_warns_with_stable_message() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["channels"][0]["target"] =
+            json!({ "node": 1, "path": "translation" });
+
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        assert_eq!(
+            loaded.warnings(),
+            &[VrmIoWarning::IgnoredAnimationChannel {
+                node: 1,
+                message: "ignored non-hips humanoid translation track".to_owned()
+            }]
+        );
+        assert!(
+            loaded.model().document().animations[0]
+                .humanoid_rotation_tracks
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn vrma_invalid_expression_path_has_stable_error_message() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["samplers"][0]["output"] = json!(2);
+        sample["animations"][0]["channels"][0]["target"] =
+            json!({ "node": 15, "path": "rotation" });
+
+        let err = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidAnimationChannel { ref message }
+                if message == "invalid expression animation path for node 15"
+        ));
+    }
+
+    #[test]
+    fn vrma_invalid_look_at_path_has_stable_error_message() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["channels"][0]["target"] =
+            json!({ "node": 16, "path": "translation" });
+
+        let err = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidAnimationChannel { ref message }
+                if message == "invalid lookAt animation path for node 16"
+        ));
+    }
+
+    #[test]
     fn node_rest_graph_tracks_parent_and_world_matrices() {
         let sample = generated_transform_hierarchy_gltf();
         let (document, _, _) = gltf::import_slice(sample.to_string().as_bytes()).unwrap();
@@ -1351,6 +1404,97 @@ mod tests {
                 { "translation": [1.0, 0.0, 0.0], "children": [1] },
                 { "translation": [0.0, 2.0, 0.0] }
             ]
+        })
+    }
+
+    fn generated_vrma_gltf() -> Value {
+        json!({
+            "asset": { "version": "2.0", "generator": "vrm-rs generated VRMA test data" },
+            "extensionsUsed": ["VRMC_vrm_animation"],
+            "scene": 0,
+            "scenes": [{ "nodes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] }],
+            "nodes": (0..17)
+                .map(|index| json!({ "name": format!("node_{index}") }))
+                .collect::<Vec<_>>(),
+            "buffers": [{
+                "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAQEAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPw==",
+                "byteLength": 64
+            }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+                { "buffer": 0, "byteOffset": 8, "byteLength": 24 },
+                { "buffer": 0, "byteOffset": 32, "byteLength": 32 }
+            ],
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": 2,
+                    "type": "SCALAR",
+                    "min": [0.0],
+                    "max": [1.0]
+                },
+                {
+                    "bufferView": 1,
+                    "componentType": 5126,
+                    "count": 2,
+                    "type": "VEC3",
+                    "min": [0.0, 0.0, 0.0],
+                    "max": [1.0, 2.0, 3.0]
+                },
+                {
+                    "bufferView": 2,
+                    "componentType": 5126,
+                    "count": 2,
+                    "type": "VEC4",
+                    "min": [0.0, 0.0, 0.0, 1.0],
+                    "max": [0.0, 0.0, 0.0, 1.0]
+                }
+            ],
+            "animations": [{
+                "samplers": [{
+                    "input": 0,
+                    "output": 1,
+                    "interpolation": "LINEAR"
+                }],
+                "channels": [{
+                    "sampler": 0,
+                    "target": {
+                        "node": 0,
+                        "path": "translation"
+                    }
+                }]
+            }],
+            "extensions": {
+                "VRMC_vrm_animation": {
+                    "specVersion": "1.0",
+                    "humanoid": {
+                        "humanBones": {
+                            "hips": { "node": 0 },
+                            "head": { "node": 1 },
+                            "spine": { "node": 2 },
+                            "leftUpperLeg": { "node": 3 },
+                            "leftLowerLeg": { "node": 4 },
+                            "leftFoot": { "node": 5 },
+                            "rightUpperLeg": { "node": 6 },
+                            "rightLowerLeg": { "node": 7 },
+                            "rightFoot": { "node": 8 },
+                            "leftUpperArm": { "node": 9 },
+                            "leftLowerArm": { "node": 10 },
+                            "leftHand": { "node": 11 },
+                            "rightUpperArm": { "node": 12 },
+                            "rightLowerArm": { "node": 13 },
+                            "rightHand": { "node": 14 }
+                        }
+                    },
+                    "expressions": {
+                        "preset": {
+                            "blink": { "node": 15 }
+                        }
+                    },
+                    "lookAt": { "node": 16 }
+                }
+            }
         })
     }
 

@@ -131,7 +131,8 @@
 - Improved spring bone numeric parity and fixture breadth. VRM0 secondary animation loaded through `vrm-io` now expands root bones by scene traversal like three-vrm, VRM0 collider offsets flip Z to match three-vrm's legacy loader, parity colliders can use exact world matrices, the Alicia VRM0 spring golden now passes in the directory comparison, and the collider-heavy Constraint sample tail tolerance is tightened from `0.003` to `0.0022`.
 - Added fixture-driven node constraint manager parity. `tools/three-vrm-constraint-golden.mjs` records three-vrm source inputs, manager update order, and destination local rotations for complete VRM scenes, and the ignored adapter test now verifies Rust ordering/writeback against the `VRM1_Constraint_Twist_Sample` golden.
 - Broadened VRMA parity breadth with a dense Seed-san/`test.vrma` golden. Directory-level VRMA comparison now requires both baseline and dense goldens, verifies animation duration and sample/time counts, and continues to compare raw absolute pose, reconstructed normalized pose, expression weights, and lookAt quaternion across deterministic samples.
-- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 77.90%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Tightened VRMA diagnostics with generated VRMA glTF tests. Non-hips humanoid translation now has a stable ignored-channel warning assertion, and invalid expression/lookAt animation paths have fixed `InvalidAnimationChannel` message tests.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 79.32%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 

@@ -53,7 +53,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
   - Done when complete VRM scenes compare constraint ordering/writeback against three-vrm golden output, beyond standalone quaternion solver cases.
 - [x] Broaden VRMA parity.
   - Done when additional `.vrma` samples cover multiple clips and mixed humanoid rotation, hips translation, expression, and lookAt tracks.
-- [ ] Tighten VRMA diagnostics.
+- [x] Tighten VRMA diagnostics.
   - Done when unsupported channel/path warnings and errors have stable tests and messages.
 
 ## P2: IO, Protocol, And Public API
