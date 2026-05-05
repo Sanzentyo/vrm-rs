@@ -140,24 +140,11 @@
 - Polished the root facade with a `Vrm` session type, `load_full`, `load_full_path`, `load_runtime`, `load_runtime_path`, `runtime_for`, and `driver_for`. The facade now covers the common path from `.vrm`/`.vrma` bytes or paths to resolved documents, rest-scene access, runtime events, and high-level adapter drivers.
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
-- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 81.34%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 81.46%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 
-- Current ordered parity push requested on 2026-04-29:
-  1. Add posed humanoid writeback golden scenarios against three-vrm. Done for Seed-san raw and normalized writeback.
-  2. Add collider-heavy, center-node, and additional fixture spring bone golden parity. Done for Seed-san plus VRM1_Constraint_Twist_Sample external golden files.
-  3. Add full VRMA model-application parity for humanoid, hips translation, expression, and lookAt tracks. Done for Seed-san plus `test.vrma`.
-- Latest ordered parity push requested on 2026-04-29:
-  1. Expand VRMA parity. Done with normalized pose comparison plus directory-level VRMA golden test.
-  2. Expand VRM0 compatibility parity. Done for legacy first-person flags and lookAt ranges.
-  3. Improve spring numeric parity. Done with per-golden max-delta reporting and explicit tolerance classes.
-- Deep VRM0 compatibility parity beyond root orientation now has an external Alicia fixture semantic check for normalized humanoid aliases, mesh annotations, lookAt, expression aliases, MToon material properties, and secondary animation. Remaining work is numeric humanoid-axis parity and the long tail of legacy material value edge cases not yet represented in the renderer-facing descriptor.
-- Humanoid pose parity now has snapshot/diff helpers plus Seed-san raw/normalized rest-state and posed writeback golden coverage.
-- Spring bone parity now has stable-length multi-frame rotation comparison plus all-joint center-tail state comparison on Seed-san and directory-level coverage for the collider-heavy VRM1_Constraint_Twist_Sample fixture. Remaining spring work is deeper solver investigation for the small collider-heavy numeric tolerance and more official sample breadth.
-- Node constraint parity now includes direct three-vrm quaternion cases for rotation, roll, and aim solvers. Remaining work is fixture-driven manager ordering/writeback parity on complete VRM scenes.
-- Renderer-specific MToon shader materialization in downstream adapters.
-- Full VRMA model application parity now has one external numeric fixture comparison; remaining work is broader VRMA fixture coverage and stricter channel/path diagnostics.
-- First-person `auto` has headless split planning, but downstream engines still need concrete mesh clone implementations.
-- MToon pipeline/shader generation per renderer.
-- Real Bevy runtime trait implementations beyond the current registry/descriptor/material-plan/scene-state/writeback/driver skeleton, especially applying recorded morph/material state into concrete Bevy mesh/material assets.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. Current coverage snapshot is workspace 81.46% line coverage, with `vrm-io` at 74.75%, `vrm-protocol` at 90.70%, `vrm-sans-io` at 95.17%, and facade docs/examples covered by doc-tests.
+- External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
+- Future work should be tracked as a new TODO section before implementation. Likely future directions are renderer-specific MToon shader/material crates, additional redistributable official VRMA clips, and deeper downstream engine integrations beyond the current renderer-agnostic traits and Bevy skeleton.

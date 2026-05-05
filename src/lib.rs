@@ -25,12 +25,13 @@ pub use vrm_sans_io as sans_io;
 use std::path::Path;
 
 pub use vrm_adapter::VrmRuntimeDriver;
-pub use vrm_core::{
-    Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel, VrmModel as ResolvedVrmModel,
-};
+pub use vrm_core::{Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
 pub use vrm_runtime::{DeltaTime, Runtime, RuntimeEvents};
 pub use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
+
+/// Concrete resolved model type returned by the facade loaders.
+pub type ResolvedVrmModel = VrmModel<Resolved>;
 
 /// Loaded VRM/VRMA data plus renderer-agnostic runtime state.
 ///
@@ -171,7 +172,7 @@ mod tests {
     #[test]
     fn facade_reexports_state_types() {
         let asset = VrmAsset::<Parsed>::new_parsed(core::VrmDocument::default());
-        let model: VrmModel<Resolved> = asset.mark_validated().resolve();
+        let model: ResolvedVrmModel = asset.mark_validated().resolve();
         assert_eq!(model.document().kind, core::VrmKind::Vrm1);
     }
 
@@ -222,7 +223,14 @@ mod tests {
 
     #[test]
     fn facade_path_loaders_initialize_runtime_sessions() {
-        let path = env::temp_dir().join("vrm-rs-facade-fixture.gltf");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "vrm-rs-facade-fixture-{}-{unique}.gltf",
+            std::process::id()
+        ));
         fs::write(&path, generated_vrm1_gltf()).unwrap();
 
         let full = load_full_path(&path).unwrap();
@@ -234,7 +242,7 @@ mod tests {
         let from_path = Vrm::from_path(&path).unwrap();
         assert_eq!(from_path.model().document().kind, core::VrmKind::Vrm1);
 
-        fs::remove_file(path).unwrap();
+        let _ = fs::remove_file(path);
     }
 
     fn generated_vrm1_gltf() -> String {

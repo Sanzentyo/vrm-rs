@@ -898,6 +898,18 @@ mod tests {
     }
 
     #[test]
+    fn load_from_slice_reports_invalid_glb_payload() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"glTF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&12u32.to_le_bytes());
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+
+        assert!(matches!(err, VrmIoError::Gltf(_)));
+    }
+
+    #[test]
     fn load_from_path_reports_filesystem_errors() {
         let missing = env::temp_dir().join("vrm-rs-missing-fixture.vrm");
         let err = load_vrm_from_path(&missing).unwrap_err();
@@ -1013,6 +1025,26 @@ mod tests {
         assert!(loaded.model().document().spring_bone.is_present());
         assert_eq!(loaded.model().document().node_constraints.len(), 1);
         assert!(loaded.model().document().materials[0].mtoon.is_present());
+    }
+
+    #[test]
+    fn generated_sample_extracts_embedded_png_images() {
+        let mut sample = generated_vrm1_gltf();
+        sample["buffers"] = json!([{
+            "uri": "data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
+            "byteLength": 68
+        }]);
+        sample["bufferViews"] = json!([{ "buffer": 0, "byteOffset": 0, "byteLength": 68 }]);
+        sample["images"] = json!([{
+            "mimeType": "image/png",
+            "bufferView": 0
+        }]);
+
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        assert_eq!(loaded.buffers.len(), 1);
+        assert_eq!(loaded.images.len(), 1);
+        assert!(!loaded.images[0].bytes.is_empty());
     }
 
     #[test]

@@ -78,17 +78,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 77.91% | 81.34% |
+| Workspace total | 78.06% | 81.46% |
 | `vrm-adapter-bevy` | 92.71% | 94.46% |
 | `vrm-adapter` | 59.28% | 69.66% |
 | `vrm-core` | 70.28% | 77.47% |
-| `vrm-io` | 77.11% | 73.90% |
+| `vrm-io` | 77.99% | 74.75% |
 | `vrm-protocol` | 92.32% | 90.70% |
 | `vrm-runtime` | 87.25% | 88.06% |
 | `vrm-sans-io` | 91.89% | 95.17% |
-| `facade src/lib.rs` | 98.75% | 100.00% |
+| `facade src/lib.rs` | 98.77% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and baseline plus dense Seed-san `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, VRM0 spring root traversal expansion, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds, and legacy spring collider Z-axis conversion. Generated VRMA diagnostics now cover stable warnings for ignored non-hips humanoid translation tracks and stable errors for invalid expression/lookAt animation paths. The next test-effort priority is docs.rs-ready examples for facade, sans-IO, runtime driver, and adapter usage.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and baseline plus dense Seed-san `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, VRM0 spring root traversal expansion, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds, and legacy spring collider Z-axis conversion. Generated VRMA diagnostics now cover stable warnings for ignored non-hips humanoid translation tracks and stable errors for invalid expression/lookAt animation paths. Generated IO tests cover invalid glTF/GLB payloads, embedded buffer retention, embedded PNG image extraction, and VRMA track/accessor extraction. The finite P0/P1/P2 backlog is complete; future test-effort priorities should be introduced as a new TODO section before implementation.
 
 ## Ordered Parity Milestones
 
