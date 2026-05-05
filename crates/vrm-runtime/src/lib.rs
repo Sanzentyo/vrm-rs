@@ -1,4 +1,15 @@
 //! Renderer-agnostic runtime algorithms for VRM components.
+//!
+//! ```
+//! use vrm_core::VrmDocument;
+//! use vrm_runtime::{DeltaTime, Runtime};
+//!
+//! let document = VrmDocument::default();
+//! let mut runtime = Runtime::from_document(&document);
+//! let events = runtime.update(DeltaTime(1.0 / 60.0)).unwrap();
+//!
+//! assert_eq!(events.delta, DeltaTime(1.0 / 60.0));
+//! ```
 
 use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;

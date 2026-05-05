@@ -1,4 +1,16 @@
 //! Traits for connecting `vrm-rs` runtime output to external engines.
+//!
+//! ```
+//! use vrm_adapter::VrmRuntimeDriver;
+//! use vrm_core::VrmDocument;
+//! use vrm_runtime::RuntimeEvents;
+//!
+//! let document = VrmDocument::default();
+//! let events = RuntimeEvents::default();
+//! let driver = VrmRuntimeDriver::new(&document).with_runtime_events(&events);
+//!
+//! assert!(driver.runtime_events.is_some());
+//! ```
 
 use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;

@@ -138,6 +138,8 @@
 - Expanded protocol roundtrip coverage for nested VRM1 metadata/humanoid/first-person/lookAt/expression payloads, spring bone colliders/groups/springs plus extended collider metadata, node constraint metadata, all major MToon texture slots, and VRMA custom track maps. Unknown vendor `extensions` and `extras` retention is now covered across the major schema families.
 - Started the P2 facade polish slice. The root crate currently exposes direct lower-crate re-exports plus `load(bytes)`, so the next step is a small session type and helpers that connect loading, resolved documents, runtime state, and `VrmRuntimeDriver` without forcing users to import each lower crate manually.
 - Polished the root facade with a `Vrm` session type, `load_full`, `load_full_path`, `load_runtime`, `load_runtime_path`, `runtime_for`, and `driver_for`. The facade now covers the common path from `.vrm`/`.vrma` bytes or paths to resolved documents, rest-scene access, runtime events, and high-level adapter drivers.
+- Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
+- Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 81.34%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:

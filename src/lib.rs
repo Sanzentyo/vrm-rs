@@ -3,6 +3,17 @@
 //! The lower crates are intentionally split into protocol, sans-IO conversion,
 //! IO, runtime, and adapter layers. This crate re-exports the stable entry
 //! points most applications need first.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), vrm_rs::VrmIoError> {
+//! let mut vrm = vrm_rs::load_runtime_path("avatar.vrm")?;
+//! let events = vrm.update(vrm_rs::DeltaTime(1.0 / 60.0)).unwrap();
+//! let driver = vrm.driver_with_events(&events);
+//!
+//! assert_eq!(driver.document.meta.name, vrm.document().meta.name);
+//! # Ok(())
+//! # }
+//! ```
 
 pub use vrm_adapter as adapter;
 pub use vrm_core as core;

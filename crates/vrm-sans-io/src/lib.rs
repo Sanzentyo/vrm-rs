@@ -1,4 +1,37 @@
 //! Side-effect-free conversion from protocol data into core VRM models.
+//!
+//! ```
+//! use vrm_protocol::{ExtensionBundle, VrmExtension, vrma};
+//! use vrm_sans_io::ValidatedAssetBuilder;
+//!
+//! let required_bones = [
+//!     "hips", "head", "spine", "leftUpperLeg", "leftLowerLeg", "leftFoot",
+//!     "rightUpperLeg", "rightLowerLeg", "rightFoot", "leftUpperArm",
+//!     "leftLowerArm", "leftHand", "rightUpperArm", "rightLowerArm", "rightHand",
+//! ];
+//! let animation = vrma::VrmcVrmAnimation {
+//!     spec_version: "1.0".to_owned(),
+//!     humanoid: Some(vrma::Humanoid {
+//!         human_bones: required_bones
+//!             .iter()
+//!             .enumerate()
+//!             .map(|(node, bone)| ((*bone).to_owned(), serde_json::json!({ "node": node })))
+//!             .collect(),
+//!     }),
+//!     ..Default::default()
+//! };
+//! let bundle = ExtensionBundle {
+//!     vrm: Some(VrmExtension::Vrma(Box::new(animation))),
+//!     ..Default::default()
+//! };
+//!
+//! let model = ValidatedAssetBuilder::new()
+//!     .with_node_count(required_bones.len())
+//!     .build(bundle)
+//!     .unwrap()
+//!     .resolve();
+//! assert!(model.document().animation.is_present());
+//! ```
 
 use glam::Vec3;
 use thiserror::Error;

@@ -64,7 +64,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
   - Done when representative unknown extension and `extras` retention tests exist for each major schema family.
 - [x] Polish the root facade.
   - Done when the root crate has an ergonomic load/validate/runtime-driver path for common `.vrm`, `.vrma`, `.gltf`, and `.glb` use.
-- [ ] Add docs.rs-ready examples.
+- [x] Add docs.rs-ready examples.
   - Done when facade, sans-IO, runtime driver, and adapter usage have short examples that compile in docs or integration tests.
 
 ## Ongoing Maintenance
