@@ -863,6 +863,8 @@ mod tests {
         let loaded = load_vrm_from_slice(&bytes).unwrap();
         let document = loaded.model().document();
 
+        assert!(loaded.buffers.is_empty());
+        assert!(loaded.images.is_empty());
         assert!(loaded.scene().node(0).is_some());
         assert_eq!(document.kind, VrmKind::Vrm1);
         assert_eq!(document.meta.name, "Generated Test Avatar");
@@ -886,6 +888,21 @@ mod tests {
         assert_eq!(emissive_strength.0, 5.0);
         assert_eq!(document.node_constraints.len(), 1);
         assert!(document.spring_bone.is_present());
+    }
+
+    #[test]
+    fn load_from_slice_reports_invalid_gltf_payload() {
+        let err = load_vrm_from_slice(b"not a gltf document").unwrap_err();
+
+        assert!(matches!(err, VrmIoError::Gltf(_)));
+    }
+
+    #[test]
+    fn load_from_path_reports_filesystem_errors() {
+        let missing = env::temp_dir().join("vrm-rs-missing-fixture.vrm");
+        let err = load_vrm_from_path(&missing).unwrap_err();
+
+        assert!(matches!(err, VrmIoError::Io(_)));
     }
 
     #[test]
@@ -1145,6 +1162,20 @@ mod tests {
     }
 
     #[test]
+    fn vrma_invalid_humanoid_path_has_stable_error_message() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["channels"][0]["target"] = json!({ "node": 0, "path": "scale" });
+
+        let err = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            VrmIoError::InvalidAnimationChannel { ref message }
+                if message == "invalid humanoid animation path for node 0"
+        ));
+    }
+
+    #[test]
     fn vrma_invalid_look_at_path_has_stable_error_message() {
         let mut sample = generated_vrma_gltf();
         sample["animations"][0]["channels"][0]["target"] =
@@ -1157,6 +1188,73 @@ mod tests {
             VrmIoError::InvalidAnimationChannel { ref message }
                 if message == "invalid lookAt animation path for node 16"
         ));
+    }
+
+    #[test]
+    fn vrma_extracts_humanoid_rotation_tracks() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["samplers"][0]["output"] = json!(2);
+        sample["animations"][0]["channels"][0]["target"] = json!({ "node": 1, "path": "rotation" });
+
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+        let animation = &loaded.model().document().animations[0];
+
+        let track = animation
+            .humanoid_rotation_tracks
+            .get(&HumanBoneName::Head)
+            .expect("head rotation track should be extracted");
+        assert_eq!(track.times, vec![0.0, 1.0]);
+        assert_eq!(track.values.len(), 2);
+        assert_eq!(animation.duration, 1.0);
+    }
+
+    #[test]
+    fn vrma_extracts_expression_and_look_at_tracks() {
+        let mut sample = generated_vrma_gltf();
+        sample["animations"][0]["samplers"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "input": 0,
+                "output": 2,
+                "interpolation": "LINEAR"
+            }));
+        sample["animations"][0]["channels"] = json!([
+            {
+                "sampler": 0,
+                "target": { "node": 15, "path": "translation" }
+            },
+            {
+                "sampler": 1,
+                "target": { "node": 16, "path": "rotation" }
+            }
+        ]);
+
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+        let animation = &loaded.model().document().animations[0];
+
+        let blink = animation
+            .preset_expression_tracks
+            .get(&ExpressionName::Blink)
+            .expect("blink expression track should be extracted");
+        assert_eq!(blink.times, vec![0.0, 1.0]);
+        assert_eq!(blink.values, vec![0.0, 1.0]);
+        let look_at = animation
+            .look_at_track
+            .as_ref()
+            .expect("lookAt track should be extracted");
+        assert_eq!(look_at.times, vec![0.0, 1.0]);
+        assert_eq!(look_at.values.len(), 2);
+        assert_eq!(animation.duration, 1.0);
+    }
+
+    #[test]
+    fn generated_vrma_retains_embedded_buffers_and_empty_image_list() {
+        let loaded = load_vrm_from_slice(generated_vrma_gltf().to_string().as_bytes()).unwrap();
+
+        assert_eq!(loaded.buffers.len(), 1);
+        assert_eq!(loaded.buffers[0].len(), 64);
+        assert!(loaded.images.is_empty());
     }
 
     #[test]

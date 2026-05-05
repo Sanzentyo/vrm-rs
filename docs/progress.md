@@ -132,7 +132,9 @@
 - Added fixture-driven node constraint manager parity. `tools/three-vrm-constraint-golden.mjs` records three-vrm source inputs, manager update order, and destination local rotations for complete VRM scenes, and the ignored adapter test now verifies Rust ordering/writeback against the `VRM1_Constraint_Twist_Sample` golden.
 - Broadened VRMA parity breadth with a dense Seed-san/`test.vrma` golden. Directory-level VRMA comparison now requires both baseline and dense goldens, verifies animation duration and sample/time counts, and continues to compare raw absolute pose, reconstructed normalized pose, expression weights, and lookAt quaternion across deterministic samples.
 - Tightened VRMA diagnostics with generated VRMA glTF tests. Non-hips humanoid translation now has a stable ignored-channel warning assertion, and invalid expression/lookAt animation paths have fixed `InvalidAnimationChannel` message tests.
-- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 79.32%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Started the P2 IO coverage slice. The focus is invalid payload/path handling, retained embedded buffers, and generated VRMA accessor/channel error paths before moving on to protocol roundtrip breadth.
+- Expanded `vrm-io` generated coverage for invalid glTF payloads, filesystem IO errors, retained embedded VRMA buffers, humanoid scale-channel rejection, and valid VRMA humanoid rotation, expression, and lookAt track extraction. This closes the current `vrm-io` low-water coverage TODO before the next protocol roundtrip slice.
+- Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 80.15%, and `vrm-adapter-bevy` line coverage is 94.46%.
 
 Open work:
 

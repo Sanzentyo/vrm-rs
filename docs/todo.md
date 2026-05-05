@@ -58,7 +58,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 ## P2: IO, Protocol, And Public API
 
-- [ ] Raise `vrm-io` coverage.
+- [x] Raise `vrm-io` coverage.
   - Done when invalid GLB/glTF, buffer/image/accessor extraction, extension shape, and VRMA error paths are covered enough to materially raise line coverage from the current low-water mark.
 - [ ] Expand protocol roundtrip coverage.
   - Done when representative unknown extension and `extras` retention tests exist for each major schema family.
