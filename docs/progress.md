@@ -165,6 +165,7 @@
 - Matched the Bevy capture projection to the three-vrm/wgpu reference camera by explicitly setting a 30 degree perspective FOV, 1:1 aspect, and `0.1..20.0` clip range. The Seed-san Bevy alpha bounding box now matches the three-vrm reference (`252x221`), and local Bevy-vs-three-vrm PSNR rose to `23.64 dB`; the remaining gap is now dominated by stock `StandardMaterial` shading versus MToon/runtime state rather than framing.
 - Extended `tools/ci/local-ci.rs` with `--render-parity`, which regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts plus PSNR reports under `.external-fixtures/render-parity/`. The local reused-fixture run produced the current wgpu `20.75 dB` and Bevy `23.64 dB` reports.
 - Added local render visual-review output: `--render-parity` now writes `.external-fixtures/render-parity/visual-review.html`, showing the three-vrm, wgpu, and Bevy PNGs side-by-side with the PSNR JSON reports for human review without committing generated artifacts.
+- Added render parity diff heatmaps to the local Rust runner. `--render-parity` now writes amplified RGB/alpha delta PNGs under `.external-fixtures/render-parity/diff/` and includes them in `visual-review.html`; the reused Seed-san run still reports wgpu `20.75 dB` and Bevy `23.64 dB`.
 
 Open work:
 

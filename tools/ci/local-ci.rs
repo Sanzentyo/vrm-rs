@@ -2,6 +2,10 @@
 ---cargo
 [package]
 edition = "2024"
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+serde_json = "1.0.150"
 ---
 
 //! Local replacement for the removed GitHub Actions workflow.
@@ -13,7 +17,7 @@ edition = "2024"
 
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 const THREE_VRM_COMMIT: &str = "9d125586f6d7da094b0ac5f204cebf19586f2397";
@@ -255,6 +259,8 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     capture_bevy(options)?;
     compare_render_pair(options, "wgpu")?;
     compare_render_pair(options, "bevy")?;
+    write_render_diff_image(options, "wgpu")?;
+    write_render_diff_image(options, "bevy")?;
     write_render_visual_review(options)
 }
 
@@ -631,6 +637,122 @@ fn render_report(options: &Options, renderer: &str) -> PathBuf {
         .join(format!("Seed-san.{renderer}-vs-three-vrm.psnr.json"))
 }
 
+fn render_diff_png(options: &Options, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join("diff")
+        .join(format!("Seed-san.{renderer}-vs-three-vrm.diff.png"))
+}
+
+fn write_render_diff_image(options: &Options, renderer: &str) -> Result<(), String> {
+    let expected = read_rgba_artifact(&render_artifact(options, "three-vrm"))?;
+    let actual = read_rgba_artifact(&render_artifact(options, renderer))?;
+    if expected.width != actual.width || expected.height != actual.height {
+        return Err(format!(
+            "{renderer}: dimension mismatch: expected {}x{}, actual {}x{}",
+            expected.width, expected.height, actual.width, actual.height
+        ));
+    }
+
+    let rgba = expected
+        .rgba
+        .chunks_exact(4)
+        .zip(actual.rgba.chunks_exact(4))
+        .flat_map(|(expected, actual)| {
+            let rgb_delta = expected[..3]
+                .iter()
+                .zip(&actual[..3])
+                .map(|(left, right)| left.abs_diff(*right))
+                .max()
+                .unwrap_or(0);
+            let alpha_delta = expected[3].abs_diff(actual[3]);
+            let red = amplify_delta(rgb_delta);
+            let blue = amplify_delta(alpha_delta);
+            [red, 0, blue, 255]
+        })
+        .collect::<Vec<_>>();
+
+    let out = render_diff_png(options, renderer);
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", path(parent)))?;
+    }
+    image::save_buffer(
+        &out,
+        &rgba,
+        expected.width,
+        expected.height,
+        image::ColorType::Rgba8,
+    )
+    .map_err(|err| format!("failed to write {}: {err}", path(&out)))
+}
+
+fn amplify_delta(delta: u8) -> u8 {
+    delta.saturating_mul(4)
+}
+
+#[derive(Debug)]
+struct RgbaArtifact {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+fn read_rgba_artifact(path: &Path) -> Result<RgbaArtifact, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", self::path(path)))?;
+    let value = serde_json::from_str::<serde_json::Value>(&text)
+        .map_err(|err| format!("failed to parse {}: {err}", self::path(path)))?;
+    let width = json_u32(&value, "width", path)?;
+    let height = json_u32(&value, "height", path)?;
+    let rgba_values = value
+        .get("rgba")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("{}: rgba must be an array", self::path(path)))?;
+    let expected_len = width as usize * height as usize * 4;
+    if rgba_values.len() != expected_len {
+        return Err(format!(
+            "{}: rgba length {} does not match {}",
+            self::path(path),
+            rgba_values.len(),
+            expected_len
+        ));
+    }
+    let rgba = rgba_values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let value = value
+                .as_u64()
+                .ok_or_else(|| format!("{}: rgba[{index}] must be an integer", self::path(path)))?;
+            u8::try_from(value)
+                .map_err(|_| format!("{}: rgba[{index}] must be in 0..255", self::path(path)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RgbaArtifact {
+        width,
+        height,
+        rgba,
+    })
+}
+
+fn json_u32(value: &serde_json::Value, field: &str, path: &Path) -> Result<u32, String> {
+    let value = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{}: {field} must be a positive integer", self::path(path)))?;
+    let value = u32::try_from(value)
+        .map_err(|_| format!("{}: {field} is too large for u32", self::path(path)))?;
+    if value == 0 {
+        Err(format!(
+            "{}: {field} must be a positive integer",
+            self::path(path)
+        ))
+    } else {
+        Ok(value)
+    }
+}
+
 fn write_render_visual_review(options: &Options) -> Result<(), String> {
     let html = format!(
         r#"<!doctype html>
@@ -645,6 +767,7 @@ fn write_render_visual_review(options: &Options) -> Result<(), String> {
     h1 {{ font-size: 22px; margin-bottom: 4px; }}
     .meta {{ color: #666; margin-top: 0; }}
     .grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }}
+    .diff-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }}
     figure {{ margin: 0; border: 1px solid #9995; padding: 12px; }}
     img {{ width: 100%; image-rendering: pixelated; background: repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 / 24px 24px; }}
     figcaption {{ font-weight: 600; margin-top: 8px; }}
@@ -667,6 +790,16 @@ fn write_render_visual_review(options: &Options) -> Result<(), String> {
     <figure>
       <img src="bevy/Seed-san.frame000.png" alt="Bevy capture">
       <figcaption>Bevy capture</figcaption>
+    </figure>
+  </section>
+  <section class="diff-grid">
+    <figure>
+      <img src="diff/Seed-san.wgpu-vs-three-vrm.diff.png" alt="wgpu diff heatmap">
+      <figcaption>wgpu diff heatmap (red: RGB, blue: alpha)</figcaption>
+    </figure>
+    <figure>
+      <img src="diff/Seed-san.bevy-vs-three-vrm.diff.png" alt="Bevy diff heatmap">
+      <figcaption>Bevy diff heatmap (red: RGB, blue: alpha)</figcaption>
     </figure>
   </section>
   <h2>wgpu vs three-vrm</h2>
@@ -766,6 +899,6 @@ fn shellish(value: &OsStr) -> String {
     }
 }
 
-fn path(path: &PathBuf) -> String {
+fn path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

@@ -58,9 +58,12 @@ prepare Playwright, and build the pinned three-vrm checkout under
 - `.external-fixtures/render-parity/bevy/Seed-san.frame000.{rgba.json,png}`
 - `.external-fixtures/render-parity/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.psnr.json`
 - `.external-fixtures/render-parity/visual-review.html`
+- `.external-fixtures/render-parity/diff/Seed-san.{wgpu,bevy}-vs-three-vrm.diff.png`
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
-their PSNR reports. It is generated data and stays outside git.
+their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
+delta and blue shows alpha-channel delta, amplified for review. It is generated
+data and stays outside git.
 
 ## three-vrm Capture
 
@@ -185,13 +188,12 @@ are stable:
 
 Any failure should store the expected, actual, difference/heatmap image if
 available, and the PSNR report under `.external-fixtures/render-parity/reports/`.
-Human visual review should compare the rendered PNGs alongside the numeric
-report before declaring parity. The local render runner writes
+Human visual review should compare the rendered PNGs and heatmaps alongside the
+numeric report before declaring parity. The local render runner writes
 `.external-fixtures/render-parity/visual-review.html` for this review loop.
 
 ## Next Renderer Work
 
 - Deepen the wgpu and Bevy capture paths with fuller MToon lighting and
   expression/runtime state before raising PSNR thresholds.
-- Add difference/heatmap image generation once the main render paths are close
-  enough for localized pixel deltas to be useful.
+- Use the generated heatmaps to prioritize the remaining MToon/runtime deltas.
