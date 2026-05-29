@@ -21,6 +21,7 @@ resolver = "3"
 [workspace.dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 bitflags = "2.11.1"
+crossbeam-channel = "0.5.15"
 glam = "0.32.1"
 gltf = { version = "1.4.1", features = ["extensions"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -41,8 +42,30 @@ vrm-runtime = { path = "crates/vrm-runtime" }
 vrm-sans-io = { path = "crates/vrm-sans-io" }
 
 [dev-dependencies]
-bevy.workspace = true
+bevy = { workspace = true, features = [
+    "std",
+    "async_executor",
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_image",
+    "bevy_light",
+    "bevy_log",
+    "bevy_mesh",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_shader",
+    "bevy_window",
+    "bevy_winit",
+    "multi_threaded",
+    "png",
+    "reflect_auto_register",
+    "tonemapping_luts",
+    "zstd_rust",
+] }
 bytemuck.workspace = true
+crossbeam-channel.workspace = true
 glam.workspace = true
 image.workspace = true
 pollster.workspace = true

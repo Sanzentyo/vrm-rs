@@ -159,6 +159,7 @@
 - Wired MToon-derived render order, cull mode, alpha mask discard, blend state, and depth-write policy into the wgpu render capture pipelines. The Seed-san baseline remains `9.70 dB`, but alpha/cull/material-order parity is no longer hard-coded to a single back-face opaque pipeline.
 - Fixed the three-vrm browser capture RGBA row convention by flipping WebGL `readPixels` output into top-left order, and fixed the canvas CSS size used for PNG review. The corrected local Seed-san wgpu-vs-three-vrm PSNR baseline rose to `17.73 dB`.
 - Added a first MToon-like shading approximation to the wgpu render capture: shade color, shading shift/toony, GI-biased ambient, directional light direction matching the three-vrm capture, and effective KHR/HDR emissive strength now feed the shader. The local Seed-san baseline rose to `20.75 dB`; remaining parity work is exact MToon light accumulation, secondary MToon textures, outlines, normal maps, and runtime expression state.
+- Added `examples/bevy_render_capture.rs`, a Bevy 0.18.1 headless offscreen capture path using `RenderTarget::Image`, a render-graph readback node, real `LoadedVrm::meshes`, decoded images, and an unlit `StandardMaterial` baseline. The local Seed-san Bevy-vs-three-vrm PSNR baseline is `10.60 dB`; this proves Bevy readback integration but still lacks skinning, MToon shading, outlines, material ordering, and runtime expression state.
 
 Open work:
 

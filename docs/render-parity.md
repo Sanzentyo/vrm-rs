@@ -112,6 +112,29 @@ This is still a failing visual parity baseline: the current path does not yet
 apply expression state, outline expansion, shade/matcap/rim secondary textures,
 normal maps, or exact three.js/MToon light accumulation.
 
+## Bevy Capture
+
+`examples/bevy_render_capture.rs` is the first Bevy 0.18.1 headless renderer
+path. It uses Bevy's offscreen `RenderTarget::Image`, a small render-graph
+copy node, real `LoadedVrm::meshes`, decoded texture images, and an unlit
+`StandardMaterial` baseline to write the same RGBA JSON plus optional PNG:
+
+```powershell
+cargo run --example bevy_render_capture -- `
+  --fixture .external-fixtures\official\Seed-san.vrm `
+  --out .external-fixtures\render-parity\bevy\Seed-san.frame000.rgba.json `
+  --png-out .external-fixtures\render-parity\bevy\Seed-san.frame000.png `
+  --width 256 `
+  --height 256 `
+  --camera-z 3.0
+```
+
+The local Bevy smoke run on 2026-05-29 produced a front-facing Seed-san
+capture and a first PSNR baseline of `10.60 dB` against the three-vrm
+reference. This is an intentionally failing renderer baseline: it proves Bevy
+readback integration works on Bevy 0.18.1, but it does not yet apply skinning,
+MToon shading, material render ordering, outlines, or expression/runtime state.
+
 ## Review Criteria
 
 Initial thresholds are intentionally conservative until real renderer captures

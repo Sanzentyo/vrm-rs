@@ -81,7 +81,8 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 - [ ] Build the three-vrm render parity harness.
   - Done when three-vrm, Bevy, and wgpu render paths can produce comparable image artifacts, compute PSNR, store visual-review outputs under `.external-fixtures/`, and document thresholds used to judge compatibility.
   - First slices landed: `tools/render-parity/compare-psnr.mjs` and `docs/render-parity.md` define the RGBA artifact format, PSNR report, and initial visual-review thresholds; `tools/render-parity/three-vrm-browser-capture.mjs` captures the three-vrm WebGL reference frame through Chromium, flips WebGL readback rows into top-left order, and can write PNG review artifacts; `vrm-io` exposes mesh primitives, decoded image metadata, texture mappings, glTF PBR base-color texture fallback, and skin inputs for Bevy/wgpu buffer construction; `examples/wgpu_render_capture.rs` writes textured, rest-skinned wgpu RGBA/PNG artifacts from real mesh primitives and applies MToon-derived render order, cull, alpha, blend, depth-write policy, shade color, shading shift/toony, ambient, and effective emissive strength.
-  - Remaining parity blockers: Bevy render capture, wgpu expression/runtime state, exact MToon light accumulation, secondary shade/matcap/rim/normal/outline texture paths, and higher PSNR thresholds.
+  - Bevy capture now has a Bevy 0.18.1 headless offscreen example using real mesh and texture inputs plus shared RGBA/PNG output. The first Seed-san PSNR baseline is `10.60 dB`.
+  - Remaining parity blockers: Bevy skinning/MToon/material-order/runtime state, wgpu expression/runtime state, exact MToon light accumulation, secondary shade/matcap/rim/normal/outline texture paths, and higher PSNR thresholds.
 
 ## Ongoing Maintenance
 
