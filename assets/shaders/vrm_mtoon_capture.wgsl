@@ -18,6 +18,7 @@ struct BevyMtoonUniform {
     shade_uv_transform: vec4<f32>,
     shading_shift_uv_transform: vec4<f32>,
     normal_uv_transform: vec4<f32>,
+    matcap_uv_transform: vec4<f32>,
     rim_uv_transform: vec4<f32>,
     emissive_uv_transform: vec4<f32>,
     uv_animation_mask_uv_transform: vec4<f32>,
@@ -217,10 +218,11 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
 
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
-    let matcap_uv = vec2<f32>(
+    let raw_matcap_uv = vec2<f32>(
         0.5 + 0.5 * dot(matcap_x, normal),
         0.5 - 0.5 * dot(matcap_y, normal),
     );
+    let matcap_uv = transform_uv(raw_matcap_uv, material.matcap_uv_transform, material.uv_rotation_b.w);
     let matcap = textureSample(matcap_texture, matcap_sampler, matcap_uv).rgb * material.matcap_factor.rgb;
     let rim_base = material.rim_color.rgb * pow(
         clamp(1.0 - dot(view_dir, normal) + material.rim_params.z, 0.0, 1.0),

@@ -158,6 +158,7 @@ struct MaterialUvTransforms {
     shade: Option<TextureTransform2d>,
     shading_shift: Option<TextureTransform2d>,
     normal: Option<TextureTransform2d>,
+    matcap: Option<TextureTransform2d>,
     rim: Option<TextureTransform2d>,
     outline_width: Option<TextureTransform2d>,
     emissive: Option<TextureTransform2d>,
@@ -815,6 +816,7 @@ struct BevyMtoonMaterial {
     shade_uv_transform: BVec4,
     shading_shift_uv_transform: BVec4,
     normal_uv_transform: BVec4,
+    matcap_uv_transform: BVec4,
     rim_uv_transform: BVec4,
     emissive_uv_transform: BVec4,
     uv_animation_mask_uv_transform: BVec4,
@@ -871,6 +873,7 @@ struct BevyMtoonUniform {
     shade_uv_transform: BVec4,
     shading_shift_uv_transform: BVec4,
     normal_uv_transform: BVec4,
+    matcap_uv_transform: BVec4,
     rim_uv_transform: BVec4,
     emissive_uv_transform: BVec4,
     uv_animation_mask_uv_transform: BVec4,
@@ -896,6 +899,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             shade_uv_transform: material.shade_uv_transform,
             shading_shift_uv_transform: material.shading_shift_uv_transform,
             normal_uv_transform: material.normal_uv_transform,
+            matcap_uv_transform: material.matcap_uv_transform,
             rim_uv_transform: material.rim_uv_transform,
             emissive_uv_transform: material.emissive_uv_transform,
             uv_animation_mask_uv_transform: material.uv_animation_mask_uv_transform,
@@ -1004,6 +1008,7 @@ fn bevy_mtoon_material(
         shade_uv_transform: bevy_uv_transform(uv_transforms.shade),
         shading_shift_uv_transform: bevy_uv_transform(uv_transforms.shading_shift),
         normal_uv_transform: bevy_uv_transform(uv_transforms.normal),
+        matcap_uv_transform: bevy_uv_transform(uv_transforms.matcap),
         rim_uv_transform: bevy_uv_transform(uv_transforms.rim),
         emissive_uv_transform: bevy_uv_transform(uv_transforms.emissive),
         uv_animation_mask_uv_transform: bevy_uv_transform(uv_transforms.uv_animation_mask),
@@ -1017,7 +1022,7 @@ fn bevy_mtoon_material(
             bevy_uv_rotation(uv_transforms.rim),
             bevy_uv_rotation(uv_transforms.emissive),
             bevy_uv_rotation(uv_transforms.uv_animation_mask),
-            0.0,
+            bevy_uv_rotation(uv_transforms.matcap),
         ),
         uv_animation: BVec4::new(
             uv_transforms.uv_animation_scroll[0],
@@ -1030,7 +1035,6 @@ fn bevy_mtoon_material(
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
         shade_texture: material_shade_image(loaded, primitive.material)
-            .or_else(|| material_main_image(loaded, primitive.material))
             .and_then(|image| image_handles.color_images.get(image))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
@@ -1312,6 +1316,7 @@ fn material_uv_transforms(
         normal: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
             .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
+        matcap: mtoon.and_then(|mtoon| mtoon.texture_transforms.matcap_texture),
         rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
         outline_width: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),

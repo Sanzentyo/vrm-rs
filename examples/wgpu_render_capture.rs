@@ -184,6 +184,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
             shade_transform: uv_transform_uniform(transforms.shade),
             shading_shift_transform: uv_transform_uniform(transforms.shading_shift),
             normal_transform: uv_transform_uniform(transforms.normal),
+            matcap_transform: uv_transform_uniform(transforms.matcap),
             rim_transform: uv_transform_uniform(transforms.rim),
             emissive_transform: uv_transform_uniform(transforms.emissive),
             uv_animation_mask_transform: uv_transform_uniform(transforms.uv_animation_mask),
@@ -197,7 +198,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
                 uv_rotation_uniform(transforms.rim),
                 uv_rotation_uniform(transforms.emissive),
                 uv_rotation_uniform(transforms.uv_animation_mask),
-                0.0,
+                uv_rotation_uniform(transforms.matcap),
             ],
             uv_animation: [
                 transforms.uv_animation_scroll[0],
@@ -241,6 +242,7 @@ struct MaterialUvUniform {
     shade_transform: [f32; 4],
     shading_shift_transform: [f32; 4],
     normal_transform: [f32; 4],
+    matcap_transform: [f32; 4],
     rim_transform: [f32; 4],
     emissive_transform: [f32; 4],
     uv_animation_mask_transform: [f32; 4],
@@ -291,6 +293,7 @@ struct MaterialUvTransforms {
     shade: Option<TextureTransform2d>,
     shading_shift: Option<TextureTransform2d>,
     normal: Option<TextureTransform2d>,
+    matcap: Option<TextureTransform2d>,
     rim: Option<TextureTransform2d>,
     outline_width: Option<TextureTransform2d>,
     emissive: Option<TextureTransform2d>,
@@ -901,6 +904,7 @@ fn material_uv_transforms(
         normal: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
             .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
+        matcap: mtoon.and_then(|mtoon| mtoon.texture_transforms.matcap_texture),
         rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
         outline_width: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
@@ -954,8 +958,7 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
     let shade = mtoon
         .and_then(|mtoon| mtoon.textures.shade_multiply_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image)
-        .or(base);
+        .map(|texture| texture.image);
     let shading_shift = mtoon
         .and_then(|mtoon| mtoon.textures.shading_shift_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
@@ -1189,12 +1192,7 @@ fn material_texture_bind_group(
     uv_transforms: MaterialUvTransforms,
 ) -> TextureBindGroup {
     let base = texture_view(resources.color, resources.indices, images.base, 0);
-    let shade = texture_view(
-        resources.color,
-        resources.indices,
-        images.shade.or(images.base),
-        0,
-    );
+    let shade = texture_view(resources.color, resources.indices, images.shade, 0);
     let shading_shift = texture_view(resources.color, resources.indices, images.shading_shift, 1);
     let matcap = texture_view(resources.color, resources.indices, images.matcap, 1);
     let rim = texture_view(resources.color, resources.indices, images.rim, 0);
@@ -1872,6 +1870,7 @@ struct MaterialUvUniform {
     shade_transform: vec4<f32>,
     shading_shift_transform: vec4<f32>,
     normal_transform: vec4<f32>,
+    matcap_transform: vec4<f32>,
     rim_transform: vec4<f32>,
     emissive_transform: vec4<f32>,
     uv_animation_mask_transform: vec4<f32>,
@@ -2075,10 +2074,11 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi);
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
-    let matcap_uv = vec2<f32>(
+    let raw_matcap_uv = vec2<f32>(
         0.5 + 0.5 * dot(matcap_x, normal),
         0.5 - 0.5 * dot(matcap_y, normal),
     );
+    let matcap_uv = transform_uv(raw_matcap_uv, material_uv.matcap_transform, material_uv.rotation_b.w);
     let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
     let rim_base = input.rim_color.rgb * pow(
         clamp(1.0 - dot(view_dir, normal) + input.rim_params.z, 0.0, 1.0),
