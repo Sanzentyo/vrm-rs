@@ -29,12 +29,13 @@ struct Vertex {
     shade_color: [f32; 4],
     shading: [f32; 4],
     emissive: [f32; 4],
+    matcap_factor: [f32; 4],
     alpha_mode: f32,
     _padding: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -73,7 +74,7 @@ struct MeshDrawData {
 struct DrawPrimitive {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    image: Option<usize>,
+    images: MaterialImages,
     policy: MaterialPolicy,
 }
 
@@ -128,8 +129,19 @@ enum CaptureAlphaMode {
 }
 
 struct TextureBindGroup {
-    image: Option<usize>,
     bind_group: wgpu::BindGroup,
+}
+
+struct TextureResource {
+    image: Option<usize>,
+    view: wgpu::TextureView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+struct MaterialImages {
+    base: Option<usize>,
+    shade: Option<usize>,
+    matcap: Option<usize>,
 }
 
 struct TextureUpload<'a> {
@@ -292,6 +304,7 @@ fn outline_primitive(
                 shade_color: color,
                 shading: [0.0, 0.0, 0.0, 0.0],
                 emissive: [0.0, 0.0, 0.0, 0.0],
+                matcap_factor: [0.0, 0.0, 0.0, 0.0],
                 alpha_mode: alpha_mode_code(CaptureAlphaMode::Opaque),
                 _padding: [0.0; 3],
             }
@@ -300,7 +313,7 @@ fn outline_primitive(
     Some(DrawPrimitive {
         vertices,
         indices: surface.indices.clone(),
-        image: None,
+        images: MaterialImages::default(),
         policy: MaterialPolicy {
             render_order: surface.policy.render_order,
             cull_mode: CaptureCullMode::Front,
@@ -360,6 +373,12 @@ fn draw_primitive(
                     shading.emissive[2],
                     0.0,
                 ],
+                matcap_factor: [
+                    shading.matcap_factor[0],
+                    shading.matcap_factor[1],
+                    shading.matcap_factor[2],
+                    0.0,
+                ],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
                 _padding: [0.0; 3],
             }
@@ -368,7 +387,7 @@ fn draw_primitive(
     Ok(DrawPrimitive {
         vertices,
         indices: primitive.indices.clone(),
-        image: material_main_image(loaded, primitive.material),
+        images: material_images(loaded, primitive.material),
         policy,
     })
 }
@@ -482,6 +501,7 @@ struct MaterialShading {
     shading_toony: f32,
     gi_equalization: f32,
     emissive: [f32; 3],
+    matcap_factor: [f32; 3],
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
@@ -506,6 +526,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                     mtoon.emissive_factor[1] * emissive_strength.0,
                     mtoon.emissive_factor[2] * emissive_strength.0,
                 ],
+                matcap_factor: mtoon.matcap_factor,
             })
         })
     {
@@ -522,6 +543,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         shading_toony: 0.0,
         gi_equalization: 0.0,
         emissive: [0.0, 0.0, 0.0],
+        matcap_factor: [0.0, 0.0, 0.0],
     }
 }
 
@@ -536,6 +558,27 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
             .and_then(|material| material.base_color_texture)
     })?;
     loaded.textures.get(texture).map(|texture| texture.image)
+}
+
+fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImages {
+    let mtoon = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref());
+    let base = material_main_image(loaded, material);
+    let shade = mtoon
+        .and_then(|mtoon| mtoon.textures.shade_multiply_texture)
+        .and_then(|texture| loaded.textures.get(texture.0))
+        .map(|texture| texture.image)
+        .or(base);
+    let matcap = mtoon
+        .and_then(|mtoon| mtoon.textures.matcap_texture)
+        .and_then(|texture| loaded.textures.get(texture.0))
+        .map(|texture| texture.image);
+    MaterialImages {
+        base,
+        shade,
+        matcap,
+    }
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgbaImage> {
@@ -579,32 +622,38 @@ fn lerp(left: f32, right: f32, t: f32) -> f32 {
     left + (right - left) * t
 }
 
-fn texture_bind_groups(
+fn texture_resources(
     loaded: &LoadedVrm,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-) -> Result<Vec<TextureBindGroup>, Box<dyn Error>> {
-    let mut groups = vec![texture_bind_group(
-        device,
-        queue,
-        layout,
-        sampler,
-        TextureUpload {
-            image: None,
-            width: 1,
-            height: 1,
-            rgba: &[255, 255, 255, 255],
-        },
-    )];
-    for (index, image) in loaded.images.iter().enumerate() {
-        let rgba = image_rgba8(image)?;
-        groups.push(texture_bind_group(
+) -> Result<Vec<TextureResource>, Box<dyn Error>> {
+    let mut resources = vec![
+        texture_resource(
             device,
             queue,
-            layout,
-            sampler,
+            TextureUpload {
+                image: None,
+                width: 1,
+                height: 1,
+                rgba: &[255, 255, 255, 255],
+            },
+        ),
+        texture_resource(
+            device,
+            queue,
+            TextureUpload {
+                image: None,
+                width: 1,
+                height: 1,
+                rgba: &[0, 0, 0, 255],
+            },
+        ),
+    ];
+    for (index, image) in loaded.images.iter().enumerate() {
+        let rgba = image_rgba8(image)?;
+        resources.push(texture_resource(
+            device,
+            queue,
             TextureUpload {
                 image: Some(index),
                 width: image.width,
@@ -613,16 +662,14 @@ fn texture_bind_groups(
             },
         ));
     }
-    Ok(groups)
+    Ok(resources)
 }
 
-fn texture_bind_group(
+fn texture_resource(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
     upload: TextureUpload<'_>,
-) -> TextureBindGroup {
+) -> TextureResource {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("render parity material texture"),
         size: wgpu::Extent3d {
@@ -657,31 +704,67 @@ fn texture_bind_group(
         },
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    TextureResource {
+        image: upload.image,
+        view,
+    }
+}
+
+fn material_texture_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    resources: &[TextureResource],
+    indices: &HashMap<usize, usize>,
+    images: MaterialImages,
+) -> TextureBindGroup {
+    let base = texture_view(resources, indices, images.base, 0);
+    let shade = texture_view(resources, indices, images.shade.or(images.base), 0);
+    let matcap = texture_view(resources, indices, images.matcap, 1);
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(base),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
+                resource: wgpu::BindingResource::TextureView(shade),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(matcap),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
         ],
     });
-    TextureBindGroup {
-        image: upload.image,
-        bind_group,
-    }
+    TextureBindGroup { bind_group }
 }
 
-fn texture_bind_group_indices(groups: &[TextureBindGroup]) -> HashMap<usize, usize> {
-    groups
+fn texture_view<'a>(
+    resources: &'a [TextureResource],
+    indices: &HashMap<usize, usize>,
+    image: Option<usize>,
+    fallback_index: usize,
+) -> &'a wgpu::TextureView {
+    image
+        .and_then(|image| indices.get(&image).copied())
+        .and_then(|index| resources.get(index))
+        .or_else(|| resources.get(fallback_index))
+        .map(|resource| &resource.view)
+        .expect("texture resource table must contain a white fallback")
+}
+
+fn texture_resource_indices(resources: &[TextureResource]) -> HashMap<usize, usize> {
+    resources
         .iter()
         .enumerate()
-        .filter_map(|(index, group)| group.image.map(|image| (image, index)))
+        .filter_map(|(index, resource)| resource.image.map(|image| (image, index)))
         .collect()
 }
 
@@ -895,6 +978,26 @@ async fn render_capture(
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
@@ -908,14 +1011,8 @@ async fn render_capture(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    let texture_bind_groups = texture_bind_groups(
-        loaded,
-        &device,
-        &queue,
-        &texture_bind_group_layout,
-        &sampler,
-    )?;
-    let texture_bind_group_indices = texture_bind_group_indices(&texture_bind_groups);
+    let texture_resources = texture_resources(loaded, &device, &queue)?;
+    let texture_resource_indices = texture_resource_indices(&texture_resources);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("render parity shader"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -935,10 +1032,25 @@ async fn render_capture(
         })
         .collect::<Vec<_>>();
     let pipeline_indices = pipeline_indices(&pipeline_keys);
-    let gpu_primitives = mesh
+    let primitive_texture_bind_groups = mesh
         .primitives
         .iter()
         .map(|primitive| {
+            material_texture_bind_group(
+                &device,
+                &texture_bind_group_layout,
+                &sampler,
+                &texture_resources,
+                &texture_resource_indices,
+                primitive.images,
+            )
+        })
+        .collect::<Vec<_>>();
+    let gpu_primitives = mesh
+        .primitives
+        .iter()
+        .enumerate()
+        .map(|(primitive_index, primitive)| {
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("render parity vertices"),
                 contents: bytemuck::cast_slice(&primitive.vertices),
@@ -953,10 +1065,7 @@ async fn render_capture(
                 vertex_buffer,
                 index_buffer,
                 index_count: u32::try_from(primitive.indices.len())?,
-                texture_bind_group_index: primitive
-                    .image
-                    .and_then(|image| texture_bind_group_indices.get(&image).copied())
-                    .unwrap_or(0),
+                texture_bind_group_index: primitive_index,
                 pipeline_index: pipeline_indices[&pipeline_key(primitive.policy)],
             })
         })
@@ -1004,7 +1113,7 @@ async fn render_capture(
             pass.set_pipeline(&pipelines[primitive.pipeline_index]);
             pass.set_bind_group(
                 1,
-                &texture_bind_groups[primitive.texture_bind_group_index].bind_group,
+                &primitive_texture_bind_groups[primitive.texture_bind_group_index].bind_group,
                 &[],
             );
             pass.set_vertex_buffer(0, primitive.vertex_buffer.slice(..));
@@ -1122,6 +1231,12 @@ var<uniform> uniforms: Uniforms;
 var base_texture: texture_2d<f32>;
 
 @group(1) @binding(1)
+var shade_texture: texture_2d<f32>;
+
+@group(1) @binding(2)
+var matcap_texture: texture_2d<f32>;
+
+@group(1) @binding(3)
 var base_sampler: sampler;
 
 struct VertexIn {
@@ -1132,7 +1247,8 @@ struct VertexIn {
     @location(4) shade_color: vec4<f32>,
     @location(5) shading: vec4<f32>,
     @location(6) emissive: vec4<f32>,
-    @location(7) alpha_mode: f32,
+    @location(7) matcap_factor: vec4<f32>,
+    @location(8) alpha_mode: f32,
 };
 
 struct VertexOut {
@@ -1143,7 +1259,8 @@ struct VertexOut {
     @location(3) shade_color: vec4<f32>,
     @location(4) shading: vec4<f32>,
     @location(5) emissive: vec4<f32>,
-    @location(6) alpha_mode: f32,
+    @location(6) matcap_factor: vec4<f32>,
+    @location(7) alpha_mode: f32,
 };
 
 @vertex
@@ -1156,6 +1273,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.shade_color = input.shade_color;
     out.shading = input.shading;
     out.emissive = input.emissive;
+    out.matcap_factor = input.matcap_factor;
     out.alpha_mode = input.alpha_mode;
     return out;
 }
@@ -1176,14 +1294,17 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
     let diffuse = input.color.rgb * texel.rgb;
-    let shade = input.shade_color.rgb * texel.rgb;
+    let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
+    let shade = input.shade_color.rgb * shade_texel.rgb;
     let shift = input.shading.x;
     let toony = input.shading.y;
     let gi = input.shading.z;
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     let direct = mix(shade, diffuse, toon);
     let ambient = diffuse * (0.1 + 0.15 * gi);
-    let color = (direct + ambient + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let matcap_uv = normalize(input.normal).xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+    let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
+    let color = (direct + ambient + matcap + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
     return vec4<f32>(color, opaque_alpha);
 }
 "#;

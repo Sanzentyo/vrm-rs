@@ -142,10 +142,14 @@ directional-light vector convention as three.js, the local Seed-san baseline is
 `24.32 dB`. Adding a first world-coordinate MToon outline expansion pass raises
 the baseline to `25.89 dB`, and applying outline width multiply textures brings
 it to `25.98 dB`. A measured reference-exposure correction for the MToon
-lighting approximation raises the baseline to `27.50 dB`.
+lighting approximation raises the baseline to `27.50 dB`. Adding separate
+wgpu bindings for MToon `shadeMultiplyTexture` and `matcapTexture` lifts the
+current Seed-san baseline to `27.52 dB`; the improvement is small because the
+fixture's shade textures mostly alias its main textures, but the renderer path
+now exercises a real secondary MToon texture slot.
 This is still a failing visual parity baseline: the current path does not yet
-apply expression state, shade/matcap/rim secondary textures, normal maps, or
-exact three.js/MToon light accumulation.
+apply expression state, rim/normal secondary textures, screen-space outline
+details, or exact three.js/MToon light accumulation.
 
 ## Bevy Capture
 
