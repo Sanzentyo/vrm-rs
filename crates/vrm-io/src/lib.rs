@@ -22,6 +22,7 @@ pub struct LoadedVrm {
     model: VrmModel<Resolved>,
     pub scene: GltfSceneRest,
     pub meshes: Vec<GltfMeshData>,
+    pub skins: Vec<GltfSkinData>,
     pub gltf_materials: Vec<GltfMaterialData>,
     pub textures: Vec<GltfTextureData>,
     pub buffers: Vec<Vec<u8>>,
@@ -120,9 +121,16 @@ pub struct GltfNodeRest {
     pub parent: Option<usize>,
     pub children: Vec<usize>,
     pub mesh: Option<usize>,
+    pub skin: Option<usize>,
     pub local: Transform,
     pub world: Transform,
     pub world_matrix: Mat4,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfSkinData {
+    pub joints: Vec<usize>,
+    pub inverse_bind_matrices: Vec<Mat4>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -136,6 +144,8 @@ pub struct GltfPrimitiveData {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub tex_coords_0: Vec<[f32; 2]>,
+    pub joints_0: Vec<[u16; 4]>,
+    pub weights_0: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
 }
 
@@ -168,6 +178,14 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         .read_tex_coords(0)
                         .map(|coords| coords.into_f32().collect())
                         .unwrap_or_default();
+                    let joints_0: Vec<[u16; 4]> = reader
+                        .read_joints(0)
+                        .map(|joints| joints.into_u16().collect())
+                        .unwrap_or_default();
+                    let weights_0: Vec<[f32; 4]> = reader
+                        .read_weights(0)
+                        .map(|weights| weights.into_f32().collect())
+                        .unwrap_or_default();
                     let indices = reader
                         .read_indices()
                         .map(|indices| indices.into_u32().collect())
@@ -177,10 +195,34 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         positions,
                         normals,
                         tex_coords_0,
+                        joints_0,
+                        weights_0,
                         indices,
                     }
                 })
                 .collect(),
+        })
+        .collect()
+}
+
+fn extract_skins(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<GltfSkinData> {
+    document
+        .skins()
+        .map(|skin| {
+            let joints = skin.joints().map(|joint| joint.index()).collect::<Vec<_>>();
+            let inverse_bind_matrices = skin
+                .reader(|buffer| buffers.get(buffer.index()).map(|data| data.0.as_slice()))
+                .read_inverse_bind_matrices()
+                .map(|matrices| {
+                    matrices
+                        .map(|matrix| Mat4::from_cols_array_2d(&matrix))
+                        .collect()
+                })
+                .unwrap_or_else(|| vec![Mat4::IDENTITY; joints.len()]);
+            GltfSkinData {
+                joints,
+                inverse_bind_matrices,
+            }
         })
         .collect()
 }
@@ -234,6 +276,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
     let scene = GltfSceneRest::from_document(&document);
     let meshes = extract_meshes(&document, &buffers);
+    let skins = extract_skins(&document, &buffers);
     let gltf_materials = extract_gltf_materials(&document);
     let textures = extract_textures(&document);
     let root_extensions = extension_map(document.as_json().extensions.as_ref());
@@ -277,6 +320,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         model,
         scene,
         meshes,
+        skins,
         gltf_materials,
         textures,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
@@ -586,6 +630,7 @@ struct NodeRestGraph {
     parents: Vec<Option<usize>>,
     children: Vec<Vec<usize>>,
     meshes: Vec<Option<usize>>,
+    skins: Vec<Option<usize>>,
     local_transforms: Vec<Transform>,
     world_transforms: Vec<Transform>,
     world_rotations: Vec<Quat>,
@@ -599,6 +644,7 @@ impl NodeRestGraph {
             parents: vec![None; node_count],
             children: vec![Vec::new(); node_count],
             meshes: vec![None; node_count],
+            skins: vec![None; node_count],
             local_transforms: vec![Transform::default(); node_count],
             world_transforms: vec![Transform::default(); node_count],
             world_rotations: vec![Quat::IDENTITY; node_count],
@@ -621,6 +667,7 @@ impl NodeRestGraph {
                     parent: self.parents[index],
                     children: self.children[index].clone(),
                     mesh: self.meshes[index],
+                    skin: self.skins[index],
                     local: self.local_transforms[index],
                     world: self.world_transforms[index],
                     world_matrix: self.world_matrices[index],
@@ -655,6 +702,7 @@ impl NodeRestGraph {
             world_matrix.to_scale_rotation_translation();
         self.parents[index] = parent;
         self.meshes[index] = node.mesh().map(|mesh| mesh.index());
+        self.skins[index] = node.skin().map(|skin| skin.index());
         if let Some(parent) = parent {
             self.children[parent].push(index);
         }
@@ -1205,15 +1253,18 @@ mod tests {
     fn generated_sample_extracts_mesh_primitives_for_renderers() {
         let mut sample = generated_vrm1_gltf();
         sample["nodes"][0]["mesh"] = json!(0);
+        sample["nodes"][0]["skin"] = json!(0);
         sample["buffers"] = json!([{
-            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAABAAIA",
-            "byteLength": 102
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAABAAIA",
+            "byteLength": 174
         }]);
         sample["bufferViews"] = json!([
             { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
             { "buffer": 0, "byteOffset": 36, "byteLength": 36 },
             { "buffer": 0, "byteOffset": 72, "byteLength": 24 },
-            { "buffer": 0, "byteOffset": 96, "byteLength": 6 }
+            { "buffer": 0, "byteOffset": 96, "byteLength": 24 },
+            { "buffer": 0, "byteOffset": 120, "byteLength": 48 },
+            { "buffer": 0, "byteOffset": 168, "byteLength": 6 }
         ]);
         sample["accessors"] = json!([
             {
@@ -1240,6 +1291,18 @@ mod tests {
                 "bufferView": 3,
                 "componentType": 5123,
                 "count": 3,
+                "type": "VEC4"
+            },
+            {
+                "bufferView": 4,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC4"
+            },
+            {
+                "bufferView": 5,
+                "componentType": 5123,
+                "count": 3,
                 "type": "SCALAR"
             }
         ]);
@@ -1248,16 +1311,25 @@ mod tests {
                 "attributes": {
                     "POSITION": 0,
                     "NORMAL": 1,
-                    "TEXCOORD_0": 2
+                    "TEXCOORD_0": 2,
+                    "JOINTS_0": 3,
+                    "WEIGHTS_0": 4
                 },
-                "indices": 3,
+                "indices": 5,
                 "material": 0
             }]
+        }]);
+        sample["skins"] = json!([{
+            "joints": [0]
         }]);
 
         let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
 
         assert_eq!(loaded.scene.node(0).unwrap().mesh, Some(0));
+        assert_eq!(loaded.scene.node(0).unwrap().skin, Some(0));
+        assert_eq!(loaded.skins.len(), 1);
+        assert_eq!(loaded.skins[0].joints, vec![0]);
+        assert_eq!(loaded.skins[0].inverse_bind_matrices, vec![Mat4::IDENTITY]);
         assert_eq!(loaded.meshes.len(), 1);
         let primitive = &loaded.meshes[0].primitives[0];
         assert_eq!(primitive.material, Some(0));
@@ -1270,6 +1342,11 @@ mod tests {
             primitive.tex_coords_0,
             vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
         );
+        assert_eq!(
+            primitive.joints_0,
+            vec![[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        );
+        assert_eq!(primitive.weights_0, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
         assert_eq!(primitive.indices, vec![0, 1, 2]);
     }
 

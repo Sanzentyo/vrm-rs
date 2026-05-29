@@ -141,7 +141,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.73%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.77%, and `vrm-adapter-bevy` line coverage is 94.46%.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture CI, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.
 - Added the optional external-fixture GitHub Actions job. It is manual-only, downloads documented fixtures into ignored CI workspace paths, builds a pinned three-vrm checkout, regenerates spring/constraint/VRMA golden JSON, runs exact ignored parity tests, and uploads generated goldens as CI artifacts without committing binaries.
@@ -155,6 +155,7 @@
 - Extended the three-vrm browser capture to optionally write a PNG visual-review artifact and verified a local Seed-san reference capture plus self-PSNR report. Added renderer-facing mesh primitive extraction to `vrm-io` (`LoadedVrm::meshes` and `GltfNodeRest::mesh`) so Bevy/wgpu capture paths can build real mesh buffers from the loaded VRM instead of placeholder geometry.
 - Added `examples/wgpu_render_capture.rs`, an offscreen wgpu capture path that renders real `LoadedVrm::meshes` primitive buffers and writes RGBA JSON plus PNG artifacts under `.external-fixtures/render-parity/`. The local Seed-san smoke run produced a first wgpu-vs-three-vrm PSNR report at `8.78 dB`, documenting the remaining texture/skinning/MToon shading gap rather than claiming visual parity.
 - Extended `vrm-io` with decoded image metadata, texture-to-image mapping, and glTF PBR material base-color texture data. The wgpu capture now samples base-color textures and uses the three-vrm-facing camera convention; the Seed-san local PSNR baseline rose to `9.64 dB`.
+- Added glTF skin extraction (`LoadedVrm::skins`, node skin refs, `JOINTS_0`, `WEIGHTS_0`, inverse bind matrices) and CPU rest-skinning in the wgpu capture path. The local Seed-san PSNR baseline is now `9.70 dB`, with the remaining gap concentrated in MToon lighting/material ordering/expression state rather than basic textured mesh input.
 
 Open work:
 

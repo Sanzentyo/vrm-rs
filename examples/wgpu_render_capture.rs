@@ -13,7 +13,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use vrm_io::{GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path};
+use vrm_io::{
+    GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -172,9 +174,19 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
         let Some(mesh) = loaded.meshes.get(mesh_index) else {
             continue;
         };
-        let world = Mat4::from_rotation_y(std::f32::consts::PI) * node.world_matrix;
+        let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
+        let world = orientation * node.world_matrix;
+        let skin_matrices = node
+            .skin
+            .and_then(|skin| loaded.skins.get(skin))
+            .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
-            primitives.push(draw_primitive(loaded, primitive, world)?);
+            primitives.push(draw_primitive(
+                loaded,
+                primitive,
+                world,
+                skin_matrices.as_deref(),
+            )?);
         }
     }
 
@@ -188,6 +200,7 @@ fn draw_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let color = material_color(loaded, primitive.material);
     let vertices = primitive
@@ -205,14 +218,17 @@ fn draw_primitive(
                 .get(index)
                 .copied()
                 .unwrap_or([0.0, 0.0]);
+            let (position, normal) = transform_vertex(
+                Vec3::from_array(*position),
+                Vec3::from_array(normal),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            );
             Vertex {
-                position: world
-                    .transform_point3(Vec3::from_array(*position))
-                    .to_array(),
-                normal: world
-                    .transform_vector3(Vec3::from_array(normal))
-                    .normalize_or_zero()
-                    .to_array(),
+                position: position.to_array(),
+                normal: normal.to_array(),
                 tex_coord,
                 color,
             }
@@ -223,6 +239,66 @@ fn draw_primitive(
         indices: primitive.indices.clone(),
         image: material_main_image(loaded, primitive.material),
     })
+}
+
+fn skin_matrices(loaded: &LoadedVrm, skin: &GltfSkinData, orientation: Mat4) -> Vec<Mat4> {
+    skin.joints
+        .iter()
+        .enumerate()
+        .map(|(index, joint)| {
+            let joint_world = loaded
+                .scene
+                .node(*joint)
+                .map(|node| node.world_matrix)
+                .unwrap_or(Mat4::IDENTITY);
+            let inverse_bind = skin
+                .inverse_bind_matrices
+                .get(index)
+                .copied()
+                .unwrap_or(Mat4::IDENTITY);
+            orientation * joint_world * inverse_bind
+        })
+        .collect()
+}
+
+fn transform_vertex(
+    position: Vec3,
+    normal: Vec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> (Vec3, Vec3) {
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return (
+            world.transform_point3(position),
+            world.transform_vector3(normal).normalize_or_zero(),
+        );
+    };
+
+    let mut skinned_position = Vec3::ZERO;
+    let mut skinned_normal = Vec3::ZERO;
+    let mut total_weight = 0.0;
+    for (joint, weight) in joints.into_iter().zip(weights) {
+        if weight <= 0.0 {
+            continue;
+        }
+        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
+            continue;
+        };
+        skinned_position += matrix.transform_point3(position) * weight;
+        skinned_normal += matrix.transform_vector3(normal) * weight;
+        total_weight += weight;
+    }
+    if total_weight > 0.0 {
+        (skinned_position, skinned_normal.normalize_or_zero())
+    } else {
+        (
+            world.transform_point3(position),
+            world.transform_vector3(normal).normalize_or_zero(),
+        )
+    }
 }
 
 fn material_color(loaded: &LoadedVrm, material: Option<usize>) -> [f32; 4] {
