@@ -32,7 +32,19 @@ cargo test -p vrm-io tests::loads_external_fixture_directory -- --ignored --exac
 
 `.external-fixtures/` is ignored by git so official samples can be downloaded for local validation without becoming repository source assets.
 
-The GitHub workflow also provides a manual external-fixture job. It is disabled for normal push and pull request runs because it downloads large third-party assets and builds the sibling three-vrm comparison stack. Trigger it with `workflow_dispatch` and `run_external_fixtures=true` when a maintainer wants CI to recreate the local ignored fixture pass. Fixture and golden environment variables should use absolute paths because Rust unit tests run with the package directory as their current directory.
+The repository no longer carries GitHub Actions workflows. Use the local Rust script when a maintainer wants the old CI-equivalent gate:
+
+```powershell
+cargo +nightly -Zscript tools/ci/local-ci.rs
+```
+
+Run the external fixture parity pass locally with:
+
+```powershell
+cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+```
+
+That script downloads documented external fixtures into `.external-fixtures/official`, builds a pinned three-vrm checkout under `.external-fixtures/three-vrm`, regenerates golden JSON under `.external-fixtures/golden`, and runs the ignored fixture/golden tests without committing binaries. Fixture and golden environment variables should use absolute paths because Rust unit tests run with the package directory as their current directory.
 
 ## Coverage
 
@@ -50,7 +62,7 @@ Summary:
 cargo llvm-cov --workspace --all-features --summary-only
 ```
 
-CI currently runs the same workspace coverage pass with a conservative line threshold:
+The local CI script runs the same workspace coverage pass with a conservative line threshold:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70

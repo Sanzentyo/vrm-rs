@@ -20,14 +20,15 @@ use bevy::render::render_graph::{
     self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
 };
 use bevy::render::render_resource::{
-    Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, MapMode, PollType,
-    PrimitiveTopology, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat, TextureUsages,
+    Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face, MapMode,
+    PollType, PrimitiveTopology, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat,
+    TextureUsages,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use crossbeam_channel::{Receiver, Sender};
-use glam::Mat4;
+use glam::{Mat4, Vec3 as GVec3};
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
@@ -38,6 +39,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+use vrm_core::{MtoonAlphaMode, MtoonCullMode};
 use vrm_io::{GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -232,6 +234,7 @@ fn spawn_vrm_meshes(
         .map(|image| bevy_image(image).map(|image| images.add(image)))
         .collect::<Vec<_>>();
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
+    let mut primitives = Vec::new();
 
     for node in &loaded.scene.nodes {
         let Some(mesh_index) = node.mesh else {
@@ -240,28 +243,73 @@ fn spawn_vrm_meshes(
         let Some(mesh) = loaded.meshes.get(mesh_index) else {
             continue;
         };
-        let transform = bevy_transform(orientation * node.world_matrix);
+        let world = orientation * node.world_matrix;
+        let skin_matrices = node
+            .skin
+            .and_then(|skin| loaded.skins.get(skin))
+            .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
-            let material = materials.add(bevy_material(loaded, primitive, &image_handles));
-            commands.spawn((
-                Mesh3d(meshes.add(bevy_mesh(primitive))),
-                MeshMaterial3d(material),
-                transform,
-            ));
+            primitives.push(BevyPrimitive {
+                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref()),
+                material: bevy_material(loaded, primitive, &image_handles),
+                render_order: material_render_order(loaded, primitive.material),
+            });
         }
+    }
+    primitives.sort_by_key(|primitive| primitive.render_order);
+
+    for primitive in primitives {
+        let material = materials.add(primitive.material);
+        commands.spawn((
+            Mesh3d(meshes.add(primitive.mesh)),
+            MeshMaterial3d(material),
+            Transform::IDENTITY,
+        ));
     }
 }
 
-fn bevy_mesh(primitive: &GltfPrimitiveData) -> Mesh {
+struct BevyPrimitive {
+    mesh: Mesh,
+    material: StandardMaterial,
+    render_order: i32,
+}
+
+fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&[Mat4]>) -> Mesh {
+    let positions = primitive
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            let (position, _) = transform_vertex(
+                GVec3::from_array(*position),
+                primitive_normal(primitive, index),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            );
+            position.to_array()
+        })
+        .collect::<Vec<_>>();
+    let normals = (0..primitive.positions.len())
+        .map(|index| {
+            let (_, normal) = transform_vertex(
+                GVec3::from_array(primitive.positions[index]),
+                primitive_normal(primitive, index),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            );
+            normal.to_array()
+        })
+        .collect::<Vec<_>>();
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, primitive.positions.clone());
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        normals_or_default(primitive.positions.len(), &primitive.normals),
-    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
@@ -270,11 +318,72 @@ fn bevy_mesh(primitive: &GltfPrimitiveData) -> Mesh {
     mesh
 }
 
-fn normals_or_default(vertex_count: usize, normals: &[[f32; 3]]) -> Vec<[f32; 3]> {
-    if normals.len() == vertex_count {
-        normals.to_vec()
+fn primitive_normal(primitive: &GltfPrimitiveData, index: usize) -> GVec3 {
+    primitive
+        .normals
+        .get(index)
+        .copied()
+        .map(GVec3::from_array)
+        .unwrap_or(GVec3::Z)
+}
+
+fn skin_matrices(loaded: &LoadedVrm, skin: &vrm_io::GltfSkinData, orientation: Mat4) -> Vec<Mat4> {
+    skin.joints
+        .iter()
+        .enumerate()
+        .map(|(index, joint)| {
+            let joint_world = loaded
+                .scene
+                .node(*joint)
+                .map(|node| node.world_matrix)
+                .unwrap_or(Mat4::IDENTITY);
+            let inverse_bind = skin
+                .inverse_bind_matrices
+                .get(index)
+                .copied()
+                .unwrap_or(Mat4::IDENTITY);
+            orientation * joint_world * inverse_bind
+        })
+        .collect()
+}
+
+fn transform_vertex(
+    position: GVec3,
+    normal: GVec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> (GVec3, GVec3) {
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return (
+            world.transform_point3(position),
+            world.transform_vector3(normal).normalize_or_zero(),
+        );
+    };
+
+    let mut skinned_position = GVec3::ZERO;
+    let mut skinned_normal = GVec3::ZERO;
+    let mut total_weight = 0.0;
+    for (joint, weight) in joints.into_iter().zip(weights) {
+        if weight <= 0.0 {
+            continue;
+        }
+        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
+            continue;
+        };
+        skinned_position += matrix.transform_point3(position) * weight;
+        skinned_normal += matrix.transform_vector3(normal) * weight;
+        total_weight += weight;
+    }
+    if total_weight > 0.0 {
+        (skinned_position, skinned_normal.normalize_or_zero())
     } else {
-        vec![[0.0, 0.0, 1.0]; vertex_count]
+        (
+            world.transform_point3(position),
+            world.transform_vector3(normal).normalize_or_zero(),
+        )
     }
 }
 
@@ -324,11 +433,45 @@ fn bevy_material(
             .and_then(|image| image_handles.get(image))
             .and_then(Clone::clone),
         unlit: true,
+        double_sided: material_cull_mode(loaded, primitive.material).is_none(),
         perceptual_roughness: 1.0,
         reflectance: 0.0,
-        alpha_mode: AlphaMode::Blend,
+        cull_mode: material_cull_mode(loaded, primitive.material),
+        alpha_mode: material_alpha_mode(loaded, primitive.material),
         ..default()
     }
+}
+
+fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map(|mtoon| mtoon.pipeline_hints().render_order)
+        .unwrap_or(2000)
+}
+
+fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Face> {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map(|mtoon| match mtoon.pipeline_hints().cull_mode {
+            MtoonCullMode::Off => None,
+            MtoonCullMode::Front => Some(Face::Front),
+            MtoonCullMode::Back => Some(Face::Back),
+        })
+        .unwrap_or(Some(Face::Back))
+}
+
+fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map(|mtoon| match mtoon.pipeline_hints().alpha_mode {
+            MtoonAlphaMode::Opaque => AlphaMode::Opaque,
+            MtoonAlphaMode::Mask => AlphaMode::Mask(mtoon.cutoff_factor),
+            MtoonAlphaMode::Blend => AlphaMode::Blend,
+        })
+        .unwrap_or(AlphaMode::Opaque)
 }
 
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
@@ -388,15 +531,6 @@ fn image_rgba8(image: &ImageData) -> Option<Vec<u8>> {
         | ImageFormat::R16G16B16A16
         | ImageFormat::R32G32B32Float
         | ImageFormat::R32G32B32A32Float => None,
-    }
-}
-
-fn bevy_transform(matrix: Mat4) -> Transform {
-    let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
-    Transform {
-        translation: Vec3::from_array(translation.to_array()),
-        rotation: Quat::from_xyzw(rotation.x, rotation.y, rotation.z, rotation.w),
-        scale: Vec3::from_array(scale.to_array()),
     }
 }
 

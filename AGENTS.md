@@ -15,6 +15,13 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
+- The repository intentionally does not carry GitHub Actions workflows. Use the local Rust CI script when you want the old CI-equivalent gate:
+
+```powershell
+cargo +nightly -Zscript tools/ci/local-ci.rs
+cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+```
+
 ## Coverage Refresh Delegation
 
 - Treat coverage table/progress updates as a routine subagent task.

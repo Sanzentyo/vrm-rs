@@ -135,6 +135,17 @@ reference. This is an intentionally failing renderer baseline: it proves Bevy
 readback integration works on Bevy 0.18.1, but it does not yet apply skinning,
 MToon shading, material render ordering, outlines, or expression/runtime state.
 
+The next Bevy slice now mirrors the wgpu capture's rest-pose mesh preparation:
+glTF node transforms and CPU rest-skinning are baked into the generated Bevy
+meshes, and MToon pipeline hints feed `StandardMaterial` alpha, cull,
+double-sided, and primitive spawn order. This still uses Bevy's stock material
+instead of a custom MToon shader, so it remains a measured baseline rather than
+visual parity. The local 2026-05-29 Seed-san baseline after this slice is
+`10.67 dB`; visual review shows the Bevy frame is still full-body/transparent
+while the three-vrm reference is upper-body/white-background, so camera and
+background normalization remain blockers before shader differences can be
+judged cleanly.
+
 ## Review Criteria
 
 Initial thresholds are intentionally conservative until real renderer captures
