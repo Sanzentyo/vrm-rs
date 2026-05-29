@@ -197,7 +197,7 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     if !options.skip_playwright_install {
         run_cmd("npm", ["install", "--no-save", "playwright"])?;
     }
-    std::fs::create_dir_all(&options.render_parity_dir).map_err(|err| err.to_string())?;
+    prepare_render_output_dirs(options)?;
     let fixtures = render_fixtures(options)?;
     for fixture in &fixtures {
         capture_three_vrm_reference(options, fixture)?;
@@ -213,6 +213,28 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         write_render_diff_image(options, fixture, "bevy")?;
     }
     write_render_visual_review(options, &fixtures)
+}
+
+fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
+    std::fs::create_dir_all(&options.render_parity_dir).map_err(|err| err.to_string())?;
+
+    for child in ["three-vrm", "wgpu", "bevy", "reports", "diff"] {
+        let dir = options.render_parity_dir.join(child);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .map_err(|err| format!("failed to remove stale render artifacts {}: {err}", path(&dir)))?;
+        }
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("failed to create render artifact dir {}: {err}", path(&dir)))?;
+    }
+
+    let review = options.render_parity_dir.join("visual-review.html");
+    if review.exists() {
+        std::fs::remove_file(&review)
+            .map_err(|err| format!("failed to remove stale {}: {err}", path(&review)))?;
+    }
+
+    Ok(())
 }
 
 fn download_external_fixtures(options: &Options) -> Result<(), String> {
@@ -677,7 +699,54 @@ fn write_render_png_from_artifact(
         artifact.height,
         image::ColorType::Rgba8,
     )
-    .map_err(|err| format!("failed to write {}: {err}", path(&out)))
+    .map_err(|err| format!("failed to write {}: {err}", path(&out)))?;
+    verify_render_png_matches_artifact(&artifact, &out, fixture, renderer)
+}
+
+fn verify_render_png_matches_artifact(
+    artifact: &RgbaArtifact,
+    png_path: &Path,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
+    let image = image::ImageReader::open(png_path)
+        .map_err(|err| format!("failed to open {}: {err}", path(png_path)))?
+        .with_guessed_format()
+        .map_err(|err| format!("failed to guess image format for {}: {err}", path(png_path)))?
+        .decode()
+        .map_err(|err| format!("failed to decode {}: {err}", path(png_path)))?
+        .to_rgba8();
+
+    if image.width() != artifact.width || image.height() != artifact.height {
+        return Err(format!(
+            "{} {renderer} PNG dimensions differ from RGBA artifact: png {}x{}, artifact {}x{}",
+            fixture.name,
+            image.width(),
+            image.height(),
+            artifact.width,
+            artifact.height
+        ));
+    }
+
+    let png_rgba = image.as_raw();
+    if png_rgba.as_slice() != artifact.rgba.as_slice() {
+        let mismatches = png_rgba
+            .chunks_exact(4)
+            .zip(artifact.rgba.chunks_exact(4))
+            .filter(|(png, artifact)| png[3] != artifact[3])
+            .count();
+        return Err(format!(
+            "{} {renderer} PNG bytes differ from RGBA artifact; alpha mismatches={mismatches}",
+            fixture.name
+        ));
+    }
+
+    let stats = alpha_stats(artifact);
+    println!(
+        "png-alpha {} {renderer}: transparent={} opaque={} partial={}",
+        fixture.name, stats.transparent, stats.opaque, stats.partial
+    );
+    Ok(())
 }
 
 fn write_render_diff_image(

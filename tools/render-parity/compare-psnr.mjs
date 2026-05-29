@@ -43,24 +43,13 @@ if (expected.rgba.length !== actual.rgba.length) {
   process.exit(3);
 }
 
-let squaredError = 0.0;
-let maxChannelDelta = 0;
-let maxPixelDelta = 0.0;
-for (let offset = 0; offset < expected.rgba.length; offset += 4) {
-  let pixelSquared = 0.0;
-  for (let channel = 0; channel < 4; channel += 1) {
-    const delta = actual.rgba[offset + channel] - expected.rgba[offset + channel];
-    const absolute = Math.abs(delta);
-    maxChannelDelta = Math.max(maxChannelDelta, absolute);
-    squaredError += delta * delta;
-    pixelSquared += delta * delta;
-  }
-  maxPixelDelta = Math.max(maxPixelDelta, Math.sqrt(pixelSquared));
-}
-
-const channelCount = expected.rgba.length;
-const mse = squaredError / channelCount;
-const psnr = mse === 0.0 ? Number.POSITIVE_INFINITY : 10.0 * Math.log10((255.0 * 255.0) / mse);
+const fullImage = compareChannels(() => true, [0, 1, 2, 3]);
+const opaqueRgb = compareChannels((pixel) => expected.rgba[pixel + 3] === 255 && actual.rgba[pixel + 3] === 255, [0, 1, 2]);
+const visibleRgb = compareChannels((pixel) => expected.rgba[pixel + 3] > 0 || actual.rgba[pixel + 3] > 0, [0, 1, 2]);
+const interiorRgb = compareChannels((pixel) => isInteriorOpaque(pixel), [0, 1, 2]);
+const alpha = alphaStats();
+const mse = fullImage.mse;
+const psnr = fullImage.psnr;
 const report = {
   expected: path.resolve(expectedPath),
   actual: path.resolve(actualPath),
@@ -69,8 +58,12 @@ const report = {
   channels: 4,
   mse,
   psnr: Number.isFinite(psnr) ? psnr : 'Infinity',
-  maxChannelDelta,
-  maxPixelDelta,
+  maxChannelDelta: fullImage.maxChannelDelta,
+  maxPixelDelta: fullImage.maxPixelDelta,
+  alpha,
+  rgbOpaque: metricReport(opaqueRgb),
+  rgbVisible: metricReport(visibleRgb),
+  rgbInterior1px: metricReport(interiorRgb),
   pass: failUnder == null || psnr >= failUnder,
   failUnder,
 };
@@ -110,4 +103,103 @@ function readRgbaJson(file) {
     return value;
   });
   return { width: parsed.width, height: parsed.height, rgba };
+}
+
+function compareChannels(includePixel, channels) {
+  let squaredError = 0.0;
+  let sampleCount = 0;
+  let pixelCount = 0;
+  let maxChannelDelta = 0;
+  let maxPixelDelta = 0.0;
+  for (let offset = 0; offset < expected.rgba.length; offset += 4) {
+    if (!includePixel(offset)) continue;
+    let pixelSquared = 0.0;
+    for (const channel of channels) {
+      const delta = actual.rgba[offset + channel] - expected.rgba[offset + channel];
+      const absolute = Math.abs(delta);
+      maxChannelDelta = Math.max(maxChannelDelta, absolute);
+      squaredError += delta * delta;
+      pixelSquared += delta * delta;
+      sampleCount += 1;
+    }
+    pixelCount += 1;
+    maxPixelDelta = Math.max(maxPixelDelta, Math.sqrt(pixelSquared));
+  }
+  if (sampleCount === 0) {
+    return {
+      pixelCount,
+      channelCount: 0,
+      mse: null,
+      psnr: null,
+      maxChannelDelta,
+      maxPixelDelta,
+    };
+  }
+  const mse = squaredError / sampleCount;
+  const psnr = mse === 0.0 ? Number.POSITIVE_INFINITY : 10.0 * Math.log10((255.0 * 255.0) / mse);
+  return {
+    pixelCount,
+    channelCount: sampleCount,
+    mse,
+    psnr,
+    maxChannelDelta,
+    maxPixelDelta,
+  };
+}
+
+function metricReport(metric) {
+  return {
+    pixels: metric.pixelCount,
+    channels: metric.channelCount,
+    mse: metric.mse,
+    psnr: metric.psnr == null ? null : Number.isFinite(metric.psnr) ? metric.psnr : 'Infinity',
+    maxChannelDelta: metric.maxChannelDelta,
+    maxPixelDelta: metric.maxPixelDelta,
+  };
+}
+
+function alphaStats() {
+  const expectedCounts = { transparent: 0, opaque: 0, partial: 0 };
+  const actualCounts = { transparent: 0, opaque: 0, partial: 0 };
+  let mismatches = 0;
+  for (let offset = 0; offset < expected.rgba.length; offset += 4) {
+    countAlpha(expectedCounts, expected.rgba[offset + 3]);
+    countAlpha(actualCounts, actual.rgba[offset + 3]);
+    if (expected.rgba[offset + 3] !== actual.rgba[offset + 3]) {
+      mismatches += 1;
+    }
+  }
+  return {
+    expected: expectedCounts,
+    actual: actualCounts,
+    mismatches,
+  };
+}
+
+function countAlpha(counts, alpha) {
+  if (alpha === 0) {
+    counts.transparent += 1;
+  } else if (alpha === 255) {
+    counts.opaque += 1;
+  } else {
+    counts.partial += 1;
+  }
+}
+
+function isInteriorOpaque(pixel) {
+  const pixelIndex = pixel / 4;
+  const x = pixelIndex % expected.width;
+  const y = Math.floor(pixelIndex / expected.width);
+  if (x === 0 || y === 0 || x === expected.width - 1 || y === expected.height - 1) {
+    return false;
+  }
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const neighbor = ((y + dy) * expected.width + (x + dx)) * 4 + 3;
+      if (expected.rgba[neighbor] !== 255 || actual.rgba[neighbor] !== 255) {
+        return false;
+      }
+    }
+  }
+  return true;
 }

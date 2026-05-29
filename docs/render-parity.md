@@ -34,7 +34,10 @@ node tools\render-parity\compare-psnr.mjs `
 ```
 
 The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
-delta, and pass/fail status. Exact matches report `"Infinity"` for PSNR.
+delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, and
+pass/fail status. Exact matches report `"Infinity"` for PSNR. The pass/fail
+threshold still uses the full RGBA PSNR; the RGB-only fields are diagnostic
+helpers for separating alpha/edge disagreement from opaque-surface shading.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
@@ -71,7 +74,11 @@ data and stays outside git.
 The local runner encodes every renderer PNG from its `.rgba.json` artifact with
 the same Rust PNG writer. This keeps the three-vrm reference PNG, wgpu PNG, and
 Bevy PNG alpha handling aligned with the exact RGBA buffers used for PSNR
-instead of relying on browser element screenshot or canvas compositing.
+instead of relying on browser element screenshot or canvas compositing. At the
+start of each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`,
+`reports`, and `diff` directories are recreated so older direct-capture smoke
+images cannot be mistaken for the current canonical comparison set. Each PNG is
+decoded after writing and must match its RGBA artifact bytes, including alpha.
 
 ## three-vrm Capture
 
@@ -112,6 +119,15 @@ for visual review, and self-compared the RGBA output with PSNR `Infinity`.
 The capture JSON is normalized to top-left row order even though WebGL
 `readPixels` returns bottom-left rows, so Bevy/wgpu/ash readbacks can compare
 the same row convention.
+
+The canonical comparison images for the current local sample sweep are:
+
+- `.external-fixtures/render-parity/three-vrm/Seed-san.frame000.png`
+- `.external-fixtures/render-parity/wgpu/Seed-san.frame000.png`
+- `.external-fixtures/render-parity/bevy/Seed-san.frame000.png`
+- `.external-fixtures/render-parity/three-vrm/VRM1_Constraint_Twist_Sample.frame000.png`
+- `.external-fixtures/render-parity/wgpu/VRM1_Constraint_Twist_Sample.frame000.png`
+- `.external-fixtures/render-parity/bevy/VRM1_Constraint_Twist_Sample.frame000.png`
 
 ## Renderer Input Data
 

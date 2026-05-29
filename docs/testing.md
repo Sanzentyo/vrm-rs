@@ -70,16 +70,23 @@ keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
 fixture directory. The local runner writes the three-vrm, wgpu, and Bevy PNGs
 from their transparent RGBA artifacts through the same Rust PNG encoder, so
-review images match the exact buffers compared by PSNR. It also checks that
-the wgpu and Bevy alpha masks stay within `--render-alpha-mismatch-tolerance`
-pixels of the three-vrm reference, preventing one renderer from silently
-becoming opaque while the others remain transparent. The compared images live
+review images match the exact buffers compared by PSNR. It decodes each PNG
+after writing and requires a byte-for-byte match with the corresponding RGBA
+artifact, including alpha. It also checks that the wgpu and Bevy alpha masks
+stay within `--render-alpha-mismatch-tolerance` pixels of the three-vrm
+reference, preventing one renderer from silently becoming opaque while the
+others remain transparent. The render-parity run recreates its managed output
+directories first, so stale direct-capture smoke PNGs are not mixed into the
+canonical review set. The compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.
 If `tools/render-parity/three-vrm-browser-capture.mjs` is invoked directly
 with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
 not from a browser canvas screenshot/data URL.
+The PSNR report additionally includes alpha counts/mismatches plus RGB-only
+opaque, visible, and 1px-interior metrics to identify whether remaining deltas
+come from silhouettes/alpha or from opaque-surface shading.
 
 ## Coverage
 
