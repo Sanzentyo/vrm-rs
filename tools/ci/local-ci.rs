@@ -77,6 +77,8 @@ struct Options {
     render_pbr_ambient: f32,
     #[arg(long)]
     render_fail_under: Option<f32>,
+    #[arg(long, default_value_t = 128)]
+    render_alpha_mismatch_tolerance: usize,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
@@ -204,6 +206,7 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         write_render_png_from_artifact(options, fixture, "wgpu")?;
         capture_bevy(options, fixture)?;
         write_render_png_from_artifact(options, fixture, "bevy")?;
+        verify_render_alpha_consistency(options, fixture)?;
         compare_render_pair(options, fixture, "wgpu")?;
         compare_render_pair(options, fixture, "bevy")?;
         write_render_diff_image(options, fixture, "wgpu")?;
@@ -726,6 +729,91 @@ fn write_render_diff_image(
 
 fn amplify_delta(delta: u8) -> u8 {
     delta.saturating_mul(4)
+}
+
+fn verify_render_alpha_consistency(
+    options: &Options,
+    fixture: &RenderFixture,
+) -> Result<(), String> {
+    let reference = read_rgba_artifact(&render_artifact(options, fixture, "three-vrm"))?;
+    let reference_stats = alpha_stats(&reference);
+    if reference_stats.transparent == 0 {
+        return Err(format!(
+            "{} three-vrm reference has no transparent background pixels; expected transparent RGBA capture",
+            fixture.name
+        ));
+    }
+
+    for renderer in ["wgpu", "bevy"] {
+        let actual = read_rgba_artifact(&render_artifact(options, fixture, renderer))?;
+        if reference.width != actual.width || reference.height != actual.height {
+            return Err(format!(
+                "{renderer}: dimension mismatch: expected {}x{}, actual {}x{}",
+                reference.width, reference.height, actual.width, actual.height
+            ));
+        }
+
+        let stats = alpha_stats(&actual);
+        if stats.transparent == 0 {
+            return Err(format!(
+                "{} {renderer} capture has no transparent background pixels; expected transparent RGBA capture",
+                fixture.name
+            ));
+        }
+
+        let mismatches = alpha_mismatch_count(&reference, &actual);
+        if mismatches > options.render_alpha_mismatch_tolerance {
+            return Err(format!(
+                "{} {renderer} alpha mask differs from three-vrm by {mismatches} pixels (tolerance {})",
+                fixture.name, options.render_alpha_mismatch_tolerance
+            ));
+        }
+
+        println!(
+            "alpha {} {renderer}: transparent={} opaque={} partial={} mismatches={mismatches}",
+            fixture.name, stats.transparent, stats.opaque, stats.partial
+        );
+    }
+
+    println!(
+        "alpha {} three-vrm: transparent={} opaque={} partial={}",
+        fixture.name, reference_stats.transparent, reference_stats.opaque, reference_stats.partial
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AlphaStats {
+    transparent: usize,
+    opaque: usize,
+    partial: usize,
+}
+
+fn alpha_stats(artifact: &RgbaArtifact) -> AlphaStats {
+    artifact.rgba.chunks_exact(4).fold(
+        AlphaStats {
+            transparent: 0,
+            opaque: 0,
+            partial: 0,
+        },
+        |mut stats, pixel| {
+            match pixel[3] {
+                0 => stats.transparent += 1,
+                255 => stats.opaque += 1,
+                _ => stats.partial += 1,
+            }
+            stats
+        },
+    )
+}
+
+fn alpha_mismatch_count(expected: &RgbaArtifact, actual: &RgbaArtifact) -> usize {
+    expected
+        .rgba
+        .chunks_exact(4)
+        .zip(actual.rgba.chunks_exact(4))
+        .filter(|(expected, actual)| expected[3] != actual[3])
+        .count()
 }
 
 #[derive(Debug)]

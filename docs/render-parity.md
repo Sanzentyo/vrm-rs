@@ -283,6 +283,10 @@ available, and the PSNR report under `.external-fixtures/render-parity/reports/`
 Human visual review should compare the rendered PNGs and heatmaps alongside the
 numeric report before declaring parity. The local render runner writes
 `.external-fixtures/render-parity/visual-review.html` for this review loop.
+The runner treats transparent RGBA as part of the contract: three-vrm, wgpu,
+and Bevy captures are written through the same Rust PNG encoder, and the wgpu
+and Bevy alpha masks are checked against the three-vrm reference before PSNR is
+reported.
 
 ## Next Renderer Work
 

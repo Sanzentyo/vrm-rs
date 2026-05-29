@@ -169,6 +169,7 @@ function capturePage(options) {
     renderer.setPixelRatio(1);
     renderer.setSize(${options.width}, ${options.height}, false);
     renderer.setClearColor(0x000000, 0);
+    renderer.setClearAlpha(0);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const camera = new THREE.PerspectiveCamera(30.0, ${options.width} / ${options.height}, 0.1, 20.0);
@@ -192,6 +193,7 @@ function capturePage(options) {
     });
     scene.add(vrm.scene);
     vrm.update?.(0.0);
+    renderer.clear(true, true, true);
     renderer.render(scene, camera);
 
     const gl = renderer.getContext();

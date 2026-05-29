@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-05-30
+
+- Tightened render parity alpha handling: the three-vrm browser reference now explicitly clears with alpha `0`, and the local render parity runner verifies that wgpu and Bevy alpha masks stay close to the three-vrm transparent RGBA reference before PSNR is reported.
+- Documented the canonical render review image locations under `.external-fixtures/render-parity/{three-vrm,wgpu,bevy}/`.
+
 ## 2026-04-29
 
 - Created workspace skeleton.

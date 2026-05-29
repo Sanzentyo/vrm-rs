@@ -70,7 +70,13 @@ keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
 fixture directory. The local runner writes the three-vrm, wgpu, and Bevy PNGs
 from their transparent RGBA artifacts through the same Rust PNG encoder, so
-review images match the exact buffers compared by PSNR.
+review images match the exact buffers compared by PSNR. It also checks that
+the wgpu and Bevy alpha masks stay within `--render-alpha-mismatch-tolerance`
+pixels of the three-vrm reference, preventing one renderer from silently
+becoming opaque while the others remain transparent. The compared images live
+under `.external-fixtures/render-parity/three-vrm/`,
+`.external-fixtures/render-parity/wgpu/`, and
+`.external-fixtures/render-parity/bevy/`.
 
 ## Coverage
 
