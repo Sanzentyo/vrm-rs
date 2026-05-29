@@ -72,13 +72,16 @@ delta and blue shows alpha-channel delta, amplified for review. It is generated
 data and stays outside git.
 
 The local runner encodes every renderer PNG from its `.rgba.json` artifact with
-the same Rust PNG writer. This keeps the three-vrm reference PNG, wgpu PNG, and
-Bevy PNG alpha handling aligned with the exact RGBA buffers used for PSNR
-instead of relying on browser element screenshot or canvas compositing. At the
-start of each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`,
-`reports`, and `diff` directories are recreated so older direct-capture smoke
-images cannot be mistaken for the current canonical comparison set. Each PNG is
-decoded after writing and must match its RGBA artifact bytes, including alpha.
+the same Rust PNG writer. The canonical run uses `--render-background
+opaque-black`, so the three-vrm reference PNG, wgpu PNG, and Bevy PNG all use
+the same opaque background/alpha contract. `--render-background transparent`
+remains available for targeted alpha-background investigations. This keeps
+preview PNGs aligned with the exact RGBA buffers used for PSNR instead of
+relying on browser element screenshots or canvas compositing. At the start of
+each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`, `reports`, and
+`diff` directories are recreated so older direct-capture smoke images cannot be
+mistaken for the current canonical comparison set. Each PNG is decoded after
+writing and must match its RGBA artifact bytes, including alpha.
 
 ## three-vrm Capture
 
@@ -93,7 +96,8 @@ node tools\render-parity\three-vrm-browser-capture.mjs `
   --three-vrm-root D:\git\three-vrm `
   --out .external-fixtures\render-parity\three-vrm\Seed-san.frame000.rgba.json `
   --width 512 `
-  --height 512
+  --height 512 `
+  --background opaque-black
 ```
 
 The script serves the local three-vrm build and fixture through a temporary
@@ -306,14 +310,17 @@ available, and the PSNR report under `.external-fixtures/render-parity/reports/`
 Human visual review should compare the rendered PNGs and heatmaps alongside the
 numeric report before declaring parity. The local render runner writes
 `.external-fixtures/render-parity/visual-review.html` for this review loop.
-The runner treats transparent RGBA as part of the contract: three-vrm, wgpu,
-and Bevy captures are written through the same Rust PNG encoder, and the wgpu
-and Bevy alpha masks are checked against the three-vrm reference before PSNR is
-reported.
+The runner treats the background alpha policy as part of the contract:
+three-vrm, wgpu, and Bevy captures are written through the same Rust PNG
+encoder, and the wgpu and Bevy alpha masks are checked against the three-vrm
+reference before PSNR is reported. Canonical parity uses an opaque black
+background because the three-vrm reference path is not reliably reviewable as a
+transparent PNG across tools; transparent capture remains available with
+`--render-background transparent`.
 When `tools/render-parity/three-vrm-browser-capture.mjs` is run directly with
 `--png-out`, it also writes PNG bytes from the raw `gl.readPixels` RGBA buffer
 instead of from a browser canvas data URL, keeping the three-vrm preview PNG
-transparent in the same way as the local runner's canonical PNG artifacts.
+consistent with the selected `--background` mode.
 The wgpu and Bevy capture examples build their mesh and skinning matrices from
 a shared headless runtime scene after a zero-delta `VrmRuntimeDriver` tick, so
 the static render path exercises the same constraint ordering, spring-rest
@@ -342,7 +349,13 @@ Seed-san Bevy `28.2468 dB`, and unchanged all-MToon constraint values of
 wgpu/Bevy `34.2969 dB`.
 After glTF base/emissive/texture parameters are merged into resolved MToon
 materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
-while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`.
+while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. Switching the
+canonical render-parity background to opaque black removes the remaining
+background-alpha mismatch from the visual review artifacts: the current
+two-fixture sweep reports `transparent/opaque/partial = 0/65536/0` for
+three-vrm, wgpu, and Bevy on both samples, with alpha mismatches `0`. Current
+PSNR values are Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, and
+constraint sample wgpu/Bevy `34.8595 dB`.
 
 ## Next Renderer Work
 

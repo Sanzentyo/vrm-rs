@@ -29,9 +29,10 @@ const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
 const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
+const background = args.get('background') ?? 'opaque-black';
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -40,6 +41,10 @@ if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
 }
 if (![cameraY, cameraZ, targetY].every(Number.isFinite)) {
   console.error('camera-y, camera-z, and target-y must be finite numbers');
+  process.exit(2);
+}
+if (!['opaque-black', 'transparent'].includes(background)) {
+  console.error(`invalid background: ${background}; expected opaque-black or transparent`);
   process.exit(2);
 }
 
@@ -71,7 +76,7 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (url.pathname === '/') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(capturePage({ width, height, cameraY, cameraZ, targetY }));
+    response.end(capturePage({ width, height, cameraY, cameraZ, targetY, background }));
     return;
   }
 
@@ -139,10 +144,13 @@ try {
 }
 
 function capturePage(options) {
+  const transparent = options.background === 'transparent';
+  const clearAlpha = transparent ? 0 : 1;
+  const cssBackground = transparent ? 'transparent' : '#000';
   return `<!doctype html>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; background: transparent; }
+  html, body { margin: 0; background: ${cssBackground}; }
 </style>
 <canvas id="canvas" width="${options.width}" height="${options.height}" style="width:${options.width}px;height:${options.height}px;display:block"></canvas>
 <script type="importmap">
@@ -161,15 +169,15 @@ function capturePage(options) {
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      alpha: true,
+      alpha: ${transparent},
       antialias: false,
       premultipliedAlpha: false,
       preserveDrawingBuffer: true,
     });
     renderer.setPixelRatio(1);
     renderer.setSize(${options.width}, ${options.height}, false);
-    renderer.setClearColor(0x000000, 0);
-    renderer.setClearAlpha(0);
+    renderer.setClearColor(0x000000, ${clearAlpha});
+    renderer.setClearAlpha(${clearAlpha});
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const camera = new THREE.PerspectiveCamera(30.0, ${options.width} / ${options.height}, 0.1, 20.0);

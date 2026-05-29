@@ -68,16 +68,19 @@ This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
-fixture directory. The local runner writes the three-vrm, wgpu, and Bevy PNGs
-from their transparent RGBA artifacts through the same Rust PNG encoder, so
-review images match the exact buffers compared by PSNR. It decodes each PNG
-after writing and requires a byte-for-byte match with the corresponding RGBA
-artifact, including alpha. It also checks that the wgpu and Bevy alpha masks
-stay within `--render-alpha-mismatch-tolerance` pixels of the three-vrm
-reference, preventing one renderer from silently becoming opaque while the
-others remain transparent. The render-parity run recreates its managed output
-directories first, so stale direct-capture smoke PNGs are not mixed into the
-canonical review set. The compared images live
+fixture directory. The canonical local runner now uses `--render-background
+opaque-black`, matching the practical three-vrm reference capture and avoiding
+one renderer being reviewed as transparent while another is opaque. Use
+`--render-background transparent` only for explicit alpha-background
+experiments. The local runner writes the three-vrm, wgpu, and Bevy PNGs from
+their RGBA artifacts through the same Rust PNG encoder, so review images match
+the exact buffers compared by PSNR. It decodes each PNG after writing and
+requires a byte-for-byte match with the corresponding RGBA artifact, including
+alpha. It also checks that the wgpu and Bevy alpha masks stay within
+`--render-alpha-mismatch-tolerance` pixels of the three-vrm reference. The
+render-parity run recreates its managed output directories first, so stale
+direct-capture smoke PNGs are not mixed into the canonical review set. The
+compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.

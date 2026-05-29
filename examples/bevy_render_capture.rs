@@ -35,7 +35,7 @@ use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::shader::ShaderRef;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use crossbeam_channel::{Receiver, Sender};
 use glam::{Mat4, Vec3 as GVec3};
 use serde_json::json;
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .insert_resource(LoadedResource(loaded))
         .insert_resource(CaptureSender(tx))
         .insert_resource(SceneController::new(options.width, options.height, 40))
-        .insert_resource(ClearColor(Color::NONE))
+        .insert_resource(ClearColor(options.background.color()))
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -112,6 +112,23 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
+    background: CaptureBackground,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum CaptureBackground {
+    OpaqueBlack,
+    Transparent,
+}
+
+impl CaptureBackground {
+    fn color(self) -> Color {
+        match self {
+            Self::OpaqueBlack => Color::BLACK,
+            Self::Transparent => Color::NONE,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -188,7 +205,7 @@ fn setup(
         Msaa::Off,
         render_target,
         Camera {
-            clear_color: ClearColorConfig::Custom(Color::NONE),
+            clear_color: ClearColorConfig::Custom(options.background.color()),
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {

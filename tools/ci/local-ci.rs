@@ -16,7 +16,7 @@ serde_json = "1.0.150"
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -79,6 +79,8 @@ struct Options {
     render_fail_under: Option<f32>,
     #[arg(long, default_value_t = 128)]
     render_alpha_mismatch_tolerance: usize,
+    #[arg(long, value_enum, default_value_t = RenderBackground::OpaqueBlack)]
+    render_background: RenderBackground,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
@@ -89,6 +91,21 @@ struct Options {
     three_vrm_root: PathBuf,
     #[arg(long, default_value = ".external-fixtures/render-parity")]
     render_parity_dir: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RenderBackground {
+    OpaqueBlack,
+    Transparent,
+}
+
+impl RenderBackground {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::OpaqueBlack => "opaque-black",
+            Self::Transparent => "transparent",
+        }
+    }
 }
 
 fn run(options: Options) -> Result<(), String> {
@@ -566,6 +583,8 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
             options.render_width.to_string().as_str(),
             "--height",
             options.render_height.to_string().as_str(),
+            "--background",
+            options.render_background.as_cli_value(),
             "--camera-z",
             options.render_camera_z.to_string().as_str(),
         ],
@@ -598,6 +617,8 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--background",
+            options.render_background.as_cli_value(),
         ],
     )
 }
@@ -628,6 +649,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--background",
+            options.render_background.as_cli_value(),
         ],
     )
 }
@@ -806,11 +829,22 @@ fn verify_render_alpha_consistency(
 ) -> Result<(), String> {
     let reference = read_rgba_artifact(&render_artifact(options, fixture, "three-vrm"))?;
     let reference_stats = alpha_stats(&reference);
-    if reference_stats.transparent == 0 {
-        return Err(format!(
-            "{} three-vrm reference has no transparent background pixels; expected transparent RGBA capture",
-            fixture.name
-        ));
+    match options.render_background {
+        RenderBackground::Transparent if reference_stats.transparent == 0 => {
+            return Err(format!(
+                "{} three-vrm reference has no transparent background pixels; expected transparent RGBA capture",
+                fixture.name
+            ));
+        }
+        RenderBackground::OpaqueBlack
+            if reference_stats.transparent != 0 || reference_stats.partial != 0 =>
+        {
+            return Err(format!(
+                "{} three-vrm reference has transparent or partial-alpha pixels under opaque-black background: transparent={} partial={}",
+                fixture.name, reference_stats.transparent, reference_stats.partial
+            ));
+        }
+        _ => {}
     }
 
     for renderer in ["wgpu", "bevy"] {
@@ -823,11 +857,20 @@ fn verify_render_alpha_consistency(
         }
 
         let stats = alpha_stats(&actual);
-        if stats.transparent == 0 {
-            return Err(format!(
-                "{} {renderer} capture has no transparent background pixels; expected transparent RGBA capture",
-                fixture.name
-            ));
+        match options.render_background {
+            RenderBackground::Transparent if stats.transparent == 0 => {
+                return Err(format!(
+                    "{} {renderer} capture has no transparent background pixels; expected transparent RGBA capture",
+                    fixture.name
+                ));
+            }
+            RenderBackground::OpaqueBlack if stats.transparent != 0 || stats.partial != 0 => {
+                return Err(format!(
+                    "{} {renderer} capture has transparent or partial-alpha pixels under opaque-black background: transparent={} partial={}",
+                    fixture.name, stats.transparent, stats.partial
+                ));
+            }
+            _ => {}
         }
 
         let mismatches = alpha_mismatch_count(&reference, &actual);

@@ -9,7 +9,7 @@
 mod render_capture_scene;
 
 use bytemuck::{Pod, Zeroable};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::json;
 use std::collections::HashMap;
@@ -92,6 +92,8 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
+    background: CaptureBackground,
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +157,21 @@ enum CaptureAlphaMode {
     Opaque,
     Mask,
     Blend,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum CaptureBackground {
+    OpaqueBlack,
+    Transparent,
+}
+
+impl CaptureBackground {
+    fn clear_color(self) -> wgpu::Color {
+        match self {
+            Self::OpaqueBlack => wgpu::Color::BLACK,
+            Self::Transparent => wgpu::Color::TRANSPARENT,
+        }
+    }
 }
 
 struct TextureBindGroup {
@@ -1417,7 +1434,7 @@ async fn render_capture(
                 view: &color_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    load: wgpu::LoadOp::Clear(options.background.clear_color()),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
