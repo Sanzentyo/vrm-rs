@@ -56,6 +56,7 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- `
   --skip-playwright-install `
   --three-vrm-root D:\git\three-vrm `
   --render-background opaque-black `
+  --render-mtoon-light-accumulation tuned `
   --render-fixture Seed-san.vrm `
   --render-fixture VRM1_Constraint_Twist_Sample.vrm `
   --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_materials_mtoon_UV_Animation_Test\VRMC_materials_mtoon_UV_Animation_Test.vrm `
@@ -103,6 +104,15 @@ preserving the source texture alpha in the readback buffer. It also includes
 the external UniVRM Alicia VRM0 fixture, kept outside git, to keep legacy
 transparent and transparent-Z-write materials in the same rendered-output
 parity loop.
+
+The Rust capture paths also accept
+`--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
+current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
+`three-vrm` mode uses the closer WebGL MToon accumulator shape for light/color
+audits: direct diffuse is normalized by the `DirectionalLight(Math.PI)` setup,
+indirect diffuse uses `pbrAmbient`, and rim lighting uses the same
+direct-plus-indirect accumulator (`1.0 + pbrAmbient`) as the three-vrm
+non-physical-light path.
 
 ## three-vrm Capture
 

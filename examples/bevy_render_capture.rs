@@ -112,10 +112,27 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
+    mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,
     #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
     background: CaptureBackground,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum MtoonLightAccumulation {
+    Tuned,
+    ThreeVrm,
+}
+
+impl MtoonLightAccumulation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tuned => "tuned",
+            Self::ThreeVrm => "three-vrm",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -998,12 +1015,7 @@ fn bevy_mtoon_material(
             normal_scale,
             if cull_mode.is_none() { 1.0 } else { 0.0 },
         ),
-        lighting: BVec4::new(
-            options.mtoon_exposure,
-            options.mtoon_ambient_base,
-            options.mtoon_ambient_gi_scale,
-            options.pbr_ambient,
-        ),
+        lighting: bevy_mtoon_lighting(options),
         base_uv_transform: bevy_uv_transform(uv_transforms.base),
         shade_uv_transform: bevy_uv_transform(uv_transforms.shade),
         shading_shift_uv_transform: bevy_uv_transform(uv_transforms.shading_shift),
@@ -1067,6 +1079,28 @@ fn bevy_mtoon_material(
         alpha_mode,
         cull_mode,
         depth_bias,
+    }
+}
+
+fn bevy_mtoon_lighting(options: &CaptureOptions) -> BVec4 {
+    let [exposure, ambient_base, ambient_gi_scale, pbr_ambient] = mtoon_lighting_values(options);
+    BVec4::new(exposure, ambient_base, ambient_gi_scale, pbr_ambient)
+}
+
+fn mtoon_lighting_values(options: &CaptureOptions) -> [f32; 4] {
+    match options.mtoon_light_accumulation {
+        MtoonLightAccumulation::Tuned => [
+            options.mtoon_exposure,
+            options.mtoon_ambient_base,
+            options.mtoon_ambient_gi_scale,
+            options.pbr_ambient,
+        ],
+        MtoonLightAccumulation::ThreeVrm => [
+            options.mtoon_exposure,
+            options.pbr_ambient,
+            0.0,
+            options.pbr_ambient,
+        ],
     }
 }
 
@@ -1829,6 +1863,7 @@ fn write_capture(
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
+    let effective_lighting = mtoon_lighting_values(options);
     let artifact = json!({
         "generator": "vrm-rs examples/bevy_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -1840,6 +1875,13 @@ fn write_capture(
             "ambientBase": options.mtoon_ambient_base,
             "ambientGiScale": options.mtoon_ambient_gi_scale,
             "pbrAmbient": options.pbr_ambient,
+            "lightAccumulation": options.mtoon_light_accumulation.as_str(),
+            "effective": {
+                "exposure": effective_lighting[0],
+                "ambientBase": effective_lighting[1],
+                "ambientGiScale": effective_lighting[2],
+                "pbrAmbient": effective_lighting[3]
+            },
             "time": options.mtoon_time
         },
         "format": "rgba8",

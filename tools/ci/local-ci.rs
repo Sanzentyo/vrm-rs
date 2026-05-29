@@ -75,6 +75,8 @@ struct Options {
     render_mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     render_pbr_ambient: f32,
+    #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::Tuned)]
+    render_mtoon_light_accumulation: RenderMtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
     render_mtoon_time: f32,
     #[arg(long)]
@@ -109,6 +111,21 @@ enum RenderPsnrMetric {
     RgbOpaque,
     RgbVisible,
     RgbInterior1px,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RenderMtoonLightAccumulation {
+    Tuned,
+    ThreeVrm,
+}
+
+impl RenderMtoonLightAccumulation {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Tuned => "tuned",
+            Self::ThreeVrm => "three-vrm",
+        }
+    }
 }
 
 impl RenderPsnrMetric {
@@ -642,6 +659,8 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--mtoon-light-accumulation",
+            options.render_mtoon_light_accumulation.as_cli_value(),
             "--mtoon-time",
             options.render_mtoon_time.to_string().as_str(),
             "--background",
@@ -676,6 +695,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--mtoon-light-accumulation",
+            options.render_mtoon_light_accumulation.as_cli_value(),
             "--mtoon-time",
             options.render_mtoon_time.to_string().as_str(),
             "--background",

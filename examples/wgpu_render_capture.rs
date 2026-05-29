@@ -92,6 +92,8 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
+    mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,
     #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
@@ -137,6 +139,21 @@ impl Default for MaterialPolicy {
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
             blend: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum MtoonLightAccumulation {
+    Tuned,
+    ThreeVrm,
+}
+
+impl MtoonLightAccumulation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tuned => "tuned",
+            Self::ThreeVrm => "three-vrm",
         }
     }
 }
@@ -1758,10 +1775,22 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
         camera_pos: Vec4::new(eye.x, eye.y, eye.z, 1.0).to_array(),
-        mtoon_lighting: [
+        mtoon_lighting: mtoon_lighting_uniform(options),
+    }
+}
+
+fn mtoon_lighting_uniform(options: &CaptureOptions) -> [f32; 4] {
+    match options.mtoon_light_accumulation {
+        MtoonLightAccumulation::Tuned => [
             options.mtoon_exposure,
             options.mtoon_ambient_base,
             options.mtoon_ambient_gi_scale,
+            options.pbr_ambient,
+        ],
+        MtoonLightAccumulation::ThreeVrm => [
+            options.mtoon_exposure,
+            options.pbr_ambient,
+            0.0,
             options.pbr_ambient,
         ],
     }
@@ -1799,6 +1828,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
+    let effective_lighting = mtoon_lighting_uniform(options);
     let artifact = json!({
         "generator": "vrm-rs examples/wgpu_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -1810,6 +1840,13 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
             "ambientBase": options.mtoon_ambient_base,
             "ambientGiScale": options.mtoon_ambient_gi_scale,
             "pbrAmbient": options.pbr_ambient,
+            "lightAccumulation": options.mtoon_light_accumulation.as_str(),
+            "effective": {
+                "exposure": effective_lighting[0],
+                "ambientBase": effective_lighting[1],
+                "ambientGiScale": effective_lighting[2],
+                "pbrAmbient": effective_lighting[3]
+            },
             "time": options.mtoon_time
         },
         "format": "rgba8",
