@@ -167,6 +167,7 @@
 - Added local render visual-review output: `--render-parity` now writes `.external-fixtures/render-parity/visual-review.html`, showing the three-vrm, wgpu, and Bevy PNGs side-by-side with the PSNR JSON reports for human review without committing generated artifacts.
 - Added render parity diff heatmaps to the local Rust runner. `--render-parity` now writes amplified RGB/alpha delta PNGs under `.external-fixtures/render-parity/diff/` and includes them in `visual-review.html`; the reused Seed-san run still reports wgpu `20.75 dB` and Bevy `23.64 dB`.
 - Improved renderer parity baselines from the heatmap pass. The wgpu capture now matches the three-vrm camera clip range and directional-light vector convention, raising Seed-san from `20.75 dB` to `24.32 dB`. The Bevy capture keeps stock `StandardMaterial` but bakes an approximate MToon light response into vertex colors, raising Seed-san from `23.64 dB` to `23.77 dB`.
+- Added first-pass world-coordinate MToon outline expansion to both capture paths. The wgpu Seed-san baseline rose to `25.89 dB`, and the Bevy baseline rose to `24.07 dB`; the remaining outline gap is exact width texture handling and shader-level details.
 
 Open work:
 

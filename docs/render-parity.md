@@ -139,10 +139,11 @@ readback row order and adding a first MToon-like shade color/toony/shift,
 ambient, and emissive pass, the local Seed-san baseline is `20.75 dB`.
 After matching the three-vrm camera clip range and using the same effective
 directional-light vector convention as three.js, the local Seed-san baseline is
-`24.32 dB`.
+`24.32 dB`. Adding a first world-coordinate MToon outline expansion pass raises
+the baseline to `25.89 dB`.
 This is still a failing visual parity baseline: the current path does not yet
-apply expression state, outline expansion, shade/matcap/rim secondary textures,
-normal maps, or exact three.js/MToon light accumulation.
+apply expression state, outline width multiply textures, shade/matcap/rim
+secondary textures, normal maps, or exact three.js/MToon light accumulation.
 
 ## Bevy Capture
 
@@ -179,7 +180,8 @@ bounding box now matches the three-vrm reference (`252x221` at `256x256`), so
 remaining Bevy deltas can be judged as material/runtime differences instead of
 camera framing. The current Bevy capture also bakes an approximate MToon
 directional-light response into vertex colors while staying on Bevy's stock
-`StandardMaterial`, raising the local baseline to `23.77 dB`.
+`StandardMaterial`, raising the local baseline to `23.77 dB`. Adding the same
+expanded outline mesh approach raises the Bevy baseline to `24.07 dB`.
 
 ## Review Criteria
 

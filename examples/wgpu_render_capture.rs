@@ -230,12 +230,11 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
-            primitives.push(draw_primitive(
-                loaded,
-                primitive,
-                world,
-                skin_matrices.as_deref(),
-            )?);
+            let surface = draw_primitive(loaded, primitive, world, skin_matrices.as_deref())?;
+            primitives.push(surface.clone());
+            if let Some(outline) = outline_primitive(loaded, primitive, &surface) {
+                primitives.push(outline);
+            }
         }
     }
 
@@ -244,6 +243,57 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
     }
     primitives.sort_by_key(|primitive| primitive.policy.render_order);
     Ok(MeshDrawData { primitives })
+}
+
+fn outline_primitive(
+    loaded: &LoadedVrm,
+    primitive: &GltfPrimitiveData,
+    surface: &DrawPrimitive,
+) -> Option<DrawPrimitive> {
+    let material = primitive
+        .material
+        .and_then(|index| loaded.model().document().materials.get(index))?;
+    let mtoon = material.mtoon.as_ref()?;
+    if !mtoon.outline_enabled() {
+        return None;
+    }
+    let color = [
+        mtoon.outline_color_factor[0],
+        mtoon.outline_color_factor[1],
+        mtoon.outline_color_factor[2],
+        mtoon.base_color_factor[3],
+    ];
+    let width = mtoon.outline_width_factor;
+    let vertices = surface
+        .vertices
+        .iter()
+        .map(|vertex| {
+            let normal = Vec3::from_array(vertex.normal).normalize_or_zero();
+            Vertex {
+                position: (Vec3::from_array(vertex.position) + normal * width).to_array(),
+                normal: vertex.normal,
+                tex_coord: vertex.tex_coord,
+                color,
+                shade_color: color,
+                shading: [0.0, 0.0, 0.0, 0.0],
+                emissive: [0.0, 0.0, 0.0, 0.0],
+                alpha_mode: alpha_mode_code(CaptureAlphaMode::Opaque),
+                _padding: [0.0; 3],
+            }
+        })
+        .collect();
+    Some(DrawPrimitive {
+        vertices,
+        indices: surface.indices.clone(),
+        image: None,
+        policy: MaterialPolicy {
+            render_order: surface.policy.render_order,
+            cull_mode: CaptureCullMode::Front,
+            alpha_mode: CaptureAlphaMode::Opaque,
+            depth_write: true,
+            blend: false,
+        },
+    })
 }
 
 fn draw_primitive(

@@ -257,11 +257,17 @@ fn spawn_vrm_meshes(
             .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
-            primitives.push(BevyPrimitive {
+            let surface = BevyPrimitive {
                 mesh: bevy_mesh(primitive, world, skin_matrices.as_deref(), shading),
                 material: bevy_material(loaded, primitive, &image_handles),
                 render_order: material_render_order(loaded, primitive.material),
-            });
+            };
+            primitives.push(surface);
+            if let Some(outline) =
+                bevy_outline_primitive(loaded, primitive, world, skin_matrices.as_deref())
+            {
+                primitives.push(outline);
+            }
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
@@ -274,6 +280,90 @@ fn spawn_vrm_meshes(
             Transform::IDENTITY,
         ));
     }
+}
+
+fn bevy_outline_primitive(
+    loaded: &LoadedVrm,
+    primitive: &GltfPrimitiveData,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+) -> Option<BevyPrimitive> {
+    let material = primitive
+        .material
+        .and_then(|index| loaded.model().document().materials.get(index))?;
+    let mtoon = material.mtoon.as_ref()?;
+    if !mtoon.outline_enabled() {
+        return None;
+    }
+    let color = [
+        mtoon.outline_color_factor[0],
+        mtoon.outline_color_factor[1],
+        mtoon.outline_color_factor[2],
+        mtoon.base_color_factor[3],
+    ];
+    let mesh = bevy_outline_mesh(primitive, world, skin_matrices, mtoon.outline_width_factor);
+    let material = StandardMaterial {
+        base_color: Color::srgba(color[0], color[1], color[2], color[3]),
+        unlit: true,
+        double_sided: false,
+        cull_mode: Some(Face::Front),
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    };
+    Some(BevyPrimitive {
+        mesh,
+        material,
+        render_order: material_render_order(loaded, primitive.material),
+    })
+}
+
+fn bevy_outline_mesh(
+    primitive: &GltfPrimitiveData,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    width: f32,
+) -> Mesh {
+    let positions = primitive
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            let (position, normal) = transform_vertex(
+                GVec3::from_array(*position),
+                primitive_normal(primitive, index),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            );
+            (position + normal * width).to_array()
+        })
+        .collect::<Vec<_>>();
+    let normals = (0..primitive.positions.len())
+        .map(|index| {
+            let (_, normal) = transform_vertex(
+                GVec3::from_array(primitive.positions[index]),
+                primitive_normal(primitive, index),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            );
+            normal.to_array()
+        })
+        .collect::<Vec<_>>();
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
+    );
+    mesh.insert_indices(Indices::U32(primitive.indices.clone()));
+    mesh
 }
 
 struct BevyPrimitive {
