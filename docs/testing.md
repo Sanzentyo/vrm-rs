@@ -52,7 +52,7 @@ Run the local render parity pass with:
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
-This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/` and writes PSNR reports under `.external-fixtures/render-parity/reports/`. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
 
 ## Coverage
 
