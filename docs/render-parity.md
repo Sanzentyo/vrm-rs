@@ -241,4 +241,8 @@ numeric report before declaring parity. The local render runner writes
 
 - Deepen the wgpu and Bevy capture paths with fuller MToon lighting and
   expression/runtime state before raising PSNR thresholds.
+- For Bevy specifically, prefer a custom MToon material/shader path next.
+  Measured attempts to push more MToon behavior into unlit `StandardMaterial`
+  vertex colors, including normal maps, matcap/rim, and outline-width
+  rescaling, all reduced the Seed-san PSNR slightly.
 - Use the generated heatmaps to prioritize the remaining MToon/runtime deltas.
