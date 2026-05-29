@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
+import zlib from 'node:zlib';
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -130,8 +131,7 @@ try {
   fs.writeFileSync(out, json);
   if (pngOut) {
     fs.mkdirSync(path.dirname(pngOut), { recursive: true });
-    const base64 = capture.pngDataUrl.replace(/^data:image\/png;base64,/, '');
-    fs.writeFileSync(pngOut, Buffer.from(base64, 'base64'));
+    fs.writeFileSync(pngOut, encodePngRgba(width, height, capture.rgba));
   }
 } finally {
   if (browser) await browser.close();
@@ -206,16 +206,62 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
-    const pngCanvas = document.createElement('canvas');
-    pngCanvas.width = ${options.width};
-    pngCanvas.height = ${options.height};
-    const context = pngCanvas.getContext('2d');
-    context.putImageData(new ImageData(new Uint8ClampedArray(rgba), ${options.width}, ${options.height}), 0, 0);
-    const pngDataUrl = pngCanvas.toDataURL('image/png');
     renderer.dispose();
-    return { rgba: Array.from(rgba), pngDataUrl };
+    return { rgba: Array.from(rgba) };
   };
 </script>`;
+}
+
+function encodePngRgba(width, height, rgba) {
+  if (rgba.length !== width * height * 4) {
+    throw new Error(`rgba length ${rgba.length} does not match ${width}x${height}`);
+  }
+
+  const scanlineBytes = width * 4;
+  const raw = Buffer.alloc((scanlineBytes + 1) * height);
+  const rgbaBytes = Buffer.from(rgba);
+  for (let y = 0; y < height; y += 1) {
+    const rawOffset = y * (scanlineBytes + 1);
+    raw[rawOffset] = 0;
+    rgbaBytes.copy(raw, rawOffset + 1, y * scanlineBytes, (y + 1) * scanlineBytes);
+  }
+
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  return Buffer.concat([
+    signature,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 0);
+  return Buffer.concat([length, typeBytes, data, crc]);
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function contentType(file) {

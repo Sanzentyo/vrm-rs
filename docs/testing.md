@@ -77,6 +77,9 @@ becoming opaque while the others remain transparent. The compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.
+If `tools/render-parity/three-vrm-browser-capture.mjs` is invoked directly
+with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
+not from a browser canvas screenshot/data URL.
 
 ## Coverage
 

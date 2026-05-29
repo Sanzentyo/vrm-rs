@@ -371,6 +371,7 @@ fn bevy_outline_primitive(
     material.outline_color = BVec4::from_array(outline_color);
     material.alpha_mode = AlphaMode::Opaque;
     material.cull_mode = Some(Face::Front);
+    material.pipeline.w = 0.0;
     Some(BevyPrimitive {
         mesh,
         material: BevyPrimitiveMaterial::Mtoon(material),
@@ -826,6 +827,7 @@ fn bevy_mtoon_material(
     image_handles: &BevyImageHandles,
 ) -> BevyMtoonMaterial {
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
+    let cull_mode = material_cull_mode(loaded, primitive.material);
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -864,7 +866,7 @@ fn bevy_mtoon_material(
             alpha_mode_code(alpha_mode),
             alpha_cutoff(alpha_mode),
             normal_scale,
-            0.0,
+            if cull_mode.is_none() { 1.0 } else { 0.0 },
         ),
         lighting: BVec4::new(
             options.mtoon_exposure,
@@ -900,7 +902,7 @@ fn bevy_mtoon_material(
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.neutral_normal.clone()),
         alpha_mode,
-        cull_mode: material_cull_mode(loaded, primitive.material),
+        cull_mode,
         depth_bias,
     }
 }

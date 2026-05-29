@@ -53,14 +53,15 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
-fn surface_normal(input: VertexOutput) -> vec3<f32> {
-    let geometric_normal = normalize(input.world_normal);
+fn surface_normal(input: VertexOutput, front_facing: bool) -> vec3<f32> {
+    let face_sign = select(-1.0, 1.0, front_facing || material.pipeline.w < 0.5);
+    let geometric_normal = normalize(input.world_normal) * face_sign;
     if material.pipeline.z <= 0.0 {
         return geometric_normal;
     }
 #ifdef VERTEX_TANGENTS
-    let tangent = normalize(input.world_tangent.xyz);
-    let bitangent = normalize(cross(geometric_normal, tangent) * input.world_tangent.w);
+    let tangent = normalize(input.world_tangent.xyz) * face_sign;
+    let bitangent = normalize(cross(geometric_normal, tangent) * input.world_tangent.w) * face_sign;
     let sampled = textureSample(normal_texture, normal_sampler, input.uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * material.pipeline.z,
@@ -78,8 +79,8 @@ fn surface_normal(input: VertexOutput) -> vec3<f32> {
 }
 
 @fragment
-fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
-    let normal = surface_normal(input);
+fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    let normal = surface_normal(input, front_facing);
     let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));
     let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
 

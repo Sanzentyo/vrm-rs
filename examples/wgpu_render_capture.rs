@@ -41,11 +41,12 @@ struct Vertex {
     outline_color: [f32; 4],
     alpha_mode: f32,
     normal_scale: f32,
-    _padding: [f32; 2],
+    double_sided: f32,
+    _padding: f32,
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 14] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32, 13 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 15] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32, 13 => Float32, 14 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -275,6 +276,7 @@ fn outline_primitive(
             vertex.position = (Vec3::from_array(vertex.position) + normal * width).to_array();
             vertex.outline_color = outline_color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
+            vertex.double_sided = 0.0;
             vertex
         })
         .collect();
@@ -381,7 +383,12 @@ fn draw_primitive(
                 outline_color: [1.0, 1.0, 1.0, -1.0],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
                 normal_scale,
-                _padding: [0.0; 2],
+                double_sided: if policy.cull_mode == CaptureCullMode::Off {
+                    1.0
+                } else {
+                    0.0
+                },
+                _padding: 0.0,
             }
         })
         .collect::<Vec<_>>();
@@ -1569,6 +1576,7 @@ struct VertexIn {
     @location(11) outline_color: vec4<f32>,
     @location(12) alpha_mode: f32,
     @location(13) normal_scale: f32,
+    @location(14) double_sided: f32,
 };
 
 struct VertexOut {
@@ -1587,6 +1595,7 @@ struct VertexOut {
     @location(11) outline_color: vec4<f32>,
     @location(12) alpha_mode: f32,
     @location(13) normal_scale: f32,
+    @location(14) double_sided: f32,
 };
 
 @vertex
@@ -1607,6 +1616,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.outline_color = input.outline_color;
     out.alpha_mode = input.alpha_mode;
     out.normal_scale = input.normal_scale;
+    out.double_sided = input.double_sided;
     return out;
 }
 
@@ -1614,13 +1624,14 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
-fn surface_normal(input: VertexOut) -> vec3<f32> {
-    let geometric_normal = normalize(input.normal);
+fn surface_normal(input: VertexOut, front_facing: bool) -> vec3<f32> {
+    let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
+    let geometric_normal = normalize(input.normal) * face_sign;
     if input.normal_scale <= 0.0 {
         return geometric_normal;
     }
-    let tangent = normalize(input.tangent.xyz);
-    let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w);
+    let tangent = normalize(input.tangent.xyz) * face_sign;
+    let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w) * face_sign;
     let sampled = textureSample(normal_texture, base_sampler, input.tex_coord).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * input.normal_scale,
@@ -1635,8 +1646,8 @@ fn surface_normal(input: VertexOut) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let normal = surface_normal(input);
+fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    let normal = surface_normal(input, front_facing);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, input.tex_coord);
     let alpha = input.color.a * texel.a;

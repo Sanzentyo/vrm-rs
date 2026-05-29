@@ -287,6 +287,10 @@ The runner treats transparent RGBA as part of the contract: three-vrm, wgpu,
 and Bevy captures are written through the same Rust PNG encoder, and the wgpu
 and Bevy alpha masks are checked against the three-vrm reference before PSNR is
 reported.
+When `tools/render-parity/three-vrm-browser-capture.mjs` is run directly with
+`--png-out`, it also writes PNG bytes from the raw `gl.readPixels` RGBA buffer
+instead of from a browser canvas data URL, keeping the three-vrm preview PNG
+transparent in the same way as the local runner's canonical PNG artifacts.
 The wgpu and Bevy capture examples build their mesh and skinning matrices from
 a shared headless runtime scene after a zero-delta `VrmRuntimeDriver` tick, so
 the static render path exercises the same constraint ordering, spring-rest
@@ -299,6 +303,13 @@ shape of three-vrm's outline fragment instead of using a flat unlit outline
 material. The 2026-05-30 official-sample sweep after this change is `Seed-san`
 wgpu `28.3645 dB`, `Seed-san` Bevy `28.1909 dB`, constraint sample wgpu
 `34.2969 dB`, and constraint sample Bevy `34.2969 dB`.
+The 2026-05-30 alpha check for that same sweep reports transparent/opaque/partial
+counts of `52648/12888/0` for three-vrm Seed-san, `52643/12893/0` for wgpu
+Seed-san, and `52644/12892/0` for Bevy Seed-san. The constraint sample reports
+`55050/10486/0` for three-vrm and `55055/10481/0` for both wgpu and Bevy.
+Double-sided materials now also carry a capture-shader flag so both wgpu and
+Bevy flip normals/TBN for back-facing fragments, matching three.js' MToon
+double-sided normal path.
 
 ## Next Renderer Work
 
