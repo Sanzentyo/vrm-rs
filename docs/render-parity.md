@@ -287,11 +287,17 @@ The runner treats transparent RGBA as part of the contract: three-vrm, wgpu,
 and Bevy captures are written through the same Rust PNG encoder, and the wgpu
 and Bevy alpha masks are checked against the three-vrm reference before PSNR is
 reported.
+The wgpu and Bevy capture examples build their mesh and skinning matrices from
+a shared headless runtime scene after a zero-delta `VrmRuntimeDriver` tick, so
+the static render path exercises the same constraint ordering, spring-rest
+capture, MToon pipeline hint, emissive-strength, first-person, and VRM0
+orientation adapter path as downstream engines.
 
 ## Next Renderer Work
 
-- Deepen the wgpu and Bevy capture paths with fuller MToon lighting and
-  expression/runtime state before raising PSNR thresholds.
+- Deepen the wgpu and Bevy capture paths with fuller MToon lighting/color
+  accumulation, screen-coordinate outline behavior, and material/shader parity
+  before raising PSNR thresholds.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
-- Use the generated heatmaps to prioritize the remaining MToon/runtime deltas.
+- Use the generated heatmaps to prioritize the remaining MToon shader deltas.

@@ -5,6 +5,9 @@
 //! and writes the same RGBA JSON artifact consumed by
 //! `tools/render-parity/compare-psnr.mjs`.
 
+#[path = "common/render_capture_scene.rs"]
+mod render_capture_scene;
+
 use bytemuck::{Pod, Zeroable};
 use clap::Parser;
 use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -199,8 +202,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
     let mut primitives = Vec::new();
+    let world_matrices = render_capture_scene::runtime_world_matrices(loaded)?;
 
-    for node in &loaded.scene.nodes {
+    for (node_index, node) in loaded.scene.nodes.iter().enumerate() {
         let Some(mesh_index) = node.mesh else {
             continue;
         };
@@ -208,11 +212,15 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
             continue;
         };
         let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
-        let world = orientation * node.world_matrix;
+        let node_world = world_matrices
+            .get(node_index)
+            .copied()
+            .unwrap_or(node.world_matrix);
+        let world = orientation * node_world;
         let skin_matrices = node
             .skin
             .and_then(|skin| loaded.skins.get(skin))
-            .map(|skin| skin_matrices(loaded, skin, orientation));
+            .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
         for primitive in &mesh.primitives {
             let surface = draw_primitive(loaded, primitive, world, skin_matrices.as_deref())?;
             primitives.push(surface.clone());
@@ -457,15 +465,20 @@ fn alpha_mode_code(mode: CaptureAlphaMode) -> f32 {
     }
 }
 
-fn skin_matrices(loaded: &LoadedVrm, skin: &GltfSkinData, orientation: Mat4) -> Vec<Mat4> {
+fn skin_matrices(
+    loaded: &LoadedVrm,
+    skin: &GltfSkinData,
+    world_matrices: &[Mat4],
+    orientation: Mat4,
+) -> Vec<Mat4> {
     skin.joints
         .iter()
         .enumerate()
         .map(|(index, joint)| {
-            let joint_world = loaded
-                .scene
-                .node(*joint)
-                .map(|node| node.world_matrix)
+            let joint_world = world_matrices
+                .get(*joint)
+                .copied()
+                .or_else(|| loaded.scene.node(*joint).map(|node| node.world_matrix))
                 .unwrap_or(Mat4::IDENTITY);
             let inverse_bind = skin
                 .inverse_bind_matrices

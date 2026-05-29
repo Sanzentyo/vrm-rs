@@ -4,6 +4,9 @@
 //! into an offscreen image and writes the shared RGBA JSON artifact consumed by
 //! `tools/render-parity/compare-psnr.mjs`.
 
+#[path = "common/render_capture_scene.rs"]
+mod render_capture_scene;
+
 use bevy::app::{AppExit, ScheduleRunnerPlugin};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
@@ -150,17 +153,16 @@ fn setup(
     loaded: Res<LoadedResource>,
     options: Res<CaptureOptions>,
     mut assets: CaptureAssets<'_>,
-    render_device: Res<RenderDevice>,
-    mut scene_controller: ResMut<SceneController>,
+    mut control: SetupControl<'_>,
 ) {
     let render_target = setup_render_target(
         &mut commands,
         &mut assets.images,
-        &render_device,
-        &mut scene_controller,
+        &control.render_device,
+        &mut control.scene_controller,
     );
 
-    spawn_vrm_meshes(
+    if let Err(error) = spawn_vrm_meshes(
         &mut commands,
         &loaded.0,
         &options,
@@ -168,7 +170,11 @@ fn setup(
         &mut assets.standard_materials,
         &mut assets.mtoon_materials,
         &mut assets.images,
-    );
+    ) {
+        let _ = control.sender.0.send(Err(error.to_string()));
+        control.app_exit_writer.write(AppExit::Success);
+        return;
+    }
 
     commands.spawn((
         DirectionalLight {
@@ -207,6 +213,14 @@ struct CaptureAssets<'w> {
     images: ResMut<'w, Assets<Image>>,
 }
 
+#[derive(SystemParam)]
+struct SetupControl<'w> {
+    render_device: Res<'w, RenderDevice>,
+    scene_controller: ResMut<'w, SceneController>,
+    sender: Res<'w, CaptureSender>,
+    app_exit_writer: MessageWriter<'w, AppExit>,
+}
+
 fn spawn_vrm_meshes(
     commands: &mut Commands,
     loaded: &LoadedVrm,
@@ -215,7 +229,7 @@ fn spawn_vrm_meshes(
     standard_materials: &mut Assets<StandardMaterial>,
     mtoon_materials: &mut Assets<BevyMtoonMaterial>,
     images: &mut Assets<Image>,
-) {
+) -> Result<(), Box<dyn Error>> {
     let image_handles = BevyImageHandles {
         color_images: loaded
             .images
@@ -245,19 +259,24 @@ fn spawn_vrm_meshes(
     };
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
     let mut primitives = Vec::new();
+    let world_matrices = render_capture_scene::runtime_world_matrices(loaded)?;
 
-    for node in &loaded.scene.nodes {
+    for (node_index, node) in loaded.scene.nodes.iter().enumerate() {
         let Some(mesh_index) = node.mesh else {
             continue;
         };
         let Some(mesh) = loaded.meshes.get(mesh_index) else {
             continue;
         };
-        let world = orientation * node.world_matrix;
+        let node_world = world_matrices
+            .get(node_index)
+            .copied()
+            .unwrap_or(node.world_matrix);
+        let world = orientation * node_world;
         let skin_matrices = node
             .skin
             .and_then(|skin| loaded.skins.get(skin))
-            .map(|skin| skin_matrices(loaded, skin, orientation));
+            .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
             let render_order = material_render_order(loaded, primitive.material);
@@ -313,6 +332,7 @@ fn spawn_vrm_meshes(
             }
         }
     }
+    Ok(())
 }
 
 fn bevy_outline_primitive(
@@ -911,15 +931,20 @@ fn primitive_normal(primitive: &GltfPrimitiveData, index: usize) -> GVec3 {
         .unwrap_or(GVec3::Z)
 }
 
-fn skin_matrices(loaded: &LoadedVrm, skin: &vrm_io::GltfSkinData, orientation: Mat4) -> Vec<Mat4> {
+fn skin_matrices(
+    loaded: &LoadedVrm,
+    skin: &vrm_io::GltfSkinData,
+    world_matrices: &[Mat4],
+    orientation: Mat4,
+) -> Vec<Mat4> {
     skin.joints
         .iter()
         .enumerate()
         .map(|(index, joint)| {
-            let joint_world = loaded
-                .scene
-                .node(*joint)
-                .map(|node| node.world_matrix)
+            let joint_world = world_matrices
+                .get(*joint)
+                .copied()
+                .or_else(|| loaded.scene.node(*joint).map(|node| node.world_matrix))
                 .unwrap_or(Mat4::IDENTITY);
             let inverse_bind = skin
                 .inverse_bind_matrices
