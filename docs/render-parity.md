@@ -181,6 +181,13 @@ defaults. It now also exposes glTF emissive factor, emissive texture index, and
 `KHR_materials_emissive_strength`; the wgpu capture uses a simple Lambert-style
 fallback for non-MToon glTF materials instead of feeding them through the MToon
 shader approximation, nudging the Seed-san baseline to `27.64 dB`.
+For MToon materials, `vrm-io` mirrors three-vrm's GLTFLoader ordering by
+building the ordinary glTF material parameters first and overlaying the
+`VRMC_materials_mtoon` extension. When the extension leaves them at default,
+the resolved core MToon material inherits glTF `baseColorFactor`,
+`baseColorTexture`, `normalTexture`, and `emissiveFactor`; renderer adapters can
+therefore consume the core MToon description without separately rejoining those
+glTF fields.
 The outline draw order now follows the core `MtoonPipelineHints` convention by
 placing outline primitives immediately after their base material order; the
 current Seed-san frame stays at `27.64 dB`, so this is a pass-order correctness
@@ -333,6 +340,9 @@ instead of treating `MeshStandardMaterial` inputs as pure Lambert. The
 2026-05-30 sweep after this change reports Seed-san wgpu `28.4228 dB`,
 Seed-san Bevy `28.2468 dB`, and unchanged all-MToon constraint values of
 wgpu/Bevy `34.2969 dB`.
+After glTF base/emissive/texture parameters are merged into resolved MToon
+materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
+while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`.
 
 ## Next Renderer Work
 

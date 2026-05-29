@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
-    ExpressionName, Feature, HumanBoneName, Resolved, RotationTrack, ScalarTrack, Transform,
-    TranslationTrack, VrmAnimation, VrmKind, VrmModel,
+    ExpressionName, Feature, HumanBoneName, MtoonMaterial, Resolved, RotationTrack, ScalarTrack,
+    TextureRef, Transform, TranslationTrack, VrmAnimation, VrmKind, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -361,6 +361,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         .with_node_count(node_count)
         .with_material_count(material_count)
         .build(bundle)?;
+    merge_gltf_material_params_into_mtoon(&mut asset.document.materials, &gltf_materials);
     expand_vrm0_spring_roots(&mut asset.document, &scene);
     if let Some(animations) = vrma_animations {
         asset.document.animation = animations
@@ -382,6 +383,29 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         images: image_data,
         warnings,
     })
+}
+
+fn merge_gltf_material_params_into_mtoon(
+    materials: &mut [vrm_core::Material],
+    gltf_materials: &[GltfMaterialData],
+) {
+    for (material, gltf) in materials.iter_mut().zip(gltf_materials) {
+        let Feature::Present(mtoon) = &mut material.mtoon else {
+            continue;
+        };
+        if mtoon.base_color_factor == MtoonMaterial::default().base_color_factor {
+            mtoon.base_color_factor = gltf.base_color_factor;
+        }
+        if mtoon.emissive_factor == MtoonMaterial::default().emissive_factor {
+            mtoon.emissive_factor = gltf.emissive_factor;
+        }
+        if mtoon.textures.main_texture.is_none() {
+            mtoon.textures.main_texture = gltf.base_color_texture.map(TextureRef);
+        }
+        if mtoon.textures.normal_texture.is_none() {
+            mtoon.textures.normal_texture = gltf.normal_texture.map(TextureRef);
+        }
+    }
 }
 
 fn extract_vrma_animations(
@@ -1319,6 +1343,14 @@ mod tests {
                 double_sided: false,
             }
         );
+        let mtoon = loaded.model().document().materials[0]
+            .mtoon
+            .as_ref()
+            .unwrap();
+        assert_eq!(mtoon.base_color_factor, [0.25, 0.5, 0.75, 1.0]);
+        assert_eq!(mtoon.emissive_factor, [0.1, 0.2, 0.3]);
+        assert_eq!(mtoon.textures.main_texture, Some(TextureRef(0)));
+        assert_eq!(mtoon.textures.normal_texture, Some(TextureRef(0)));
     }
 
     #[test]
