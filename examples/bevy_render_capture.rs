@@ -9,7 +9,9 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;
+use bevy::math::Vec4 as BVec4;
 use bevy::mesh::Indices;
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::Extract;
 use bevy::render::Render;
@@ -20,11 +22,13 @@ use bevy::render::render_graph::{
     self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
 };
 use bevy::render::render_resource::{
-    Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face, MapMode,
-    PollType, PrimitiveTopology, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat,
+    AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face,
+    MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
+    SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat,
     TextureUsages,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
+use bevy::shader::ShaderRef;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use crossbeam_channel::{Receiver, Sender};
@@ -44,7 +48,7 @@ use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
 
-const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
+const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse()?;
@@ -68,6 +72,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .disable::<WinitPlugin>(),
         )
         .add_plugins((ImageCopyPlugin, CaptureFramePlugin))
+        .add_plugins(MaterialPlugin::<BevyMtoonMaterial>::default())
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
         )))
@@ -199,7 +204,8 @@ fn setup(
         &mut commands,
         &loaded.0,
         &mut assets.meshes,
-        &mut assets.materials,
+        &mut assets.standard_materials,
+        &mut assets.mtoon_materials,
         &mut assets.images,
     );
 
@@ -234,7 +240,8 @@ fn setup(
 #[derive(SystemParam)]
 struct CaptureAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
-    materials: ResMut<'w, Assets<StandardMaterial>>,
+    standard_materials: ResMut<'w, Assets<StandardMaterial>>,
+    mtoon_materials: ResMut<'w, Assets<BevyMtoonMaterial>>,
     images: ResMut<'w, Assets<Image>>,
 }
 
@@ -242,14 +249,37 @@ fn spawn_vrm_meshes(
     commands: &mut Commands,
     loaded: &LoadedVrm,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    standard_materials: &mut Assets<StandardMaterial>,
+    mtoon_materials: &mut Assets<BevyMtoonMaterial>,
     images: &mut Assets<Image>,
 ) {
-    let image_handles = loaded
-        .images
-        .iter()
-        .map(|image| bevy_image(image).map(|image| images.add(image)))
-        .collect::<Vec<_>>();
+    let image_handles = BevyImageHandles {
+        color_images: loaded
+            .images
+            .iter()
+            .map(|image| bevy_image(image).map(|image| images.add(image)))
+            .collect::<Vec<_>>(),
+        linear_images: loaded
+            .images
+            .iter()
+            .map(|image| {
+                bevy_image_with_format(image, TextureFormat::Rgba8Unorm)
+                    .map(|image| images.add(image))
+            })
+            .collect::<Vec<_>>(),
+        white: images.add(single_pixel_image(
+            [255, 255, 255, 255],
+            TextureFormat::Rgba8UnormSrgb,
+        )),
+        black: images.add(single_pixel_image(
+            [0, 0, 0, 255],
+            TextureFormat::Rgba8UnormSrgb,
+        )),
+        neutral_normal: images.add(single_pixel_image(
+            [128, 128, 255, 255],
+            TextureFormat::Rgba8Unorm,
+        )),
+    };
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
     let mut primitives = Vec::new();
 
@@ -267,17 +297,22 @@ fn spawn_vrm_meshes(
             .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
-            let shading_shift_texture = material_shading_shift_image(loaded, primitive.material);
+            let render_order = material_render_order(loaded, primitive.material);
             let surface = BevyPrimitive {
-                mesh: bevy_mesh(
+                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref()),
+                material: BevyPrimitiveMaterial::Mtoon(bevy_mtoon_material(
+                    loaded,
                     primitive,
-                    world,
-                    skin_matrices.as_deref(),
                     shading,
-                    shading_shift_texture.as_ref(),
-                ),
-                material: bevy_material(loaded, primitive, &image_handles),
-                render_order: material_render_order(loaded, primitive.material),
+                    render_depth_bias(render_order),
+                    if primitive.tangents.len() == primitive.positions.len() {
+                        shading.normal_scale
+                    } else {
+                        0.0
+                    },
+                    &image_handles,
+                )),
+                render_order,
             };
             primitives.push(surface);
             if let Some(outline) =
@@ -290,12 +325,23 @@ fn spawn_vrm_meshes(
     primitives.sort_by_key(|primitive| primitive.render_order);
 
     for primitive in primitives {
-        let material = materials.add(primitive.material);
-        commands.spawn((
-            Mesh3d(meshes.add(primitive.mesh)),
-            MeshMaterial3d(material),
-            Transform::IDENTITY,
-        ));
+        let mesh = meshes.add(primitive.mesh);
+        match primitive.material {
+            BevyPrimitiveMaterial::Standard(material) => {
+                commands.spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(standard_materials.add(material)),
+                    Transform::IDENTITY,
+                ));
+            }
+            BevyPrimitiveMaterial::Mtoon(material) => {
+                commands.spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(mtoon_materials.add(material)),
+                    Transform::IDENTITY,
+                ));
+            }
+        }
     }
 }
 
@@ -318,10 +364,7 @@ fn bevy_outline_primitive(
         mtoon.outline_color_factor[2],
         mtoon.base_color_factor[3],
     ];
-    let width_texture = mtoon
-        .textures
-        .outline_width_multiply_texture
-        .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
+    let width_texture = material_outline_width_image(loaded, primitive.material);
     let mesh = bevy_outline_mesh(
         primitive,
         world,
@@ -335,11 +378,12 @@ fn bevy_outline_primitive(
         double_sided: false,
         cull_mode: Some(Face::Front),
         alpha_mode: AlphaMode::Opaque,
+        depth_bias: render_depth_bias(material_render_order(loaded, primitive.material) + 1),
         ..default()
     };
     Some(BevyPrimitive {
         mesh,
-        material,
+        material: BevyPrimitiveMaterial::Standard(material),
         render_order: material_render_order(loaded, primitive.material).saturating_add(1),
     })
 }
@@ -384,12 +428,32 @@ fn bevy_outline_mesh(
             normal.to_array()
         })
         .collect::<Vec<_>>();
+    let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
+        primitive
+            .tangents
+            .iter()
+            .enumerate()
+            .map(|(index, tangent)| {
+                let direction = transform_direction(
+                    GVec3::new(tangent[0], tangent[1], tangent[2]),
+                    world,
+                    skin_matrices,
+                    primitive.joints_0.get(index).copied(),
+                    primitive.weights_0.get(index).copied(),
+                );
+                [direction.x, direction.y, direction.z, tangent[3]]
+            })
+            .collect::<Vec<_>>()
+    });
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    if let Some(tangents) = tangents {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    }
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
@@ -408,17 +472,24 @@ fn primitive_tex_coord(primitive: &GltfPrimitiveData, index: usize) -> [f32; 2] 
 
 struct BevyPrimitive {
     mesh: Mesh,
-    material: StandardMaterial,
+    material: BevyPrimitiveMaterial,
     render_order: i32,
 }
 
-fn bevy_mesh(
-    primitive: &GltfPrimitiveData,
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    shading: MaterialShading,
-    shading_shift_texture: Option<&CpuRgbaImage>,
-) -> Mesh {
+enum BevyPrimitiveMaterial {
+    Standard(StandardMaterial),
+    Mtoon(BevyMtoonMaterial),
+}
+
+struct BevyImageHandles {
+    color_images: Vec<Option<Handle<Image>>>,
+    linear_images: Vec<Option<Handle<Image>>>,
+    white: Handle<Image>,
+    black: Handle<Image>,
+    neutral_normal: Handle<Image>,
+}
+
+fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&[Mat4]>) -> Mesh {
     let positions = primitive
         .positions
         .iter()
@@ -448,25 +519,32 @@ fn bevy_mesh(
             normal.to_array()
         })
         .collect::<Vec<_>>();
-    let colors = normals
-        .iter()
-        .enumerate()
-        .map(|(index, normal)| {
-            vertex_mtoon_color(
-                GVec3::from_array(*normal),
-                primitive_tex_coord(primitive, index),
-                shading,
-                shading_shift_texture,
-            )
-        })
-        .collect::<Vec<_>>();
+    let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
+        primitive
+            .tangents
+            .iter()
+            .enumerate()
+            .map(|(index, tangent)| {
+                let direction = transform_direction(
+                    GVec3::new(tangent[0], tangent[1], tangent[2]),
+                    world,
+                    skin_matrices,
+                    primitive.joints_0.get(index).copied(),
+                    primitive.weights_0.get(index).copied(),
+                );
+                [direction.x, direction.y, direction.z, tangent[3]]
+            })
+            .collect::<Vec<_>>()
+    });
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    if let Some(tangents) = tangents {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    }
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
@@ -484,14 +562,21 @@ struct MaterialShading {
     shading_shift_texture_scale: f32,
     gi_equalization: f32,
     emissive: [f32; 3],
+    matcap_factor: [f32; 3],
+    parametric_rim_color: [f32; 3],
+    rim_lighting_mix: f32,
+    parametric_rim_fresnel_power: f32,
+    parametric_rim_lift: f32,
+    normal_scale: f32,
+    pbr_fallback: bool,
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
     if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| {
-            let mtoon = material.mtoon.as_ref()?;
-            let (emissive_strength, _) = material.effective_emissive_strength();
+        .and_then(|core_material| {
+            let mtoon = core_material.mtoon.as_ref()?;
+            let (emissive_strength, _) = core_material.effective_emissive_strength();
             Some(MaterialShading {
                 base_color: mtoon.base_color_factor,
                 shade_color: [
@@ -509,6 +594,17 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                     mtoon.emissive_factor[1] * emissive_strength.0,
                     mtoon.emissive_factor[2] * emissive_strength.0,
                 ],
+                matcap_factor: mtoon.matcap_factor,
+                parametric_rim_color: mtoon.parametric_rim_color_factor,
+                rim_lighting_mix: mtoon.rim_lighting_mix_factor,
+                parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
+                parametric_rim_lift: mtoon.parametric_rim_lift_factor,
+                normal_scale: material_normal_texture(loaded, material).map_or(0.0, |_| {
+                    material
+                        .and_then(|index| loaded.gltf_materials.get(index))
+                        .map_or(1.0, |gltf_material| gltf_material.normal_scale)
+                }),
+                pbr_fallback: false,
             })
         })
     {
@@ -533,46 +629,219 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         shading_shift_texture_scale: 1.0,
         gi_equalization: 0.0,
         emissive,
+        matcap_factor: [0.0, 0.0, 0.0],
+        parametric_rim_color: [0.0, 0.0, 0.0],
+        rim_lighting_mix: 1.0,
+        parametric_rim_fresnel_power: 5.0,
+        parametric_rim_lift: 0.0,
+        normal_scale: material_normal_texture(loaded, material)
+            .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
+        pbr_fallback: true,
     }
 }
 
-fn vertex_mtoon_color(
-    normal: GVec3,
-    tex_coord: [f32; 2],
-    shading: MaterialShading,
-    shading_shift_texture: Option<&CpuRgbaImage>,
-) -> [f32; 4] {
-    let ndotl = normal
-        .normalize_or_zero()
-        .dot(GVec3::new(-1.0, -1.0, -1.0).normalize())
-        .clamp(-1.0, 1.0);
-    let shift = shading.shading_shift
-        + shading_shift_texture
-            .map(|image| image.sample_red(tex_coord) * shading.shading_shift_texture_scale)
-            .unwrap_or(0.0);
-    let toon = linearstep(
-        -1.0 + shading.shading_toony,
-        1.0 - shading.shading_toony,
-        ndotl + shift,
-    );
-    let diffuse = GVec3::from_array([
-        shading.base_color[0],
-        shading.base_color[1],
-        shading.base_color[2],
-    ]);
-    let shade = GVec3::from_array([
-        shading.shade_color[0],
-        shading.shade_color[1],
-        shading.shade_color[2],
-    ]);
-    let ambient = diffuse * (0.1 + 0.15 * shading.gi_equalization);
-    let emissive = GVec3::from_array(shading.emissive);
-    let color = (shade.lerp(diffuse, toon) + ambient + emissive) * MTOON_REFERENCE_EXPOSURE;
-    [color.x, color.y, color.z, shading.base_color[3]]
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+#[uniform(0, BevyMtoonUniform)]
+#[bind_group_data(BevyMtoonKey)]
+struct BevyMtoonMaterial {
+    base_color: BVec4,
+    shade_color: BVec4,
+    shading: BVec4,
+    emissive: BVec4,
+    matcap_factor: BVec4,
+    rim_color: BVec4,
+    rim_params: BVec4,
+    pipeline: BVec4,
+    #[texture(1)]
+    #[sampler(2)]
+    base_texture: Handle<Image>,
+    #[texture(3)]
+    #[sampler(4)]
+    shade_texture: Handle<Image>,
+    #[texture(5)]
+    #[sampler(6)]
+    shading_shift_texture: Handle<Image>,
+    #[texture(7)]
+    #[sampler(8)]
+    matcap_texture: Handle<Image>,
+    #[texture(9)]
+    #[sampler(10)]
+    rim_texture: Handle<Image>,
+    #[texture(11)]
+    #[sampler(12)]
+    normal_texture: Handle<Image>,
+    alpha_mode: AlphaMode,
+    cull_mode: Option<Face>,
+    depth_bias: f32,
 }
 
-fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
-    ((value - edge0) / (edge1 - edge0).max(0.00001)).clamp(0.0, 1.0)
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct BevyMtoonKey {
+    cull_mode: Option<Face>,
+}
+
+#[derive(Clone, Copy, Debug, ShaderType)]
+struct BevyMtoonUniform {
+    base_color: BVec4,
+    shade_color: BVec4,
+    shading: BVec4,
+    emissive: BVec4,
+    matcap_factor: BVec4,
+    rim_color: BVec4,
+    rim_params: BVec4,
+    pipeline: BVec4,
+}
+
+impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
+    fn from(material: &BevyMtoonMaterial) -> Self {
+        Self {
+            base_color: material.base_color,
+            shade_color: material.shade_color,
+            shading: material.shading,
+            emissive: material.emissive,
+            matcap_factor: material.matcap_factor,
+            rim_color: material.rim_color,
+            rim_params: material.rim_params,
+            pipeline: material.pipeline,
+        }
+    }
+}
+
+impl From<&BevyMtoonMaterial> for BevyMtoonKey {
+    fn from(material: &BevyMtoonMaterial) -> Self {
+        Self {
+            cull_mode: material.cull_mode,
+        }
+    }
+}
+
+impl Material for BevyMtoonMaterial {
+    fn fragment_shader() -> ShaderRef {
+        MTOON_SHADER_ASSET_PATH.into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    fn depth_bias(&self) -> f32 {
+        self.depth_bias
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
+        Ok(())
+    }
+}
+
+fn bevy_mtoon_material(
+    loaded: &LoadedVrm,
+    primitive: &GltfPrimitiveData,
+    shading: MaterialShading,
+    depth_bias: f32,
+    normal_scale: f32,
+    image_handles: &BevyImageHandles,
+) -> BevyMtoonMaterial {
+    let alpha_mode = material_alpha_mode(loaded, primitive.material);
+    BevyMtoonMaterial {
+        base_color: BVec4::from_array(shading.base_color),
+        shade_color: BVec4::from_array(shading.shade_color),
+        shading: BVec4::new(
+            shading.shading_shift,
+            shading.shading_toony,
+            shading.gi_equalization,
+            shading.shading_shift_texture_scale,
+        ),
+        emissive: BVec4::new(
+            shading.emissive[0],
+            shading.emissive[1],
+            shading.emissive[2],
+            0.0,
+        ),
+        matcap_factor: BVec4::new(
+            shading.matcap_factor[0],
+            shading.matcap_factor[1],
+            shading.matcap_factor[2],
+            0.0,
+        ),
+        rim_color: BVec4::new(
+            shading.parametric_rim_color[0],
+            shading.parametric_rim_color[1],
+            shading.parametric_rim_color[2],
+            0.0,
+        ),
+        rim_params: BVec4::new(
+            shading.rim_lighting_mix,
+            shading.parametric_rim_fresnel_power,
+            shading.parametric_rim_lift,
+            if shading.pbr_fallback { 1.0 } else { 0.0 },
+        ),
+        pipeline: BVec4::new(
+            alpha_mode_code(alpha_mode),
+            alpha_cutoff(alpha_mode),
+            normal_scale,
+            0.0,
+        ),
+        base_texture: material_main_image(loaded, primitive.material)
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.white.clone()),
+        shade_texture: material_shade_image(loaded, primitive.material)
+            .or_else(|| material_main_image(loaded, primitive.material))
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.white.clone()),
+        shading_shift_texture: material_shading_shift_image_index(loaded, primitive.material)
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.black.clone()),
+        matcap_texture: material_matcap_image(loaded, primitive.material)
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.black.clone()),
+        rim_texture: material_rim_image(loaded, primitive.material)
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.white.clone()),
+        normal_texture: material_normal_texture(loaded, primitive.material)
+            .and_then(|texture| loaded.textures.get(texture))
+            .map(|texture| texture.image)
+            .and_then(|image| image_handles.linear_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.neutral_normal.clone()),
+        alpha_mode,
+        cull_mode: material_cull_mode(loaded, primitive.material),
+        depth_bias,
+    }
+}
+
+fn alpha_mode_code(mode: AlphaMode) -> f32 {
+    match mode {
+        AlphaMode::Opaque | AlphaMode::AlphaToCoverage => 0.0,
+        AlphaMode::Mask(_) => 1.0,
+        AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply => 2.0,
+    }
+}
+
+fn alpha_cutoff(mode: AlphaMode) -> f32 {
+    match mode {
+        AlphaMode::Mask(cutoff) => cutoff,
+        AlphaMode::Opaque
+        | AlphaMode::Blend
+        | AlphaMode::Premultiplied
+        | AlphaMode::Add
+        | AlphaMode::Multiply
+        | AlphaMode::AlphaToCoverage => 0.5,
+    }
 }
 
 fn primitive_normal(primitive: &GltfPrimitiveData, index: usize) -> GVec3 {
@@ -644,51 +913,44 @@ fn transform_vertex(
     }
 }
 
+fn transform_direction(
+    direction: GVec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> GVec3 {
+    let Some(skin_matrices) = skin_matrices else {
+        return world.transform_vector3(direction).normalize_or_zero();
+    };
+    let (Some(joints), Some(weights)) = (joints, weights) else {
+        return world.transform_vector3(direction).normalize_or_zero();
+    };
+
+    let mut transformed = GVec3::ZERO;
+    let mut total_weight = 0.0;
+    for (joint, weight) in joints.into_iter().zip(weights) {
+        if weight <= 0.0 {
+            continue;
+        }
+        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
+            continue;
+        };
+        transformed += matrix.transform_vector3(direction) * weight;
+        total_weight += weight;
+    }
+    if total_weight > 0.0 {
+        transformed.normalize_or_zero()
+    } else {
+        world.transform_vector3(direction).normalize_or_zero()
+    }
+}
+
 fn tex_coords_or_default(vertex_count: usize, tex_coords: &[[f32; 2]]) -> Vec<[f32; 2]> {
     if tex_coords.len() == vertex_count {
         tex_coords.to_vec()
     } else {
         vec![[0.0, 0.0]; vertex_count]
-    }
-}
-
-fn bevy_material(
-    loaded: &LoadedVrm,
-    primitive: &GltfPrimitiveData,
-    image_handles: &[Option<Handle<Image>>],
-) -> StandardMaterial {
-    let base_color = primitive
-        .material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .map(|_| Color::WHITE)
-        .or_else(|| {
-            primitive
-                .material
-                .and_then(|index| loaded.gltf_materials.get(index))
-                .map(|material| {
-                    Color::srgba(
-                        material.base_color_factor[0],
-                        material.base_color_factor[1],
-                        material.base_color_factor[2],
-                        material.base_color_factor[3],
-                    )
-                })
-        })
-        .unwrap_or(Color::srgb(0.78, 0.78, 0.78));
-
-    StandardMaterial {
-        base_color,
-        base_color_texture: material_main_image(loaded, primitive.material)
-            .and_then(|image| image_handles.get(image))
-            .and_then(Clone::clone),
-        unlit: true,
-        double_sided: material_cull_mode(loaded, primitive.material).is_none(),
-        perceptual_roughness: 1.0,
-        reflectance: 0.0,
-        cull_mode: material_cull_mode(loaded, primitive.material),
-        alpha_mode: material_alpha_mode(loaded, primitive.material),
-        ..default()
     }
 }
 
@@ -706,6 +968,10 @@ fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
     } else {
         render_order
     }
+}
+
+fn render_depth_bias(render_order: i32) -> f32 {
+    render_order as f32
 }
 
 fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Face> {
@@ -748,6 +1014,19 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
         .unwrap_or(mtoon_alpha)
 }
 
+fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let mtoon_texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.normal_texture)
+        .map(|texture| texture.0);
+    mtoon_texture.or_else(|| {
+        material
+            .and_then(|index| loaded.gltf_materials.get(index))
+            .and_then(|material| material.normal_texture)
+    })
+}
+
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
     let mtoon_texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
@@ -761,14 +1040,49 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
     loaded.textures.get(texture).map(|texture| texture.image)
 }
 
-fn material_shading_shift_image(
+fn material_shade_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.shade_multiply_texture)?;
+    loaded.textures.get(texture.0).map(|texture| texture.image)
+}
+
+fn material_shading_shift_image_index(
+    loaded: &LoadedVrm,
+    material: Option<usize>,
+) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.shading_shift_texture)?;
+    loaded.textures.get(texture.0).map(|texture| texture.image)
+}
+
+fn material_matcap_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.matcap_texture)?;
+    loaded.textures.get(texture.0).map(|texture| texture.image)
+}
+
+fn material_rim_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)?;
+    loaded.textures.get(texture.0).map(|texture| texture.image)
+}
+
+fn material_outline_width_image(
     loaded: &LoadedVrm,
     material: Option<usize>,
 ) -> Option<CpuRgbaImage> {
     material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.shading_shift_texture)
+        .and_then(|mtoon| mtoon.textures.outline_width_multiply_texture)
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0))
 }
 
@@ -783,10 +1097,6 @@ fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRg
 }
 
 impl CpuRgbaImage {
-    fn sample_red(&self, tex_coord: [f32; 2]) -> f32 {
-        self.sample_channel(tex_coord, 0, 255)
-    }
-
     fn sample_green(&self, tex_coord: [f32; 2]) -> f32 {
         self.sample_channel(tex_coord, 1, 255)
     }
@@ -830,6 +1140,10 @@ fn lerp(left: f32, right: f32, t: f32) -> f32 {
 }
 
 fn bevy_image(image: &ImageData) -> Option<Image> {
+    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb)
+}
+
+fn bevy_image_with_format(image: &ImageData, format: TextureFormat) -> Option<Image> {
     Some(Image::new(
         Extent3d {
             width: image.width,
@@ -838,9 +1152,23 @@ fn bevy_image(image: &ImageData) -> Option<Image> {
         },
         bevy::render::render_resource::TextureDimension::D2,
         image_rgba8(image)?,
-        TextureFormat::Rgba8UnormSrgb,
+        format,
         RenderAssetUsages::default(),
     ))
+}
+
+fn single_pixel_image(rgba: [u8; 4], format: TextureFormat) -> Image {
+    Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        rgba.to_vec(),
+        format,
+        RenderAssetUsages::default(),
+    )
 }
 
 fn image_rgba8(image: &ImageData) -> Option<Vec<u8>> {

@@ -168,15 +168,15 @@ missing, the capture path generates triangle tangents from transformed
 positions/UVs and disables normal-map contribution on vertices where no stable
 tangent frame can be accumulated.
 This is still a failing visual parity baseline: the current path does not yet
-apply expression state, Bevy-side normal/custom MToon shading, screen-space
-outline details, or exact three.js/MToon light accumulation.
+apply expression state, screen-space outline details, or exact
+three.js/MToon light accumulation.
 
 ## Bevy Capture
 
-`examples/bevy_render_capture.rs` is the first Bevy 0.18.1 headless renderer
-path. It uses Bevy's offscreen `RenderTarget::Image`, a small render-graph
-copy node, real `LoadedVrm::meshes`, decoded texture images, and an unlit
-`StandardMaterial` baseline to write the same RGBA JSON plus optional PNG:
+`examples/bevy_render_capture.rs` is the Bevy 0.18.1 headless renderer path. It
+uses Bevy's offscreen `RenderTarget::Image`, a small render-graph copy node,
+real `LoadedVrm::meshes`, decoded texture images, and a custom MToon material
+for base passes to write the same RGBA JSON plus optional PNG:
 
 ```powershell
 cargo run --example bevy_render_capture -- `
@@ -188,11 +188,11 @@ cargo run --example bevy_render_capture -- `
   --camera-z 3.0
 ```
 
-The local Bevy smoke run on 2026-05-29 produced a front-facing Seed-san
-capture and a first PSNR baseline of `10.60 dB` against the three-vrm
-reference. This is an intentionally failing renderer baseline: it proves Bevy
-readback integration works on Bevy 0.18.1, but it does not yet apply skinning,
-MToon shading, material render ordering, outlines, or expression/runtime state.
+The first local Bevy smoke run on 2026-05-29 produced a front-facing Seed-san
+capture and a `10.60 dB` baseline against the three-vrm reference. That
+historical baseline proved Bevy readback integration worked on Bevy 0.18.1
+before the capture path gained skinning, MToon policy, outlines, and a custom
+shader.
 
 The next Bevy slice now mirrors the wgpu capture's rest-pose mesh preparation:
 glTF node transforms and CPU rest-skinning are baked into the generated Bevy
@@ -217,9 +217,21 @@ instead of a custom MToon shader/runtime path. Feeding MToon
 `shadingShiftTexture` into the baked vertex-color toon threshold nudges the
 current Bevy baseline to `25.00 dB` while preserving Bevy's main texture path.
 Bevy outline primitives now use the same base-plus-one pass ordering as the
-renderer-agnostic MToon pipeline hints. The local Seed-san PSNR remains
-`25.00 dB`, but the example no longer relies on equal-order stable sorting for
-base/outline sequencing.
+renderer-agnostic MToon pipeline hints. The example also carries the material
+order into Bevy's material depth-bias hook, but broader transparent/overlapping
+fixture coverage is still needed before treating that as complete MToon render
+queue parity.
+
+The current Bevy slice replaces the stock-material bake for base passes with a
+custom Bevy 0.18.1 `MaterialPlugin` path and a source-controlled MToon capture
+WGSL shader. The material binds base, shade, shading-shift, matcap, rim, and
+normal textures plus MToon scalar/color uniforms; normal textures are uploaded
+as linear images and sampled when glTF tangents are present. The local
+2026-05-30 Seed-san Bevy-vs-three-vrm PSNR is now `25.06 dB`. This confirms the
+custom shader path is wired correctly, but the small improvement means the next
+Bevy parity gains need to come from exact three-vrm MToon light accumulation,
+runtime expression/pose state, and screen/clip-space outline behavior rather
+than more `StandardMaterial` tuning.
 
 ## Review Criteria
 
@@ -241,8 +253,6 @@ numeric report before declaring parity. The local render runner writes
 
 - Deepen the wgpu and Bevy capture paths with fuller MToon lighting and
   expression/runtime state before raising PSNR thresholds.
-- For Bevy specifically, prefer a custom MToon material/shader path next.
-  Measured attempts to push more MToon behavior into unlit `StandardMaterial`
-  vertex colors, including normal maps, matcap/rim, and outline-width
-  rescaling, all reduced the Seed-san PSNR slightly.
+- For Bevy specifically, deepen the new custom MToon material/shader path
+  instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize the remaining MToon/runtime deltas.
