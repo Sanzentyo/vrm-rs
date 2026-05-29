@@ -93,7 +93,12 @@ with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
 not from a browser canvas screenshot/data URL.
 The PSNR report additionally includes alpha counts/mismatches plus RGB-only
 opaque, visible, and 1px-interior metrics to identify whether remaining deltas
-come from silhouettes/alpha or from opaque-surface shading.
+come from silhouettes/alpha or from opaque-surface shading. When
+`--render-fail-under N` is used, the local runner evaluates the selected
+`--render-psnr-metric`, which defaults to `rgb-visible` for transparent
+canonical captures. Use `--render-psnr-metric rgba` for old full-buffer checks,
+or `rgb-opaque`/`rgb-interior1px` when edge alpha disagreement should be kept
+out of the threshold.
 
 ## Coverage
 

@@ -30,14 +30,18 @@ node tools\render-parity\compare-psnr.mjs `
   --expected .external-fixtures\render-parity\three-vrm\Seed-san.frame000.rgba.json `
   --actual .external-fixtures\render-parity\wgpu\Seed-san.frame000.rgba.json `
   --out .external-fixtures\render-parity\reports\Seed-san.wgpu.frame000.psnr.json `
+  --metric rgb-visible `
   --fail-under 40
 ```
 
 The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
-delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, and
-pass/fail status. Exact matches report `"Infinity"` for PSNR. The pass/fail
-threshold still uses the full RGBA PSNR; the RGB-only fields are diagnostic
-helpers for separating alpha/edge disagreement from opaque-surface shading.
+delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
+selected metric, and pass/fail status. Exact matches report `"Infinity"` for
+PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
+`--metric rgb-visible`, and `--metric rgb-interior1px`; pass/fail thresholds
+use the selected metric. The local render-parity runner defaults to
+`rgb-visible` because the canonical transparent background should not let
+fully transparent pixels dominate compatibility decisions.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
@@ -368,10 +372,14 @@ opaque-black official sample sweep reported `transparent/opaque/partial =
 values of Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, constraint
 sample wgpu/Bevy `34.8595 dB`, and UV animation sample wgpu/Bevy `36.1575 dB`
 at time `0`. The current default is transparent again; the transparent sweep
-reports Seed-san wgpu `28.4228 dB`, Seed-san Bevy `28.2468 dB`, constraint
-sample wgpu/Bevy `34.3346 dB`, and UV animation sample wgpu/Bevy `36.1575 dB`.
-The transparent time `1.0` UV-animation sweep reports wgpu/Bevy `35.9209 dB`.
-Use explicit `opaque-black` only when the review needs opaque alpha.
+reports full-RGBA PSNR of Seed-san wgpu `28.4228 dB`, Seed-san Bevy
+`28.2468 dB`, constraint sample wgpu/Bevy `34.3346 dB`, and UV animation
+sample wgpu/Bevy `36.1575 dB`. The selected `rgb-visible` metric for the same
+reports is Seed-san wgpu `20.4135 dB`, Seed-san Bevy `20.3099 dB`, constraint
+sample wgpu/Bevy `25.6527 dB`, and UV animation time `0` wgpu/Bevy
+`27.4533 dB`. The transparent time `1.0` UV-animation sweep reports full-RGBA
+wgpu/Bevy `35.9209 dB` and selected `rgb-visible` wgpu/Bevy `27.2167 dB`. Use
+explicit `opaque-black` only when the review needs opaque alpha.
 Static `KHR_texture_transform` data is now retained through the non-rendering
 layers: VRMC MToon texture infos round-trip nested transform extensions,
 `MtoonTextureTransformSet` stores slot-specific transforms in core, and

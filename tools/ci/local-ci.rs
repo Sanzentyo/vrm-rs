@@ -79,6 +79,8 @@ struct Options {
     render_mtoon_time: f32,
     #[arg(long)]
     render_fail_under: Option<f32>,
+    #[arg(long, value_enum, default_value_t = RenderPsnrMetric::RgbVisible)]
+    render_psnr_metric: RenderPsnrMetric,
     #[arg(long, default_value_t = 128)]
     render_alpha_mismatch_tolerance: usize,
     #[arg(long, value_enum, default_value_t = RenderBackground::Transparent)]
@@ -99,6 +101,25 @@ struct Options {
 enum RenderBackground {
     OpaqueBlack,
     Transparent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RenderPsnrMetric {
+    Rgba,
+    RgbOpaque,
+    RgbVisible,
+    RgbInterior1px,
+}
+
+impl RenderPsnrMetric {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Rgba => "rgba",
+            Self::RgbOpaque => "rgb-opaque",
+            Self::RgbVisible => "rgb-visible",
+            Self::RgbInterior1px => "rgb-interior1px",
+        }
+    }
 }
 
 impl RenderBackground {
@@ -677,6 +698,8 @@ fn compare_render_pair(
         path(&render_artifact(options, fixture, renderer)).as_str(),
         "--out",
         path(&render_report(options, fixture, renderer)).as_str(),
+        "--metric",
+        options.render_psnr_metric.as_cli_value(),
     ]);
     if let Some(fail_under) = options.render_fail_under {
         command.args(["--fail-under", fail_under.to_string().as_str()]);

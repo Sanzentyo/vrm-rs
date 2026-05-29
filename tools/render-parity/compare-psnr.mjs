@@ -22,13 +22,19 @@ const expectedPath = args.get('expected');
 const actualPath = args.get('actual');
 const outPath = args.get('out');
 const failUnder = args.has('fail-under') ? Number(args.get('fail-under')) : null;
+const metricName = args.get('metric') ?? 'rgba';
+const metricNames = new Set(['rgba', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px']);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--fail-under 40]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
   console.error(`invalid --fail-under: ${args.get('fail-under')}`);
+  process.exit(2);
+}
+if (!metricNames.has(metricName)) {
+  console.error(`invalid --metric: ${metricName}; expected one of ${Array.from(metricNames).join(', ')}`);
   process.exit(2);
 }
 
@@ -48,6 +54,12 @@ const opaqueRgb = compareChannels((pixel) => expected.rgba[pixel + 3] === 255 &&
 const visibleRgb = compareChannels((pixel) => expected.rgba[pixel + 3] > 0 || actual.rgba[pixel + 3] > 0, [0, 1, 2]);
 const interiorRgb = compareChannels((pixel) => isInteriorOpaque(pixel), [0, 1, 2]);
 const alpha = alphaStats();
+const selectedMetric = selectMetric(metricName, {
+  rgba: fullImage,
+  'rgb-opaque': opaqueRgb,
+  'rgb-visible': visibleRgb,
+  'rgb-interior1px': interiorRgb,
+});
 const mse = fullImage.mse;
 const psnr = fullImage.psnr;
 const report = {
@@ -64,7 +76,11 @@ const report = {
   rgbOpaque: metricReport(opaqueRgb),
   rgbVisible: metricReport(visibleRgb),
   rgbInterior1px: metricReport(interiorRgb),
-  pass: failUnder == null || psnr >= failUnder,
+  selectedMetric: {
+    name: metricName,
+    ...metricReport(selectedMetric),
+  },
+  pass: failUnder == null || selectedMetric.psnr >= failUnder,
   failUnder,
 };
 
@@ -77,7 +93,7 @@ if (outPath) {
 }
 
 if (!report.pass) {
-  console.error(`PSNR ${psnr.toFixed(4)} dB is below threshold ${failUnder} dB`);
+  console.error(`PSNR ${selectedMetric.psnr.toFixed(4)} dB for ${metricName} is below threshold ${failUnder} dB`);
   process.exit(4);
 }
 
@@ -156,6 +172,14 @@ function metricReport(metric) {
     maxChannelDelta: metric.maxChannelDelta,
     maxPixelDelta: metric.maxPixelDelta,
   };
+}
+
+function selectMetric(name, metrics) {
+  const metric = metrics[name];
+  if (metric.channelCount === 0) {
+    throw new Error(`selected metric ${name} has no comparable pixels`);
+  }
+  return metric;
 }
 
 function alphaStats() {
