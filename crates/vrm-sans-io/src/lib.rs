@@ -602,9 +602,16 @@ fn vec3_vrm0_collider(value: Option<[f32; 3]>) -> Vec3 {
 
 fn map_vrm0_material(material: vrm0::Material) -> Material {
     let render_queue = material.render_queue.unwrap_or(2000);
-    let queue = if render_queue >= 3000 {
+    let float_properties = material.float_properties.unwrap_or_default();
+    let vector_properties = material.vector_properties.unwrap_or_default();
+    let texture_properties = material.texture_properties.unwrap_or_default();
+    let keyword_map = material.keyword_map.unwrap_or_default();
+    let is_transparent = keyword_map.contains_key("_ALPHABLEND_ON") || render_queue >= 3000;
+    let is_cutoff =
+        keyword_map.contains_key("_ALPHATEST_ON") || (2450..3000).contains(&render_queue);
+    let queue = if is_transparent {
         MtoonRenderQueue::Transparent
-    } else if render_queue >= 2450 {
+    } else if is_cutoff {
         MtoonRenderQueue::AlphaTest
     } else {
         MtoonRenderQueue::Opaque
@@ -616,12 +623,12 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
             MtoonRenderQueue::Transparent => 3000,
         };
 
-    let float_properties = material.float_properties.unwrap_or_default();
-    let vector_properties = material.vector_properties.unwrap_or_default();
-    let texture_properties = material.texture_properties.unwrap_or_default();
     let shader = material.shader.unwrap_or_default();
+    let (shading_shift_factor, shading_toony_factor) = map_vrm0_mtoon_shading(&float_properties);
+    let gi_equalization_factor = map_vrm0_gi_equalization(&float_properties);
     let mtoon = shader.contains("MToon").then(|| MtoonMaterial {
-        transparent_with_z_write: float_property(&float_properties, "_ZWrite").unwrap_or(0.0) > 0.0,
+        transparent_with_z_write: is_transparent
+            && float_property(&float_properties, "_ZWrite").unwrap_or(0.0) > 0.0,
         render_queue_offset_number,
         render_queue: queue,
         cull_mode: map_vrm0_cull_mode(float_property(&float_properties, "_CullMode")),
@@ -639,28 +646,26 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
             uv_animation_mask_texture: texture_property(&texture_properties, "_UvAnimMaskTexture"),
         },
         texture_transforms: MtoonTextureTransformSet::default(),
-        base_color_factor: vec4_property(&vector_properties, "_Color")
+        base_color_factor: vec4_property_gamma_rgb(&vector_properties, "_Color")
             .unwrap_or(MtoonMaterial::default().base_color_factor),
-        emissive_factor: vec3_property(&vector_properties, "_EmissionColor")
+        emissive_factor: vec3_property_gamma(&vector_properties, "_EmissionColor")
             .unwrap_or(MtoonMaterial::default().emissive_factor),
         cutoff_factor: float_property(&float_properties, "_Cutoff")
             .unwrap_or(MtoonMaterial::default().cutoff_factor),
-        shade_color_factor: vec3_property(&vector_properties, "_ShadeColor")
-            .unwrap_or([0.97, 0.81, 0.86]),
+        shade_color_factor: vec3_property_gamma(&vector_properties, "_ShadeColor")
+            .unwrap_or_else(|| gamma_vec3([0.97, 0.81, 0.86])),
         receive_shadow_rate_factor: float_property(&float_properties, "_ReceiveShadowRate")
             .unwrap_or(MtoonMaterial::default().receive_shadow_rate_factor),
         shading_grade_rate_factor: float_property(&float_properties, "_ShadingGradeRate")
             .unwrap_or(MtoonMaterial::default().shading_grade_rate_factor),
-        shading_shift_factor: float_property(&float_properties, "_ShadeShift").unwrap_or(0.0),
+        shading_shift_factor,
         shading_shift_texture_scale: MtoonMaterial::default().shading_shift_texture_scale,
-        shading_toony_factor: float_property(&float_properties, "_ShadeToony").unwrap_or(0.9),
+        shading_toony_factor,
         light_color_attenuation_factor: float_property(&float_properties, "_LightColorAttenuation")
             .unwrap_or(MtoonMaterial::default().light_color_attenuation_factor),
-        gi_equalization_factor: float_property(&float_properties, "_IndirectLightIntensity")
-            .unwrap_or(0.9),
-        matcap_factor: vec3_property(&vector_properties, "_MatcapColor")
-            .unwrap_or(MtoonMaterial::default().matcap_factor),
-        parametric_rim_color_factor: vec3_property(&vector_properties, "_RimColor")
+        gi_equalization_factor,
+        matcap_factor: MtoonMaterial::default().matcap_factor,
+        parametric_rim_color_factor: vec3_property_gamma(&vector_properties, "_RimColor")
             .unwrap_or(MtoonMaterial::default().parametric_rim_color_factor),
         rim_lighting_mix_factor: float_property(&float_properties, "_RimLightingMix")
             .unwrap_or(MtoonMaterial::default().rim_lighting_mix_factor),
@@ -675,14 +680,19 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
             2 => OutlineWidthMode::ScreenCoordinates,
             _ => OutlineWidthMode::None,
         },
-        outline_width_factor: float_property(&float_properties, "_OutlineWidth").unwrap_or(0.0),
-        outline_color_factor: vec3_property(&vector_properties, "_OutlineColor")
+        outline_width_factor: 0.01
+            * float_property(&float_properties, "_OutlineWidth").unwrap_or(0.0),
+        outline_color_factor: vec3_property_gamma(&vector_properties, "_OutlineColor")
             .unwrap_or([0.0, 0.0, 0.0]),
-        outline_lighting_mix_factor: float_property(&float_properties, "_OutlineLightingMix")
-            .unwrap_or(MtoonMaterial::default().outline_lighting_mix_factor),
+        outline_lighting_mix_factor: match float_property(&float_properties, "_OutlineColorMode")
+            .unwrap_or(0.0) as i32
+        {
+            1 => float_property(&float_properties, "_OutlineLightingMix").unwrap_or(1.0),
+            _ => 0.0,
+        },
         uv_animation: UvAnimation {
             scroll_x_speed: float_property(&float_properties, "_UvAnimScrollX").unwrap_or(0.0),
-            scroll_y_speed: float_property(&float_properties, "_UvAnimScrollY").unwrap_or(0.0),
+            scroll_y_speed: -float_property(&float_properties, "_UvAnimScrollY").unwrap_or(0.0),
             rotation_speed: float_property(&float_properties, "_UvAnimRotation").unwrap_or(0.0),
         },
     });
@@ -691,6 +701,23 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
         name: material.name,
         mtoon: mtoon.map_or(Feature::Absent, Feature::Present),
         ..Material::default()
+    }
+}
+
+fn map_vrm0_mtoon_shading(float_properties: &vrm_protocol::AnyMap) -> (f32, f32) {
+    let legacy_shift = float_property(float_properties, "_ShadeShift").unwrap_or(0.0);
+    let legacy_toony = float_property(float_properties, "_ShadeToony").unwrap_or(0.9);
+    let shading_toony_factor = legacy_toony + (1.0 - legacy_toony) * (0.5 + 0.5 * legacy_shift);
+    let shading_shift_factor = -legacy_shift - (1.0 - shading_toony_factor);
+    (shading_shift_factor, shading_toony_factor)
+}
+
+fn map_vrm0_gi_equalization(float_properties: &vrm_protocol::AnyMap) -> f32 {
+    let gi_intensity = float_property(float_properties, "_IndirectLightIntensity").unwrap_or(0.1);
+    if gi_intensity == 0.0 {
+        MtoonMaterial::default().gi_equalization_factor
+    } else {
+        1.0 - gi_intensity
     }
 }
 
@@ -717,6 +744,10 @@ fn vec3_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 3]> {
     ])
 }
 
+fn vec3_property_gamma(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 3]> {
+    vec3_property(map, key).map(gamma_vec3)
+}
+
 fn vec4_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 4]> {
     let values = map.get(key)?.as_array()?;
     Some([
@@ -725,6 +756,22 @@ fn vec4_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 4]> {
         values.get(2)?.as_f64()? as f32,
         values.get(3)?.as_f64()? as f32,
     ])
+}
+
+fn vec4_property_gamma_rgb(map: &vrm_protocol::AnyMap, key: &str) -> Option<[f32; 4]> {
+    let mut values = vec4_property(map, key)?;
+    values[0] = gamma_eotf(values[0]);
+    values[1] = gamma_eotf(values[1]);
+    values[2] = gamma_eotf(values[2]);
+    Some(values)
+}
+
+fn gamma_vec3(values: [f32; 3]) -> [f32; 3] {
+    values.map(gamma_eotf)
+}
+
+fn gamma_eotf(value: f32) -> f32 {
+    value.powf(2.2)
 }
 
 fn texture_property(map: &vrm_protocol::AnyMap, key: &str) -> Option<TextureRef> {
@@ -1193,6 +1240,27 @@ mod tests {
     use super::*;
     use vrm_protocol::{ExtensionBundle, VrmExtension};
 
+    fn assert_f32_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.00001,
+            "actual {actual} did not match expected {expected}"
+        );
+    }
+
+    fn assert_vec3_close(actual: [f32; 3], expected: [f32; 3]) {
+        actual
+            .into_iter()
+            .zip(expected)
+            .for_each(|(actual, expected)| assert_f32_close(actual, expected));
+    }
+
+    fn assert_vec4_close(actual: [f32; 4], expected: [f32; 4]) {
+        actual
+            .into_iter()
+            .zip(expected)
+            .for_each(|(actual, expected)| assert_f32_close(actual, expected));
+    }
+
     #[test]
     fn rejects_missing_required_humanoid_bones() {
         let bundle = ExtensionBundle {
@@ -1351,25 +1419,41 @@ mod tests {
         assert_eq!(mtoon.render_order(), 3001);
         assert_eq!(mtoon.cull_mode, MtoonCullMode::Off);
         assert_eq!(mtoon.pipeline_hints().alpha_mode, MtoonAlphaMode::Blend);
-        assert_eq!(mtoon.base_color_factor, [1.0, 0.9, 0.8, 0.7]);
-        assert_eq!(mtoon.emissive_factor, [0.4, 0.5, 0.6]);
+        assert_vec4_close(
+            mtoon.base_color_factor,
+            [gamma_eotf(1.0), gamma_eotf(0.9), gamma_eotf(0.8), 0.7],
+        );
+        assert_vec3_close(
+            mtoon.emissive_factor,
+            [gamma_eotf(0.4), gamma_eotf(0.5), gamma_eotf(0.6)],
+        );
         assert_eq!(mtoon.cutoff_factor, 0.42);
-        assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
+        assert_vec3_close(
+            mtoon.shade_color_factor,
+            [gamma_eotf(0.1), gamma_eotf(0.2), gamma_eotf(0.3)],
+        );
         assert_eq!(mtoon.receive_shadow_rate_factor, 0.8);
         assert_eq!(mtoon.shading_grade_rate_factor, 0.7);
-        assert_eq!(mtoon.shading_shift_factor, -0.2);
-        assert_eq!(mtoon.shading_toony_factor, 0.65);
+        assert_f32_close(mtoon.shading_shift_factor, -0.01);
+        assert_f32_close(mtoon.shading_toony_factor, 0.79);
         assert_eq!(mtoon.light_color_attenuation_factor, 0.6);
-        assert_eq!(mtoon.gi_equalization_factor, 0.4);
-        assert_eq!(mtoon.matcap_factor, [0.2, 0.3, 0.4]);
-        assert_eq!(mtoon.parametric_rim_color_factor, [0.9, 0.8, 0.7]);
+        assert_f32_close(mtoon.gi_equalization_factor, 0.6);
+        assert_eq!(mtoon.matcap_factor, [1.0, 1.0, 1.0]);
+        assert_vec3_close(
+            mtoon.parametric_rim_color_factor,
+            [gamma_eotf(0.9), gamma_eotf(0.8), gamma_eotf(0.7)],
+        );
         assert_eq!(mtoon.rim_lighting_mix_factor, 0.35);
         assert_eq!(mtoon.parametric_rim_fresnel_power_factor, 2.5);
         assert_eq!(mtoon.parametric_rim_lift_factor, 0.15);
-        assert_eq!(mtoon.outline_color_factor, [0.7, 0.6, 0.5]);
-        assert_eq!(mtoon.outline_lighting_mix_factor, 0.3);
+        assert_f32_close(mtoon.outline_width_factor, 0.0002);
+        assert_vec3_close(
+            mtoon.outline_color_factor,
+            [gamma_eotf(0.7), gamma_eotf(0.6), gamma_eotf(0.5)],
+        );
+        assert_eq!(mtoon.outline_lighting_mix_factor, 0.0);
         assert_eq!(mtoon.uv_animation.scroll_x_speed, 0.5);
-        assert_eq!(mtoon.uv_animation.scroll_y_speed, -0.25);
+        assert_eq!(mtoon.uv_animation.scroll_y_speed, 0.25);
         assert_eq!(mtoon.uv_animation.rotation_speed, 0.125);
         assert_eq!(mtoon.textures.main_texture, Some(TextureRef(3)));
         assert_eq!(mtoon.textures.shade_multiply_texture, Some(TextureRef(4)));

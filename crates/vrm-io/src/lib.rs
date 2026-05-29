@@ -1186,6 +1186,24 @@ mod tests {
         MtoonRenderQueue, OutlineWidthMode, VrmKind,
     };
 
+    fn assert_f32_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.00001,
+            "actual {actual} did not match expected {expected}"
+        );
+    }
+
+    fn assert_vec3_close(actual: [f32; 3], expected: [f32; 3]) {
+        actual
+            .into_iter()
+            .zip(expected)
+            .for_each(|(actual, expected)| assert_f32_close(actual, expected));
+    }
+
+    fn gamma_eotf(value: f32) -> f32 {
+        value.powf(2.2)
+    }
+
     #[test]
     fn loads_generated_vrm1_gltf_without_repo_fixture_asset() {
         let bytes = generated_vrm1_gltf().to_string().into_bytes();
@@ -2418,21 +2436,32 @@ mod tests {
             assert_eq!(body_mtoon.base_color_factor, [1.0, 1.0, 1.0, 1.0]);
             assert_eq!(body_mtoon.emissive_factor, [0.0, 0.0, 0.0]);
             assert_eq!(body_mtoon.cutoff_factor, 0.5);
-            assert_eq!(body_mtoon.shade_color_factor, [1.0, 0.8666667, 0.84000003]);
+            assert_vec3_close(
+                body_mtoon.shade_color_factor,
+                [
+                    gamma_eotf(1.0),
+                    gamma_eotf(0.8666667),
+                    gamma_eotf(0.84000003),
+                ],
+            );
             assert_eq!(body_mtoon.receive_shadow_rate_factor, 1.0);
             assert_eq!(body_mtoon.shading_grade_rate_factor, 1.0);
-            assert_eq!(body_mtoon.shading_shift_factor, 0.0);
-            assert_eq!(body_mtoon.shading_toony_factor, 0.9);
+            assert_f32_close(body_mtoon.shading_shift_factor, -0.05);
+            assert_f32_close(body_mtoon.shading_toony_factor, 0.95);
             assert_eq!(body_mtoon.light_color_attenuation_factor, 0.0);
-            assert_eq!(body_mtoon.gi_equalization_factor, 0.1);
+            assert_eq!(body_mtoon.gi_equalization_factor, 0.9);
             assert_eq!(
                 body_mtoon.outline_width_mode,
                 OutlineWidthMode::WorldCoordinates
             );
-            assert_eq!(body_mtoon.outline_width_factor, 0.05);
-            assert_eq!(
+            assert_f32_close(body_mtoon.outline_width_factor, 0.0005);
+            assert_vec3_close(
                 body_mtoon.outline_color_factor,
-                [0.671, 0.55702585, 0.53478694]
+                [
+                    gamma_eotf(0.671),
+                    gamma_eotf(0.55702585),
+                    gamma_eotf(0.53478694),
+                ],
             );
             assert_eq!(body_mtoon.outline_lighting_mix_factor, 1.0);
             assert_eq!(
