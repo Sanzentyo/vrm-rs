@@ -256,8 +256,9 @@ fn spawn_vrm_meshes(
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
+            let shading = material_shading(loaded, primitive.material);
             primitives.push(BevyPrimitive {
-                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref()),
+                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref(), shading),
                 material: bevy_material(loaded, primitive, &image_handles),
                 render_order: material_render_order(loaded, primitive.material),
             });
@@ -281,7 +282,12 @@ struct BevyPrimitive {
     render_order: i32,
 }
 
-fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&[Mat4]>) -> Mesh {
+fn bevy_mesh(
+    primitive: &GltfPrimitiveData,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    shading: MaterialShading,
+) -> Mesh {
     let positions = primitive
         .positions
         .iter()
@@ -311,18 +317,104 @@ fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&
             normal.to_array()
         })
         .collect::<Vec<_>>();
+    let colors = normals
+        .iter()
+        .map(|normal| vertex_mtoon_color(GVec3::from_array(*normal), shading))
+        .collect::<Vec<_>>();
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
     );
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     mesh
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MaterialShading {
+    base_color: [f32; 4],
+    shade_color: [f32; 4],
+    shading_shift: f32,
+    shading_toony: f32,
+    gi_equalization: f32,
+    emissive: [f32; 3],
+}
+
+fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
+    if let Some(shading) = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| {
+            let mtoon = material.mtoon.as_ref()?;
+            let (emissive_strength, _) = material.effective_emissive_strength();
+            Some(MaterialShading {
+                base_color: mtoon.base_color_factor,
+                shade_color: [
+                    mtoon.shade_color_factor[0],
+                    mtoon.shade_color_factor[1],
+                    mtoon.shade_color_factor[2],
+                    1.0,
+                ],
+                shading_shift: mtoon.shading_shift_factor,
+                shading_toony: mtoon.shading_toony_factor,
+                gi_equalization: mtoon.gi_equalization_factor,
+                emissive: [
+                    mtoon.emissive_factor[0] * emissive_strength.0,
+                    mtoon.emissive_factor[1] * emissive_strength.0,
+                    mtoon.emissive_factor[2] * emissive_strength.0,
+                ],
+            })
+        })
+    {
+        return shading;
+    }
+    let base_color = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .map(|material| material.base_color_factor)
+        .unwrap_or([0.78, 0.78, 0.78, 1.0]);
+    MaterialShading {
+        base_color,
+        shade_color: base_color,
+        shading_shift: 0.0,
+        shading_toony: 0.0,
+        gi_equalization: 0.0,
+        emissive: [0.0, 0.0, 0.0],
+    }
+}
+
+fn vertex_mtoon_color(normal: GVec3, shading: MaterialShading) -> [f32; 4] {
+    let ndotl = normal
+        .normalize_or_zero()
+        .dot(GVec3::new(-1.0, -1.0, -1.0).normalize())
+        .clamp(-1.0, 1.0);
+    let toon = linearstep(
+        -1.0 + shading.shading_toony,
+        1.0 - shading.shading_toony,
+        ndotl + shading.shading_shift,
+    );
+    let diffuse = GVec3::from_array([
+        shading.base_color[0],
+        shading.base_color[1],
+        shading.base_color[2],
+    ]);
+    let shade = GVec3::from_array([
+        shading.shade_color[0],
+        shading.shade_color[1],
+        shading.shade_color[2],
+    ]);
+    let ambient = diffuse * (0.1 + 0.15 * shading.gi_equalization);
+    let emissive = GVec3::from_array(shading.emissive);
+    let color = shade.lerp(diffuse, toon) + ambient + emissive;
+    [color.x, color.y, color.z, shading.base_color[3]]
+}
+
+fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    ((value - edge0) / (edge1 - edge0).max(0.00001)).clamp(0.0, 1.0)
 }
 
 fn primitive_normal(primitive: &GltfPrimitiveData, index: usize) -> GVec3 {
@@ -411,14 +503,7 @@ fn bevy_material(
         .material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
-        .map(|mtoon| {
-            Color::srgba(
-                mtoon.base_color_factor[0],
-                mtoon.base_color_factor[1],
-                mtoon.base_color_factor[2],
-                mtoon.base_color_factor[3],
-            )
-        })
+        .map(|_| Color::WHITE)
         .or_else(|| {
             primitive
                 .material
