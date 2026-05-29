@@ -256,12 +256,15 @@ to `25.20 dB`. Adding the same CPU-generated mip chains and repeat/linear/
 mipmap-nearest sampler policy used by the wgpu capture raises it to `25.26 dB`.
 The same configurable lighting defaults bring the current Seed-san Bevy
 baseline to `25.27 dB`.
+Disabling Bevy camera MSAA to match the antialias-disabled three-vrm and wgpu
+captures removes partial alpha edge pixels from the Bevy artifact and raises
+the current Seed-san Bevy baseline to `28.00 dB`.
 This confirms the custom shader path is wired correctly, but the
 small improvement means the next Bevy parity gains need to come from exact
 three-vrm MToon light accumulation, runtime expression/pose state, and
 screen/clip-space outline behavior rather than more `StandardMaterial` tuning.
 The first multi-fixture local run gives
-`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.91 dB`, which
+`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `33.88 dB`, which
 confirms the Bevy capture path works beyond Seed-san but remains below the
 MToon-lit threshold.
 

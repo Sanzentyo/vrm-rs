@@ -190,6 +190,7 @@
 - Made render-capture MToon lighting coefficients configurable through clap in `tools/ci/local-ci.rs`, `examples/wgpu_render_capture.rs`, and `examples/bevy_render_capture.rs`. The local CI runner no longer passes those approximation knobs into the three-vrm reference path.
 - Tightened transparent PNG parity by making the three-vrm browser capture request straight alpha (`premultipliedAlpha: false`) and by having the local runner encode all three renderer PNGs from their RGBA JSON artifacts with the same Rust PNG encoder. The two-fixture PNG alpha check now shows transparent background for three-vrm, wgpu, and Bevy artifacts.
 - Retuned the default capture-only MToon lighting approximation to exposure `0.78`, ambient base `0.12`, ambient GI scale `0.20`, and PBR ambient `0.03183099`. The local two-fixture sweep now reports Seed-san at wgpu `28.21 dB` and Bevy `25.27 dB`, and `VRM1_Constraint_Twist_Sample.vrm` at wgpu `34.21 dB` and Bevy `26.91 dB`.
+- Disabled Bevy camera MSAA in the render capture to match the antialias-disabled three-vrm/wgpu reference condition. This removes partial-alpha edge pixels from Bevy artifacts and raises the local two-fixture Bevy sweep to Seed-san `28.00 dB` and `VRM1_Constraint_Twist_Sample.vrm` `33.88 dB`, with the remaining delta now mostly RGB/MToon rather than alpha resolve behavior.
 
 Open work:
 

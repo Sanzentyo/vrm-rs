@@ -180,6 +180,7 @@ fn setup(
 
     commands.spawn((
         Camera3d::default(),
+        Msaa::Off,
         render_target,
         Camera {
             clear_color: ClearColorConfig::Custom(Color::NONE),
