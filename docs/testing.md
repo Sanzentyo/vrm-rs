@@ -69,11 +69,11 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet measured with image artifacts. P3 will add a three-vrm, Bevy, and wgpu comparison harness that records PSNR and visual-review outputs under `.external-fixtures/`.
+- Render parity is not yet measured with real renderer image artifacts. P3 now has a PSNR comparator and RGBA artifact format; concrete three-vrm, Bevy, and wgpu capture paths are still pending.
 
 ## Current Coverage Snapshot
 
-Measured locally on 2026-05-05 with:
+Measured locally on 2026-05-29 with:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
@@ -81,17 +81,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.06% | 81.46% |
+| Workspace total | 78.03% | 81.57% |
 | `vrm-adapter-bevy` | 92.71% | 94.46% |
-| `vrm-adapter` | 59.28% | 69.66% |
+| `vrm-adapter` | 61.36% | 71.17% |
 | `vrm-core` | 70.28% | 77.47% |
 | `vrm-io` | 77.99% | 74.75% |
 | `vrm-protocol` | 92.32% | 90.70% |
-| `vrm-runtime` | 87.25% | 88.06% |
+| `vrm-runtime` | 87.27% | 88.10% |
 | `vrm-sans-io` | 91.89% | 95.17% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, and baseline plus dense Seed-san `test.vrma` application comparison on real VRM/VRMA files without committing those binaries. The Alicia VRM0 fixture asserts normalized humanoid aliases, Auto first-person annotations, Bone lookAt ranges, legacy expression preset aliases, MToon material slots/outline, concrete legacy texture-slot behavior, MToon base/emissive/cutoff/shadow/rim/outline-lighting parameters, UV animation defaults, VRM0 spring root traversal expansion, and secondary animation spring/collider counts. Generated VRM0 material tests cover additional MToon float/vector properties, texture slots, UV animation, `_MainTex_ST`/`_ShadeTexture_ST`/`_BumpMap_ST` texture-transform binds, and legacy spring collider Z-axis conversion. Generated VRMA diagnostics now cover stable warnings for ignored non-hips humanoid translation tracks and stable errors for invalid expression/lookAt animation paths. Generated IO tests cover invalid glTF/GLB payloads, embedded buffer retention, embedded PNG image extraction, and VRMA track/accessor extraction. The finite P0/P1/P2 backlog is complete; future test-effort priorities should be introduced as a new TODO section before implementation.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, and stable errors for invalid expression/lookAt animation paths.
 
 ## Ordered Parity Milestones
 
@@ -99,7 +99,7 @@ The current ordered work queue is:
 
 1. Posed humanoid writeback golden: generate deterministic `setRawPose` / `setNormalizedPose` three-vrm snapshots and compare Rust writeback against the resulting raw node transforms. Done for Seed-san.
 2. Spring bone fixture expansion: add collider-heavy, center-node, and non-Seed-san official fixture golden comparisons while keeping external binaries out of git. Done for Seed-san plus VRM1_Constraint_Twist_Sample.
-3. VRMA application parity: apply sampled VRMA frames to a model and compare humanoid rotations, hips translation, expression weights, and lookAt tracks against three-vrm behavior. Done for Seed-san plus `test.vrma`.
+3. VRMA application parity: apply sampled VRMA frames to a model and compare humanoid rotations, hips translation, expression weights, and lookAt tracks against three-vrm behavior. Done for Seed-san plus stable `test.vrma` and branch-only `idle_loop.vrma`.
 
 Latest completed ordered work queue:
 
@@ -153,6 +153,7 @@ node tools\three-vrm-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\offic
 node tools\three-vrm-constraint-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\VRM1_Constraint_Twist_Sample.vrm --three-vrm-root D:\git\three-vrm --out D:\git\vrm-rs\.external-fixtures\golden\VRM1_Constraint_Twist_Sample.constraint.json
 node tools\three-vrm-vrma-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --vrma D:\git\vrm-rs\.external-fixtures\official\test.vrma --three-vrm-root D:\git\three-vrm --times 0,0.5,1 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.test-vrma.json
 node tools\three-vrm-vrma-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --vrma D:\git\vrm-rs\.external-fixtures\official\test.vrma --three-vrm-root D:\git\three-vrm --times 0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.test-vrma-dense.json
+node tools\three-vrm-vrma-golden.mjs --fixture D:\git\vrm-rs\.external-fixtures\official\Seed-san.vrm --vrma D:\git\vrm-rs\.external-fixtures\official\idle_loop.vrma --three-vrm-root D:\git\three-vrm --times 0,0.5,1 --out D:\git\vrm-rs\.external-fixtures\golden\Seed-san.idle-loop-vrma.json
 ```
 
 Run the ignored comparison with:
@@ -178,6 +179,10 @@ The golden output records public local rotations, three-vrm's private center-spa
 ## Current External Official Samples
 
 Spark downloaded the current local fixture set into `.external-fixtures/official/` on 2026-04-29. These files are intentionally ignored by git.
+VRMA clip discovery is tracked in `docs/vrma-fixture-discovery.md`; as of the
+latest check, `test.vrma` is the stable public upstream `.vrma` sample and
+`idle_loop.vrma` is an experimental branch-only upstream sample used for
+external-only parity breadth.
 
 | File | Source | Local use note |
 | --- | --- | --- |
@@ -188,5 +193,6 @@ Spark downloaded the current local fixture set into `.external-fixtures/official
 | `VRMC_vrm_expressions_isBinary_Overrides.vrm` | `https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/VRMC_vrm_expressions_isBinary_Overrides/vrm/VRMC_vrm_expressions_isBinary_Overrides.vrm` | Embedded VRM metadata says VRM Public License 1.0, `allowRedistribution=true`, author `pixiv Inc.`; useful for expression override parity, external only. |
 | `UniVRM/AliciaSolid_vrm-0.51.vrm` | `https://raw.githubusercontent.com/vrm-c/UniVRM/cc52748645889e1521f5a4cef2103b8b028100bf/Tests/Models/Alicia_vrm-0.51/AliciaSolid_vrm-0.51.vrm` | VRM0 compatibility fixture for ignored semantic tests. Keep external until redistribution/license status is reviewed for this repository's MIT/Apache source distribution. |
 | `test.vrma` | `https://raw.githubusercontent.com/pixiv/three-vrm/9d125586f6d7da094b0ac5f204cebf19586f2397/packages/three-vrm-animation/examples/models/test.vrma` | Local testing only until upstream redistribution status is confirmed; no embedded asset license/provenance found. |
+| `idle_loop.vrma` | `https://raw.githubusercontent.com/pixiv/three-vrm/75ab65c9d4e488521d41bff7f5cfd1976a0b16e8/packages/vrm-viewer/examples/models/idle_loop.vrma` | Experimental branch-only three-vrm viewer clip. Useful for hips translation scaling parity. External only; do not vendor without explicit review. |
 
 The URLs are commit-pinned to avoid branch drift.

@@ -1,0 +1,113 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+
+const args = new Map();
+for (let index = 2; index < process.argv.length; index += 1) {
+  const arg = process.argv[index];
+  if (!arg.startsWith('--')) continue;
+  const key = arg.slice(2);
+  const next = process.argv[index + 1];
+  if (next == null || next.startsWith('--')) {
+    args.set(key, 'true');
+  } else {
+    args.set(key, next);
+    index += 1;
+  }
+}
+
+const expectedPath = args.get('expected');
+const actualPath = args.get('actual');
+const outPath = args.get('out');
+const failUnder = args.has('fail-under') ? Number(args.get('fail-under')) : null;
+
+if (!expectedPath || !actualPath) {
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--fail-under 40]');
+  process.exit(2);
+}
+if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
+  console.error(`invalid --fail-under: ${args.get('fail-under')}`);
+  process.exit(2);
+}
+
+const expected = readRgbaJson(expectedPath);
+const actual = readRgbaJson(actualPath);
+if (expected.width !== actual.width || expected.height !== actual.height) {
+  console.error(`image dimensions differ: expected ${expected.width}x${expected.height}, actual ${actual.width}x${actual.height}`);
+  process.exit(3);
+}
+if (expected.rgba.length !== actual.rgba.length) {
+  console.error(`image buffer lengths differ: expected ${expected.rgba.length}, actual ${actual.rgba.length}`);
+  process.exit(3);
+}
+
+let squaredError = 0.0;
+let maxChannelDelta = 0;
+let maxPixelDelta = 0.0;
+for (let offset = 0; offset < expected.rgba.length; offset += 4) {
+  let pixelSquared = 0.0;
+  for (let channel = 0; channel < 4; channel += 1) {
+    const delta = actual.rgba[offset + channel] - expected.rgba[offset + channel];
+    const absolute = Math.abs(delta);
+    maxChannelDelta = Math.max(maxChannelDelta, absolute);
+    squaredError += delta * delta;
+    pixelSquared += delta * delta;
+  }
+  maxPixelDelta = Math.max(maxPixelDelta, Math.sqrt(pixelSquared));
+}
+
+const channelCount = expected.rgba.length;
+const mse = squaredError / channelCount;
+const psnr = mse === 0.0 ? Number.POSITIVE_INFINITY : 10.0 * Math.log10((255.0 * 255.0) / mse);
+const report = {
+  expected: path.resolve(expectedPath),
+  actual: path.resolve(actualPath),
+  width: expected.width,
+  height: expected.height,
+  channels: 4,
+  mse,
+  psnr: Number.isFinite(psnr) ? psnr : 'Infinity',
+  maxChannelDelta,
+  maxPixelDelta,
+  pass: failUnder == null || psnr >= failUnder,
+  failUnder,
+};
+
+const json = `${JSON.stringify(report, null, 2)}\n`;
+if (outPath) {
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, json);
+} else {
+  process.stdout.write(json);
+}
+
+if (!report.pass) {
+  console.error(`PSNR ${psnr.toFixed(4)} dB is below threshold ${failUnder} dB`);
+  process.exit(4);
+}
+
+function readRgbaJson(file) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Number.isInteger(parsed.width) || parsed.width <= 0) {
+    throw new Error(`${file}: width must be a positive integer`);
+  }
+  if (!Number.isInteger(parsed.height) || parsed.height <= 0) {
+    throw new Error(`${file}: height must be a positive integer`);
+  }
+  if (!Array.isArray(parsed.rgba)) {
+    throw new Error(`${file}: rgba must be an array`);
+  }
+  const expectedLength = parsed.width * parsed.height * 4;
+  if (parsed.rgba.length !== expectedLength) {
+    throw new Error(`${file}: rgba length ${parsed.rgba.length} does not match ${expectedLength}`);
+  }
+  const rgba = parsed.rgba.map((value, index) => {
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      throw new Error(`${file}: rgba[${index}] must be an integer in 0..255`);
+    }
+    return value;
+  });
+  return { width: parsed.width, height: parsed.height, rgba };
+}

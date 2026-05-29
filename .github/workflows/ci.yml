@@ -46,6 +46,7 @@ jobs:
       GOLDEN_DIR: ${{ github.workspace }}/.external-fixtures/golden
       THREE_VRM_ROOT: ${{ github.workspace }}/.external-fixtures/three-vrm
       THREE_VRM_COMMIT: 9d125586f6d7da094b0ac5f204cebf19586f2397
+      THREE_VRM_VIEWER_COMMIT: 75ab65c9d4e488521d41bff7f5cfd1976a0b16e8
       VRM_SPEC_COMMIT: 3942748efbc803b258e288e0f6c993c6bb96cebf
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +73,8 @@ jobs:
             -o "$FIXTURE_DIR/VRMC_vrm_expressions_isBinary_Overrides.vrm"
           curl -fL "https://raw.githubusercontent.com/pixiv/three-vrm/${THREE_VRM_COMMIT}/packages/three-vrm-animation/examples/models/test.vrma" \
             -o "$FIXTURE_DIR/test.vrma"
+          curl -fL "https://raw.githubusercontent.com/pixiv/three-vrm/${THREE_VRM_VIEWER_COMMIT}/packages/vrm-viewer/examples/models/idle_loop.vrma" \
+            -o "$FIXTURE_DIR/idle_loop.vrma"
 
       - name: Build pinned three-vrm for golden generation
         shell: bash
@@ -116,6 +119,12 @@ jobs:
             --three-vrm-root "$THREE_VRM_ROOT" \
             --times 0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1 \
             --out "$GOLDEN_DIR/Seed-san.test-vrma-dense.json"
+          node tools/three-vrm-vrma-golden.mjs \
+            --fixture "$FIXTURE_DIR/Seed-san.vrm" \
+            --vrma "$FIXTURE_DIR/idle_loop.vrma" \
+            --three-vrm-root "$THREE_VRM_ROOT" \
+            --times 0,0.5,1 \
+            --out "$GOLDEN_DIR/Seed-san.idle-loop-vrma.json"
 
       - name: Run ignored external fixture tests
         shell: bash

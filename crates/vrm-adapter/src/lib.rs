@@ -97,6 +97,400 @@ pub struct SpringRestMap {
     states: HashMap<(usize, usize), SpringRestEntry>,
 }
 
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum HeadlessAdapterError {
+    #[error("missing node {0:?}")]
+    MissingNode(NodeRef),
+    #[error("node {0:?} cannot be parented to itself")]
+    SelfParent(NodeRef),
+    #[error("cyclic hierarchy at node {0:?}")]
+    CyclicHierarchy(NodeRef),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextureTransformWrite {
+    pub scale: Option<[f32; 2]>,
+    pub offset: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeadlessNodeState {
+    pub parent: Option<NodeRef>,
+    pub children: Vec<NodeRef>,
+    pub local: Transform,
+    pub world: Transform,
+    pub visible: bool,
+}
+
+impl HeadlessNodeState {
+    pub fn new(local: Transform) -> Self {
+        Self {
+            parent: None,
+            children: Vec::new(),
+            local,
+            world: local,
+            visible: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HeadlessSceneState {
+    nodes: HashMap<NodeRef, HeadlessNodeState>,
+    morph_weights: HashMap<(NodeRef, usize), f32>,
+    material_colors: HashMap<(MaterialRef, String), Vec<f32>>,
+    texture_transforms: HashMap<MaterialRef, TextureTransformWrite>,
+    emissive_intensities: HashMap<MaterialRef, f32>,
+    mtoon_pipeline_passes: HashMap<MaterialRef, Vec<MtoonPipelinePass>>,
+    look_at_rotation: Option<Quat>,
+    constraint_rest: HashMap<(NodeRef, NodeRef), ConstraintRestState>,
+}
+
+impl HeadlessSceneState {
+    pub fn insert_node(&mut self, node: NodeRef, local: Transform) {
+        self.nodes.insert(node, HeadlessNodeState::new(local));
+    }
+
+    pub fn node(&self, node: NodeRef) -> Option<&HeadlessNodeState> {
+        self.nodes.get(&node)
+    }
+
+    pub fn set_parent(
+        &mut self,
+        node: NodeRef,
+        parent: Option<NodeRef>,
+    ) -> Result<(), HeadlessAdapterError> {
+        self.ensure_node(node)?;
+        if parent == Some(node) {
+            return Err(HeadlessAdapterError::SelfParent(node));
+        }
+        if let Some(parent) = parent {
+            self.ensure_node(parent)?;
+            self.ensure_no_descendant_parent(node, parent)?;
+        }
+        if let Some(previous_parent) = self.nodes.get(&node).and_then(|state| state.parent)
+            && let Some(previous) = self.nodes.get_mut(&previous_parent)
+        {
+            previous.children.retain(|child| *child != node);
+        }
+        if let Some(state) = self.nodes.get_mut(&node) {
+            state.parent = parent;
+        }
+        if let Some(parent) = parent {
+            let children = &mut self
+                .nodes
+                .get_mut(&parent)
+                .ok_or(HeadlessAdapterError::MissingNode(parent))?
+                .children;
+            if !children.contains(&node) {
+                children.push(node);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn morph_weight(&self, node: NodeRef, morph_index: usize) -> Option<f32> {
+        self.morph_weights.get(&(node, morph_index)).copied()
+    }
+
+    pub fn material_color(&self, material: MaterialRef, property: &str) -> Option<&[f32]> {
+        self.material_colors
+            .get(&(material, property.to_owned()))
+            .map(Vec::as_slice)
+    }
+
+    pub fn texture_transform(&self, material: MaterialRef) -> Option<TextureTransformWrite> {
+        self.texture_transforms.get(&material).copied()
+    }
+
+    pub fn emissive_intensity(&self, material: MaterialRef) -> Option<f32> {
+        self.emissive_intensities.get(&material).copied()
+    }
+
+    pub fn mtoon_pipeline_passes(&self, material: MaterialRef) -> Option<&[MtoonPipelinePass]> {
+        self.mtoon_pipeline_passes.get(&material).map(Vec::as_slice)
+    }
+
+    pub fn look_at_rotation(&self) -> Option<Quat> {
+        self.look_at_rotation
+    }
+
+    pub fn set_constraint_rest_state(
+        &mut self,
+        destination: NodeRef,
+        source: NodeRef,
+        state: ConstraintRestState,
+    ) -> Result<(), HeadlessAdapterError> {
+        self.ensure_node(destination)?;
+        self.ensure_node(source)?;
+        self.constraint_rest.insert((destination, source), state);
+        Ok(())
+    }
+
+    pub fn capture_constraint_rest_state(
+        &mut self,
+        destination: NodeRef,
+        source: NodeRef,
+    ) -> Result<(), HeadlessAdapterError> {
+        let state = ConstraintRestState::new(
+            self.local_transform(destination)?.rotation,
+            self.local_transform(source)?.rotation,
+        );
+        self.set_constraint_rest_state(destination, source, state)
+    }
+
+    fn ensure_node(&self, node: NodeRef) -> Result<(), HeadlessAdapterError> {
+        self.nodes
+            .contains_key(&node)
+            .then_some(())
+            .ok_or(HeadlessAdapterError::MissingNode(node))
+    }
+
+    fn ensure_no_descendant_parent(
+        &self,
+        node: NodeRef,
+        proposed_parent: NodeRef,
+    ) -> Result<(), HeadlessAdapterError> {
+        let mut current = Some(proposed_parent);
+        let mut visited = HashSet::new();
+        while let Some(candidate) = current {
+            if !visited.insert(candidate) {
+                return Err(HeadlessAdapterError::CyclicHierarchy(candidate));
+            }
+            if candidate == node {
+                return Err(HeadlessAdapterError::CyclicHierarchy(node));
+            }
+            current = self
+                .nodes
+                .get(&candidate)
+                .ok_or(HeadlessAdapterError::MissingNode(candidate))?
+                .parent;
+        }
+        Ok(())
+    }
+
+    fn update_world_node(
+        &mut self,
+        node: NodeRef,
+        parent_world: Option<Transform>,
+        visiting: &mut HashSet<NodeRef>,
+    ) -> Result<(), HeadlessAdapterError> {
+        if !visiting.insert(node) {
+            return Err(HeadlessAdapterError::CyclicHierarchy(node));
+        }
+        let local = self
+            .nodes
+            .get(&node)
+            .ok_or(HeadlessAdapterError::MissingNode(node))?
+            .local;
+        let world = parent_world.map_or(local, |parent| compose_transform(parent, local));
+        self.nodes
+            .get_mut(&node)
+            .ok_or(HeadlessAdapterError::MissingNode(node))?
+            .world = world;
+        let children = self
+            .nodes
+            .get(&node)
+            .ok_or(HeadlessAdapterError::MissingNode(node))?
+            .children
+            .clone();
+        for child in children {
+            self.update_world_node(child, Some(world), visiting)?;
+        }
+        visiting.remove(&node);
+        Ok(())
+    }
+}
+
+impl SceneGraph for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error> {
+        self.ensure_node(node)?;
+        Ok(self.nodes.get(&node).and_then(|state| state.parent))
+    }
+
+    fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error> {
+        self.ensure_node(node)?;
+        Ok(self
+            .nodes
+            .get(&node)
+            .map(|state| state.children.clone())
+            .unwrap_or_default())
+    }
+}
+
+impl TransformAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn local_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+        self.nodes
+            .get(&node)
+            .map(|state| state.local)
+            .ok_or(HeadlessAdapterError::MissingNode(node))
+    }
+
+    fn set_local_transform(
+        &mut self,
+        node: NodeRef,
+        transform: Transform,
+    ) -> Result<(), Self::Error> {
+        self.nodes
+            .get_mut(&node)
+            .map(|state| state.local = transform)
+            .ok_or(HeadlessAdapterError::MissingNode(node))
+    }
+
+    fn set_local_rotation(&mut self, node: NodeRef, rotation: Quat) -> Result<(), Self::Error> {
+        let mut transform = self.local_transform(node)?;
+        transform.rotation = rotation;
+        self.set_local_transform(node, transform)
+    }
+
+    fn translate_local(&mut self, node: NodeRef, translation: Vec3) -> Result<(), Self::Error> {
+        let mut transform = self.local_transform(node)?;
+        transform.translation = translation;
+        self.set_local_transform(node, transform)
+    }
+}
+
+impl WorldTransformAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+        self.nodes
+            .get(&node)
+            .map(|state| state.world)
+            .ok_or(HeadlessAdapterError::MissingNode(node))
+    }
+}
+
+impl WorldMatrixAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
+        self.world_transform(node).map(transform_matrix)
+    }
+}
+
+impl WorldTransformUpdate for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
+        let roots = self
+            .nodes
+            .iter()
+            .filter_map(|(node, state)| state.parent.is_none().then_some(*node))
+            .collect::<Vec<_>>();
+        let mut visiting = HashSet::new();
+        for root in roots {
+            self.update_world_node(root, None, &mut visiting)?;
+        }
+        Ok(())
+    }
+}
+
+impl ConstraintRestAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn constraint_rest_state(
+        &self,
+        destination: NodeRef,
+        source: NodeRef,
+    ) -> Result<ConstraintRestState, Self::Error> {
+        if let Some(state) = self.constraint_rest.get(&(destination, source)).copied() {
+            return Ok(state);
+        }
+        Ok(ConstraintRestState::new(
+            self.local_transform(destination)?.rotation,
+            self.local_transform(source)?.rotation,
+        ))
+    }
+}
+
+impl MorphTargetAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn set_morph_weight(
+        &mut self,
+        node: NodeRef,
+        morph_index: usize,
+        weight: f32,
+    ) -> Result<(), Self::Error> {
+        self.ensure_node(node)?;
+        self.morph_weights.insert((node, morph_index), weight);
+        Ok(())
+    }
+}
+
+impl MaterialAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn set_material_color(
+        &mut self,
+        material: MaterialRef,
+        property: &str,
+        value: &[f32],
+    ) -> Result<(), Self::Error> {
+        self.material_colors
+            .insert((material, property.to_owned()), value.to_vec());
+        Ok(())
+    }
+
+    fn set_texture_transform(
+        &mut self,
+        material: MaterialRef,
+        scale: Option<[f32; 2]>,
+        offset: Option<[f32; 2]>,
+    ) -> Result<(), Self::Error> {
+        self.texture_transforms
+            .insert(material, TextureTransformWrite { scale, offset });
+        Ok(())
+    }
+
+    fn set_emissive_intensity(
+        &mut self,
+        material: MaterialRef,
+        intensity: f32,
+    ) -> Result<(), Self::Error> {
+        self.emissive_intensities.insert(material, intensity);
+        Ok(())
+    }
+}
+
+impl MtoonPipelineAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn set_mtoon_pipeline_passes(
+        &mut self,
+        material: MaterialRef,
+        passes: &[MtoonPipelinePass],
+    ) -> Result<(), Self::Error> {
+        self.mtoon_pipeline_passes.insert(material, passes.to_vec());
+        Ok(())
+    }
+}
+
+impl VisibilityAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error> {
+        self.nodes
+            .get_mut(&node)
+            .map(|state| state.visible = visible)
+            .ok_or(HeadlessAdapterError::MissingNode(node))
+    }
+}
+
+impl LookAtAccess for HeadlessSceneState {
+    type Error = HeadlessAdapterError;
+
+    fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
+        self.look_at_rotation = Some(rotation);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HumanoidPoseRig {
     raw_rest: RawAbsolutePose,
@@ -572,6 +966,14 @@ fn transform_matrix(transform: Transform) -> Mat4 {
         transform.rotation,
         transform.translation,
     )
+}
+
+fn compose_transform(parent: Transform, local: Transform) -> Transform {
+    Transform {
+        translation: parent.translation + parent.rotation * (parent.scale * local.translation),
+        rotation: parent.rotation * local.rotation,
+        scale: parent.scale * local.scale,
+    }
 }
 
 fn initial_local_child_position<T, E>(
@@ -1802,6 +2204,17 @@ where
             .get(&HumanBoneName::Hips)
             .map(|transform| transform.translation)
             .unwrap_or(Vec3::ZERO);
+        let source_hips_y = frame
+            .source_rest_hips_position
+            .map(|position| position.y)
+            .filter(|y| y.abs() > f32::EPSILON);
+        let translation_scale = source_hips_y.map_or(1.0, |animation_y| {
+            if rest_translation.y.abs() > f32::EPSILON {
+                rest_translation.y / animation_y
+            } else {
+                1.0
+            }
+        });
         let rotation = pose
             .get(&HumanBoneName::Hips)
             .map(|transform| transform.rotation)
@@ -1809,7 +2222,7 @@ where
         pose.insert(
             HumanBoneName::Hips,
             vrm_core::PoseTransform {
-                translation: translation - rest_translation,
+                translation: translation * translation_scale - rest_translation,
                 rotation,
             },
         );
@@ -1945,8 +2358,8 @@ mod tests {
     use std::convert::Infallible;
     use vrm_core::{
         EmissiveStrength, Expression, ExpressionSet, Feature, FirstPerson,
-        FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, MtoonMaterial,
-        MtoonRenderQueue, PoseTransform, RotationTrack, VrmAnimation, VrmDocument,
+        FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, Material,
+        MtoonMaterial, MtoonRenderQueue, PoseTransform, RotationTrack, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -2822,6 +3235,52 @@ mod tests {
                 .rotation
                 .abs_diff_eq(Quat::from_rotation_y(0.25), 0.0001)
         );
+    }
+
+    #[test]
+    fn vrma_humanoid_frame_scales_hips_translation_to_target_rest_height() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Hips,
+                    HumanBone {
+                        node: NodeRef(0),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            local_transforms: [(NodeRef(0), Transform::default())].into_iter().collect(),
+            world_transforms: [(
+                NodeRef(0),
+                Transform {
+                    translation: Vec3::Y,
+                    ..Transform::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let mut rig = HumanoidPoseRig::capture(&mock, &document).unwrap();
+        let frame = VrmAnimationFrame {
+            hips_translation: Some(Vec3::new(0.0, 2.5, 0.0)),
+            source_rest_hips_position: Some(Vec3::new(0.0, 2.0, 0.0)),
+            ..VrmAnimationFrame::default()
+        };
+
+        apply_vrma_humanoid_frame(&mut mock, &mut rig, &frame).unwrap();
+
+        let hips = mock
+            .local_sets
+            .iter()
+            .find(|(node, _)| *node == NodeRef(0))
+            .expect("hips writeback");
+        assert_eq!(hips.1.translation, Vec3::new(0.0, 1.25, 0.0));
     }
 
     #[test]
@@ -4238,11 +4697,13 @@ mod tests {
             assert_expression_weights_match(&frame, &sample["expressionWeights"], time);
             if let Some(expected) = sample["lookAtQuaternion"].as_array() {
                 let expected = quat_from_json_array(expected);
-                let actual = scene
-                    .look_at_rotations
-                    .last()
-                    .copied()
-                    .unwrap_or_else(|| panic!("VRMA sample at {time} did not write lookAt"));
+                let actual = scene.look_at_rotations.last().copied().unwrap_or_else(|| {
+                    if frame.look_at.is_none() && expected.abs_diff_eq(Quat::IDENTITY, 0.000001) {
+                        Quat::IDENTITY
+                    } else {
+                        panic!("VRMA sample at {time} did not write lookAt")
+                    }
+                });
                 assert!(
                     actual.abs_diff_eq(expected, tolerance.rotation_radians)
                         || actual.abs_diff_eq(-expected, tolerance.rotation_radians),
@@ -4676,6 +5137,128 @@ mod tests {
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(3)));
         assert_eq!(mock.visibility, vec![(NodeRef(8), true)]);
+    }
+
+    #[test]
+    fn headless_scene_state_drives_runtime_without_engine_framework() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Hips,
+                    HumanBone {
+                        node: NodeRef(1),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            first_person: Feature::Present(FirstPerson {
+                mesh_annotations: vec![FirstPersonMeshAnnotation {
+                    node: NodeRef(8),
+                    kind: FirstPersonAnnotation::FirstPersonOnly,
+                }],
+            }),
+            expressions: Feature::Present(ExpressionSet {
+                preset: [(
+                    ExpressionName::Blink,
+                    Expression {
+                        binds: vec![ExpressionBind::MorphTarget {
+                            node: NodeRef(8),
+                            index: 0,
+                            weight: 100.0,
+                        }],
+                        ..Expression::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                custom: Default::default(),
+            }),
+            materials: vec![Material {
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    transparent_with_z_write: true,
+                    emissive_factor: [0.25, 0.5, 0.75],
+                    ..MtoonMaterial::default()
+                }),
+                ..Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+
+        let mut scene = HeadlessSceneState::default();
+        scene.insert_node(NodeRef(0), Transform::default());
+        scene.insert_node(
+            NodeRef(1),
+            Transform {
+                translation: Vec3::Y,
+                ..Transform::default()
+            },
+        );
+        scene.insert_node(NodeRef(2), Transform::default());
+        scene.insert_node(
+            NodeRef(4),
+            Transform {
+                rotation: Quat::IDENTITY,
+                ..Transform::default()
+            },
+        );
+        scene.insert_node(NodeRef(8), Transform::default());
+        scene.set_parent(NodeRef(1), Some(NodeRef(0))).unwrap();
+        scene.update_world_transforms().unwrap();
+        assert_eq!(
+            scene.world_transform(NodeRef(1)).unwrap().translation,
+            Vec3::Y
+        );
+
+        scene
+            .capture_constraint_rest_state(NodeRef(2), NodeRef(4))
+            .unwrap();
+        let source_rotation = Quat::from_rotation_y(0.5);
+        scene
+            .set_local_rotation(NodeRef(4), source_rotation)
+            .unwrap();
+
+        let events = RuntimeEvents {
+            delta: DeltaTime(0.0),
+            expressions: vec![AppliedExpression {
+                name: "blink".to_owned(),
+                effective_weight: 0.5,
+                binds: vec![ExpressionBind::MorphTarget {
+                    node: NodeRef(8),
+                    index: 0,
+                    weight: 100.0,
+                }],
+            }],
+            constraints: vec![NodeConstraint {
+                destination: NodeRef(2),
+                source: NodeRef(4),
+                kind: ConstraintKind::Rotation,
+                weight: 1.0,
+            }],
+            springs: Vec::new(),
+        };
+        let mut driver = VrmRuntimeDriver::new(&document).with_runtime_events(&events);
+        driver.tick(&mut scene, None).unwrap();
+
+        assert_eq!(scene.morph_weight(NodeRef(8), 0), Some(50.0));
+        assert!(
+            scene
+                .local_transform(NodeRef(2))
+                .unwrap()
+                .rotation
+                .abs_diff_eq(source_rotation, 0.0001)
+        );
+        assert!(!scene.node(NodeRef(8)).unwrap().visible);
+        assert_eq!(scene.emissive_intensity(MaterialRef(0)), Some(2.0));
+        assert!(
+            !scene
+                .mtoon_pipeline_passes(MaterialRef(0))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -977,6 +977,7 @@ pub fn sample_scalar_track(track: &ScalarTrack, time: f32) -> Option<f32> {
 pub struct VrmAnimationFrame {
     pub humanoid_rotations: IndexMap<HumanBoneName, Quat>,
     pub hips_translation: Option<Vec3>,
+    pub source_rest_hips_position: Option<Vec3>,
     pub preset_expressions: IndexMap<ExpressionName, f32>,
     pub custom_expressions: IndexMap<String, f32>,
     pub look_at: Option<Quat>,
@@ -995,6 +996,10 @@ pub fn sample_vrm_animation(animation: &VrmAnimation, time: f32) -> VrmAnimation
             .hips_translation
             .as_ref()
             .and_then(|track| sample_translation_track(track, time)),
+        source_rest_hips_position: animation
+            .hips_translation
+            .as_ref()
+            .map(|_| animation.rest_hips_position),
         preset_expressions: animation
             .preset_expression_tracks
             .iter()
