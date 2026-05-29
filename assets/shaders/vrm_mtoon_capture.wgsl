@@ -182,7 +182,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
     }
-    let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 0.5);
+    let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 1.5);
     let diffuse = material.base_color.rgb * texel.rgb;
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
 

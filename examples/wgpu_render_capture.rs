@@ -2045,7 +2045,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
         discard;
     }
-    let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
+    let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     let diffuse = input.color.rgb * texel.rgb;
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     if input.rim_params.w > 0.5 {

@@ -17,7 +17,7 @@ render-parity three_vrm_root="D:/git/three-vrm" background="transparent":
 
 # Regenerate render parity artifacts for the current local official VRM sample set.
 render-parity-samples three_vrm_root="D:/git/three-vrm" background="transparent":
-    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_materials_mtoon_UV_Animation_Test/VRMC_materials_mtoon_UV_Animation_Test.vrm
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_materials_mtoon_UV_Animation_Test/VRMC_materials_mtoon_UV_Animation_Test.vrm --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_vrm_expressions_isBinary_Overridden/VRMC_vrm_expressions_isBinary_Overridden.vrm --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_vrm_expressions_isBinary_Overrides/VRMC_vrm_expressions_isBinary_Overrides.vrm
 
 # Regenerate a time-advanced MToon UV animation parity artifact.
 render-parity-uv-animation three_vrm_root="D:/git/three-vrm" time="1.0" background="transparent":
