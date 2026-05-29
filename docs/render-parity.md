@@ -203,7 +203,9 @@ correction to the baked vertex colors raises it to `24.98 dB`. glTF emissive
 factor and `KHR_materials_emissive_strength` now flow into the baked color path
 for non-MToon materials, but the current Seed-san frame remains `24.98 dB`
 because the visible Bevy delta is still dominated by stock `StandardMaterial`
-instead of a custom MToon shader/runtime path.
+instead of a custom MToon shader/runtime path. Feeding MToon
+`shadingShiftTexture` into the baked vertex-color toon threshold nudges the
+current Bevy baseline to `25.00 dB` while preserving Bevy's main texture path.
 
 ## Review Criteria
 

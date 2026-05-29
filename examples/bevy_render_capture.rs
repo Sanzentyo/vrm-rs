@@ -267,8 +267,15 @@ fn spawn_vrm_meshes(
             .map(|skin| skin_matrices(loaded, skin, orientation));
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
+            let shading_shift_texture = material_shading_shift_image(loaded, primitive.material);
             let surface = BevyPrimitive {
-                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref(), shading),
+                mesh: bevy_mesh(
+                    primitive,
+                    world,
+                    skin_matrices.as_deref(),
+                    shading,
+                    shading_shift_texture.as_ref(),
+                ),
                 material: bevy_material(loaded, primitive, &image_handles),
                 render_order: material_render_order(loaded, primitive.material),
             };
@@ -410,6 +417,7 @@ fn bevy_mesh(
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     shading: MaterialShading,
+    shading_shift_texture: Option<&CpuRgbaImage>,
 ) -> Mesh {
     let positions = primitive
         .positions
@@ -442,7 +450,15 @@ fn bevy_mesh(
         .collect::<Vec<_>>();
     let colors = normals
         .iter()
-        .map(|normal| vertex_mtoon_color(GVec3::from_array(*normal), shading))
+        .enumerate()
+        .map(|(index, normal)| {
+            vertex_mtoon_color(
+                GVec3::from_array(*normal),
+                primitive_tex_coord(primitive, index),
+                shading,
+                shading_shift_texture,
+            )
+        })
         .collect::<Vec<_>>();
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -465,6 +481,7 @@ struct MaterialShading {
     shade_color: [f32; 4],
     shading_shift: f32,
     shading_toony: f32,
+    shading_shift_texture_scale: f32,
     gi_equalization: f32,
     emissive: [f32; 3],
 }
@@ -485,6 +502,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 ],
                 shading_shift: mtoon.shading_shift_factor,
                 shading_toony: mtoon.shading_toony_factor,
+                shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
                 gi_equalization: mtoon.gi_equalization_factor,
                 emissive: [
                     mtoon.emissive_factor[0] * emissive_strength.0,
@@ -512,20 +530,30 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         shade_color: base_color,
         shading_shift: 0.0,
         shading_toony: 0.0,
+        shading_shift_texture_scale: 1.0,
         gi_equalization: 0.0,
         emissive,
     }
 }
 
-fn vertex_mtoon_color(normal: GVec3, shading: MaterialShading) -> [f32; 4] {
+fn vertex_mtoon_color(
+    normal: GVec3,
+    tex_coord: [f32; 2],
+    shading: MaterialShading,
+    shading_shift_texture: Option<&CpuRgbaImage>,
+) -> [f32; 4] {
     let ndotl = normal
         .normalize_or_zero()
         .dot(GVec3::new(-1.0, -1.0, -1.0).normalize())
         .clamp(-1.0, 1.0);
+    let shift = shading.shading_shift
+        + shading_shift_texture
+            .map(|image| image.sample_red(tex_coord) * shading.shading_shift_texture_scale)
+            .unwrap_or(0.0);
     let toon = linearstep(
         -1.0 + shading.shading_toony,
         1.0 - shading.shading_toony,
-        ndotl + shading.shading_shift,
+        ndotl + shift,
     );
     let diffuse = GVec3::from_array([
         shading.base_color[0],
@@ -733,6 +761,17 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
     loaded.textures.get(texture).map(|texture| texture.image)
 }
 
+fn material_shading_shift_image(
+    loaded: &LoadedVrm,
+    material: Option<usize>,
+) -> Option<CpuRgbaImage> {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.shading_shift_texture)
+        .and_then(|texture| sampled_image_for_texture(loaded, texture.0))
+}
+
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgbaImage> {
     let image = loaded.textures.get(texture)?.image;
     let image = loaded.images.get(image)?;
@@ -744,7 +783,15 @@ fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRg
 }
 
 impl CpuRgbaImage {
+    fn sample_red(&self, tex_coord: [f32; 2]) -> f32 {
+        self.sample_channel(tex_coord, 0, 255)
+    }
+
     fn sample_green(&self, tex_coord: [f32; 2]) -> f32 {
+        self.sample_channel(tex_coord, 1, 255)
+    }
+
+    fn sample_channel(&self, tex_coord: [f32; 2], channel: usize, fallback: u8) -> f32 {
         let u = tex_coord[0].rem_euclid(1.0);
         let v = tex_coord[1].rem_euclid(1.0);
         let x = u * self.width as f32 - 0.5;
@@ -755,18 +802,26 @@ impl CpuRgbaImage {
         let ty = y - y0;
         let x0 = x0 as i32;
         let y0 = y0 as i32;
-        let top = lerp(self.green_at(x0, y0), self.green_at(x0 + 1, y0), tx);
-        let bottom = lerp(self.green_at(x0, y0 + 1), self.green_at(x0 + 1, y0 + 1), tx);
+        let top = lerp(
+            self.channel_at(x0, y0, channel, fallback),
+            self.channel_at(x0 + 1, y0, channel, fallback),
+            tx,
+        );
+        let bottom = lerp(
+            self.channel_at(x0, y0 + 1, channel, fallback),
+            self.channel_at(x0 + 1, y0 + 1, channel, fallback),
+            tx,
+        );
         lerp(top, bottom, ty)
     }
 
-    fn green_at(&self, x: i32, y: i32) -> f32 {
+    fn channel_at(&self, x: i32, y: i32, channel: usize, fallback: u8) -> f32 {
         let width = self.width as i32;
         let height = self.height as i32;
         let x = x.rem_euclid(width) as u32;
         let y = y.rem_euclid(height) as u32;
-        let index = ((y * self.width + x) * 4 + 1) as usize;
-        self.rgba.get(index).copied().unwrap_or(255) as f32 / 255.0
+        let index = ((y * self.width + x) * 4) as usize + channel;
+        self.rgba.get(index).copied().unwrap_or(fallback) as f32 / 255.0
     }
 }
 
