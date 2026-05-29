@@ -17,6 +17,7 @@ serde_json = "1.0.150"
 
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -186,6 +187,8 @@ Options:
 }
 
 fn run(options: Options) -> Result<(), String> {
+    ensure_no_github_actions_workflows()?;
+
     if !options.skip_core {
         run_cmd("cargo", ["fmt", "--all", "--", "--check"])?;
         run_cmd("cargo", ["test", "--workspace", "--all-features"])?;
@@ -225,6 +228,42 @@ fn run(options: Options) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn ensure_no_github_actions_workflows() -> Result<(), String> {
+    let workflows = Path::new(".github").join("workflows");
+    if !workflows.exists() {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(&workflows)
+        .map_err(|err| format!("failed to read {}: {err}", path(&workflows)))?;
+    let workflow_files = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("yml") || extension.eq_ignore_ascii_case("yaml")
+                })
+        })
+        .collect::<Vec<_>>();
+
+    if workflow_files.is_empty() {
+        Ok(())
+    } else {
+        let files = workflow_files
+            .iter()
+            .map(|file| format!("  - {}", path(file)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(format!(
+            "GitHub Actions workflows are intentionally not used in this repository. \
+             Remove these files and use `cargo +nightly -Zscript tools/ci/local-ci.rs` instead:\n{files}"
+        ))
+    }
 }
 
 fn prepare_external_inputs(options: &Options) -> Result<(), String> {

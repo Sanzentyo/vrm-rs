@@ -7,21 +7,21 @@ Repository guidance for Codex agents working on `vrm-rs`.
 - Before Rust implementation, testing, refactoring, or review work, read and follow the local `rust-best-practices` skill:
   - `C:\Users\sanze\.agents\skills\rust\SKILL.md`
 - Keep changes idiomatic Rust: no `unsafe`, no unstable features, no broad macro-heavy abstractions unless explicitly justified.
-- Run the normal gate before implementation commits:
+- Run the normal gate before implementation commits through the local Rust CI script:
 
 ```powershell
-cargo fmt --all -- --check
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo +nightly -Zscript tools/ci/local-ci.rs
 ```
 
-- The repository intentionally does not carry GitHub Actions workflows. Use the local Rust CI script when you want the old CI-equivalent gate:
+- The repository intentionally does not carry GitHub Actions workflows. `tools/ci/local-ci.rs` fails fast if `.github/workflows/*.yml` or `.github/workflows/*.yaml` files are present. Use the local Rust CI script when you want the old CI-equivalent gate:
 
 ```powershell
 cargo +nightly -Zscript tools/ci/local-ci.rs
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
+
+The default script run covers `cargo fmt --all -- --check`, `cargo test --workspace --all-features`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70`.
 
 ## Coverage Refresh Delegation
 

@@ -38,6 +38,8 @@ The repository no longer carries GitHub Actions workflows. Use the local Rust sc
 cargo +nightly -Zscript tools/ci/local-ci.rs
 ```
 
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, and the conservative `cargo-llvm-cov` line threshold.
+
 Run the external fixture parity pass locally with:
 
 ```powershell
@@ -73,7 +75,7 @@ cargo llvm-cov --workspace --all-features --summary-only
 The local CI script runs the same workspace coverage pass with a conservative line threshold:
 
 ```powershell
-cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
+cargo +nightly -Zscript tools/ci/local-ci.rs
 ```
 
 HTML report:

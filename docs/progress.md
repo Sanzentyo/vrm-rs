@@ -38,7 +38,7 @@
 - Added renderer-agnostic MToon pipeline hints for alpha mode, culling, depth write/test, blend, render order, and outline pass hints.
 - Added `VrmRuntimeDriver` in `vrm-adapter` to combine VRM0 orientation, animation frame application, runtime expression events, constraints, spring stepping, MToon pipeline hints, and first-person visibility in one tick.
 - Added MToon pipeline pass helper and adapter trait for renderer-side pipeline selection without shader generation.
-- Added CI workflow for fmt/test/clippy and non-threshold `cargo-llvm-cov` summary coverage.
+- Added the first automation pass for fmt/test/clippy and non-threshold `cargo-llvm-cov` summary coverage; later work removed GitHub-hosted CI and moved the gate into the local Rust runner.
 - Expanded external fixture tests from load-only checks to semantic assertions for VRM metadata/humanoid/material/spring/constraints and VRMA tracks.
 - Expanded protocol roundtrip tests for VRM0, spring bone, node constraint, MToon, VRMA, unknown extensions, and invalid extension errors.
 - Hardened `VrmRuntimeDriver` so VRM0 root orientation compensation is applied once per driver instead of compounding every tick.
@@ -173,6 +173,7 @@
 - Added secondary MToon texture bindings to the wgpu capture for `shadeMultiplyTexture` and `matcapTexture`. On Seed-san, most shade textures alias the main texture, but matcap improves arm material matching slightly; the local wgpu-vs-three-vrm baseline is now `27.52 dB` while Bevy remains `24.98 dB`.
 - Added VRM1 `shadingShiftTexture` plus scale to the core/sans-IO MToon model and propagated it through adapter material descriptors, Bevy texture plans, and wgpu capture bindings. The wgpu capture also now computes matcap UVs from the camera view direction and applies parametric rim lighting/rim multiply inputs. The local Seed-san wgpu-vs-three-vrm baseline is now `27.63 dB`; Bevy remains `24.98 dB`.
 - Extended renderer-facing glTF material extraction with alpha mode, alpha cutoff, and double-sided flags, then wired those inputs into the wgpu and Bevy capture material policies. Seed-san's current static frame remains wgpu `27.63 dB` and Bevy `24.98 dB`, but transparent/double-sided material handling is no longer implicit in the capture paths.
+- Confirmed that no `.github` workflow files are tracked, then hardened `tools/ci/local-ci.rs` so the local CI-equivalent runner fails fast if GitHub Actions workflow YAML files reappear. Updated agent/testing/TODO docs to make the Rust script the canonical gate.
 
 Open work:
 

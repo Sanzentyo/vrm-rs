@@ -8,14 +8,13 @@ criteria.
 
 - Update this file when a task is completed, split, or superseded.
 - Keep external binaries and generated golden files under `.external-fixtures/`; do not commit them.
-- Before committing implementation work, run:
+- Before committing implementation work, run the local Rust CI script:
 
 ```powershell
-cargo fmt --all -- --check
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
+cargo +nightly -Zscript tools/ci/local-ci.rs
 ```
+
+The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs` for the CI-equivalent local gate and its optional external fixture / render parity passes.
 
 ## P0: Bevy Adapter Integration
 
