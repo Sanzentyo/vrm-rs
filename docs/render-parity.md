@@ -101,12 +101,12 @@ cargo run --example wgpu_render_capture -- `
 ```
 
 The local smoke run on 2026-05-29 successfully wrote wgpu RGBA/PNG artifacts
-from the real Seed-san mesh primitives. The first PSNR against the three-vrm
-reference is `8.78 dB`, which is intentionally recorded as a failing visual
-parity baseline: the current path draws unskinned, untextured MToon base-color
-geometry with a small diffuse shader. Next parity work should add texture
-sampling, alpha/cull parity, skinning or rest-pose parity policy, and fuller
-MToon lighting before tightening thresholds.
+from the real Seed-san mesh primitives. The first textured PSNR against the
+three-vrm reference is `9.64 dB`, which is intentionally recorded as a failing
+visual parity baseline: the current path draws rest-pose mesh primitives with
+PBR base-color texture fallback and a small diffuse shader. Next parity work
+should add alpha/cull parity, material ordering, skinning or rest-pose parity
+policy, and fuller MToon lighting before tightening thresholds.
 
 ## Review Criteria
 
@@ -127,6 +127,6 @@ report before declaring parity.
 
 - Add a Bevy capture path that renders the same camera/light/material setup and
   writes RGBA JSON after readback using `LoadedVrm::meshes`.
-- Deepen the wgpu capture path with texture sampling, MToon material state,
-  alpha/cull parity, and animation/skinning policy before raising PSNR
+- Deepen the wgpu capture path with MToon material state, alpha/cull parity,
+  material ordering, and animation/skinning policy before raising PSNR
   thresholds.

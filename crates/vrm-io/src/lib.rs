@@ -22,6 +22,8 @@ pub struct LoadedVrm {
     model: VrmModel<Resolved>,
     pub scene: GltfSceneRest,
     pub meshes: Vec<GltfMeshData>,
+    pub gltf_materials: Vec<GltfMaterialData>,
+    pub textures: Vec<GltfTextureData>,
     pub buffers: Vec<Vec<u8>>,
     pub images: Vec<ImageData>,
     pub warnings: Vec<VrmIoWarning>,
@@ -55,6 +57,51 @@ impl GltfSceneRest {
 pub struct ImageData {
     pub mime_type: Option<String>,
     pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub format: ImageFormat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFormat {
+    R8,
+    R8G8,
+    R8G8B8,
+    R8G8B8A8,
+    R16,
+    R16G16,
+    R16G16B16,
+    R16G16B16A16,
+    R32G32B32Float,
+    R32G32B32A32Float,
+}
+
+impl From<gltf::image::Format> for ImageFormat {
+    fn from(value: gltf::image::Format) -> Self {
+        match value {
+            gltf::image::Format::R8 => Self::R8,
+            gltf::image::Format::R8G8 => Self::R8G8,
+            gltf::image::Format::R8G8B8 => Self::R8G8B8,
+            gltf::image::Format::R8G8B8A8 => Self::R8G8B8A8,
+            gltf::image::Format::R16 => Self::R16,
+            gltf::image::Format::R16G16 => Self::R16G16,
+            gltf::image::Format::R16G16B16 => Self::R16G16B16,
+            gltf::image::Format::R16G16B16A16 => Self::R16G16B16A16,
+            gltf::image::Format::R32G32B32FLOAT => Self::R32G32B32Float,
+            gltf::image::Format::R32G32B32A32FLOAT => Self::R32G32B32A32Float,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GltfTextureData {
+    pub image: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialData {
+    pub base_color_factor: [f32; 4],
+    pub base_color_texture: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -138,6 +185,30 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
         .collect()
 }
 
+fn extract_textures(document: &gltf::Document) -> Vec<GltfTextureData> {
+    document
+        .textures()
+        .map(|texture| GltfTextureData {
+            image: texture.source().index(),
+        })
+        .collect()
+}
+
+fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
+    document
+        .materials()
+        .map(|material| {
+            let pbr = material.pbr_metallic_roughness();
+            GltfMaterialData {
+                base_color_factor: pbr.base_color_factor(),
+                base_color_texture: pbr
+                    .base_color_texture()
+                    .map(|texture| texture.texture().index()),
+            }
+        })
+        .collect()
+}
+
 fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
     let Some(value) = extensions.get("VRMC_vrm_animation") else {
         return Vec::new();
@@ -163,6 +234,8 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
     let scene = GltfSceneRest::from_document(&document);
     let meshes = extract_meshes(&document, &buffers);
+    let gltf_materials = extract_gltf_materials(&document);
+    let textures = extract_textures(&document);
     let root_extensions = extension_map(document.as_json().extensions.as_ref());
     let mut warnings = vrma_extension_warnings(&root_extensions);
     let mut bundle = parse_root_extensions(&root_extensions)?;
@@ -178,6 +251,9 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         .map(|image| ImageData {
             mime_type: image.format.to_mime_type().map(str::to_owned),
             bytes: image.pixels,
+            width: image.width,
+            height: image.height,
+            format: image.format.into(),
         })
         .collect();
 
@@ -201,6 +277,8 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
         model,
         scene,
         meshes,
+        gltf_materials,
+        textures,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
         images: image_data,
         warnings,
@@ -1099,12 +1177,28 @@ mod tests {
             "mimeType": "image/png",
             "bufferView": 0
         }]);
+        sample["textures"] = json!([{ "source": 0 }]);
+        sample["materials"][0]["pbrMetallicRoughness"] = json!({
+            "baseColorTexture": { "index": 0 },
+            "baseColorFactor": [0.25, 0.5, 0.75, 1.0]
+        });
 
         let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
 
         assert_eq!(loaded.buffers.len(), 1);
         assert_eq!(loaded.images.len(), 1);
+        assert_eq!(loaded.images[0].width, 1);
+        assert_eq!(loaded.images[0].height, 1);
+        assert_eq!(loaded.images[0].format, ImageFormat::R8G8B8A8);
         assert!(!loaded.images[0].bytes.is_empty());
+        assert_eq!(loaded.textures, vec![GltfTextureData { image: 0 }]);
+        assert_eq!(
+            loaded.gltf_materials[0],
+            GltfMaterialData {
+                base_color_factor: [0.25, 0.5, 0.75, 1.0],
+                base_color_texture: Some(0)
+            }
+        );
     }
 
     #[test]
@@ -1167,6 +1261,8 @@ mod tests {
         assert_eq!(loaded.meshes.len(), 1);
         let primitive = &loaded.meshes[0].primitives[0];
         assert_eq!(primitive.material, Some(0));
+        assert_eq!(loaded.gltf_materials[0].base_color_factor, [1.0; 4]);
+        assert_eq!(loaded.gltf_materials[0].base_color_texture, None);
         assert_eq!(primitive.positions.len(), 3);
         assert_eq!(primitive.positions[1], [1.0, 0.0, 0.0]);
         assert_eq!(primitive.normals, vec![[0.0, 0.0, 1.0]; 3]);

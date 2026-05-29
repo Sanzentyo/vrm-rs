@@ -154,6 +154,7 @@
 - Added `tools/render-parity/three-vrm-browser-capture.mjs`, an optional Playwright/Chromium reference capture path that serves a local three-vrm build and VRM fixture, renders a fixed camera/light frame in WebGL, and writes RGBA JSON for PSNR comparison.
 - Extended the three-vrm browser capture to optionally write a PNG visual-review artifact and verified a local Seed-san reference capture plus self-PSNR report. Added renderer-facing mesh primitive extraction to `vrm-io` (`LoadedVrm::meshes` and `GltfNodeRest::mesh`) so Bevy/wgpu capture paths can build real mesh buffers from the loaded VRM instead of placeholder geometry.
 - Added `examples/wgpu_render_capture.rs`, an offscreen wgpu capture path that renders real `LoadedVrm::meshes` primitive buffers and writes RGBA JSON plus PNG artifacts under `.external-fixtures/render-parity/`. The local Seed-san smoke run produced a first wgpu-vs-three-vrm PSNR report at `8.78 dB`, documenting the remaining texture/skinning/MToon shading gap rather than claiming visual parity.
+- Extended `vrm-io` with decoded image metadata, texture-to-image mapping, and glTF PBR material base-color texture data. The wgpu capture now samples base-color textures and uses the three-vrm-facing camera convention; the Seed-san local PSNR baseline rose to `9.64 dB`.
 
 Open work:
 
