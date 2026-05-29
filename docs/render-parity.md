@@ -51,7 +51,8 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- `
   --skip-playwright-install `
   --three-vrm-root D:\git\three-vrm `
   --render-fixture Seed-san.vrm `
-  --render-fixture VRM1_Constraint_Twist_Sample.vrm
+  --render-fixture VRM1_Constraint_Twist_Sample.vrm `
+  --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_materials_mtoon_UV_Animation_Test\VRMC_materials_mtoon_UV_Animation_Test.vrm
 ```
 
 Without the `--skip-*` flags, the same script can download external fixtures,
@@ -132,6 +133,19 @@ The canonical comparison images for the current local sample sweep are:
 - `.external-fixtures/render-parity/three-vrm/VRM1_Constraint_Twist_Sample.frame000.png`
 - `.external-fixtures/render-parity/wgpu/VRM1_Constraint_Twist_Sample.frame000.png`
 - `.external-fixtures/render-parity/bevy/VRM1_Constraint_Twist_Sample.frame000.png`
+- `.external-fixtures/render-parity/three-vrm/VRMC_materials_mtoon_UV_Animation_Test.frame000.png`
+- `.external-fixtures/render-parity/wgpu/VRMC_materials_mtoon_UV_Animation_Test.frame000.png`
+- `.external-fixtures/render-parity/bevy/VRMC_materials_mtoon_UV_Animation_Test.frame000.png`
+
+For a time-advanced MToon UV animation check that does not overwrite the static
+review set, run:
+
+```powershell
+just render-parity-uv-animation
+```
+
+This writes `.external-fixtures/render-parity-uv-animation/visual-review.html`
+and its renderer artifacts with `--render-mtoon-time 1.0`.
 
 ## Renderer Input Data
 
@@ -352,10 +366,11 @@ materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
 while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. Switching the
 canonical render-parity background to opaque black removes the remaining
 background-alpha mismatch from the visual review artifacts: the current
-two-fixture sweep reports `transparent/opaque/partial = 0/65536/0` for
-three-vrm, wgpu, and Bevy on both samples, with alpha mismatches `0`. Current
-PSNR values are Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, and
-constraint sample wgpu/Bevy `34.8595 dB`.
+official sample sweep reports `transparent/opaque/partial = 0/65536/0` for
+three-vrm, wgpu, and Bevy, with alpha mismatches `0`. Current
+PSNR values are Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`,
+constraint sample wgpu/Bevy `34.8595 dB`, and UV animation sample wgpu/Bevy
+`36.1575 dB` at time `0`.
 Static `KHR_texture_transform` data is now retained through the non-rendering
 layers: VRMC MToon texture infos round-trip nested transform extensions,
 `MtoonTextureTransformSet` stores slot-specific transforms in core, and
@@ -367,9 +382,13 @@ per-primitive UV-transform uniform beside its material textures, Bevy includes
 the same slot-specific transforms in its custom material uniform, and both
 shader paths sample base, shade, shading-shift, normal, rim, and emissive
 textures through those transforms. Outline-width texture sampling applies the
-transform on the CPU side while baking the outline mesh. The remaining
-texture-transform parity gap is animated UV offsets/rotation over time and
-dedicated UV-animation-mask sampling.
+transform on the CPU side while baking the outline mesh. The capture harness
+now also passes MToon material time into three-vrm, wgpu, and Bevy; the wgpu and
+Bevy shader paths apply UV animation scroll/rotation before slot-specific
+texture transforms and bind the UV-animation-mask texture. The official UV
+animation sample at `--render-mtoon-time 1.0` reports wgpu/Bevy `35.9209 dB`
+with alpha mismatches `0`. The remaining texture-animation gap is broader
+mask-texture fixture coverage and raising the MToon-lit PSNR threshold.
 
 ## Next Renderer Work
 

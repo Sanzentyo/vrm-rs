@@ -92,6 +92,8 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, default_value_t = 0.0)]
+    mtoon_time: f32,
     #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
     background: CaptureBackground,
 }
@@ -184,6 +186,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
             normal_transform: uv_transform_uniform(transforms.normal),
             rim_transform: uv_transform_uniform(transforms.rim),
             emissive_transform: uv_transform_uniform(transforms.emissive),
+            uv_animation_mask_transform: uv_transform_uniform(transforms.uv_animation_mask),
             rotation_a: [
                 uv_rotation_uniform(transforms.base),
                 uv_rotation_uniform(transforms.shade),
@@ -193,7 +196,13 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
             rotation_b: [
                 uv_rotation_uniform(transforms.rim),
                 uv_rotation_uniform(transforms.emissive),
+                uv_rotation_uniform(transforms.uv_animation_mask),
                 0.0,
+            ],
+            uv_animation: [
+                transforms.uv_animation_scroll[0],
+                transforms.uv_animation_scroll[1],
+                transforms.uv_animation_rotation,
                 0.0,
             ],
         }
@@ -234,8 +243,10 @@ struct MaterialUvUniform {
     normal_transform: [f32; 4],
     rim_transform: [f32; 4],
     emissive_transform: [f32; 4],
+    uv_animation_mask_transform: [f32; 4],
     rotation_a: [f32; 4],
     rotation_b: [f32; 4],
+    uv_animation: [f32; 4],
 }
 
 struct TextureResource {
@@ -258,6 +269,7 @@ struct MaterialImages {
     matcap: Option<usize>,
     rim: Option<usize>,
     emissive: Option<usize>,
+    uv_animation_mask: Option<usize>,
 }
 
 struct TextureUpload<'a> {
@@ -282,12 +294,15 @@ struct MaterialUvTransforms {
     rim: Option<TextureTransform2d>,
     outline_width: Option<TextureTransform2d>,
     emissive: Option<TextureTransform2d>,
+    uv_animation_mask: Option<TextureTransform2d>,
+    uv_animation_scroll: [f32; 2],
+    uv_animation_rotation: f32,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
-    let mesh = mesh_draw_data(&loaded)?;
+    let mesh = mesh_draw_data(&loaded, &options)?;
     let rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
 
     write_rgba_json(&options, &rgba)?;
@@ -297,7 +312,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
+fn mesh_draw_data(
+    loaded: &LoadedVrm,
+    options: &CaptureOptions,
+) -> Result<MeshDrawData, Box<dyn Error>> {
     let mut primitives = Vec::new();
     let world_matrices = render_capture_scene::runtime_world_matrices(loaded)?;
 
@@ -319,7 +337,8 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
         for primitive in &mesh.primitives {
-            let surface = draw_primitive(loaded, primitive, world, skin_matrices.as_deref())?;
+            let surface =
+                draw_primitive(loaded, primitive, world, skin_matrices.as_deref(), options)?;
             primitives.push(surface.clone());
             if let Some(outline) = outline_primitive(loaded, primitive, &surface) {
                 primitives.push(outline);
@@ -356,7 +375,7 @@ fn outline_primitive(
         .textures
         .outline_width_multiply_texture
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
-    let uv_transforms = material_uv_transforms(loaded, primitive.material);
+    let uv_transforms = surface.uv_transforms;
     let width = mtoon.outline_width_factor;
     let vertices = surface
         .vertices
@@ -397,9 +416,10 @@ fn draw_primitive(
     primitive: &GltfPrimitiveData,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
+    options: &CaptureOptions,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let shading = material_shading(loaded, primitive.material);
-    let uv_transforms = material_uv_transforms(loaded, primitive.material);
+    let uv_transforms = material_uv_transforms(loaded, primitive.material, options.mtoon_time);
     let policy = material_policy(loaded, primitive.material);
     let mut vertices = primitive
         .positions
@@ -827,7 +847,11 @@ fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Optio
     })
 }
 
-fn material_uv_transforms(loaded: &LoadedVrm, material: Option<usize>) -> MaterialUvTransforms {
+fn material_uv_transforms(
+    loaded: &LoadedVrm,
+    material: Option<usize>,
+    mtoon_time: f32,
+) -> MaterialUvTransforms {
     let mtoon = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref());
@@ -849,6 +873,16 @@ fn material_uv_transforms(loaded: &LoadedVrm, material: Option<usize>) -> Materi
         outline_width: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
         emissive: gltf.and_then(|material| material.emissive_texture_transform),
+        uv_animation_mask: mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.uv_animation_mask_texture),
+        uv_animation_scroll: mtoon.map_or([0.0, 0.0], |mtoon| {
+            [
+                mtoon.uv_animation.scroll_x_speed * mtoon_time,
+                mtoon.uv_animation.scroll_y_speed * mtoon_time,
+            ]
+        }),
+        uv_animation_rotation: mtoon
+            .map_or(0.0, |mtoon| mtoon.uv_animation.rotation_speed * mtoon_time),
     }
 }
 
@@ -910,6 +944,10 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         .and_then(|material| material.emissive_texture)
         .and_then(|texture| loaded.textures.get(texture))
         .map(|texture| texture.image);
+    let uv_animation_mask = mtoon
+        .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)
+        .and_then(|texture| loaded.textures.get(texture.0))
+        .map(|texture| texture.image);
     MaterialImages {
         base,
         shade,
@@ -918,6 +956,7 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         matcap,
         rim,
         emissive,
+        uv_animation_mask,
     }
 }
 
@@ -1128,6 +1167,12 @@ fn material_texture_bind_group(
     let matcap = texture_view(resources.color, resources.indices, images.matcap, 1);
     let rim = texture_view(resources.color, resources.indices, images.rim, 0);
     let emissive = texture_view(resources.color, resources.indices, images.emissive, 0);
+    let uv_animation_mask = texture_view(
+        resources.color,
+        resources.indices,
+        images.uv_animation_mask,
+        0,
+    );
     let normal = texture_view(resources.normal, resources.indices, images.normal, 2);
     let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render parity material uv transform uniform"),
@@ -1173,6 +1218,10 @@ fn material_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 8,
                 resource: uv_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: wgpu::BindingResource::TextureView(uv_animation_mask),
             },
         ],
     });
@@ -1487,6 +1536,16 @@ async fn render_capture(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1705,7 +1764,8 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
             "exposure": options.mtoon_exposure,
             "ambientBase": options.mtoon_ambient_base,
             "ambientGiScale": options.mtoon_ambient_gi_scale,
-            "pbrAmbient": options.pbr_ambient
+            "pbrAmbient": options.pbr_ambient,
+            "time": options.mtoon_time
         },
         "format": "rgba8",
         "rgba": rgba,
@@ -1767,12 +1827,17 @@ struct MaterialUvUniform {
     normal_transform: vec4<f32>,
     rim_transform: vec4<f32>,
     emissive_transform: vec4<f32>,
+    uv_animation_mask_transform: vec4<f32>,
     rotation_a: vec4<f32>,
     rotation_b: vec4<f32>,
+    uv_animation: vec4<f32>,
 };
 
 @group(1) @binding(8)
 var<uniform> material_uv: MaterialUvUniform;
+
+@group(1) @binding(9)
+var uv_animation_mask_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -1877,6 +1942,24 @@ fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f
     );
 }
 
+fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
+    let mask_uv = transform_uv(
+        uv,
+        material_uv.uv_animation_mask_transform,
+        material_uv.rotation_b.z,
+    );
+    let mask = textureSample(uv_animation_mask_texture, base_sampler, mask_uv).b;
+    let phase = material_uv.uv_animation.z * mask;
+    let c = cos(phase);
+    let s = sin(phase);
+    let centered = uv - vec2<f32>(0.5, 0.5);
+    let rotated = vec2<f32>(
+        c * centered.x + s * centered.y,
+        -s * centered.x + c * centered.y,
+    ) + vec2<f32>(0.5, 0.5);
+    return rotated + material_uv.uv_animation.xy * mask;
+}
+
 fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
     let geometric_normal = normalize(input.normal) * face_sign;
@@ -1900,12 +1983,13 @@ fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) ->
 
 @fragment
 fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    let base_uv = transform_uv(input.tex_coord, material_uv.base_transform, material_uv.rotation_a.x);
-    let shade_uv = transform_uv(input.tex_coord, material_uv.shade_transform, material_uv.rotation_a.y);
-    let shading_shift_uv = transform_uv(input.tex_coord, material_uv.shading_shift_transform, material_uv.rotation_a.z);
-    let normal_uv = transform_uv(input.tex_coord, material_uv.normal_transform, material_uv.rotation_a.w);
-    let rim_uv = transform_uv(input.tex_coord, material_uv.rim_transform, material_uv.rotation_b.x);
-    let emissive_uv = transform_uv(input.tex_coord, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let animated_uv = animate_uv(input.tex_coord);
+    let base_uv = transform_uv(animated_uv, material_uv.base_transform, material_uv.rotation_a.x);
+    let shade_uv = transform_uv(animated_uv, material_uv.shade_transform, material_uv.rotation_a.y);
+    let shading_shift_uv = transform_uv(animated_uv, material_uv.shading_shift_transform, material_uv.rotation_a.z);
+    let normal_uv = transform_uv(animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
+    let rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    let emissive_uv = transform_uv(animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
     let normal = surface_normal(input, front_facing, normal_uv);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, base_uv);

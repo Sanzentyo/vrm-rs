@@ -20,8 +20,10 @@ struct BevyMtoonUniform {
     normal_uv_transform: vec4<f32>,
     rim_uv_transform: vec4<f32>,
     emissive_uv_transform: vec4<f32>,
+    uv_animation_mask_uv_transform: vec4<f32>,
     uv_rotation_a: vec4<f32>,
     uv_rotation_b: vec4<f32>,
+    uv_animation: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -61,6 +63,11 @@ var normal_sampler: sampler;
 var emissive_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(14)
 var emissive_sampler: sampler;
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(15)
+var uv_animation_mask_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(16)
+var uv_animation_mask_sampler: sampler;
 
 fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
@@ -106,6 +113,24 @@ fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f
     );
 }
 
+fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
+    let mask_uv = transform_uv(
+        uv,
+        material.uv_animation_mask_uv_transform,
+        material.uv_rotation_b.z,
+    );
+    let mask = textureSample(uv_animation_mask_texture, uv_animation_mask_sampler, mask_uv).b;
+    let phase = material.uv_animation.z * mask;
+    let c = cos(phase);
+    let s = sin(phase);
+    let centered = uv - vec2<f32>(0.5, 0.5);
+    let rotated = vec2<f32>(
+        c * centered.x + s * centered.y,
+        -s * centered.x + c * centered.y,
+    ) + vec2<f32>(0.5, 0.5);
+    return rotated + material.uv_animation.xy * mask;
+}
+
 fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || material.pipeline.w < 0.5);
     let geometric_normal = normalize(input.world_normal) * face_sign;
@@ -139,12 +164,13 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let uv = vec2<f32>(0.0, 0.0);
 #endif
 
-    let base_uv = transform_uv(uv, material.base_uv_transform, material.uv_rotation_a.x);
-    let shade_uv = transform_uv(uv, material.shade_uv_transform, material.uv_rotation_a.y);
-    let shading_shift_uv = transform_uv(uv, material.shading_shift_uv_transform, material.uv_rotation_a.z);
-    let normal_uv = transform_uv(uv, material.normal_uv_transform, material.uv_rotation_a.w);
-    let rim_uv = transform_uv(uv, material.rim_uv_transform, material.uv_rotation_b.x);
-    let emissive_uv = transform_uv(uv, material.emissive_uv_transform, material.uv_rotation_b.y);
+    let animated_uv = animate_uv(uv);
+    let base_uv = transform_uv(animated_uv, material.base_uv_transform, material.uv_rotation_a.x);
+    let shade_uv = transform_uv(animated_uv, material.shade_uv_transform, material.uv_rotation_a.y);
+    let shading_shift_uv = transform_uv(animated_uv, material.shading_shift_uv_transform, material.uv_rotation_a.z);
+    let normal_uv = transform_uv(animated_uv, material.normal_uv_transform, material.uv_rotation_a.w);
+    let rim_uv = transform_uv(animated_uv, material.rim_uv_transform, material.uv_rotation_b.x);
+    let emissive_uv = transform_uv(animated_uv, material.emissive_uv_transform, material.uv_rotation_b.y);
 
     let normal = surface_normal(input, front_facing, normal_uv);
     let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));

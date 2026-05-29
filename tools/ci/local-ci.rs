@@ -75,6 +75,8 @@ struct Options {
     render_mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     render_pbr_ambient: f32,
+    #[arg(long, default_value_t = 0.0)]
+    render_mtoon_time: f32,
     #[arg(long)]
     render_fail_under: Option<f32>,
     #[arg(long, default_value_t = 128)]
@@ -587,6 +589,8 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
             options.render_background.as_cli_value(),
             "--camera-z",
             options.render_camera_z.to_string().as_str(),
+            "--mtoon-time",
+            options.render_mtoon_time.to_string().as_str(),
         ],
     )
 }
@@ -617,6 +621,8 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--mtoon-time",
+            options.render_mtoon_time.to_string().as_str(),
             "--background",
             options.render_background.as_cli_value(),
         ],
@@ -649,6 +655,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--mtoon-time",
+            options.render_mtoon_time.to_string().as_str(),
             "--background",
             options.render_background.as_cli_value(),
         ],

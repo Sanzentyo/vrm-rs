@@ -29,6 +29,7 @@ const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
 const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
+const mtoonTime = Number(args.get('mtoon-time') ?? '0.0');
 const background = args.get('background') ?? 'opaque-black';
 
 if (!fixture || !out) {
@@ -39,8 +40,8 @@ if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
   console.error(`invalid dimensions: ${width}x${height}`);
   process.exit(2);
 }
-if (![cameraY, cameraZ, targetY].every(Number.isFinite)) {
-  console.error('camera-y, camera-z, and target-y must be finite numbers');
+if (![cameraY, cameraZ, targetY, mtoonTime].every(Number.isFinite)) {
+  console.error('camera-y, camera-z, target-y, and mtoon-time must be finite numbers');
   process.exit(2);
 }
 if (!['opaque-black', 'transparent'].includes(background)) {
@@ -76,7 +77,7 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (url.pathname === '/') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(capturePage({ width, height, cameraY, cameraZ, targetY, background }));
+    response.end(capturePage({ width, height, cameraY, cameraZ, targetY, mtoonTime, background }));
     return;
   }
 
@@ -129,6 +130,7 @@ try {
     width,
     height,
     camera: { y: cameraY, z: cameraZ, targetY },
+    mtoonTime,
     format: 'rgba8',
     rgba: capture.rgba,
   }, null, 2)}\n`;
@@ -200,7 +202,7 @@ function capturePage(options) {
       object.frustumCulled = false;
     });
     scene.add(vrm.scene);
-    vrm.update?.(0.0);
+    vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
 

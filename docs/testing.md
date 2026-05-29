@@ -67,12 +67,16 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
-`Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
-fixture directory. The canonical local runner now uses `--render-background
-opaque-black`, matching the practical three-vrm reference capture and avoiding
-one renderer being reviewed as transparent while another is opaque. Use
-`--render-background transparent` only for explicit alpha-background
-experiments. The local runner writes the three-vrm, wgpu, and Bevy PNGs from
+`Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, and the official
+`VRMC_materials_mtoon_UV_Animation_Test.vrm` fixture. Use
+`--render-mtoon-time SECONDS` for MToon material-update parity checks such as
+UV animation; `just render-parity-uv-animation` stores its time-advanced sample
+under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
+the canonical static sweep. The canonical local runner now uses
+`--render-background opaque-black`, matching the practical three-vrm reference
+capture and avoiding one renderer being reviewed as transparent while another
+is opaque. Use `--render-background transparent` only for explicit
+alpha-background experiments. The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
 requires a byte-for-byte match with the corresponding RGBA artifact, including
