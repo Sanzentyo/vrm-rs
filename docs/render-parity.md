@@ -447,6 +447,15 @@ outline mesh expansion multiplies width by view depth divided by the fixed
 The current official sweep does not exercise that branch, so the remaining
 outline gap is fixture breadth plus exact edge/color parity rather than a
 missing mode in wgpu/Bevy captures.
+Generated transparent MToon blend coverage now includes RGB accumulation as
+well as alpha buckets. The capture shaders manually sRGB-encode fragment output
+into `Rgba8Unorm` targets so blending happens after the same color correction
+stage as three-vrm's reference path. The 2026-05-30
+`just render-parity-transparent-generated` run reports `transparent=512`,
+`opaque=0`, `partial=65024`, alpha mismatches `0`, wgpu `rgb-visible =
+Infinity` with max channel delta `0`, and Bevy `rgb-visible = 52.9020 dB` with
+max channel delta `1`. This closes the generated transparent-material blocker;
+the remaining transparent work is broader real-fixture coverage.
 
 ## Next Renderer Work
 
@@ -456,6 +465,9 @@ missing mode in wgpu/Bevy captures.
 - Add or discover an external screen-coordinate outline fixture so the newly
   implemented screen-width path is measured against three-vrm instead of only
   being compile/render-path covered.
+- Add or discover broader transparent-material fixtures with real textures and
+  mixed render queues so the generated blend fixture is not the only
+  transparent RGB parity guard.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize the remaining MToon shader deltas.

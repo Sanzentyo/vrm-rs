@@ -603,7 +603,9 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
                 policy.alpha_mode = CaptureAlphaMode::Blend;
                 policy.depth_write = mtoon.is_some_and(|mtoon| mtoon.transparent_with_z_write);
                 policy.blend = true;
-                policy.render_order = policy.render_order.max(3000);
+                policy.render_order = mtoon.map_or(policy.render_order.max(3000), |mtoon| {
+                    3000 + mtoon_transparent_order_offset(mtoon)
+                });
             }
         }
         if gltf.double_sided {
@@ -611,6 +613,15 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
         }
     }
     policy
+}
+
+fn mtoon_transparent_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
+    let queue_offset = if mtoon.transparent_with_z_write {
+        0
+    } else {
+        19
+    };
+    queue_offset + mtoon.render_queue_offset_number
 }
 
 fn capture_cull_mode(mode: MtoonCullMode) -> CaptureCullMode {
@@ -1391,7 +1402,7 @@ fn render_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus,
             depth_write_enabled: Some(key.depth_write),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -1443,7 +1454,7 @@ async fn render_capture(
         })
         .await?;
 
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
     let color_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("render parity color"),
         size: extent(options),
@@ -1987,6 +1998,20 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
+fn linear_to_srgb_channel(value: f32) -> f32 {
+    let x = clamp(value, 0.0, 1.0);
+    return select(1.055 * pow(x, 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
+}
+
+fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
+    return vec4<f32>(
+        linear_to_srgb_channel(color.r),
+        linear_to_srgb_channel(color.g),
+        linear_to_srgb_channel(color.b),
+        alpha,
+    );
+}
+
 fn pbr_direct(
     diffuse: vec3<f32>,
     normal: vec3<f32>,
@@ -2100,7 +2125,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         if input.outline_color.a >= 0.0 {
             pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
         }
-        return vec4<f32>(pbr_color, opaque_alpha);
+        return output_color(pbr_color, opaque_alpha);
     }
     let shade_texel = textureSample(shade_texture, base_sampler, shade_uv);
     let shade = input.shade_color.rgb * shade_texel.rgb;
@@ -2131,6 +2156,6 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if input.outline_color.a >= 0.0 {
         color = input.outline_color.rgb * mix(vec3<f32>(1.0), color, input.outline_color.a);
     }
-    return vec4<f32>(color, opaque_alpha);
+    return output_color(color, opaque_alpha);
 }
 "#;

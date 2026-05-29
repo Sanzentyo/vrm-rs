@@ -74,6 +74,20 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
+fn linear_to_srgb_channel(value: f32) -> f32 {
+    let x = clamp(value, 0.0, 1.0);
+    return select(1.055 * pow(x, 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
+}
+
+fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
+    return vec4<f32>(
+        linear_to_srgb_channel(color.r),
+        linear_to_srgb_channel(color.g),
+        linear_to_srgb_channel(color.b),
+        alpha,
+    );
+}
+
 fn pbr_direct(
     diffuse: vec3<f32>,
     normal: vec3<f32>,
@@ -201,7 +215,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         if material.outline_color.a >= 0.0 {
             pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
         }
-        return vec4<f32>(pbr_color, opaque_alpha);
+        return output_color(pbr_color, opaque_alpha);
     }
 
     let shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
@@ -236,5 +250,5 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     if material.outline_color.a >= 0.0 {
         color = material.outline_color.rgb * mix(vec3<f32>(1.0), color, material.outline_color.a);
     }
-    return vec4<f32>(color, opaque_alpha);
+    return output_color(color, opaque_alpha);
 }

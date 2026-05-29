@@ -866,12 +866,14 @@ struct BevyMtoonMaterial {
     uv_animation_mask_texture: Handle<Image>,
     alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
+    depth_write: bool,
     depth_bias: f32,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct BevyMtoonKey {
     cull_mode: Option<Face>,
+    depth_write: bool,
 }
 
 #[derive(Clone, Copy, Debug, ShaderType)]
@@ -931,6 +933,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonKey {
     fn from(material: &BevyMtoonMaterial) -> Self {
         Self {
             cull_mode: material.cull_mode,
+            depth_write: material.depth_write,
         }
     }
 }
@@ -959,6 +962,9 @@ impl Material for BevyMtoonMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
+        if let Some(depth_stencil) = &mut descriptor.depth_stencil {
+            depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
+        }
         Ok(())
     }
 }
@@ -974,6 +980,7 @@ fn bevy_mtoon_material(
 ) -> BevyMtoonMaterial {
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
     let cull_mode = material_cull_mode(loaded, primitive.material);
+    let depth_write = material_depth_write(loaded, primitive.material);
     let uv_transforms = material_uv_transforms(loaded, primitive.material, options.mtoon_time);
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
@@ -1078,6 +1085,7 @@ fn bevy_mtoon_material(
             .unwrap_or_else(|| image_handles.white.clone()),
         alpha_mode,
         cull_mode,
+        depth_write,
         depth_bias,
     }
 }
@@ -1256,18 +1264,49 @@ fn tex_coords_or_default(vertex_count: usize, tex_coords: &[[f32; 2]]) -> Vec<[f
 }
 
 fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
-    let render_order = material
+    let mtoon = material
         .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|material| material.mtoon.as_ref());
+    let render_order = mtoon
         .map(|mtoon| mtoon.pipeline_hints().render_order)
         .unwrap_or(2000);
     if material
         .and_then(|index| loaded.gltf_materials.get(index))
         .is_some_and(|material| material.alpha_mode == GltfAlphaMode::Blend)
     {
-        render_order.max(3000)
+        mtoon.map_or(render_order.max(3000), |mtoon| {
+            3000 + bevy_transparent_spawn_order_offset(mtoon)
+        })
     } else {
         render_order
+    }
+}
+
+fn bevy_transparent_spawn_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
+    1000 - mtoon_transparent_order_offset(mtoon)
+}
+
+fn mtoon_transparent_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
+    let queue_offset = if mtoon.transparent_with_z_write {
+        0
+    } else {
+        19
+    };
+    queue_offset + mtoon.render_queue_offset_number
+}
+
+fn material_depth_write(loaded: &LoadedVrm, material: Option<usize>) -> bool {
+    let mtoon = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref());
+    let is_blend = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .is_some_and(|material| material.alpha_mode == GltfAlphaMode::Blend)
+        || mtoon.is_some_and(|mtoon| mtoon.pipeline_hints().alpha_mode == MtoonAlphaMode::Blend);
+    if is_blend {
+        mtoon.is_some_and(|mtoon| mtoon.transparent_with_z_write)
+    } else {
+        true
     }
 }
 
@@ -1687,7 +1726,7 @@ fn setup_render_target(
         depth_or_array_layers: 1,
     };
     let mut render_target_image =
-        Image::new_target_texture(size.width, size.height, TextureFormat::bevy_default(), None);
+        Image::new_target_texture(size.width, size.height, TextureFormat::Rgba8Unorm, None);
     render_target_image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let render_target_image_handle = images.add(render_target_image);
     commands.spawn(ImageCopier::new(
