@@ -186,6 +186,7 @@
 - Added a root `Justfile` with `just ci`, `just ci-external`, `just render-parity`, `just render-parity-full`, and `just coverage` wrappers. These keep the Rust script as the implementation source of truth while making the common local gate and render-parity commands easier to run.
 - Extended local render parity beyond the Seed-san-only path. `tools/ci/local-ci.rs --render-parity` now accepts repeated `--render-fixture` flags, writes per-fixture RGBA/PNG/report/diff artifacts, and builds a multi-section `visual-review.html`. The first two-fixture run covers `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm`; the constraint sample reports wgpu `33.87 dB` and Bevy `26.89 dB`.
 - Unified render-parity PNG alpha handling. The three-vrm reference PNG is now encoded from the same transparent RGBA readback buffer used for PSNR, instead of using a Playwright element screenshot that composited the canvas background differently from the wgpu/Bevy PNG artifacts.
+- Added CPU-generated mip chains and glTF-like repeat/linear/mipmap-nearest sampler policy to the wgpu and Bevy render capture texture uploads. The local two-fixture render sweep now reports Seed-san at wgpu `28.17 dB` and Bevy `25.26 dB`, and `VRM1_Constraint_Twist_Sample.vrm` at wgpu `33.93 dB` and Bevy `26.90 dB`.
 
 Open work:
 

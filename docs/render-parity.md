@@ -177,15 +177,18 @@ positions/UVs and disables normal-map contribution on vertices where no stable
 tangent frame can be accumulated.
 Matching three-vrm's rim/matcap composition more closely by adding matcap to
 the rim term before `rimMultiplyTexture` and `rimLightingMix` raises the current
-wgpu Seed-san baseline to `27.98 dB`.
+wgpu Seed-san baseline to `27.98 dB`. Adding CPU-generated mip chains plus a
+repeat/linear/mipmap-nearest sampler policy to match the official sample
+samplers raises the local Seed-san wgpu baseline again to `28.17 dB`.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, screen-space outline details, or exact
 three.js/MToon light accumulation.
 
 The first multi-fixture local run also renders
-`VRM1_Constraint_Twist_Sample.vrm`. On 2026-05-30, its wgpu-vs-three-vrm PSNR is
-`33.87 dB`, substantially closer than Seed-san because the visible material set
-is simpler and less dependent on the remaining MToon deltas.
+`VRM1_Constraint_Twist_Sample.vrm`. On 2026-05-30, after mipmapped texture
+uploads, its wgpu-vs-three-vrm PSNR is `33.93 dB`, substantially closer than
+Seed-san because the visible material set is simpler and less dependent on the
+remaining MToon deltas.
 
 ## Bevy Capture
 
@@ -246,12 +249,14 @@ as linear images and sampled when glTF tangents are present. The local
 2026-05-30 Seed-san Bevy-vs-three-vrm PSNR was `25.06 dB`. Matching three-vrm's
 rim/matcap composition and generating Bevy-side tangents for normal-mapped
 primitives that omit glTF `TANGENT` raises the current Seed-san Bevy baseline
-to `25.20 dB`. This confirms the custom shader path is wired correctly, but the
+to `25.20 dB`. Adding the same CPU-generated mip chains and repeat/linear/
+mipmap-nearest sampler policy used by the wgpu capture raises it to `25.26 dB`.
+This confirms the custom shader path is wired correctly, but the
 small improvement means the next Bevy parity gains need to come from exact
 three-vrm MToon light accumulation, runtime expression/pose state, and
 screen/clip-space outline behavior rather than more `StandardMaterial` tuning.
 The first multi-fixture local run gives
-`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.89 dB`, which
+`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.90 dB`, which
 confirms the Bevy capture path works beyond Seed-san but remains below the
 MToon-lit threshold.
 

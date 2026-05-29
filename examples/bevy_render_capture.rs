@@ -9,6 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Vec4 as BVec4;
 use bevy::mesh::Indices;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin};
@@ -24,8 +25,8 @@ use bevy::render::render_graph::{
 use bevy::render::render_resource::{
     AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face,
     MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
-    SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat,
-    TextureUsages,
+    SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureDataOrder,
+    TextureFormat, TextureUsages,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::shader::ShaderRef;
@@ -1179,31 +1180,82 @@ fn bevy_image(image: &ImageData) -> Option<Image> {
 }
 
 fn bevy_image_with_format(image: &ImageData, format: TextureFormat) -> Option<Image> {
-    Some(Image::new(
-        Extent3d {
-            width: image.width,
-            height: image.height,
-            depth_or_array_layers: 1,
-        },
-        bevy::render::render_resource::TextureDimension::D2,
+    Some(bevy_image_from_rgba(
+        image.width,
+        image.height,
         image_rgba8(image)?,
         format,
-        RenderAssetUsages::default(),
     ))
 }
 
-fn single_pixel_image(rgba: [u8; 4], format: TextureFormat) -> Image {
-    Image::new(
+fn bevy_image_from_rgba(width: u32, height: u32, rgba: Vec<u8>, format: TextureFormat) -> Image {
+    let levels = mip_chain(width, height, &rgba);
+    let mip_level_count = u32::try_from(levels.len()).unwrap_or(1);
+    let data = levels
+        .into_iter()
+        .flat_map(|level| level.rgba)
+        .collect::<Vec<_>>();
+    let mut image = Image::new_uninit(
         Extent3d {
-            width: 1,
-            height: 1,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         bevy::render::render_resource::TextureDimension::D2,
-        rgba.to_vec(),
         format,
         RenderAssetUsages::default(),
-    )
+    );
+    image.texture_descriptor.mip_level_count = mip_level_count;
+    image.data_order = TextureDataOrder::MipMajor;
+    image.data = Some(data);
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_w: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Nearest,
+        ..Default::default()
+    });
+    image
+}
+
+fn single_pixel_image(rgba: [u8; 4], format: TextureFormat) -> Image {
+    bevy_image_from_rgba(1, 1, rgba.to_vec(), format)
+}
+
+struct TextureMipLevel {
+    rgba: Vec<u8>,
+}
+
+fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
+    let mut levels = vec![TextureMipLevel {
+        rgba: rgba.to_vec(),
+    }];
+    let mut current_width = width;
+    let mut current_height = height;
+    let mut current_rgba = rgba.to_vec();
+    while current_width > 1 || current_height > 1 {
+        let next_width = (current_width / 2).max(1);
+        let next_height = (current_height / 2).max(1);
+        let Some(image) = image::RgbaImage::from_raw(current_width, current_height, current_rgba)
+        else {
+            break;
+        };
+        let next = image::imageops::resize(
+            &image,
+            next_width,
+            next_height,
+            image::imageops::FilterType::Triangle,
+        );
+        current_width = next_width;
+        current_height = next_height;
+        current_rgba = next.into_raw();
+        levels.push(TextureMipLevel {
+            rgba: current_rgba.clone(),
+        });
+    }
+    levels
 }
 
 fn image_rgba8(image: &ImageData) -> Option<Vec<u8>> {
