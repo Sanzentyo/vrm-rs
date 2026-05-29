@@ -46,6 +46,14 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 
 That script downloads documented external fixtures into `.external-fixtures/official`, builds a pinned three-vrm checkout under `.external-fixtures/three-vrm`, regenerates golden JSON under `.external-fixtures/golden`, and runs the ignored fixture/golden tests without committing binaries. Fixture and golden environment variables should use absolute paths because Rust unit tests run with the package directory as their current directory.
 
+Run the local render parity pass with:
+
+```powershell
+cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
+```
+
+This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/` and writes PSNR reports under `.external-fixtures/render-parity/reports/`. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+
 ## Coverage
 
 Line and branch coverage are measured with `cargo-llvm-cov`. The tool is not required for normal development, but release and parity work should use it when available.

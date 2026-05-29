@@ -9,6 +9,7 @@ edition = "2024"
 //! Usage:
 //! cargo +nightly -Zscript tools/ci/local-ci.rs
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+//! cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -29,14 +30,21 @@ fn main() {
 #[derive(Clone, Debug)]
 struct Options {
     external_fixtures: bool,
+    render_parity: bool,
     skip_core: bool,
     skip_coverage: bool,
     skip_download: bool,
     skip_three_vrm_build: bool,
     skip_golden_generation: bool,
+    skip_playwright_install: bool,
+    render_width: u32,
+    render_height: u32,
+    render_camera_z: f32,
+    render_fail_under: Option<f32>,
     fixture_dir: PathBuf,
     golden_dir: PathBuf,
     three_vrm_root: PathBuf,
+    render_parity_dir: PathBuf,
 }
 
 impl Options {
@@ -44,14 +52,21 @@ impl Options {
         let cwd = env::current_dir().map_err(|err| err.to_string())?;
         let mut options = Self {
             external_fixtures: false,
+            render_parity: false,
             skip_core: false,
             skip_coverage: false,
             skip_download: false,
             skip_three_vrm_build: false,
             skip_golden_generation: false,
+            skip_playwright_install: false,
+            render_width: 256,
+            render_height: 256,
+            render_camera_z: 3.0,
+            render_fail_under: None,
             fixture_dir: cwd.join(".external-fixtures").join("official"),
             golden_dir: cwd.join(".external-fixtures").join("golden"),
             three_vrm_root: cwd.join(".external-fixtures").join("three-vrm"),
+            render_parity_dir: cwd.join(".external-fixtures").join("render-parity"),
         };
 
         let args = args.collect::<Vec<_>>();
@@ -61,11 +76,13 @@ impl Options {
             match arg.as_ref() {
                 "--" => {}
                 "--external-fixtures" => options.external_fixtures = true,
+                "--render-parity" => options.render_parity = true,
                 "--skip-core" => options.skip_core = true,
                 "--skip-coverage" => options.skip_coverage = true,
                 "--skip-download" => options.skip_download = true,
                 "--skip-three-vrm-build" => options.skip_three_vrm_build = true,
                 "--skip-golden-generation" => options.skip_golden_generation = true,
+                "--skip-playwright-install" => options.skip_playwright_install = true,
                 "--fixture-dir" => {
                     index += 1;
                     options.fixture_dir = required_path(&args, index, "--fixture-dir")?;
@@ -77,6 +94,27 @@ impl Options {
                 "--three-vrm-root" => {
                     index += 1;
                     options.three_vrm_root = required_path(&args, index, "--three-vrm-root")?;
+                }
+                "--render-parity-dir" => {
+                    index += 1;
+                    options.render_parity_dir = required_path(&args, index, "--render-parity-dir")?;
+                }
+                "--render-width" => {
+                    index += 1;
+                    options.render_width = required_parse(&args, index, "--render-width")?;
+                }
+                "--render-height" => {
+                    index += 1;
+                    options.render_height = required_parse(&args, index, "--render-height")?;
+                }
+                "--render-camera-z" => {
+                    index += 1;
+                    options.render_camera_z = required_parse(&args, index, "--render-camera-z")?;
+                }
+                "--render-fail-under" => {
+                    index += 1;
+                    options.render_fail_under =
+                        Some(required_parse(&args, index, "--render-fail-under")?);
                 }
                 "--help" | "-h" => {
                     print_help();
@@ -97,6 +135,21 @@ fn required_path(args: &[OsString], index: usize, flag: &str) -> Result<PathBuf,
         .ok_or_else(|| format!("missing value for {flag}"))
 }
 
+fn required_parse<T: std::str::FromStr>(
+    args: &[OsString],
+    index: usize,
+    flag: &str,
+) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    args.get(index)
+        .ok_or_else(|| format!("missing value for {flag}"))?
+        .to_string_lossy()
+        .parse()
+        .map_err(|err| format!("invalid value for {flag}: {err}"))
+}
+
 fn print_help() {
     println!(
         "\
@@ -105,17 +158,25 @@ Local vrm-rs CI runner
 Usage:
   cargo +nightly -Zscript tools/ci/local-ci.rs
   cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 
 Options:
   --external-fixtures        Download external samples, build three-vrm, generate goldens, and run ignored parity tests
+  --render-parity            Render Seed-san through three-vrm, wgpu, and Bevy, then write PSNR reports
   --skip-core                Skip fmt/test/clippy
   --skip-coverage            Skip cargo-llvm-cov
   --skip-download            Reuse existing external fixture files
   --skip-three-vrm-build     Reuse an existing built three-vrm checkout
   --skip-golden-generation   Reuse existing generated golden JSON files
+  --skip-playwright-install  Reuse existing local Playwright installation
   --fixture-dir PATH         Override .external-fixtures/official
   --golden-dir PATH          Override .external-fixtures/golden
   --three-vrm-root PATH      Override .external-fixtures/three-vrm
+  --render-parity-dir PATH   Override .external-fixtures/render-parity
+  --render-width N           Render width, default 256
+  --render-height N          Render height, default 256
+  --render-camera-z N        Camera Z distance, default 3.0
+  --render-fail-under N      Optional PSNR threshold for wgpu and Bevy reports
 "
     );
 }
@@ -155,11 +216,14 @@ fn run(options: Options) -> Result<(), String> {
     if options.external_fixtures {
         run_external_fixture_ci(&options)?;
     }
+    if options.render_parity {
+        run_render_parity_ci(&options)?;
+    }
 
     Ok(())
 }
 
-fn run_external_fixture_ci(options: &Options) -> Result<(), String> {
+fn prepare_external_inputs(options: &Options) -> Result<(), String> {
     std::fs::create_dir_all(&options.fixture_dir).map_err(|err| err.to_string())?;
     std::fs::create_dir_all(&options.golden_dir).map_err(|err| err.to_string())?;
 
@@ -169,10 +233,28 @@ fn run_external_fixture_ci(options: &Options) -> Result<(), String> {
     if !options.skip_three_vrm_build {
         build_three_vrm(&options.three_vrm_root)?;
     }
+    Ok(())
+}
+
+fn run_external_fixture_ci(options: &Options) -> Result<(), String> {
+    prepare_external_inputs(options)?;
     if !options.skip_golden_generation {
         generate_goldens(options)?;
     }
     run_external_fixture_tests(options)
+}
+
+fn run_render_parity_ci(options: &Options) -> Result<(), String> {
+    prepare_external_inputs(options)?;
+    if !options.skip_playwright_install {
+        run_cmd("npm", ["install", "--no-save", "playwright"])?;
+    }
+    std::fs::create_dir_all(&options.render_parity_dir).map_err(|err| err.to_string())?;
+    capture_three_vrm_reference(options)?;
+    capture_wgpu(options)?;
+    capture_bevy(options)?;
+    compare_render_pair(options, "wgpu")?;
+    compare_render_pair(options, "bevy")
 }
 
 fn download_external_fixtures(options: &Options) -> Result<(), String> {
@@ -218,7 +300,12 @@ fn build_three_vrm(root: &PathBuf) -> Result<(), String> {
         run_cmd_in(
             root,
             "git",
-            ["remote", "add", "origin", "https://github.com/pixiv/three-vrm.git"],
+            [
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/pixiv/three-vrm.git",
+            ],
         )?;
     }
     run_cmd_in(
@@ -229,7 +316,10 @@ fn build_three_vrm(root: &PathBuf) -> Result<(), String> {
     run_cmd_in(root, "git", ["checkout", "--detach", "FETCH_HEAD"])?;
     run_cmd("corepack", ["enable"])?;
     run_cmd("corepack", ["prepare", "pnpm@10.24.0", "--activate"])?;
-    run_cmd("pnpm", ["-C", path(root).as_str(), "install", "--frozen-lockfile"])?;
+    run_cmd(
+        "pnpm",
+        ["-C", path(root).as_str(), "install", "--frozen-lockfile"],
+    )?;
     run_cmd(
         "pnpm",
         [
@@ -321,12 +411,7 @@ fn generate_goldens(options: &Options) -> Result<(), String> {
     )
 }
 
-fn run_vrma_golden(
-    vrma: &str,
-    out: &str,
-    times: &str,
-    options: &Options,
-) -> Result<(), String> {
+fn run_vrma_golden(vrma: &str, out: &str, times: &str, options: &Options) -> Result<(), String> {
     run_cmd(
         "node",
         [
@@ -388,9 +473,11 @@ fn run_external_fixture_tests(options: &Options) -> Result<(), String> {
     run_cargo_test_with_env(
         [(
             "VRM_RS_THREE_VRM_CONSTRAINT_GOLDEN",
-            path(&options
-                .golden_dir
-                .join("VRM1_Constraint_Twist_Sample.constraint.json")),
+            path(
+                &options
+                    .golden_dir
+                    .join("VRM1_Constraint_Twist_Sample.constraint.json"),
+            ),
         )],
         [
             "test",
@@ -418,7 +505,10 @@ fn run_external_fixture_tests(options: &Options) -> Result<(), String> {
         ],
     )?;
     run_cargo_test_with_env(
-        [("VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR", path(&options.golden_dir))],
+        [(
+            "VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR",
+            path(&options.golden_dir),
+        )],
         [
             "test",
             "-p",
@@ -429,6 +519,115 @@ fn run_external_fixture_tests(options: &Options) -> Result<(), String> {
             "--exact",
         ],
     )
+}
+
+fn capture_three_vrm_reference(options: &Options) -> Result<(), String> {
+    run_cmd(
+        "node",
+        [
+            "tools/render-parity/three-vrm-browser-capture.mjs",
+            "--fixture",
+            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            "--three-vrm-root",
+            path(&options.three_vrm_root).as_str(),
+            "--out",
+            path(&render_artifact(options, "three-vrm")).as_str(),
+            "--png-out",
+            path(&render_png(options, "three-vrm")).as_str(),
+            "--width",
+            options.render_width.to_string().as_str(),
+            "--height",
+            options.render_height.to_string().as_str(),
+            "--camera-z",
+            options.render_camera_z.to_string().as_str(),
+        ],
+    )
+}
+
+fn capture_wgpu(options: &Options) -> Result<(), String> {
+    run_cmd(
+        "cargo",
+        [
+            "run",
+            "--example",
+            "wgpu_render_capture",
+            "--",
+            "--fixture",
+            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            "--out",
+            path(&render_artifact(options, "wgpu")).as_str(),
+            "--png-out",
+            path(&render_png(options, "wgpu")).as_str(),
+            "--width",
+            options.render_width.to_string().as_str(),
+            "--height",
+            options.render_height.to_string().as_str(),
+            "--camera-z",
+            options.render_camera_z.to_string().as_str(),
+        ],
+    )
+}
+
+fn capture_bevy(options: &Options) -> Result<(), String> {
+    run_cmd(
+        "cargo",
+        [
+            "run",
+            "--example",
+            "bevy_render_capture",
+            "--",
+            "--fixture",
+            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            "--out",
+            path(&render_artifact(options, "bevy")).as_str(),
+            "--png-out",
+            path(&render_png(options, "bevy")).as_str(),
+            "--width",
+            options.render_width.to_string().as_str(),
+            "--height",
+            options.render_height.to_string().as_str(),
+            "--camera-z",
+            options.render_camera_z.to_string().as_str(),
+        ],
+    )
+}
+
+fn compare_render_pair(options: &Options, renderer: &str) -> Result<(), String> {
+    let mut command = Command::new("node");
+    command.args([
+        "tools/render-parity/compare-psnr.mjs",
+        "--expected",
+        path(&render_artifact(options, "three-vrm")).as_str(),
+        "--actual",
+        path(&render_artifact(options, renderer)).as_str(),
+        "--out",
+        path(&render_report(options, renderer)).as_str(),
+    ]);
+    if let Some(fail_under) = options.render_fail_under {
+        command.args(["--fail-under", fail_under.to_string().as_str()]);
+    }
+    run_command(command)
+}
+
+fn render_artifact(options: &Options, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join(renderer)
+        .join("Seed-san.frame000.rgba.json")
+}
+
+fn render_png(options: &Options, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join(renderer)
+        .join("Seed-san.frame000.png")
+}
+
+fn render_report(options: &Options, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join("reports")
+        .join(format!("Seed-san.{renderer}-vs-three-vrm.psnr.json"))
 }
 
 fn run_cargo_test_with_env<const N: usize, const M: usize>(

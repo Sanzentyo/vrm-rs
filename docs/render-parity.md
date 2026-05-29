@@ -36,6 +36,28 @@ node tools\render-parity\compare-psnr.mjs `
 The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
 delta, and pass/fail status. Exact matches report `"Infinity"` for PSNR.
 
+For the full local Seed-san parity loop, use the Rust local CI runner:
+
+```powershell
+cargo +nightly -Zscript tools/ci/local-ci.rs -- `
+  --render-parity `
+  --skip-core `
+  --skip-coverage `
+  --skip-download `
+  --skip-three-vrm-build `
+  --skip-playwright-install `
+  --three-vrm-root D:\git\three-vrm
+```
+
+Without the `--skip-*` flags, the same script can download external fixtures,
+prepare Playwright, and build the pinned three-vrm checkout under
+`.external-fixtures/three-vrm`. The render pass writes:
+
+- `.external-fixtures/render-parity/three-vrm/Seed-san.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/wgpu/Seed-san.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/bevy/Seed-san.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.psnr.json`
+
 ## three-vrm Capture
 
 The first reference capture path is a browser script that renders a VRM through

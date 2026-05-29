@@ -20,6 +20,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```powershell
 cargo +nightly -Zscript tools/ci/local-ci.rs
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
 ## Coverage Refresh Delegation

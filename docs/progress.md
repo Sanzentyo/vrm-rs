@@ -163,6 +163,7 @@
 - Removed the GitHub Actions workflow at user request and added `tools/ci/local-ci.rs`, a Rust `cargo +nightly -Zscript` runner for the old fmt/test/clippy/coverage gate plus optional local external-fixture parity (`--external-fixtures`).
 - Started improving the Bevy capture parity baseline by baking glTF rest transforms and CPU rest-skinning into generated Bevy meshes, then applying MToon pipeline hints for render order, alpha mode, cull mode, and double-sided policy through `StandardMaterial`. The local Seed-san Bevy-vs-three-vrm baseline is now `10.67 dB`; the remaining large visual delta is camera/background framing plus missing MToon shading and runtime state.
 - Matched the Bevy capture projection to the three-vrm/wgpu reference camera by explicitly setting a 30 degree perspective FOV, 1:1 aspect, and `0.1..20.0` clip range. The Seed-san Bevy alpha bounding box now matches the three-vrm reference (`252x221`), and local Bevy-vs-three-vrm PSNR rose to `23.64 dB`; the remaining gap is now dominated by stock `StandardMaterial` shading versus MToon/runtime state rather than framing.
+- Extended `tools/ci/local-ci.rs` with `--render-parity`, which regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts plus PSNR reports under `.external-fixtures/render-parity/`. The local reused-fixture run produced the current wgpu `20.75 dB` and Bevy `23.64 dB` reports.
 
 Open work:
 
