@@ -9,7 +9,7 @@ use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
     ExpressionName, Feature, HumanBoneName, MtoonMaterial, Resolved, RotationTrack, ScalarTrack,
-    TextureRef, Transform, TranslationTrack, VrmAnimation, VrmKind, VrmModel,
+    TextureRef, TextureTransform2d, Transform, TranslationTrack, VrmAnimation, VrmKind, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -103,12 +103,15 @@ pub struct GltfTextureData {
 pub struct GltfMaterialData {
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
+    pub base_color_texture_transform: Option<TextureTransform2d>,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub normal_texture: Option<usize>,
+    pub normal_texture_transform: Option<TextureTransform2d>,
     pub normal_scale: f32,
     pub emissive_factor: [f32; 3],
     pub emissive_texture: Option<usize>,
+    pub emissive_texture_transform: Option<TextureTransform2d>,
     pub emissive_strength: f32,
     pub alpha_mode: GltfAlphaMode,
     pub alpha_cutoff: Option<f32>,
@@ -265,24 +268,36 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
         .materials()
         .map(|material| {
             let pbr = material.pbr_metallic_roughness();
+            let base_color_texture = pbr.base_color_texture();
             let normal_texture = material.normal_texture();
+            let emissive_texture = material.emissive_texture();
             GltfMaterialData {
                 base_color_factor: pbr.base_color_factor(),
-                base_color_texture: pbr
-                    .base_color_texture()
+                base_color_texture: base_color_texture
+                    .as_ref()
                     .map(|texture| texture.texture().index()),
+                base_color_texture_transform: base_color_texture
+                    .as_ref()
+                    .and_then(texture_transform),
                 metallic_factor: pbr.metallic_factor(),
                 roughness_factor: pbr.roughness_factor(),
                 normal_texture: normal_texture
                     .as_ref()
                     .map(|texture| texture.texture().index()),
+                normal_texture_transform: normal_texture.as_ref().and_then(|texture| {
+                    texture_transform_value(
+                        texture.extension_value("KHR_texture_transform"),
+                        Some(texture.tex_coord()),
+                    )
+                }),
                 normal_scale: normal_texture
                     .as_ref()
                     .map_or(1.0, |texture| texture.scale()),
                 emissive_factor: material.emissive_factor(),
-                emissive_texture: material
-                    .emissive_texture()
+                emissive_texture: emissive_texture
+                    .as_ref()
                     .map(|texture| texture.texture().index()),
+                emissive_texture_transform: emissive_texture.as_ref().and_then(texture_transform),
                 emissive_strength: khr_emissive_strength(
                     material.extension_value("KHR_materials_emissive_strength"),
                 ),
@@ -296,6 +311,49 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
             }
         })
         .collect()
+}
+
+fn texture_transform(texture: &gltf::texture::Info<'_>) -> Option<TextureTransform2d> {
+    let transform = texture.texture_transform()?;
+    Some(TextureTransform2d {
+        offset: transform.offset(),
+        scale: transform.scale(),
+        rotation: transform.rotation(),
+        tex_coord: transform.tex_coord().or(Some(texture.tex_coord())),
+    })
+}
+
+fn texture_transform_value(
+    value: Option<&Value>,
+    texture_tex_coord: Option<u32>,
+) -> Option<TextureTransform2d> {
+    let value = value?;
+    let offset = vec2_value(value.get("offset")).unwrap_or([0.0, 0.0]);
+    let scale = vec2_value(value.get("scale")).unwrap_or([1.0, 1.0]);
+    let rotation = value
+        .get("rotation")
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(0.0);
+    let tex_coord = value
+        .get("texCoord")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .or(texture_tex_coord);
+    Some(TextureTransform2d {
+        offset,
+        scale,
+        rotation,
+        tex_coord,
+    })
+}
+
+fn vec2_value(value: Option<&Value>) -> Option<[f32; 2]> {
+    let array = value?.as_array()?;
+    let [x, y] = array.as_slice() else {
+        return None;
+    };
+    Some([x.as_f64()? as f32, y.as_f64()? as f32])
 }
 
 fn khr_emissive_strength(extension: Option<&Value>) -> f32 {
@@ -402,8 +460,14 @@ fn merge_gltf_material_params_into_mtoon(
         if mtoon.textures.main_texture.is_none() {
             mtoon.textures.main_texture = gltf.base_color_texture.map(TextureRef);
         }
+        if mtoon.texture_transforms.main_texture.is_none() {
+            mtoon.texture_transforms.main_texture = gltf.base_color_texture_transform;
+        }
         if mtoon.textures.normal_texture.is_none() {
             mtoon.textures.normal_texture = gltf.normal_texture.map(TextureRef);
+        }
+        if mtoon.texture_transforms.normal_texture.is_none() {
+            mtoon.texture_transforms.normal_texture = gltf.normal_texture_transform;
         }
     }
 }
@@ -1306,12 +1370,28 @@ mod tests {
         }]);
         sample["textures"] = json!([{ "source": 0 }]);
         sample["materials"][0]["pbrMetallicRoughness"] = json!({
-            "baseColorTexture": { "index": 0 },
+            "baseColorTexture": {
+                "index": 0,
+                "extensions": {
+                    "KHR_texture_transform": {
+                        "offset": [0.25, 0.5],
+                        "scale": [2.0, 3.0],
+                        "rotation": 0.125,
+                        "texCoord": 1
+                    }
+                }
+            },
             "baseColorFactor": [0.25, 0.5, 0.75, 1.0],
             "metallicFactor": 0.75,
             "roughnessFactor": 0.25
         });
-        sample["materials"][0]["normalTexture"] = json!({ "index": 0, "scale": 0.25 });
+        sample["materials"][0]["normalTexture"] = json!({
+            "index": 0,
+            "scale": 0.25,
+            "extensions": {
+                "KHR_texture_transform": { "offset": [0.1, 0.2], "scale": [0.5, 0.75] }
+            }
+        });
         sample["materials"][0]["emissiveFactor"] = json!([0.1, 0.2, 0.3]);
         sample["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
         sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"] =
@@ -1331,12 +1411,25 @@ mod tests {
             GltfMaterialData {
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
                 base_color_texture: Some(0),
+                base_color_texture_transform: Some(TextureTransform2d {
+                    offset: [0.25, 0.5],
+                    scale: [2.0, 3.0],
+                    rotation: 0.125,
+                    tex_coord: Some(1),
+                }),
                 metallic_factor: 0.75,
                 roughness_factor: 0.25,
                 normal_texture: Some(0),
+                normal_texture_transform: Some(TextureTransform2d {
+                    offset: [0.1, 0.2],
+                    scale: [0.5, 0.75],
+                    rotation: 0.0,
+                    tex_coord: Some(0),
+                }),
                 normal_scale: 0.25,
                 emissive_factor: [0.1, 0.2, 0.3],
                 emissive_texture: Some(0),
+                emissive_texture_transform: None,
                 emissive_strength: 2.0,
                 alpha_mode: GltfAlphaMode::Opaque,
                 alpha_cutoff: None,
@@ -1350,7 +1443,25 @@ mod tests {
         assert_eq!(mtoon.base_color_factor, [0.25, 0.5, 0.75, 1.0]);
         assert_eq!(mtoon.emissive_factor, [0.1, 0.2, 0.3]);
         assert_eq!(mtoon.textures.main_texture, Some(TextureRef(0)));
+        assert_eq!(
+            mtoon.texture_transforms.main_texture,
+            Some(TextureTransform2d {
+                offset: [0.25, 0.5],
+                scale: [2.0, 3.0],
+                rotation: 0.125,
+                tex_coord: Some(1),
+            })
+        );
         assert_eq!(mtoon.textures.normal_texture, Some(TextureRef(0)));
+        assert_eq!(
+            mtoon.texture_transforms.normal_texture,
+            Some(TextureTransform2d {
+                offset: [0.1, 0.2],
+                scale: [0.5, 0.75],
+                rotation: 0.0,
+                tex_coord: Some(0),
+            })
+        );
     }
 
     #[test]
@@ -1856,7 +1967,8 @@ mod tests {
                 "VRMC_node_constraint",
                 "VRMC_materials_mtoon",
                 "VRMC_materials_hdr_emissiveMultiplier",
-                "KHR_materials_emissive_strength"
+                "KHR_materials_emissive_strength",
+                "KHR_texture_transform"
             ],
             "scene": 0,
             "scenes": [{ "nodes": [0] }],

@@ -638,6 +638,7 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
             ),
             uv_animation_mask_texture: texture_property(&texture_properties, "_UvAnimMaskTexture"),
         },
+        texture_transforms: MtoonTextureTransformSet::default(),
         base_color_factor: vec4_property(&vector_properties, "_Color")
             .unwrap_or(MtoonMaterial::default().base_color_factor),
         emissive_factor: vec3_property(&vector_properties, "_EmissionColor")
@@ -859,6 +860,34 @@ fn map_node_constraint(
 }
 
 fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> MtoonMaterial {
+    let texture_transforms = MtoonTextureTransformSet {
+        main_texture: None,
+        shade_multiply_texture: material
+            .shade_multiply_texture
+            .as_ref()
+            .and_then(mtoon_texture_transform),
+        shading_shift_texture: material
+            .shading_shift_texture
+            .as_ref()
+            .and_then(mtoon_shading_shift_texture_transform),
+        normal_texture: None,
+        matcap_texture: material
+            .matcap_texture
+            .as_ref()
+            .and_then(mtoon_texture_transform),
+        rim_multiply_texture: material
+            .rim_multiply_texture
+            .as_ref()
+            .and_then(mtoon_texture_transform),
+        outline_width_multiply_texture: material
+            .outline_width_multiply_texture
+            .as_ref()
+            .and_then(mtoon_texture_transform),
+        uv_animation_mask_texture: material
+            .uv_animation_mask_texture
+            .as_ref()
+            .and_then(mtoon_texture_transform),
+    };
     MtoonMaterial {
         transparent_with_z_write: material.transparent_with_z_write.unwrap_or(false),
         render_queue_offset_number: material.render_queue_offset_number.unwrap_or(0),
@@ -887,6 +916,7 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
                 .uv_animation_mask_texture
                 .map(|texture| TextureRef(texture.index)),
         },
+        texture_transforms,
         base_color_factor: MtoonMaterial::default().base_color_factor,
         emissive_factor: MtoonMaterial::default().emissive_factor,
         cutoff_factor: MtoonMaterial::default().cutoff_factor,
@@ -934,6 +964,51 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
             rotation_speed: material.uv_animation_rotation_speed_factor.unwrap_or(0.0),
         },
     }
+}
+
+fn mtoon_texture_transform(
+    texture: &vrm_protocol::materials_mtoon::TextureInfo,
+) -> Option<TextureTransform2d> {
+    texture_transform(texture.extensions.as_ref(), texture.tex_coord)
+}
+
+fn mtoon_shading_shift_texture_transform(
+    texture: &vrm_protocol::materials_mtoon::ShadingShiftTextureInfo,
+) -> Option<TextureTransform2d> {
+    texture_transform(texture.extensions.as_ref(), texture.tex_coord)
+}
+
+fn texture_transform(
+    extensions: Option<&vrm_protocol::ExtensionMap>,
+    texture_tex_coord: Option<u32>,
+) -> Option<TextureTransform2d> {
+    let value = extensions?.get("KHR_texture_transform")?;
+    let offset = vec2_value(value.get("offset")).unwrap_or([0.0, 0.0]);
+    let scale = vec2_value(value.get("scale")).unwrap_or([1.0, 1.0]);
+    let rotation = value
+        .get("rotation")
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(0.0);
+    let tex_coord = value
+        .get("texCoord")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .or(texture_tex_coord);
+    Some(TextureTransform2d {
+        offset,
+        scale,
+        rotation,
+        tex_coord,
+    })
+}
+
+fn vec2_value(value: Option<&serde_json::Value>) -> Option<[f32; 2]> {
+    let array = value?.as_array()?;
+    let [x, y] = array.as_slice() else {
+        return None;
+    };
+    Some([x.as_f64()? as f32, y.as_f64()? as f32])
 }
 
 fn map_hdr_emissive_multiplier(
@@ -1650,6 +1725,20 @@ mod tests {
                             index: 11,
                             tex_coord: Some(0),
                             scale: Some(0.5),
+                            extensions: Some(
+                                [(
+                                    "KHR_texture_transform".to_owned(),
+                                    serde_json::json!({
+                                        "offset": [0.25, 0.5],
+                                        "scale": [2.0, 3.0],
+                                        "rotation": 0.125,
+                                        "texCoord": 1
+                                    }),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            extras: None,
                         },
                     ),
                     shading_toony_factor: Some(0.7),
@@ -1707,6 +1796,15 @@ mod tests {
         assert_eq!(mtoon.shading_shift_factor, -0.2);
         assert_eq!(mtoon.shading_shift_texture_scale, 0.5);
         assert_eq!(mtoon.textures.shading_shift_texture, Some(TextureRef(11)));
+        assert_eq!(
+            mtoon.texture_transforms.shading_shift_texture,
+            Some(TextureTransform2d {
+                offset: [0.25, 0.5],
+                scale: [2.0, 3.0],
+                rotation: 0.125,
+                tex_coord: Some(1)
+            })
+        );
         assert_eq!(mtoon.shading_toony_factor, 0.7);
         assert_eq!(mtoon.gi_equalization_factor, 0.4);
         assert_eq!(mtoon.matcap_factor, [0.5, 0.6, 0.7]);

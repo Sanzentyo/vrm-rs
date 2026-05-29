@@ -834,6 +834,7 @@ pub struct MtoonMaterial {
     pub render_queue: MtoonRenderQueue,
     pub cull_mode: MtoonCullMode,
     pub textures: MtoonTextureSet,
+    pub texture_transforms: MtoonTextureTransformSet,
     pub base_color_factor: [f32; 4],
     pub emissive_factor: [f32; 3],
     pub cutoff_factor: f32,
@@ -865,6 +866,7 @@ impl Default for MtoonMaterial {
             render_queue: MtoonRenderQueue::Auto,
             cull_mode: MtoonCullMode::Back,
             textures: MtoonTextureSet::default(),
+            texture_transforms: MtoonTextureTransformSet::default(),
             base_color_factor: [1.0, 1.0, 1.0, 1.0],
             emissive_factor: [0.0, 0.0, 0.0],
             cutoff_factor: 0.5,
@@ -908,6 +910,43 @@ pub struct MtoonTextureSet {
     pub rim_multiply_texture: Option<TextureRef>,
     pub outline_width_multiply_texture: Option<TextureRef>,
     pub uv_animation_mask_texture: Option<TextureRef>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureTransform2d {
+    pub offset: [f32; 2],
+    pub scale: [f32; 2],
+    pub rotation: f32,
+    pub tex_coord: Option<u32>,
+}
+
+impl Default for TextureTransform2d {
+    fn default() -> Self {
+        Self {
+            offset: [0.0, 0.0],
+            scale: [1.0, 1.0],
+            rotation: 0.0,
+            tex_coord: None,
+        }
+    }
+}
+
+impl TextureTransform2d {
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MtoonTextureTransformSet {
+    pub main_texture: Option<TextureTransform2d>,
+    pub shade_multiply_texture: Option<TextureTransform2d>,
+    pub shading_shift_texture: Option<TextureTransform2d>,
+    pub normal_texture: Option<TextureTransform2d>,
+    pub matcap_texture: Option<TextureTransform2d>,
+    pub rim_multiply_texture: Option<TextureTransform2d>,
+    pub outline_width_multiply_texture: Option<TextureTransform2d>,
+    pub uv_animation_mask_texture: Option<TextureTransform2d>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

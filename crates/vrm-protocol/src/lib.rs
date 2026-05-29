@@ -563,19 +563,23 @@ pub mod materials_mtoon {
         pub extras: Option<serde_json::Value>,
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct TextureInfo {
         pub index: usize,
         pub tex_coord: Option<u32>,
+        pub extensions: Option<ExtensionMap>,
+        pub extras: Option<serde_json::Value>,
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct ShadingShiftTextureInfo {
         pub index: usize,
         pub tex_coord: Option<u32>,
         pub scale: Option<f32>,
+        pub extensions: Option<ExtensionMap>,
+        pub extras: Option<serde_json::Value>,
     }
 }
 
@@ -1086,8 +1090,19 @@ mod tests {
     fn materials_mtoon_round_trips_extensions_and_all_texture_slots() {
         let input = serde_json::json!({
             "specVersion": "1.0",
-            "shadeMultiplyTexture": { "index": 1, "texCoord": 0 },
-            "shadingShiftTexture": { "index": 2, "texCoord": 1, "scale": 0.5 },
+            "shadeMultiplyTexture": {
+                "index": 1,
+                "texCoord": 0,
+                "extensions": {
+                    "KHR_texture_transform": { "offset": [0.25, 0.5], "scale": [2.0, 3.0] }
+                }
+            },
+            "shadingShiftTexture": {
+                "index": 2,
+                "texCoord": 1,
+                "scale": 0.5,
+                "extras": { "slot": "shift" }
+            },
             "matcapTexture": { "index": 3 },
             "rimMultiplyTexture": { "index": 4, "texCoord": 2 },
             "outlineWidthMultiplyTexture": { "index": 5 },
@@ -1100,6 +1115,11 @@ mod tests {
         let value = serde_json::to_value(material).unwrap();
 
         assert_eq!(value["shadingShiftTexture"]["scale"], 0.5);
+        assert_eq!(
+            value["shadeMultiplyTexture"]["extensions"]["KHR_texture_transform"]["scale"][1],
+            3.0
+        );
+        assert_eq!(value["shadingShiftTexture"]["extras"]["slot"], "shift");
         assert_eq!(value["matcapTexture"]["index"], 3);
         assert_eq!(value["rimMultiplyTexture"]["texCoord"], 2);
         assert_eq!(value["outlineWidthMultiplyTexture"]["index"], 5);

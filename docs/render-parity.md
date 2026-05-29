@@ -356,6 +356,15 @@ two-fixture sweep reports `transparent/opaque/partial = 0/65536/0` for
 three-vrm, wgpu, and Bevy on both samples, with alpha mismatches `0`. Current
 PSNR values are Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, and
 constraint sample wgpu/Bevy `34.8595 dB`.
+Static `KHR_texture_transform` data is now retained through the non-rendering
+layers: VRMC MToon texture infos round-trip nested transform extensions,
+`MtoonTextureTransformSet` stores slot-specific transforms in core, and
+`vrm-io` extracts glTF base/normal/emissive texture transforms and merges them
+into resolved MToon materials. The current two official render fixtures only
+exercise identity transforms, so this does not move their PSNR by itself. The
+next renderer slice should consume `MtoonTextureTransformSet` in the wgpu and
+Bevy capture shaders, including separate UVs for base, shade, normal, rim,
+emissive, outline-width, and UV-animation-mask texture slots.
 
 ## Next Renderer Work
 
