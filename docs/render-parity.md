@@ -74,9 +74,9 @@ data and stays outside git.
 
 The local runner encodes every renderer PNG from its `.rgba.json` artifact with
 the same Rust PNG writer. The canonical run uses `--render-background
-opaque-black`, so the three-vrm reference PNG, wgpu PNG, and Bevy PNG all use
-the same opaque background/alpha contract. `--render-background transparent`
-remains available for targeted alpha-background investigations. This keeps
+transparent`, so the three-vrm reference PNG, wgpu PNG, and Bevy PNG all use
+the same transparent background/alpha contract. `--render-background
+opaque-black` remains available for targeted fully opaque investigations. This keeps
 preview PNGs aligned with the exact RGBA buffers used for PSNR instead of
 relying on browser element screenshots or canvas compositing. At the start of
 each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`, `reports`, and
@@ -98,7 +98,7 @@ node tools\render-parity\three-vrm-browser-capture.mjs `
   --out .external-fixtures\render-parity\three-vrm\Seed-san.frame000.rgba.json `
   --width 512 `
   --height 512 `
-  --background opaque-black
+  --background transparent
 ```
 
 The script serves the local three-vrm build and fixture through a temporary
@@ -327,10 +327,9 @@ numeric report before declaring parity. The local render runner writes
 The runner treats the background alpha policy as part of the contract:
 three-vrm, wgpu, and Bevy captures are written through the same Rust PNG
 encoder, and the wgpu and Bevy alpha masks are checked against the three-vrm
-reference before PSNR is reported. Canonical parity uses an opaque black
-background because the three-vrm reference path is not reliably reviewable as a
-transparent PNG across tools; transparent capture remains available with
-`--render-background transparent`.
+reference before PSNR is reported. Canonical parity now uses a transparent
+background so the review PNGs stay consistent on checkerboard viewers; fully
+opaque capture remains available with `--render-background opaque-black`.
 When `tools/render-parity/three-vrm-browser-capture.mjs` is run directly with
 `--png-out`, it also writes PNG bytes from the raw `gl.readPixels` RGBA buffer
 instead of from a browser canvas data URL, keeping the three-vrm preview PNG
@@ -363,14 +362,16 @@ Seed-san Bevy `28.2468 dB`, and unchanged all-MToon constraint values of
 wgpu/Bevy `34.2969 dB`.
 After glTF base/emissive/texture parameters are merged into resolved MToon
 materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
-while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. Switching the
-canonical render-parity background to opaque black removes the remaining
-background-alpha mismatch from the visual review artifacts: the current
-official sample sweep reports `transparent/opaque/partial = 0/65536/0` for
-three-vrm, wgpu, and Bevy, with alpha mismatches `0`. Current
-PSNR values are Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`,
-constraint sample wgpu/Bevy `34.8595 dB`, and UV animation sample wgpu/Bevy
-`36.1575 dB` at time `0`.
+while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. A later
+opaque-black official sample sweep reported `transparent/opaque/partial =
+0/65536/0` for three-vrm, wgpu, and Bevy, with alpha mismatches `0`, and PSNR
+values of Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, constraint
+sample wgpu/Bevy `34.8595 dB`, and UV animation sample wgpu/Bevy `36.1575 dB`
+at time `0`. The current default is transparent again; the transparent sweep
+reports Seed-san wgpu `28.4228 dB`, Seed-san Bevy `28.2468 dB`, constraint
+sample wgpu/Bevy `34.3346 dB`, and UV animation sample wgpu/Bevy `36.1575 dB`.
+The transparent time `1.0` UV-animation sweep reports wgpu/Bevy `35.9209 dB`.
+Use explicit `opaque-black` only when the review needs opaque alpha.
 Static `KHR_texture_transform` data is now retained through the non-rendering
 layers: VRMC MToon texture infos round-trip nested transform extensions,
 `MtoonTextureTransformSet` stores slot-specific transforms in core, and
@@ -389,12 +390,22 @@ texture transforms and bind the UV-animation-mask texture. The official UV
 animation sample at `--render-mtoon-time 1.0` reports wgpu/Bevy `35.9209 dB`
 with alpha mismatches `0`. The remaining texture-animation gap is broader
 mask-texture fixture coverage and raising the MToon-lit PSNR threshold.
+Screen-coordinate outline scaling is also implemented in the concrete capture
+paths: when a material requests `outlineWidthMode = screenCoordinates`, the CPU
+outline mesh expansion multiplies width by view depth divided by the fixed
+30 degree projection Y scale, matching three-vrm's vertex shader convention.
+The current official sweep does not exercise that branch, so the remaining
+outline gap is fixture breadth plus exact edge/color parity rather than a
+missing mode in wgpu/Bevy captures.
 
 ## Next Renderer Work
 
 - Deepen the wgpu and Bevy capture paths with fuller MToon lighting/color
-  accumulation, screen-coordinate outline behavior, and material/shader parity
+  accumulation and material/shader parity
   before raising PSNR thresholds.
+- Add or discover an external screen-coordinate outline fixture so the newly
+  implemented screen-width path is measured against three-vrm instead of only
+  being compile/render-path covered.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize the remaining MToon shader deltas.

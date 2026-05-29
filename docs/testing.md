@@ -73,10 +73,10 @@ keeping binaries external. `just render-parity-samples` currently renders
 UV animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
 the canonical static sweep. The canonical local runner now uses
-`--render-background opaque-black`, matching the practical three-vrm reference
-capture and avoiding one renderer being reviewed as transparent while another
-is opaque. Use `--render-background transparent` only for explicit
-alpha-background experiments. The local runner writes the three-vrm, wgpu, and Bevy PNGs from
+`--render-background transparent`, so the three-vrm reference, wgpu capture, and
+Bevy capture are all reviewed with the same alpha-background contract. Use
+`--render-background opaque-black` only for explicit fully opaque experiments.
+The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
 requires a byte-for-byte match with the corresponding RGBA artifact, including

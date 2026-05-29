@@ -17,7 +17,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode, TextureTransform2d};
+use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
     load_vrm_from_path,
@@ -94,7 +94,7 @@ struct CaptureOptions {
     pbr_ambient: f32,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,
-    #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
+    #[arg(long, value_enum, default_value_t = CaptureBackground::Transparent)]
     background: CaptureBackground,
 }
 
@@ -340,7 +340,7 @@ fn mesh_draw_data(
             let surface =
                 draw_primitive(loaded, primitive, world, skin_matrices.as_deref(), options)?;
             primitives.push(surface.clone());
-            if let Some(outline) = outline_primitive(loaded, primitive, &surface) {
+            if let Some(outline) = outline_primitive(loaded, primitive, &surface, options) {
                 primitives.push(outline);
             }
         }
@@ -357,6 +357,7 @@ fn outline_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     surface: &DrawPrimitive,
+    options: &CaptureOptions,
 ) -> Option<DrawPrimitive> {
     let material = primitive
         .material
@@ -377,6 +378,7 @@ fn outline_primitive(
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
     let uv_transforms = surface.uv_transforms;
     let width = mtoon.outline_width_factor;
+    let outline_scale = OutlineScale::new(mtoon.outline_width_mode, options);
     let vertices = surface
         .vertices
         .iter()
@@ -389,7 +391,8 @@ fn outline_primitive(
                     .map(|image| image.sample_green(outline_coord))
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
-            vertex.position = (Vec3::from_array(vertex.position) + normal * width).to_array();
+            let position = Vec3::from_array(vertex.position);
+            vertex.position = (position + normal * width * outline_scale.at(position)).to_array();
             vertex.outline_color = outline_color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;
@@ -409,6 +412,35 @@ fn outline_primitive(
             blend: false,
         },
     })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OutlineScale {
+    mode: OutlineWidthMode,
+    view: Mat4,
+    projection_y: f32,
+}
+
+impl OutlineScale {
+    fn new(mode: OutlineWidthMode, options: &CaptureOptions) -> Self {
+        Self {
+            mode,
+            view: camera_view(options),
+            projection_y: projection_y_scale(),
+        }
+    }
+
+    fn at(self, world_position: Vec3) -> f32 {
+        match self.mode {
+            OutlineWidthMode::ScreenCoordinates => {
+                let view_z = self.view.transform_point3(world_position).z;
+                (-view_z / self.projection_y).max(0.0)
+            }
+            OutlineWidthMode::None
+            | OutlineWidthMode::WorldCoordinates
+            | OutlineWidthMode::Unknown => 1.0,
+        }
+    }
 }
 
 fn draw_primitive(
@@ -1715,9 +1747,8 @@ async fn render_capture(
 }
 
 fn uniforms(options: &CaptureOptions) -> Uniforms {
-    let eye = Vec3::new(0.0, options.camera_y, -options.camera_z);
-    let center = Vec3::new(0.0, options.target_y, 0.0);
-    let view = Mat4::look_at_rh(eye, center, Vec3::Y);
+    let eye = camera_eye(options);
+    let view = camera_view(options);
     let projection = Mat4::perspective_rh(
         30.0_f32.to_radians(),
         options.width as f32 / options.height as f32,
@@ -1736,6 +1767,22 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
             options.pbr_ambient,
         ],
     }
+}
+
+fn camera_eye(options: &CaptureOptions) -> Vec3 {
+    Vec3::new(0.0, options.camera_y, -options.camera_z)
+}
+
+fn camera_view(options: &CaptureOptions) -> Mat4 {
+    Mat4::look_at_rh(
+        camera_eye(options),
+        Vec3::new(0.0, options.target_y, 0.0),
+        Vec3::Y,
+    )
+}
+
+fn projection_y_scale() -> f32 {
+    1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
 fn extent(options: &CaptureOptions) -> wgpu::Extent3d {

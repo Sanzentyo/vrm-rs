@@ -81,7 +81,7 @@ struct Options {
     render_fail_under: Option<f32>,
     #[arg(long, default_value_t = 128)]
     render_alpha_mismatch_tolerance: usize,
-    #[arg(long, value_enum, default_value_t = RenderBackground::OpaqueBlack)]
+    #[arg(long, value_enum, default_value_t = RenderBackground::Transparent)]
     render_background: RenderBackground,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,

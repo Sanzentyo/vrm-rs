@@ -47,7 +47,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode, TextureTransform2d};
+use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
@@ -114,7 +114,7 @@ struct CaptureOptions {
     pbr_ambient: f32,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,
-    #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
+    #[arg(long, value_enum, default_value_t = CaptureBackground::Transparent)]
     background: CaptureBackground,
 }
 
@@ -390,9 +390,13 @@ fn bevy_outline_primitive(
         primitive,
         world,
         skin_matrices,
-        mtoon.outline_width_factor,
-        width_texture.as_ref(),
-        uv_transforms.outline_width,
+        BevyOutlineMeshSettings {
+            width: mtoon.outline_width_factor,
+            width_mode: mtoon.outline_width_mode,
+            capture: options,
+            width_texture: width_texture.as_ref(),
+            width_transform: uv_transforms.outline_width,
+        },
     );
     let mut material = bevy_mtoon_material(
         loaded,
@@ -418,10 +422,9 @@ fn bevy_outline_mesh(
     primitive: &GltfPrimitiveData,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
-    width: f32,
-    width_texture: Option<&CpuRgbaImage>,
-    outline_width_transform: Option<TextureTransform2d>,
+    settings: BevyOutlineMeshSettings<'_>,
 ) -> Mesh {
+    let outline_scale = OutlineScale::new(settings.width_mode, settings.capture);
     let positions = primitive
         .positions
         .iter()
@@ -435,16 +438,17 @@ fn bevy_outline_mesh(
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             );
-            let width = width
-                * width_texture
+            let width = settings.width
+                * settings
+                    .width_texture
                     .map(|image| {
                         image.sample_green(transform_uv(
                             primitive_tex_coord(primitive, index),
-                            outline_width_transform,
+                            settings.width_transform,
                         ))
                     })
                     .unwrap_or(1.0);
-            (position + normal * width).to_array()
+            (position + normal * width * outline_scale.at(position)).to_array()
         })
         .collect::<Vec<_>>();
     let normals = (0..primitive.positions.len())
@@ -492,6 +496,44 @@ fn bevy_outline_mesh(
     );
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     mesh
+}
+
+#[derive(Clone, Copy)]
+struct BevyOutlineMeshSettings<'a> {
+    width: f32,
+    width_mode: OutlineWidthMode,
+    capture: &'a CaptureOptions,
+    width_texture: Option<&'a CpuRgbaImage>,
+    width_transform: Option<TextureTransform2d>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OutlineScale {
+    mode: OutlineWidthMode,
+    view: Mat4,
+    projection_y: f32,
+}
+
+impl OutlineScale {
+    fn new(mode: OutlineWidthMode, options: &CaptureOptions) -> Self {
+        Self {
+            mode,
+            view: camera_view(options),
+            projection_y: projection_y_scale(),
+        }
+    }
+
+    fn at(self, world_position: GVec3) -> f32 {
+        match self.mode {
+            OutlineWidthMode::ScreenCoordinates => {
+                let view_z = self.view.transform_point3(world_position).z;
+                (-view_z / self.projection_y).max(0.0)
+            }
+            OutlineWidthMode::None
+            | OutlineWidthMode::WorldCoordinates
+            | OutlineWidthMode::Unknown => 1.0,
+        }
+    }
 }
 
 fn primitive_tex_coord(primitive: &GltfPrimitiveData, index: usize) -> [f32; 2] {
@@ -1042,6 +1084,22 @@ fn alpha_cutoff(mode: AlphaMode) -> f32 {
         | AlphaMode::Multiply
         | AlphaMode::AlphaToCoverage => 0.5,
     }
+}
+
+fn camera_eye(options: &CaptureOptions) -> GVec3 {
+    GVec3::new(0.0, options.camera_y, -options.camera_z)
+}
+
+fn camera_view(options: &CaptureOptions) -> Mat4 {
+    Mat4::look_at_rh(
+        camera_eye(options),
+        GVec3::new(0.0, options.target_y, 0.0),
+        GVec3::Y,
+    )
+}
+
+fn projection_y_scale() -> f32 {
+    1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
 fn primitive_normal(primitive: &GltfPrimitiveData, index: usize) -> GVec3 {
