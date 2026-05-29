@@ -1,0 +1,519 @@
+//! Offscreen wgpu render capture for render-parity experiments.
+//!
+//! This example intentionally keeps renderer policy small: it loads real glTF
+//! primitive buffers from `vrm-io`, draws them with a fixed camera/light setup,
+//! and writes the same RGBA JSON artifact consumed by
+//! `tools/render-parity/compare-psnr.mjs`.
+
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3, Vec4};
+use serde_json::json;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use vrm_io::{GltfPrimitiveData, LoadedVrm, load_vrm_from_path};
+use wgpu::util::DeviceExt;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [f32; 4],
+}
+
+impl Vertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
+
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct Uniforms {
+    view_projection: [[f32; 4]; 4],
+    light_dir: [f32; 4],
+}
+
+#[derive(Clone, Debug)]
+struct CaptureOptions {
+    fixture: PathBuf,
+    out: PathBuf,
+    png_out: Option<PathBuf>,
+    width: u32,
+    height: u32,
+    camera_y: f32,
+    camera_z: f32,
+    target_y: f32,
+}
+
+#[derive(Clone, Debug)]
+struct MeshDrawData {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let options = CaptureOptions::parse()?;
+    let loaded = load_vrm_from_path(&options.fixture)?;
+    let mesh = mesh_draw_data(&loaded)?;
+    let rgba = pollster::block_on(render_capture(&mesh, &options))?;
+
+    write_rgba_json(&options, &rgba)?;
+    if let Some(path) = &options.png_out {
+        write_png(path, options.width, options.height, &rgba)?;
+    }
+    Ok(())
+}
+
+impl CaptureOptions {
+    fn parse() -> Result<Self, Box<dyn Error>> {
+        let args = std::env::args().skip(1).collect::<Vec<_>>();
+        let mut values = HashMap::new();
+        let mut index = 0;
+        while index < args.len() {
+            let key = &args[index];
+            if !key.starts_with("--") {
+                return Err(format!("unexpected positional argument: {key}").into());
+            }
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("missing value for {key}").into());
+            };
+            values.insert(key.trim_start_matches("--").to_string(), value.clone());
+            index += 2;
+        }
+
+        let fixture = required_path(&values, "fixture")?;
+        let out = required_path(&values, "out")?;
+        Ok(Self {
+            fixture,
+            out,
+            png_out: values.get("png-out").map(PathBuf::from),
+            width: parse_u32(&values, "width", 512)?,
+            height: parse_u32(&values, "height", 512)?,
+            camera_y: parse_f32(&values, "camera-y", 1.0)?,
+            camera_z: parse_f32(&values, "camera-z", 5.0)?,
+            target_y: parse_f32(&values, "target-y", 1.0)?,
+        })
+    }
+}
+
+fn required_path(values: &HashMap<String, String>, name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    values
+        .get(name)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("missing --{name}").into())
+}
+
+fn parse_u32(
+    values: &HashMap<String, String>,
+    name: &str,
+    default: u32,
+) -> Result<u32, Box<dyn Error>> {
+    match values.get(name) {
+        Some(value) => Ok(value.parse()?),
+        None => Ok(default),
+    }
+}
+
+fn parse_f32(
+    values: &HashMap<String, String>,
+    name: &str,
+    default: f32,
+) -> Result<f32, Box<dyn Error>> {
+    match values.get(name) {
+        Some(value) => Ok(value.parse()?),
+        None => Ok(default),
+    }
+}
+
+fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for node in &loaded.scene.nodes {
+        let Some(mesh_index) = node.mesh else {
+            continue;
+        };
+        let Some(mesh) = loaded.meshes.get(mesh_index) else {
+            continue;
+        };
+        let world = Mat4::from_rotation_y(std::f32::consts::PI) * node.world_matrix;
+        for primitive in &mesh.primitives {
+            append_primitive(
+                primitive,
+                world,
+                material_color(loaded, primitive.material),
+                &mut vertices,
+                &mut indices,
+            )?;
+        }
+    }
+
+    if vertices.is_empty() || indices.is_empty() {
+        return Err("no drawable mesh primitives were found".into());
+    }
+    Ok(MeshDrawData { vertices, indices })
+}
+
+fn append_primitive(
+    primitive: &GltfPrimitiveData,
+    world: Mat4,
+    color: [f32; 4],
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) -> Result<(), Box<dyn Error>> {
+    let base = u32::try_from(vertices.len())?;
+    vertices.extend(
+        primitive
+            .positions
+            .iter()
+            .enumerate()
+            .map(|(index, position)| {
+                let normal = primitive
+                    .normals
+                    .get(index)
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 1.0]);
+                Vertex {
+                    position: world
+                        .transform_point3(Vec3::from_array(*position))
+                        .to_array(),
+                    normal: world
+                        .transform_vector3(Vec3::from_array(normal))
+                        .normalize_or_zero()
+                        .to_array(),
+                    color,
+                }
+            }),
+    );
+    indices.extend(primitive.indices.iter().map(|index| base + *index));
+    Ok(())
+}
+
+fn material_color(loaded: &LoadedVrm, material: Option<usize>) -> [f32; 4] {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map(|mtoon| mtoon.base_color_factor)
+        .unwrap_or([0.78, 0.78, 0.78, 1.0])
+}
+
+async fn render_capture(
+    mesh: &MeshDrawData,
+    options: &CaptureOptions,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let instance = wgpu::Instance::default();
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await?;
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("vrm-rs render parity device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        })
+        .await?;
+
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("render parity color"),
+        size: extent(options),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("render parity depth"),
+        size: extent(options),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth24Plus,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let uniforms = uniforms(options);
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("render parity uniforms"),
+        contents: bytemuck::bytes_of(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("render parity bind group layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("render parity bind group"),
+        layout: &bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("render parity shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("render parity pipeline layout"),
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("render parity pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Vertex::layout()],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("render parity vertices"),
+        contents: bytemuck::cast_slice(&mesh.vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("render parity indices"),
+        contents: bytemuck::cast_slice(&mesh.indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let bytes_per_pixel = 4;
+    let unpadded_bytes_per_row = options.width * bytes_per_pixel;
+    let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("render parity readback"),
+        size: u64::from(padded_bytes_per_row * options.height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render parity encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render parity pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..u32::try_from(mesh.indices.len())?, 0, 0..1);
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &color_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &output_buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(options.height),
+            },
+        },
+        extent(options),
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let slice = output_buffer.slice(..);
+    let (tx, rx) = mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    device.poll(wgpu::PollType::wait_indefinitely())?;
+    rx.recv()??;
+    let mapped = slice.get_mapped_range();
+    let mut rgba = vec![0; (options.width * options.height * bytes_per_pixel) as usize];
+    for row in 0..options.height as usize {
+        let source_start = row * padded_bytes_per_row as usize;
+        let source_end = source_start + unpadded_bytes_per_row as usize;
+        let destination_start = row * unpadded_bytes_per_row as usize;
+        rgba[destination_start..destination_start + unpadded_bytes_per_row as usize]
+            .copy_from_slice(&mapped[source_start..source_end]);
+    }
+    drop(mapped);
+    output_buffer.unmap();
+    Ok(rgba)
+}
+
+fn uniforms(options: &CaptureOptions) -> Uniforms {
+    let eye = Vec3::new(0.0, options.camera_y, options.camera_z);
+    let center = Vec3::new(0.0, options.target_y, 0.0);
+    let view = Mat4::look_at_rh(eye, center, Vec3::Y);
+    let projection = Mat4::perspective_rh(
+        30.0_f32.to_radians(),
+        options.width as f32 / options.height as f32,
+        0.01,
+        100.0,
+    );
+    let light_dir = Vec3::new(0.5, 1.0, 0.5).normalize();
+    Uniforms {
+        view_projection: (projection * view).to_cols_array_2d(),
+        light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
+    }
+}
+
+fn extent(options: &CaptureOptions) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width: options.width,
+        height: options.height,
+        depth_or_array_layers: 1,
+    }
+}
+
+fn align_to(value: u32, alignment: u32) -> u32 {
+    value.div_ceil(alignment) * alignment
+}
+
+fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = options.out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let artifact = json!({
+        "generator": "vrm-rs examples/wgpu_render_capture.rs",
+        "fixture": options.fixture.to_string_lossy(),
+        "width": options.width,
+        "height": options.height,
+        "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
+        "format": "rgba8",
+        "rgba": rgba,
+    });
+    fs::write(
+        &options.out,
+        format!("{}\n", serde_json::to_string_pretty(&artifact)?),
+    )?;
+    Ok(())
+}
+
+fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    image::save_buffer(path, rgba, width, height, image::ColorType::Rgba8)?;
+    Ok(())
+}
+
+const SHADER: &str = r#"
+struct Uniforms {
+    view_projection: mat4x4<f32>,
+    light_dir: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uniforms: Uniforms;
+
+struct VertexIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+};
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+    @location(1) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexIn) -> VertexOut {
+    var out: VertexOut;
+    out.position = uniforms.view_projection * vec4<f32>(input.position, 1.0);
+    out.normal = normalize(input.normal);
+    out.color = input.color;
+    return out;
+}
+
+@fragment
+fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
+    let ndotl = max(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), 0.0);
+    let lit = 0.25 + 0.75 * ndotl;
+    return vec4<f32>(input.color.rgb * lit, input.color.a);
+}
+"#;

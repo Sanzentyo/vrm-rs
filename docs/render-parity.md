@@ -54,8 +54,8 @@ node tools\render-parity\three-vrm-browser-capture.mjs `
 
 The script serves the local three-vrm build and fixture through a temporary
 localhost server, opens Chromium, renders with a fixed camera/light setup, and
-reads RGBA bytes from the WebGL drawing buffer. The next Bevy and wgpu capture
-paths should match this camera/light setup before comparing PSNR.
+reads RGBA bytes from the WebGL drawing buffer. The Bevy capture path and deeper
+wgpu material pass should match this camera/light setup before comparing PSNR.
 
 For human review, also request a PNG:
 
@@ -82,6 +82,32 @@ Each `GltfPrimitiveData` stores material index, positions, normals,
 mesh buffers from this data so they render the same primitives loaded from the
 VRM file rather than using ad hoc sample geometry.
 
+## wgpu Capture
+
+The first Rust renderer path is `examples/wgpu_render_capture.rs`. It is an
+offscreen wgpu example, not a new library dependency: it loads a VRM with
+`vrm-io`, builds vertex/index buffers from `LoadedVrm::meshes`, renders with the
+same fixed camera shape as the three-vrm capture, and writes both RGBA JSON and
+an optional PNG:
+
+```powershell
+cargo run --example wgpu_render_capture -- `
+  --fixture .external-fixtures\official\Seed-san.vrm `
+  --out .external-fixtures\render-parity\wgpu\Seed-san.frame000.rgba.json `
+  --png-out .external-fixtures\render-parity\wgpu\Seed-san.frame000.png `
+  --width 256 `
+  --height 256 `
+  --camera-z 3.0
+```
+
+The local smoke run on 2026-05-29 successfully wrote wgpu RGBA/PNG artifacts
+from the real Seed-san mesh primitives. The first PSNR against the three-vrm
+reference is `8.78 dB`, which is intentionally recorded as a failing visual
+parity baseline: the current path draws unskinned, untextured MToon base-color
+geometry with a small diffuse shader. Next parity work should add texture
+sampling, alpha/cull parity, skinning or rest-pose parity policy, and fuller
+MToon lighting before tightening thresholds.
+
 ## Review Criteria
 
 Initial thresholds are intentionally conservative until real renderer captures
@@ -101,6 +127,6 @@ report before declaring parity.
 
 - Add a Bevy capture path that renders the same camera/light/material setup and
   writes RGBA JSON after readback using `LoadedVrm::meshes`.
-- Add a wgpu capture path using `HeadlessSceneState` plus the MToon descriptor
-  example layout and `LoadedVrm::meshes`, then write RGBA JSON from a staging
-  buffer.
+- Deepen the wgpu capture path with texture sampling, MToon material state,
+  alpha/cull parity, and animation/skinning policy before raising PSNR
+  thresholds.
