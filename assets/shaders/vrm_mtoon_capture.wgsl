@@ -12,6 +12,7 @@ struct BevyMtoonUniform {
     rim_color: vec4<f32>,
     rim_params: vec4<f32>,
     pipeline: vec4<f32>,
+    lighting: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -46,8 +47,6 @@ var rim_sampler: sampler;
 var normal_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(12)
 var normal_sampler: sampler;
-
-const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
 
 fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
@@ -99,7 +98,7 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
 
     if material.rim_params.w > 0.5 {
         let direct = diffuse * max(ndotl, 0.0);
-        let ambient = diffuse * 0.03183099;
+        let ambient = diffuse * material.lighting.w;
         return vec4<f32>(direct + ambient + material.emissive.rgb, opaque_alpha);
     }
 
@@ -113,7 +112,7 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         ndotl + shift,
     );
     let direct = mix(shade, diffuse, toon);
-    let ambient = diffuse * (0.1 + 0.15 * material.shading.z);
+    let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z);
 
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
@@ -130,6 +129,6 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let rim_texel = textureSample(rim_texture, rim_sampler, uv).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    let color = (direct + ambient + rim + material.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let color = (direct + ambient + rim + material.emissive.rgb) * material.lighting.x;
     return vec4<f32>(color, opaque_alpha);
 }

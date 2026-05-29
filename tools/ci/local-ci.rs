@@ -67,6 +67,14 @@ struct Options {
     render_height: u32,
     #[arg(long, default_value_t = 3.0)]
     render_camera_z: f32,
+    #[arg(long, default_value_t = 0.78)]
+    render_mtoon_exposure: f32,
+    #[arg(long, default_value_t = 0.12)]
+    render_mtoon_ambient_base: f32,
+    #[arg(long, default_value_t = 0.20)]
+    render_mtoon_ambient_gi_scale: f32,
+    #[arg(long, default_value_t = 0.03183099)]
+    render_pbr_ambient: f32,
     #[arg(long)]
     render_fail_under: Option<f32>,
     #[arg(long = "render-fixture")]
@@ -191,8 +199,11 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     let fixtures = render_fixtures(options)?;
     for fixture in &fixtures {
         capture_three_vrm_reference(options, fixture)?;
+        write_render_png_from_artifact(options, fixture, "three-vrm")?;
         capture_wgpu(options, fixture)?;
+        write_render_png_from_artifact(options, fixture, "wgpu")?;
         capture_bevy(options, fixture)?;
+        write_render_png_from_artifact(options, fixture, "bevy")?;
         compare_render_pair(options, fixture, "wgpu")?;
         compare_render_pair(options, fixture, "bevy")?;
         write_render_diff_image(options, fixture, "wgpu")?;
@@ -526,8 +537,6 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
             path(&options.three_vrm_root).as_str(),
             "--out",
             path(&render_artifact(options, fixture, "three-vrm")).as_str(),
-            "--png-out",
-            path(&render_png(options, fixture, "three-vrm")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
@@ -550,14 +559,20 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
             path(&fixture.path).as_str(),
             "--out",
             path(&render_artifact(options, fixture, "wgpu")).as_str(),
-            "--png-out",
-            path(&render_png(options, fixture, "wgpu")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
             options.render_height.to_string().as_str(),
             "--camera-z",
             options.render_camera_z.to_string().as_str(),
+            "--mtoon-exposure",
+            options.render_mtoon_exposure.to_string().as_str(),
+            "--mtoon-ambient-base",
+            options.render_mtoon_ambient_base.to_string().as_str(),
+            "--mtoon-ambient-gi-scale",
+            options.render_mtoon_ambient_gi_scale.to_string().as_str(),
+            "--pbr-ambient",
+            options.render_pbr_ambient.to_string().as_str(),
         ],
     )
 }
@@ -574,14 +589,20 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
             path(&fixture.path).as_str(),
             "--out",
             path(&render_artifact(options, fixture, "bevy")).as_str(),
-            "--png-out",
-            path(&render_png(options, fixture, "bevy")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
             options.render_height.to_string().as_str(),
             "--camera-z",
             options.render_camera_z.to_string().as_str(),
+            "--mtoon-exposure",
+            options.render_mtoon_exposure.to_string().as_str(),
+            "--mtoon-ambient-base",
+            options.render_mtoon_ambient_base.to_string().as_str(),
+            "--mtoon-ambient-gi-scale",
+            options.render_mtoon_ambient_gi_scale.to_string().as_str(),
+            "--pbr-ambient",
+            options.render_pbr_ambient.to_string().as_str(),
         ],
     )
 }
@@ -633,6 +654,27 @@ fn render_diff_png(options: &Options, fixture: &RenderFixture, renderer: &str) -
         .render_parity_dir
         .join("diff")
         .join(format!("{}.{renderer}-vs-three-vrm.diff.png", fixture.stem))
+}
+
+fn write_render_png_from_artifact(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
+    let artifact = read_rgba_artifact(&render_artifact(options, fixture, renderer))?;
+    let out = render_png(options, fixture, renderer);
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", path(parent)))?;
+    }
+    image::save_buffer(
+        &out,
+        &artifact.rgba,
+        artifact.width,
+        artifact.height,
+        image::ColorType::Rgba8,
+    )
+    .map_err(|err| format!("failed to write {}: {err}", path(&out)))
 }
 
 fn write_render_diff_image(

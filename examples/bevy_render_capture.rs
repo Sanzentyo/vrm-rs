@@ -101,6 +101,14 @@ struct CaptureOptions {
     camera_z: f32,
     #[arg(long, default_value_t = 1.0)]
     target_y: f32,
+    #[arg(long, default_value_t = 0.78)]
+    mtoon_exposure: f32,
+    #[arg(long, default_value_t = 0.12)]
+    mtoon_ambient_base: f32,
+    #[arg(long, default_value_t = 0.20)]
+    mtoon_ambient_gi_scale: f32,
+    #[arg(long, default_value_t = 0.03183099)]
+    pbr_ambient: f32,
 }
 
 #[derive(Resource)]
@@ -155,6 +163,7 @@ fn setup(
     spawn_vrm_meshes(
         &mut commands,
         &loaded.0,
+        &options,
         &mut assets.meshes,
         &mut assets.standard_materials,
         &mut assets.mtoon_materials,
@@ -200,6 +209,7 @@ struct CaptureAssets<'w> {
 fn spawn_vrm_meshes(
     commands: &mut Commands,
     loaded: &LoadedVrm,
+    options: &CaptureOptions,
     meshes: &mut Assets<Mesh>,
     standard_materials: &mut Assets<StandardMaterial>,
     mtoon_materials: &mut Assets<BevyMtoonMaterial>,
@@ -262,6 +272,7 @@ fn spawn_vrm_meshes(
                     loaded,
                     primitive,
                     shading,
+                    options,
                     render_depth_bias(render_order),
                     if has_tangents {
                         shading.normal_scale
@@ -688,6 +699,7 @@ struct BevyMtoonMaterial {
     rim_color: BVec4,
     rim_params: BVec4,
     pipeline: BVec4,
+    lighting: BVec4,
     #[texture(1)]
     #[sampler(2)]
     base_texture: Handle<Image>,
@@ -726,6 +738,7 @@ struct BevyMtoonUniform {
     rim_color: BVec4,
     rim_params: BVec4,
     pipeline: BVec4,
+    lighting: BVec4,
 }
 
 impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
@@ -739,6 +752,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             rim_color: material.rim_color,
             rim_params: material.rim_params,
             pipeline: material.pipeline,
+            lighting: material.lighting,
         }
     }
 }
@@ -783,6 +797,7 @@ fn bevy_mtoon_material(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     shading: MaterialShading,
+    options: &CaptureOptions,
     depth_bias: f32,
     normal_scale: f32,
     image_handles: &BevyImageHandles,
@@ -826,6 +841,12 @@ fn bevy_mtoon_material(
             alpha_cutoff(alpha_mode),
             normal_scale,
             0.0,
+        ),
+        lighting: BVec4::new(
+            options.mtoon_exposure,
+            options.mtoon_ambient_base,
+            options.mtoon_ambient_gi_scale,
+            options.pbr_ambient,
         ),
         base_texture: material_main_image(loaded, primitive.material)
             .and_then(|image| image_handles.color_images.get(image))
@@ -1514,6 +1535,12 @@ fn write_capture(
         "width": options.width,
         "height": options.height,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
+        "mtoonLighting": {
+            "exposure": options.mtoon_exposure,
+            "ambientBase": options.mtoon_ambient_base,
+            "ambientGiScale": options.mtoon_ambient_gi_scale,
+            "pbrAmbient": options.pbr_ambient
+        },
         "format": "rgba8",
         "rgba": rgba,
     });

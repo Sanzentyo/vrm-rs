@@ -141,6 +141,9 @@ try {
 function capturePage(options) {
   return `<!doctype html>
 <meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; }
+</style>
 <canvas id="canvas" width="${options.width}" height="${options.height}" style="width:${options.width}px;height:${options.height}px;display:block"></canvas>
 <script type="importmap">
   {
@@ -160,6 +163,7 @@ function capturePage(options) {
       canvas,
       alpha: true,
       antialias: false,
+      premultipliedAlpha: false,
       preserveDrawingBuffer: true,
     });
     renderer.setPixelRatio(1);

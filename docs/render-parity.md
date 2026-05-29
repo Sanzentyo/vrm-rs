@@ -68,10 +68,10 @@ their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
 delta and blue shows alpha-channel delta, amplified for review. It is generated
 data and stays outside git.
 
-The three-vrm PNG review artifact is encoded from the same WebGL `readPixels`
-RGBA buffer as the `.rgba.json` artifact. This keeps the reference PNG alpha
-handling aligned with the wgpu and Bevy captures instead of relying on browser
-element screenshot compositing.
+The local runner encodes every renderer PNG from its `.rgba.json` artifact with
+the same Rust PNG writer. This keeps the three-vrm reference PNG, wgpu PNG, and
+Bevy PNG alpha handling aligned with the exact RGBA buffers used for PSNR
+instead of relying on browser element screenshot or canvas compositing.
 
 ## three-vrm Capture
 
@@ -180,15 +180,18 @@ the rim term before `rimMultiplyTexture` and `rimLightingMix` raises the current
 wgpu Seed-san baseline to `27.98 dB`. Adding CPU-generated mip chains plus a
 repeat/linear/mipmap-nearest sampler policy to match the official sample
 samplers raises the local Seed-san wgpu baseline again to `28.17 dB`.
+Making the capture-only MToon lighting coefficients configurable and retuning
+the default exposure/ambient approximation raises the current Seed-san wgpu
+baseline to `28.21 dB`.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, screen-space outline details, or exact
 three.js/MToon light accumulation.
 
 The first multi-fixture local run also renders
 `VRM1_Constraint_Twist_Sample.vrm`. On 2026-05-30, after mipmapped texture
-uploads, its wgpu-vs-three-vrm PSNR is `33.93 dB`, substantially closer than
-Seed-san because the visible material set is simpler and less dependent on the
-remaining MToon deltas.
+uploads and the lighting-coefficient retune, its wgpu-vs-three-vrm PSNR is
+`34.21 dB`, substantially closer than Seed-san because the visible material set
+is simpler and less dependent on the remaining MToon deltas.
 
 ## Bevy Capture
 
@@ -251,12 +254,14 @@ rim/matcap composition and generating Bevy-side tangents for normal-mapped
 primitives that omit glTF `TANGENT` raises the current Seed-san Bevy baseline
 to `25.20 dB`. Adding the same CPU-generated mip chains and repeat/linear/
 mipmap-nearest sampler policy used by the wgpu capture raises it to `25.26 dB`.
+The same configurable lighting defaults bring the current Seed-san Bevy
+baseline to `25.27 dB`.
 This confirms the custom shader path is wired correctly, but the
 small improvement means the next Bevy parity gains need to come from exact
 three-vrm MToon light accumulation, runtime expression/pose state, and
 screen/clip-space outline behavior rather than more `StandardMaterial` tuning.
 The first multi-fixture local run gives
-`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.90 dB`, which
+`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.91 dB`, which
 confirms the Bevy capture path works beyond Seed-san but remains below the
 MToon-lit threshold.
 

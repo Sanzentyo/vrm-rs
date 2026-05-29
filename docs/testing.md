@@ -68,8 +68,9 @@ This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
-fixture directory. The three-vrm PNG is generated from the same transparent
-RGBA readback used by PSNR so its alpha handling matches the wgpu and Bevy PNGs.
+fixture directory. The local runner writes the three-vrm, wgpu, and Bevy PNGs
+from their transparent RGBA artifacts through the same Rust PNG encoder, so
+review images match the exact buffers compared by PSNR.
 
 ## Coverage
 

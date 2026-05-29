@@ -58,6 +58,7 @@ struct Uniforms {
     view_projection: [[f32; 4]; 4],
     light_dir: [f32; 4],
     camera_pos: [f32; 4],
+    mtoon_lighting: [f32; 4],
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -78,6 +79,14 @@ struct CaptureOptions {
     camera_z: f32,
     #[arg(long, default_value_t = 1.0)]
     target_y: f32,
+    #[arg(long, default_value_t = 0.78)]
+    mtoon_exposure: f32,
+    #[arg(long, default_value_t = 0.12)]
+    mtoon_ambient_base: f32,
+    #[arg(long, default_value_t = 0.20)]
+    mtoon_ambient_gi_scale: f32,
+    #[arg(long, default_value_t = 0.03183099)]
+    pbr_ambient: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -1454,6 +1463,12 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
         camera_pos: Vec4::new(eye.x, eye.y, eye.z, 1.0).to_array(),
+        mtoon_lighting: [
+            options.mtoon_exposure,
+            options.mtoon_ambient_base,
+            options.mtoon_ambient_gi_scale,
+            options.pbr_ambient,
+        ],
     }
 }
 
@@ -1479,6 +1494,12 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "width": options.width,
         "height": options.height,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
+        "mtoonLighting": {
+            "exposure": options.mtoon_exposure,
+            "ambientBase": options.mtoon_ambient_base,
+            "ambientGiScale": options.mtoon_ambient_gi_scale,
+            "pbrAmbient": options.pbr_ambient
+        },
         "format": "rgba8",
         "rgba": rgba,
     });
@@ -1502,6 +1523,7 @@ struct Uniforms {
     view_projection: mat4x4<f32>,
     light_dir: vec4<f32>,
     camera_pos: vec4<f32>,
+    mtoon_lighting: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -1585,8 +1607,6 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
-const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
-
 fn surface_normal(input: VertexOut) -> vec3<f32> {
     let geometric_normal = normalize(input.normal);
     if input.normal_scale <= 0.0 {
@@ -1620,7 +1640,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let diffuse = input.color.rgb * texel.rgb;
     if input.rim_params.w > 0.5 {
         let direct = diffuse * max(ndotl, 0.0);
-        let ambient = diffuse * 0.03183099;
+        let ambient = diffuse * uniforms.mtoon_lighting.w;
         return vec4<f32>(direct + ambient + input.emissive.rgb, opaque_alpha);
     }
     let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
@@ -1631,7 +1651,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let gi = input.shading.z;
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     let direct = mix(shade, diffuse, toon);
-    let ambient = diffuse * (0.1 + 0.15 * gi);
+    let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi);
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
@@ -1647,7 +1667,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    let color = (direct + ambient + rim + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let color = (direct + ambient + rim + input.emissive.rgb) * uniforms.mtoon_lighting.x;
     return vec4<f32>(color, opaque_alpha);
 }
 "#;
