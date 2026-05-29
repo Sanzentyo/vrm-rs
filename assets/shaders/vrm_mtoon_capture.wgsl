@@ -229,7 +229,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         material.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, rim_sampler, rim_uv).rgb;
-    let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
+    let rim_light = vec3<f32>(1.0 + material.lighting.w);
+    let rim_mix = mix(vec3<f32>(1.0), rim_light, material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + material.emissive.rgb * emissive_texel) * material.lighting.x;
     if material.outline_color.a >= 0.0 {

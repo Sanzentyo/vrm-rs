@@ -2085,7 +2085,8 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         input.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, base_sampler, rim_uv).rgb;
-    let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
+    let rim_light = vec3<f32>(1.0 + uniforms.mtoon_lighting.w);
+    let rim_mix = mix(vec3<f32>(1.0), rim_light, input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + input.emissive.rgb * emissive_texel) * uniforms.mtoon_lighting.x;
     if input.outline_color.a >= 0.0 {
