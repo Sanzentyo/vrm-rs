@@ -105,8 +105,9 @@ from the real Seed-san mesh primitives. The first textured, rest-skinned PSNR
 against the three-vrm reference is `9.70 dB`, which is intentionally recorded
 as a failing visual parity baseline: the current path draws rest-pose mesh
 primitives with PBR base-color texture fallback and a small diffuse shader.
-Next parity work should add alpha/cull parity, material ordering, expression
-state, and fuller MToon lighting before tightening thresholds.
+The capture path now consumes MToon-derived render order, cull mode, alpha mask
+discard, blend state, and depth-write policy. Next parity work should add
+expression state and fuller MToon lighting before tightening thresholds.
 
 ## Review Criteria
 
@@ -127,5 +128,5 @@ report before declaring parity.
 
 - Add a Bevy capture path that renders the same camera/light/material setup and
   writes RGBA JSON after readback using `LoadedVrm::meshes`.
-- Deepen the wgpu capture path with MToon material state, alpha/cull parity,
-  material ordering, and expression/runtime state before raising PSNR thresholds.
+- Deepen the wgpu capture path with fuller MToon lighting and
+  expression/runtime state before raising PSNR thresholds.

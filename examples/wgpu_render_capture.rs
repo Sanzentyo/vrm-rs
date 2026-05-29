@@ -13,6 +13,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use vrm_core::{MtoonAlphaMode, MtoonCullMode};
 use vrm_io::{
     GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
@@ -25,11 +26,12 @@ struct Vertex {
     normal: [f32; 3],
     tex_coord: [f32; 2],
     color: [f32; 4],
+    alpha_mode: f32,
+    _padding: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -69,6 +71,7 @@ struct DrawPrimitive {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     image: Option<usize>,
+    policy: MaterialPolicy,
 }
 
 struct GpuPrimitive {
@@ -76,6 +79,49 @@ struct GpuPrimitive {
     index_buffer: wgpu::Buffer,
     index_count: u32,
     texture_bind_group_index: usize,
+    pipeline_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MaterialPolicy {
+    render_order: i32,
+    cull_mode: CaptureCullMode,
+    alpha_mode: CaptureAlphaMode,
+    depth_write: bool,
+    blend: bool,
+}
+
+impl Default for MaterialPolicy {
+    fn default() -> Self {
+        Self {
+            render_order: 2000,
+            cull_mode: CaptureCullMode::Back,
+            alpha_mode: CaptureAlphaMode::Opaque,
+            depth_write: true,
+            blend: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    cull_mode: CaptureCullMode,
+    depth_write: bool,
+    blend: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum CaptureCullMode {
+    Off,
+    Front,
+    Back,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureAlphaMode {
+    Opaque,
+    Mask,
+    Blend,
 }
 
 struct TextureBindGroup {
@@ -193,6 +239,7 @@ fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
     if primitives.is_empty() {
         return Err("no drawable mesh primitives were found".into());
     }
+    primitives.sort_by_key(|primitive| primitive.policy.render_order);
     Ok(MeshDrawData { primitives })
 }
 
@@ -203,6 +250,7 @@ fn draw_primitive(
     skin_matrices: Option<&[Mat4]>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let color = material_color(loaded, primitive.material);
+    let policy = material_policy(loaded, primitive.material);
     let vertices = primitive
         .positions
         .iter()
@@ -231,6 +279,8 @@ fn draw_primitive(
                 normal: normal.to_array(),
                 tex_coord,
                 color,
+                alpha_mode: alpha_mode_code(policy.alpha_mode),
+                _padding: [0.0; 3],
             }
         })
         .collect();
@@ -238,7 +288,49 @@ fn draw_primitive(
         vertices,
         indices: primitive.indices.clone(),
         image: material_main_image(loaded, primitive.material),
+        policy,
     })
+}
+
+fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicy {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map(|mtoon| {
+            let hints = mtoon.pipeline_hints();
+            MaterialPolicy {
+                render_order: hints.render_order,
+                cull_mode: capture_cull_mode(hints.cull_mode),
+                alpha_mode: capture_alpha_mode(hints.alpha_mode),
+                depth_write: hints.depth_write,
+                blend: hints.blend,
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn capture_cull_mode(mode: MtoonCullMode) -> CaptureCullMode {
+    match mode {
+        MtoonCullMode::Off => CaptureCullMode::Off,
+        MtoonCullMode::Front => CaptureCullMode::Front,
+        MtoonCullMode::Back => CaptureCullMode::Back,
+    }
+}
+
+fn capture_alpha_mode(mode: MtoonAlphaMode) -> CaptureAlphaMode {
+    match mode {
+        MtoonAlphaMode::Opaque => CaptureAlphaMode::Opaque,
+        MtoonAlphaMode::Mask => CaptureAlphaMode::Mask,
+        MtoonAlphaMode::Blend => CaptureAlphaMode::Blend,
+    }
+}
+
+fn alpha_mode_code(mode: CaptureAlphaMode) -> f32 {
+    match mode {
+        CaptureAlphaMode::Opaque => 0.0,
+        CaptureAlphaMode::Mask => 1.0,
+        CaptureAlphaMode::Blend => 2.0,
+    }
 }
 
 fn skin_matrices(loaded: &LoadedVrm, skin: &GltfSkinData, orientation: Mat4) -> Vec<Mat4> {
@@ -465,6 +557,92 @@ fn image_rgba8(image: &ImageData) -> Result<Vec<u8>, Box<dyn Error>> {
     }
 }
 
+fn pipeline_keys(mesh: &MeshDrawData) -> Vec<PipelineKey> {
+    let mut keys = mesh
+        .primitives
+        .iter()
+        .map(|primitive| pipeline_key(primitive.policy))
+        .collect::<Vec<_>>();
+    keys.sort_by_key(|key| (key.cull_mode as u8, key.depth_write, key.blend));
+    keys.dedup();
+    keys
+}
+
+fn pipeline_indices(keys: &[PipelineKey]) -> HashMap<PipelineKey, usize> {
+    keys.iter()
+        .copied()
+        .enumerate()
+        .map(|(index, key)| (key, index))
+        .collect()
+}
+
+fn pipeline_key(policy: MaterialPolicy) -> PipelineKey {
+    PipelineKey {
+        cull_mode: policy.cull_mode,
+        depth_write: policy.depth_write,
+        blend: policy.blend,
+    }
+}
+
+fn render_pipeline(
+    device: &wgpu::Device,
+    uniform_layout: &wgpu::BindGroupLayout,
+    texture_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    key: PipelineKey,
+) -> wgpu::RenderPipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("render parity pipeline layout"),
+        bind_group_layouts: &[Some(uniform_layout), Some(texture_layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("render parity pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Vertex::layout()],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: cull_face(key.cull_mode),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(key.depth_write),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: key.blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn cull_face(mode: CaptureCullMode) -> Option<wgpu::Face> {
+    match mode {
+        CaptureCullMode::Off => None,
+        CaptureCullMode::Front => Some(wgpu::Face::Front),
+        CaptureCullMode::Back => Some(wgpu::Face::Back),
+    }
+}
+
 async fn render_capture(
     loaded: &LoadedVrm,
     mesh: &MeshDrawData,
@@ -579,6 +757,25 @@ async fn render_capture(
         &sampler,
     )?;
     let texture_bind_group_indices = texture_bind_group_indices(&texture_bind_groups);
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("render parity shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
+    let pipeline_keys = pipeline_keys(mesh);
+    let pipelines = pipeline_keys
+        .iter()
+        .map(|key| {
+            render_pipeline(
+                &device,
+                &uniform_bind_group_layout,
+                &texture_bind_group_layout,
+                &shader,
+                format,
+                *key,
+            )
+        })
+        .collect::<Vec<_>>();
+    let pipeline_indices = pipeline_indices(&pipeline_keys);
     let gpu_primitives = mesh
         .primitives
         .iter()
@@ -601,58 +798,10 @@ async fn render_capture(
                     .image
                     .and_then(|image| texture_bind_group_indices.get(&image).copied())
                     .unwrap_or(0),
+                pipeline_index: pipeline_indices[&pipeline_key(primitive.policy)],
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("render parity shader"),
-        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("render parity pipeline layout"),
-        bind_group_layouts: &[
-            Some(&uniform_bind_group_layout),
-            Some(&texture_bind_group_layout),
-        ],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("render parity pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Vertex::layout()],
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
 
     let bytes_per_pixel = 4;
     let unpadded_bytes_per_row = options.width * bytes_per_pixel;
@@ -691,9 +840,9 @@ async fn render_capture(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &uniform_bind_group, &[]);
         for primitive in &gpu_primitives {
+            pass.set_pipeline(&pipelines[primitive.pipeline_index]);
             pass.set_bind_group(
                 1,
                 &texture_bind_groups[primitive.texture_bind_group_index].bind_group,
@@ -821,6 +970,7 @@ struct VertexIn {
     @location(1) normal: vec3<f32>,
     @location(2) tex_coord: vec2<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) alpha_mode: f32,
 };
 
 struct VertexOut {
@@ -828,6 +978,7 @@ struct VertexOut {
     @location(0) normal: vec3<f32>,
     @location(1) tex_coord: vec2<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) alpha_mode: f32,
 };
 
 @vertex
@@ -837,6 +988,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.normal = normalize(input.normal);
     out.tex_coord = input.tex_coord;
     out.color = input.color;
+    out.alpha_mode = input.alpha_mode;
     return out;
 }
 
@@ -845,6 +997,11 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let ndotl = max(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), 0.0);
     let lit = 0.25 + 0.75 * ndotl;
     let texel = textureSample(base_texture, base_sampler, input.tex_coord);
-    return vec4<f32>(input.color.rgb * texel.rgb * lit, input.color.a * texel.a);
+    let alpha = input.color.a * texel.a;
+    if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
+        discard;
+    }
+    let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
+    return vec4<f32>(input.color.rgb * texel.rgb * lit, opaque_alpha);
 }
 "#;

@@ -156,6 +156,7 @@
 - Added `examples/wgpu_render_capture.rs`, an offscreen wgpu capture path that renders real `LoadedVrm::meshes` primitive buffers and writes RGBA JSON plus PNG artifacts under `.external-fixtures/render-parity/`. The local Seed-san smoke run produced a first wgpu-vs-three-vrm PSNR report at `8.78 dB`, documenting the remaining texture/skinning/MToon shading gap rather than claiming visual parity.
 - Extended `vrm-io` with decoded image metadata, texture-to-image mapping, and glTF PBR material base-color texture data. The wgpu capture now samples base-color textures and uses the three-vrm-facing camera convention; the Seed-san local PSNR baseline rose to `9.64 dB`.
 - Added glTF skin extraction (`LoadedVrm::skins`, node skin refs, `JOINTS_0`, `WEIGHTS_0`, inverse bind matrices) and CPU rest-skinning in the wgpu capture path. The local Seed-san PSNR baseline is now `9.70 dB`, with the remaining gap concentrated in MToon lighting/material ordering/expression state rather than basic textured mesh input.
+- Wired MToon-derived render order, cull mode, alpha mask discard, blend state, and depth-write policy into the wgpu render capture pipelines. The Seed-san baseline remains `9.70 dB`, but alpha/cull/material-order parity is no longer hard-coded to a single back-face opaque pipeline.
 
 Open work:
 
