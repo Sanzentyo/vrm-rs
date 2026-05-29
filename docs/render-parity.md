@@ -292,6 +292,13 @@ a shared headless runtime scene after a zero-delta `VrmRuntimeDriver` tick, so
 the static render path exercises the same constraint ordering, spring-rest
 capture, MToon pipeline hint, emissive-strength, first-person, and VRM0
 orientation adapter path as downstream engines.
+Outline geometry now also uses the MToon shader path in both capture examples:
+after calculating the lit base color, the fragment applies
+`outlineColorFactor * mix(1, litColor, outlineLightingMixFactor)`, matching the
+shape of three-vrm's outline fragment instead of using a flat unlit outline
+material. The 2026-05-30 official-sample sweep after this change is `Seed-san`
+wgpu `28.3645 dB`, `Seed-san` Bevy `28.1909 dB`, constraint sample wgpu
+`34.2969 dB`, and constraint sample Bevy `34.2969 dB`.
 
 ## Next Renderer Work
 

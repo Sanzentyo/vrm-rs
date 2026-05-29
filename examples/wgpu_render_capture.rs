@@ -38,13 +38,14 @@ struct Vertex {
     matcap_factor: [f32; 4],
     rim_color: [f32; 4],
     rim_params: [f32; 4],
+    outline_color: [f32; 4],
     alpha_mode: f32,
     normal_scale: f32,
     _padding: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32, 12 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 14] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32, 13 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -249,11 +250,11 @@ fn outline_primitive(
     if !mtoon.outline_enabled() {
         return None;
     }
-    let color = [
+    let outline_color = [
         mtoon.outline_color_factor[0],
         mtoon.outline_color_factor[1],
         mtoon.outline_color_factor[2],
-        mtoon.base_color_factor[3],
+        mtoon.outline_lighting_mix_factor,
     ];
     let width_texture = mtoon
         .textures
@@ -270,28 +271,17 @@ fn outline_primitive(
                     .as_ref()
                     .map(|image| image.sample_green(vertex.tex_coord))
                     .unwrap_or(1.0);
-            Vertex {
-                position: (Vec3::from_array(vertex.position) + normal * width).to_array(),
-                normal: vertex.normal,
-                tangent: vertex.tangent,
-                tex_coord: vertex.tex_coord,
-                color,
-                shade_color: color,
-                shading: [0.0, 0.0, 0.0, 0.0],
-                emissive: [0.0, 0.0, 0.0, 0.0],
-                matcap_factor: [0.0, 0.0, 0.0, 0.0],
-                rim_color: [0.0, 0.0, 0.0, 0.0],
-                rim_params: [0.0, 1.0, 0.0, 0.0],
-                alpha_mode: alpha_mode_code(CaptureAlphaMode::Opaque),
-                normal_scale: 0.0,
-                _padding: [0.0; 2],
-            }
+            let mut vertex = *vertex;
+            vertex.position = (Vec3::from_array(vertex.position) + normal * width).to_array();
+            vertex.outline_color = outline_color;
+            vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
+            vertex
         })
         .collect();
     Some(DrawPrimitive {
         vertices,
         indices: surface.indices.clone(),
-        images: MaterialImages::default(),
+        images: surface.images,
         policy: MaterialPolicy {
             render_order: surface.policy.render_order.saturating_add(1),
             cull_mode: CaptureCullMode::Front,
@@ -388,6 +378,7 @@ fn draw_primitive(
                     shading.parametric_rim_lift,
                     if shading.pbr_fallback { 1.0 } else { 0.0 },
                 ],
+                outline_color: [1.0, 1.0, 1.0, -1.0],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
                 normal_scale,
                 _padding: [0.0; 2],
@@ -1575,8 +1566,9 @@ struct VertexIn {
     @location(8) matcap_factor: vec4<f32>,
     @location(9) rim_color: vec4<f32>,
     @location(10) rim_params: vec4<f32>,
-    @location(11) alpha_mode: f32,
-    @location(12) normal_scale: f32,
+    @location(11) outline_color: vec4<f32>,
+    @location(12) alpha_mode: f32,
+    @location(13) normal_scale: f32,
 };
 
 struct VertexOut {
@@ -1592,8 +1584,9 @@ struct VertexOut {
     @location(8) world_position: vec3<f32>,
     @location(9) rim_color: vec4<f32>,
     @location(10) rim_params: vec4<f32>,
-    @location(11) alpha_mode: f32,
-    @location(12) normal_scale: f32,
+    @location(11) outline_color: vec4<f32>,
+    @location(12) alpha_mode: f32,
+    @location(13) normal_scale: f32,
 };
 
 @vertex
@@ -1611,6 +1604,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.matcap_factor = input.matcap_factor;
     out.rim_color = input.rim_color;
     out.rim_params = input.rim_params;
+    out.outline_color = input.outline_color;
     out.alpha_mode = input.alpha_mode;
     out.normal_scale = input.normal_scale;
     return out;
@@ -1654,7 +1648,11 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     if input.rim_params.w > 0.5 {
         let direct = diffuse * max(ndotl, 0.0);
         let ambient = diffuse * uniforms.mtoon_lighting.w;
-        return vec4<f32>(direct + ambient + input.emissive.rgb, opaque_alpha);
+        var pbr_color = direct + ambient + input.emissive.rgb;
+        if input.outline_color.a >= 0.0 {
+            pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
+        }
+        return vec4<f32>(pbr_color, opaque_alpha);
     }
     let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
     let shade = input.shade_color.rgb * shade_texel.rgb;
@@ -1680,7 +1678,10 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    let color = (direct + ambient + rim + input.emissive.rgb) * uniforms.mtoon_lighting.x;
+    var color = (direct + ambient + rim + input.emissive.rgb) * uniforms.mtoon_lighting.x;
+    if input.outline_color.a >= 0.0 {
+        color = input.outline_color.rgb * mix(vec3<f32>(1.0), color, input.outline_color.a);
+    }
     return vec4<f32>(color, opaque_alpha);
 }
 "#;

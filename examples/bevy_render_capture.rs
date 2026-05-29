@@ -167,7 +167,6 @@ fn setup(
         &loaded.0,
         &options,
         &mut assets.meshes,
-        &mut assets.standard_materials,
         &mut assets.mtoon_materials,
         &mut assets.images,
     ) {
@@ -208,7 +207,6 @@ fn setup(
 #[derive(SystemParam)]
 struct CaptureAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
-    standard_materials: ResMut<'w, Assets<StandardMaterial>>,
     mtoon_materials: ResMut<'w, Assets<BevyMtoonMaterial>>,
     images: ResMut<'w, Assets<Image>>,
 }
@@ -226,7 +224,6 @@ fn spawn_vrm_meshes(
     loaded: &LoadedVrm,
     options: &CaptureOptions,
     meshes: &mut Assets<Mesh>,
-    standard_materials: &mut Assets<StandardMaterial>,
     mtoon_materials: &mut Assets<BevyMtoonMaterial>,
     images: &mut Assets<Image>,
 ) -> Result<(), Box<dyn Error>> {
@@ -304,9 +301,14 @@ fn spawn_vrm_meshes(
                 render_order,
             };
             primitives.push(surface);
-            if let Some(outline) =
-                bevy_outline_primitive(loaded, primitive, world, skin_matrices.as_deref())
-            {
+            if let Some(outline) = bevy_outline_primitive(
+                loaded,
+                primitive,
+                world,
+                skin_matrices.as_deref(),
+                options,
+                &image_handles,
+            ) {
                 primitives.push(outline);
             }
         }
@@ -316,13 +318,6 @@ fn spawn_vrm_meshes(
     for primitive in primitives {
         let mesh = meshes.add(primitive.mesh);
         match primitive.material {
-            BevyPrimitiveMaterial::Standard(material) => {
-                commands.spawn((
-                    Mesh3d(mesh),
-                    MeshMaterial3d(standard_materials.add(material)),
-                    Transform::IDENTITY,
-                ));
-            }
             BevyPrimitiveMaterial::Mtoon(material) => {
                 commands.spawn((
                     Mesh3d(mesh),
@@ -340,6 +335,8 @@ fn bevy_outline_primitive(
     primitive: &GltfPrimitiveData,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
+    options: &CaptureOptions,
+    image_handles: &BevyImageHandles,
 ) -> Option<BevyPrimitive> {
     let material = primitive
         .material
@@ -348,11 +345,11 @@ fn bevy_outline_primitive(
     if !mtoon.outline_enabled() {
         return None;
     }
-    let color = [
+    let outline_color = [
         mtoon.outline_color_factor[0],
         mtoon.outline_color_factor[1],
         mtoon.outline_color_factor[2],
-        mtoon.base_color_factor[3],
+        mtoon.outline_lighting_mix_factor,
     ];
     let width_texture = material_outline_width_image(loaded, primitive.material);
     let mesh = bevy_outline_mesh(
@@ -362,18 +359,21 @@ fn bevy_outline_primitive(
         mtoon.outline_width_factor,
         width_texture.as_ref(),
     );
-    let material = StandardMaterial {
-        base_color: Color::srgba(color[0], color[1], color[2], color[3]),
-        unlit: true,
-        double_sided: false,
-        cull_mode: Some(Face::Front),
-        alpha_mode: AlphaMode::Opaque,
-        depth_bias: render_depth_bias(material_render_order(loaded, primitive.material) + 1),
-        ..default()
-    };
+    let mut material = bevy_mtoon_material(
+        loaded,
+        primitive,
+        material_shading(loaded, primitive.material),
+        options,
+        render_depth_bias(material_render_order(loaded, primitive.material) + 1),
+        0.0,
+        image_handles,
+    );
+    material.outline_color = BVec4::from_array(outline_color);
+    material.alpha_mode = AlphaMode::Opaque;
+    material.cull_mode = Some(Face::Front);
     Some(BevyPrimitive {
         mesh,
-        material: BevyPrimitiveMaterial::Standard(material),
+        material: BevyPrimitiveMaterial::Mtoon(material),
         render_order: material_render_order(loaded, primitive.material).saturating_add(1),
     })
 }
@@ -467,7 +467,6 @@ struct BevyPrimitive {
 }
 
 enum BevyPrimitiveMaterial {
-    Standard(StandardMaterial),
     Mtoon(BevyMtoonMaterial),
 }
 
@@ -719,6 +718,7 @@ struct BevyMtoonMaterial {
     matcap_factor: BVec4,
     rim_color: BVec4,
     rim_params: BVec4,
+    outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
     #[texture(1)]
@@ -758,6 +758,7 @@ struct BevyMtoonUniform {
     matcap_factor: BVec4,
     rim_color: BVec4,
     rim_params: BVec4,
+    outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
 }
@@ -772,6 +773,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             matcap_factor: material.matcap_factor,
             rim_color: material.rim_color,
             rim_params: material.rim_params,
+            outline_color: material.outline_color,
             pipeline: material.pipeline,
             lighting: material.lighting,
         }
@@ -857,6 +859,7 @@ fn bevy_mtoon_material(
             shading.parametric_rim_lift,
             if shading.pbr_fallback { 1.0 } else { 0.0 },
         ),
+        outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
             alpha_mode_code(alpha_mode),
             alpha_cutoff(alpha_mode),

@@ -5,6 +5,7 @@
 - Tightened render parity alpha handling: the three-vrm browser reference now explicitly clears with alpha `0`, and the local render parity runner verifies that wgpu and Bevy alpha masks stay close to the three-vrm transparent RGBA reference before PSNR is reported.
 - Documented the canonical render review image locations under `.external-fixtures/render-parity/{three-vrm,wgpu,bevy}/`.
 - Routed the wgpu and Bevy render capture mesh baking through a shared `HeadlessSceneState` plus `VrmRuntimeDriver` tick so static render artifacts include the same renderer-agnostic runtime pose, constraint ordering, spring rest capture, MToon pass hints, emissive strength, and VRM0 root-orientation path used by engine adapters. The current official-sample PSNR is effectively unchanged (`Seed-san` wgpu `28.2117`, Bevy `27.9992`; constraint sample wgpu `34.2094`, Bevy `33.8841`), which narrows the next parity work toward exact MToon lighting/color/outline behavior rather than missing static runtime application.
+- Moved wgpu and Bevy outline rendering closer to three-vrm by running outline geometry through the same MToon shader path and applying `outlineColorFactor * mix(1, litColor, outlineLightingMixFactor)` at the end of the fragment pass instead of using a flat unlit outline material. The official-sample sweep improved to `Seed-san` wgpu `28.3645`, Bevy `28.1909`; constraint sample wgpu/Bevy `34.2969`.
 
 ## 2026-04-29
 

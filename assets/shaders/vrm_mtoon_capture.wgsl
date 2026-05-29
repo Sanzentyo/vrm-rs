@@ -11,6 +11,7 @@ struct BevyMtoonUniform {
     matcap_factor: vec4<f32>,
     rim_color: vec4<f32>,
     rim_params: vec4<f32>,
+    outline_color: vec4<f32>,
     pipeline: vec4<f32>,
     lighting: vec4<f32>,
 };
@@ -99,7 +100,11 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     if material.rim_params.w > 0.5 {
         let direct = diffuse * max(ndotl, 0.0);
         let ambient = diffuse * material.lighting.w;
-        return vec4<f32>(direct + ambient + material.emissive.rgb, opaque_alpha);
+        var pbr_color = direct + ambient + material.emissive.rgb;
+        if material.outline_color.a >= 0.0 {
+            pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
+        }
+        return vec4<f32>(pbr_color, opaque_alpha);
     }
 
     let shade_texel = textureSample(shade_texture, shade_sampler, uv);
@@ -129,6 +134,9 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let rim_texel = textureSample(rim_texture, rim_sampler, uv).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    let color = (direct + ambient + rim + material.emissive.rgb) * material.lighting.x;
+    var color = (direct + ambient + rim + material.emissive.rgb) * material.lighting.x;
+    if material.outline_color.a >= 0.0 {
+        color = material.outline_color.rgb * mix(vec3<f32>(1.0), color, material.outline_color.a);
+    }
     return vec4<f32>(color, opaque_alpha);
 }
