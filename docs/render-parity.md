@@ -140,11 +140,12 @@ glTF node transforms and CPU rest-skinning are baked into the generated Bevy
 meshes, and MToon pipeline hints feed `StandardMaterial` alpha, cull,
 double-sided, and primitive spawn order. This still uses Bevy's stock material
 instead of a custom MToon shader, so it remains a measured baseline rather than
-visual parity. The local 2026-05-29 Seed-san baseline after this slice is
-`10.67 dB`; visual review shows the Bevy frame is still full-body/transparent
-while the three-vrm reference is upper-body/white-background, so camera and
-background normalization remain blockers before shader differences can be
-judged cleanly.
+visual parity. After also setting Bevy's perspective projection to the same
+30 degree FOV and `0.1..20.0` clip range as the three-vrm/wgpu captures, the
+local 2026-05-29 Seed-san Bevy-vs-three-vrm baseline is `23.64 dB`. The alpha
+bounding box now matches the three-vrm reference (`252x221` at `256x256`), so
+remaining Bevy deltas can be judged as material/runtime differences instead of
+camera framing.
 
 ## Review Criteria
 

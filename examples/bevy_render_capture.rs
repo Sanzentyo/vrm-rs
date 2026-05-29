@@ -208,6 +208,13 @@ fn setup(
             clear_color: ClearColorConfig::Custom(Color::NONE),
             ..default()
         },
+        Projection::Perspective(PerspectiveProjection {
+            fov: 30.0_f32.to_radians(),
+            aspect_ratio: options.width as f32 / options.height as f32,
+            near: 0.1,
+            far: 20.0,
+            ..default()
+        }),
         Tonemapping::None,
         Transform::from_xyz(0.0, options.camera_y, -options.camera_z)
             .looking_at(Vec3::new(0.0, options.target_y, 0.0), Vec3::Y),
