@@ -46,24 +46,32 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- `
   --skip-download `
   --skip-three-vrm-build `
   --skip-playwright-install `
-  --three-vrm-root D:\git\three-vrm
+  --three-vrm-root D:\git\three-vrm `
+  --render-fixture Seed-san.vrm `
+  --render-fixture VRM1_Constraint_Twist_Sample.vrm
 ```
 
 Without the `--skip-*` flags, the same script can download external fixtures,
 prepare Playwright, and build the pinned three-vrm checkout under
-`.external-fixtures/three-vrm`. The render pass writes:
+`.external-fixtures/three-vrm`. If no `--render-fixture` is passed, the render
+set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 
-- `.external-fixtures/render-parity/three-vrm/Seed-san.frame000.{rgba.json,png}`
-- `.external-fixtures/render-parity/wgpu/Seed-san.frame000.{rgba.json,png}`
-- `.external-fixtures/render-parity/bevy/Seed-san.frame000.{rgba.json,png}`
-- `.external-fixtures/render-parity/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.psnr.json`
+- `.external-fixtures/render-parity/three-vrm/<fixture>.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json`
 - `.external-fixtures/render-parity/visual-review.html`
-- `.external-fixtures/render-parity/diff/Seed-san.{wgpu,bevy}-vs-three-vrm.diff.png`
+- `.external-fixtures/render-parity/diff/<fixture>.{wgpu,bevy}-vs-three-vrm.diff.png`
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
 delta and blue shows alpha-channel delta, amplified for review. It is generated
 data and stays outside git.
+
+The three-vrm PNG review artifact is encoded from the same WebGL `readPixels`
+RGBA buffer as the `.rgba.json` artifact. This keeps the reference PNG alpha
+handling aligned with the wgpu and Bevy captures instead of relying on browser
+element screenshot compositing.
 
 ## three-vrm Capture
 
@@ -174,6 +182,11 @@ This is still a failing visual parity baseline: the current path does not yet
 apply expression state, screen-space outline details, or exact
 three.js/MToon light accumulation.
 
+The first multi-fixture local run also renders
+`VRM1_Constraint_Twist_Sample.vrm`. On 2026-05-30, its wgpu-vs-three-vrm PSNR is
+`33.87 dB`, substantially closer than Seed-san because the visible material set
+is simpler and less dependent on the remaining MToon deltas.
+
 ## Bevy Capture
 
 `examples/bevy_render_capture.rs` is the Bevy 0.18.1 headless renderer path. It
@@ -237,6 +250,10 @@ to `25.20 dB`. This confirms the custom shader path is wired correctly, but the
 small improvement means the next Bevy parity gains need to come from exact
 three-vrm MToon light accumulation, runtime expression/pose state, and
 screen/clip-space outline behavior rather than more `StandardMaterial` tuning.
+The first multi-fixture local run gives
+`VRM1_Constraint_Twist_Sample.vrm` a Bevy-vs-three-vrm PSNR of `26.89 dB`, which
+confirms the Bevy capture path works beyond Seed-san but remains below the
+MToon-lit threshold.
 
 ## Review Criteria
 

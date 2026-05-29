@@ -45,6 +45,7 @@ as the single implementation of the gate:
 just ci
 just ci-external
 just render-parity
+just render-parity-samples
 ```
 
 The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, and the conservative `cargo-llvm-cov` line threshold.
@@ -64,6 +65,11 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
+keeping binaries external. `just render-parity-samples` currently renders
+`Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm` from the local official
+fixture directory. The three-vrm PNG is generated from the same transparent
+RGBA readback used by PSNR so its alpha handling matches the wgpu and Bevy PNGs.
 
 ## Coverage
 

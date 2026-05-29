@@ -69,6 +69,8 @@ struct Options {
     render_camera_z: f32,
     #[arg(long)]
     render_fail_under: Option<f32>,
+    #[arg(long = "render-fixture")]
+    render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
     fixture_dir: PathBuf,
     #[arg(long, default_value = ".external-fixtures/golden")]
@@ -186,14 +188,17 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         run_cmd("npm", ["install", "--no-save", "playwright"])?;
     }
     std::fs::create_dir_all(&options.render_parity_dir).map_err(|err| err.to_string())?;
-    capture_three_vrm_reference(options)?;
-    capture_wgpu(options)?;
-    capture_bevy(options)?;
-    compare_render_pair(options, "wgpu")?;
-    compare_render_pair(options, "bevy")?;
-    write_render_diff_image(options, "wgpu")?;
-    write_render_diff_image(options, "bevy")?;
-    write_render_visual_review(options)
+    let fixtures = render_fixtures(options)?;
+    for fixture in &fixtures {
+        capture_three_vrm_reference(options, fixture)?;
+        capture_wgpu(options, fixture)?;
+        capture_bevy(options, fixture)?;
+        compare_render_pair(options, fixture, "wgpu")?;
+        compare_render_pair(options, fixture, "bevy")?;
+        write_render_diff_image(options, fixture, "wgpu")?;
+        write_render_diff_image(options, fixture, "bevy")?;
+    }
+    write_render_visual_review(options, &fixtures)
 }
 
 fn download_external_fixtures(options: &Options) -> Result<(), String> {
@@ -460,19 +465,69 @@ fn run_external_fixture_tests(options: &Options) -> Result<(), String> {
     )
 }
 
-fn capture_three_vrm_reference(options: &Options) -> Result<(), String> {
+#[derive(Clone, Debug)]
+struct RenderFixture {
+    name: String,
+    stem: String,
+    path: PathBuf,
+}
+
+fn render_fixtures(options: &Options) -> Result<Vec<RenderFixture>, String> {
+    let names = if options.render_fixtures.is_empty() {
+        vec!["Seed-san.vrm".to_owned()]
+    } else {
+        options.render_fixtures.clone()
+    };
+    names
+        .into_iter()
+        .map(|name| {
+            let fixture_path = PathBuf::from(&name);
+            let path = if fixture_path.is_absolute() || fixture_path.components().count() > 1 {
+                fixture_path
+            } else {
+                options.fixture_dir.join(&name)
+            };
+            if !path.exists() {
+                return Err(format!("render fixture does not exist: {}", self::path(&path)));
+            }
+            let stem = path
+                .file_stem()
+                .and_then(OsStr::to_str)
+                .ok_or_else(|| format!("render fixture has no valid file stem: {}", self::path(&path)))?;
+            Ok(RenderFixture {
+                name,
+                stem: sanitize_artifact_stem(stem),
+                path,
+            })
+        })
+        .collect()
+}
+
+fn sanitize_artifact_stem(stem: &str) -> String {
+    stem.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
     run_cmd(
         "node",
         [
             "tools/render-parity/three-vrm-browser-capture.mjs",
             "--fixture",
-            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            path(&fixture.path).as_str(),
             "--three-vrm-root",
             path(&options.three_vrm_root).as_str(),
             "--out",
-            path(&render_artifact(options, "three-vrm")).as_str(),
+            path(&render_artifact(options, fixture, "three-vrm")).as_str(),
             "--png-out",
-            path(&render_png(options, "three-vrm")).as_str(),
+            path(&render_png(options, fixture, "three-vrm")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
@@ -483,7 +538,7 @@ fn capture_three_vrm_reference(options: &Options) -> Result<(), String> {
     )
 }
 
-fn capture_wgpu(options: &Options) -> Result<(), String> {
+fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
     run_cmd(
         "cargo",
         [
@@ -492,11 +547,11 @@ fn capture_wgpu(options: &Options) -> Result<(), String> {
             "wgpu_render_capture",
             "--",
             "--fixture",
-            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            path(&fixture.path).as_str(),
             "--out",
-            path(&render_artifact(options, "wgpu")).as_str(),
+            path(&render_artifact(options, fixture, "wgpu")).as_str(),
             "--png-out",
-            path(&render_png(options, "wgpu")).as_str(),
+            path(&render_png(options, fixture, "wgpu")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
@@ -507,7 +562,7 @@ fn capture_wgpu(options: &Options) -> Result<(), String> {
     )
 }
 
-fn capture_bevy(options: &Options) -> Result<(), String> {
+fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
     run_cmd(
         "cargo",
         [
@@ -516,11 +571,11 @@ fn capture_bevy(options: &Options) -> Result<(), String> {
             "bevy_render_capture",
             "--",
             "--fixture",
-            path(&options.fixture_dir.join("Seed-san.vrm")).as_str(),
+            path(&fixture.path).as_str(),
             "--out",
-            path(&render_artifact(options, "bevy")).as_str(),
+            path(&render_artifact(options, fixture, "bevy")).as_str(),
             "--png-out",
-            path(&render_png(options, "bevy")).as_str(),
+            path(&render_png(options, fixture, "bevy")).as_str(),
             "--width",
             options.render_width.to_string().as_str(),
             "--height",
@@ -531,16 +586,20 @@ fn capture_bevy(options: &Options) -> Result<(), String> {
     )
 }
 
-fn compare_render_pair(options: &Options, renderer: &str) -> Result<(), String> {
+fn compare_render_pair(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
     let mut command = Command::new("node");
     command.args([
         "tools/render-parity/compare-psnr.mjs",
         "--expected",
-        path(&render_artifact(options, "three-vrm")).as_str(),
+        path(&render_artifact(options, fixture, "three-vrm")).as_str(),
         "--actual",
-        path(&render_artifact(options, renderer)).as_str(),
+        path(&render_artifact(options, fixture, renderer)).as_str(),
         "--out",
-        path(&render_report(options, renderer)).as_str(),
+        path(&render_report(options, fixture, renderer)).as_str(),
     ]);
     if let Some(fail_under) = options.render_fail_under {
         command.args(["--fail-under", fail_under.to_string().as_str()]);
@@ -548,37 +607,41 @@ fn compare_render_pair(options: &Options, renderer: &str) -> Result<(), String> 
     run_command(command)
 }
 
-fn render_artifact(options: &Options, renderer: &str) -> PathBuf {
+fn render_artifact(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
         .join(renderer)
-        .join("Seed-san.frame000.rgba.json")
+        .join(format!("{}.frame000.rgba.json", fixture.stem))
 }
 
-fn render_png(options: &Options, renderer: &str) -> PathBuf {
+fn render_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
         .join(renderer)
-        .join("Seed-san.frame000.png")
+        .join(format!("{}.frame000.png", fixture.stem))
 }
 
-fn render_report(options: &Options, renderer: &str) -> PathBuf {
+fn render_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
         .join("reports")
-        .join(format!("Seed-san.{renderer}-vs-three-vrm.psnr.json"))
+        .join(format!("{}.{renderer}-vs-three-vrm.psnr.json", fixture.stem))
 }
 
-fn render_diff_png(options: &Options, renderer: &str) -> PathBuf {
+fn render_diff_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
         .join("diff")
-        .join(format!("Seed-san.{renderer}-vs-three-vrm.diff.png"))
+        .join(format!("{}.{renderer}-vs-three-vrm.diff.png", fixture.stem))
 }
 
-fn write_render_diff_image(options: &Options, renderer: &str) -> Result<(), String> {
-    let expected = read_rgba_artifact(&render_artifact(options, "three-vrm"))?;
-    let actual = read_rgba_artifact(&render_artifact(options, renderer))?;
+fn write_render_diff_image(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
+    let expected = read_rgba_artifact(&render_artifact(options, fixture, "three-vrm"))?;
+    let actual = read_rgba_artifact(&render_artifact(options, fixture, renderer))?;
     if expected.width != actual.width || expected.height != actual.height {
         return Err(format!(
             "{renderer}: dimension mismatch: expected {}x{}, actual {}x{}",
@@ -604,7 +667,7 @@ fn write_render_diff_image(options: &Options, renderer: &str) -> Result<(), Stri
         })
         .collect::<Vec<_>>();
 
-    let out = render_diff_png(options, renderer);
+    let out = render_diff_png(options, fixture, renderer);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", path(parent)))?;
@@ -685,18 +748,24 @@ fn json_u32(value: &serde_json::Value, field: &str, path: &Path) -> Result<u32, 
     }
 }
 
-fn write_render_visual_review(options: &Options) -> Result<(), String> {
+fn write_render_visual_review(options: &Options, fixtures: &[RenderFixture]) -> Result<(), String> {
+    let sections = fixtures
+        .iter()
+        .map(|fixture| render_visual_review_section(options, fixture))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
     let html = format!(
         r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>vrm-rs Seed-san Render Parity</title>
+  <title>vrm-rs Render Parity</title>
   <style>
     :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
     body {{ margin: 24px; }}
     main {{ max-width: 1180px; margin: 0 auto; }}
     h1 {{ font-size: 22px; margin-bottom: 4px; }}
+    h2 {{ margin-top: 28px; }}
     .meta {{ color: #666; margin-top: 0; }}
     .grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }}
     .diff-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }}
@@ -708,49 +777,68 @@ fn write_render_visual_review(options: &Options) -> Result<(), String> {
 </head>
 <body>
 <main>
-  <h1>Seed-san Render Parity</h1>
+  <h1>vrm-rs Render Parity</h1>
   <p class="meta">Generated by <code>cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity</code>.</p>
-  <section class="grid">
-    <figure>
-      <img src="three-vrm/Seed-san.frame000.png" alt="three-vrm reference">
-      <figcaption>three-vrm reference</figcaption>
-    </figure>
-    <figure>
-      <img src="wgpu/Seed-san.frame000.png" alt="wgpu capture">
-      <figcaption>wgpu capture</figcaption>
-    </figure>
-    <figure>
-      <img src="bevy/Seed-san.frame000.png" alt="Bevy capture">
-      <figcaption>Bevy capture</figcaption>
-    </figure>
-  </section>
-  <section class="diff-grid">
-    <figure>
-      <img src="diff/Seed-san.wgpu-vs-three-vrm.diff.png" alt="wgpu diff heatmap">
-      <figcaption>wgpu diff heatmap (red: RGB, blue: alpha)</figcaption>
-    </figure>
-    <figure>
-      <img src="diff/Seed-san.bevy-vs-three-vrm.diff.png" alt="Bevy diff heatmap">
-      <figcaption>Bevy diff heatmap (red: RGB, blue: alpha)</figcaption>
-    </figure>
-  </section>
-  <h2>wgpu vs three-vrm</h2>
-  <pre>{wgpu_report}</pre>
-  <h2>Bevy vs three-vrm</h2>
-  <pre>{bevy_report}</pre>
+  {sections}
 </main>
 </body>
 </html>
 "#,
-        wgpu_report = html_escape(&report_text(options, "wgpu")?),
-        bevy_report = html_escape(&report_text(options, "bevy")?),
+        sections = sections,
     );
     let out = options.render_parity_dir.join("visual-review.html");
     std::fs::write(&out, html).map_err(|err| format!("failed to write {}: {err}", path(&out)))
 }
 
-fn report_text(options: &Options, renderer: &str) -> Result<String, String> {
-    let report = render_report(options, renderer);
+fn render_visual_review_section(
+    options: &Options,
+    fixture: &RenderFixture,
+) -> Result<String, String> {
+    Ok(format!(
+        r#"<section>
+  <h2>{fixture_name}</h2>
+  <section class="grid">
+    <figure>
+      <img src="three-vrm/{stem}.frame000.png" alt="{fixture_name} three-vrm reference">
+      <figcaption>three-vrm reference</figcaption>
+    </figure>
+    <figure>
+      <img src="wgpu/{stem}.frame000.png" alt="{fixture_name} wgpu capture">
+      <figcaption>wgpu capture</figcaption>
+    </figure>
+    <figure>
+      <img src="bevy/{stem}.frame000.png" alt="{fixture_name} Bevy capture">
+      <figcaption>Bevy capture</figcaption>
+    </figure>
+  </section>
+  <section class="diff-grid">
+    <figure>
+      <img src="diff/{stem}.wgpu-vs-three-vrm.diff.png" alt="{fixture_name} wgpu diff heatmap">
+      <figcaption>wgpu diff heatmap (red: RGB, blue: alpha)</figcaption>
+    </figure>
+    <figure>
+      <img src="diff/{stem}.bevy-vs-three-vrm.diff.png" alt="{fixture_name} Bevy diff heatmap">
+      <figcaption>Bevy diff heatmap (red: RGB, blue: alpha)</figcaption>
+    </figure>
+  </section>
+  <h3>wgpu vs three-vrm</h3>
+  <pre>{wgpu_report}</pre>
+  <h3>Bevy vs three-vrm</h3>
+  <pre>{bevy_report}</pre>
+</section>"#,
+        fixture_name = html_escape(&fixture.name),
+        stem = html_escape(&fixture.stem),
+        wgpu_report = html_escape(&report_text(options, fixture, "wgpu")?),
+        bevy_report = html_escape(&report_text(options, fixture, "bevy")?),
+    ))
+}
+
+fn report_text(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<String, String> {
+    let report = render_report(options, fixture, renderer);
     std::fs::read_to_string(&report)
         .map_err(|err| format!("failed to read {}: {err}", path(&report)))
 }

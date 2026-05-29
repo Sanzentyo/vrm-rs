@@ -184,6 +184,8 @@
 - Matched the capture shaders' rim/matcap composition more closely to three-vrm by adding matcap into the rim term before `rimMultiplyTexture` and `rimLightingMix`, raising the local Seed-san wgpu baseline from `27.77 dB` to `27.98 dB` and Bevy from `25.06 dB` to `25.08 dB`. Bevy-side generated tangents for normal-mapped primitives that omit glTF `TANGENT`, plus removal of the measured-worse material depth-bias experiment, raise the current Bevy baseline to `25.20 dB`.
 - Replaced hand-written Rust CLI argument parsing with `clap` for the local Rust CI runner and the wgpu/Bevy render capture examples. The local CI runner still accepts the documented `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity` form by filtering the cargo-script separator before invoking clap.
 - Added a root `Justfile` with `just ci`, `just ci-external`, `just render-parity`, `just render-parity-full`, and `just coverage` wrappers. These keep the Rust script as the implementation source of truth while making the common local gate and render-parity commands easier to run.
+- Extended local render parity beyond the Seed-san-only path. `tools/ci/local-ci.rs --render-parity` now accepts repeated `--render-fixture` flags, writes per-fixture RGBA/PNG/report/diff artifacts, and builds a multi-section `visual-review.html`. The first two-fixture run covers `Seed-san.vrm` and `VRM1_Constraint_Twist_Sample.vrm`; the constraint sample reports wgpu `33.87 dB` and Bevy `26.89 dB`.
+- Unified render-parity PNG alpha handling. The three-vrm reference PNG is now encoded from the same transparent RGBA readback buffer used for PSNR, instead of using a Playwright element screenshot that composited the canvas background differently from the wgpu/Bevy PNG artifacts.
 
 Open work:
 

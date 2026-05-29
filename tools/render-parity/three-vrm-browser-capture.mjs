@@ -123,13 +123,15 @@ try {
     width,
     height,
     camera: { y: cameraY, z: cameraZ, targetY },
+    format: 'rgba8',
     rgba: capture.rgba,
   }, null, 2)}\n`;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, json);
   if (pngOut) {
     fs.mkdirSync(path.dirname(pngOut), { recursive: true });
-    await page.locator('#canvas').screenshot({ path: pngOut, omitBackground: false });
+    const base64 = capture.pngDataUrl.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(pngOut, Buffer.from(base64, 'base64'));
   }
 } finally {
   if (browser) await browser.close();
@@ -198,8 +200,14 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
+    const pngCanvas = document.createElement('canvas');
+    pngCanvas.width = ${options.width};
+    pngCanvas.height = ${options.height};
+    const context = pngCanvas.getContext('2d');
+    context.putImageData(new ImageData(new Uint8ClampedArray(rgba), ${options.width}, ${options.height}), 0, 0);
+    const pngDataUrl = pngCanvas.toDataURL('image/png');
     renderer.dispose();
-    return { rgba: Array.from(rgba) };
+    return { rgba: Array.from(rgba), pngDataUrl };
   };
 </script>`;
 }

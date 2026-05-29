@@ -19,6 +19,7 @@ cargo +nightly -Zscript tools/ci/local-ci.rs
 just ci
 just ci-external
 just render-parity
+just render-parity-samples
 ```
 
 - The repository intentionally does not carry GitHub Actions workflows. `tools/ci/local-ci.rs` fails fast if `.github/workflows/*.yml` or `.github/workflows/*.yaml` files are present. Use the local Rust CI script when you want the old CI-equivalent gate:
