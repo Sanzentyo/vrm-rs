@@ -167,6 +167,9 @@ raises the current Seed-san baseline to `27.77 dB`. When glTF tangents are
 missing, the capture path generates triangle tangents from transformed
 positions/UVs and disables normal-map contribution on vertices where no stable
 tangent frame can be accumulated.
+Matching three-vrm's rim/matcap composition more closely by adding matcap to
+the rim term before `rimMultiplyTexture` and `rimLightingMix` raises the current
+wgpu Seed-san baseline to `27.98 dB`.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, screen-space outline details, or exact
 three.js/MToon light accumulation.
@@ -217,21 +220,23 @@ instead of a custom MToon shader/runtime path. Feeding MToon
 `shadingShiftTexture` into the baked vertex-color toon threshold nudges the
 current Bevy baseline to `25.00 dB` while preserving Bevy's main texture path.
 Bevy outline primitives now use the same base-plus-one pass ordering as the
-renderer-agnostic MToon pipeline hints. The example also carries the material
-order into Bevy's material depth-bias hook, but broader transparent/overlapping
-fixture coverage is still needed before treating that as complete MToon render
-queue parity.
+renderer-agnostic MToon pipeline hints. Spawn order carries the material order
+for this capture path; an earlier Bevy material `depth_bias` experiment was
+removed after measurement because it was not needed for Seed-san parity and
+slightly worsened the captured image.
 
 The current Bevy slice replaces the stock-material bake for base passes with a
 custom Bevy 0.18.1 `MaterialPlugin` path and a source-controlled MToon capture
 WGSL shader. The material binds base, shade, shading-shift, matcap, rim, and
 normal textures plus MToon scalar/color uniforms; normal textures are uploaded
 as linear images and sampled when glTF tangents are present. The local
-2026-05-30 Seed-san Bevy-vs-three-vrm PSNR is now `25.06 dB`. This confirms the
-custom shader path is wired correctly, but the small improvement means the next
-Bevy parity gains need to come from exact three-vrm MToon light accumulation,
-runtime expression/pose state, and screen/clip-space outline behavior rather
-than more `StandardMaterial` tuning.
+2026-05-30 Seed-san Bevy-vs-three-vrm PSNR was `25.06 dB`. Matching three-vrm's
+rim/matcap composition and generating Bevy-side tangents for normal-mapped
+primitives that omit glTF `TANGENT` raises the current Seed-san Bevy baseline
+to `25.20 dB`. This confirms the custom shader path is wired correctly, but the
+small improvement means the next Bevy parity gains need to come from exact
+three-vrm MToon light accumulation, runtime expression/pose state, and
+screen/clip-space outline behavior rather than more `StandardMaterial` tuning.
 
 ## Review Criteria
 

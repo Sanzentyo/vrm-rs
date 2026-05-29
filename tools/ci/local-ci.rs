@@ -4,6 +4,7 @@
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 serde_json = "1.0.150"
 ---
@@ -15,6 +16,7 @@ serde_json = "1.0.150"
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 
+use clap::Parser;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -26,164 +28,55 @@ const THREE_VRM_VIEWER_COMMIT: &str = "75ab65c9d4e488521d41bff7f5cfd1976a0b16e8"
 const VRM_SPEC_COMMIT: &str = "3942748efbc803b258e288e0f6c993c6bb96cebf";
 
 fn main() {
-    if let Err(err) = Options::parse(env::args_os().skip(1)).and_then(run) {
+    if let Err(err) = run(Options::parse_from(script_args())) {
         eprintln!("local-ci failed: {err}");
         std::process::exit(1);
     }
 }
 
-#[derive(Clone, Debug)]
+fn script_args() -> impl Iterator<Item = OsString> {
+    env::args_os().filter(|arg| arg != "--")
+}
+
+#[derive(Clone, Debug, Parser)]
+#[command(
+    name = "local-ci",
+    about = "Local vrm-rs CI runner",
+    after_help = "Examples:\n  cargo +nightly -Zscript tools/ci/local-ci.rs\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity"
+)]
 struct Options {
+    #[arg(long)]
     external_fixtures: bool,
+    #[arg(long)]
     render_parity: bool,
+    #[arg(long)]
     skip_core: bool,
+    #[arg(long)]
     skip_coverage: bool,
+    #[arg(long)]
     skip_download: bool,
+    #[arg(long)]
     skip_three_vrm_build: bool,
+    #[arg(long)]
     skip_golden_generation: bool,
+    #[arg(long)]
     skip_playwright_install: bool,
+    #[arg(long, default_value_t = 256)]
     render_width: u32,
+    #[arg(long, default_value_t = 256)]
     render_height: u32,
+    #[arg(long, default_value_t = 3.0)]
     render_camera_z: f32,
+    #[arg(long)]
     render_fail_under: Option<f32>,
+    #[arg(long, default_value = ".external-fixtures/official")]
     fixture_dir: PathBuf,
+    #[arg(long, default_value = ".external-fixtures/golden")]
     golden_dir: PathBuf,
+    #[arg(long, default_value = ".external-fixtures/three-vrm")]
     three_vrm_root: PathBuf,
+    #[arg(long, default_value = ".external-fixtures/render-parity")]
     render_parity_dir: PathBuf,
-}
-
-impl Options {
-    fn parse(args: impl Iterator<Item = OsString>) -> Result<Self, String> {
-        let cwd = env::current_dir().map_err(|err| err.to_string())?;
-        let mut options = Self {
-            external_fixtures: false,
-            render_parity: false,
-            skip_core: false,
-            skip_coverage: false,
-            skip_download: false,
-            skip_three_vrm_build: false,
-            skip_golden_generation: false,
-            skip_playwright_install: false,
-            render_width: 256,
-            render_height: 256,
-            render_camera_z: 3.0,
-            render_fail_under: None,
-            fixture_dir: cwd.join(".external-fixtures").join("official"),
-            golden_dir: cwd.join(".external-fixtures").join("golden"),
-            three_vrm_root: cwd.join(".external-fixtures").join("three-vrm"),
-            render_parity_dir: cwd.join(".external-fixtures").join("render-parity"),
-        };
-
-        let args = args.collect::<Vec<_>>();
-        let mut index = 0;
-        while index < args.len() {
-            let arg = args[index].to_string_lossy();
-            match arg.as_ref() {
-                "--" => {}
-                "--external-fixtures" => options.external_fixtures = true,
-                "--render-parity" => options.render_parity = true,
-                "--skip-core" => options.skip_core = true,
-                "--skip-coverage" => options.skip_coverage = true,
-                "--skip-download" => options.skip_download = true,
-                "--skip-three-vrm-build" => options.skip_three_vrm_build = true,
-                "--skip-golden-generation" => options.skip_golden_generation = true,
-                "--skip-playwright-install" => options.skip_playwright_install = true,
-                "--fixture-dir" => {
-                    index += 1;
-                    options.fixture_dir = required_path(&args, index, "--fixture-dir")?;
-                }
-                "--golden-dir" => {
-                    index += 1;
-                    options.golden_dir = required_path(&args, index, "--golden-dir")?;
-                }
-                "--three-vrm-root" => {
-                    index += 1;
-                    options.three_vrm_root = required_path(&args, index, "--three-vrm-root")?;
-                }
-                "--render-parity-dir" => {
-                    index += 1;
-                    options.render_parity_dir = required_path(&args, index, "--render-parity-dir")?;
-                }
-                "--render-width" => {
-                    index += 1;
-                    options.render_width = required_parse(&args, index, "--render-width")?;
-                }
-                "--render-height" => {
-                    index += 1;
-                    options.render_height = required_parse(&args, index, "--render-height")?;
-                }
-                "--render-camera-z" => {
-                    index += 1;
-                    options.render_camera_z = required_parse(&args, index, "--render-camera-z")?;
-                }
-                "--render-fail-under" => {
-                    index += 1;
-                    options.render_fail_under =
-                        Some(required_parse(&args, index, "--render-fail-under")?);
-                }
-                "--help" | "-h" => {
-                    print_help();
-                    std::process::exit(0);
-                }
-                _ => return Err(format!("unknown argument: {arg}")),
-            }
-            index += 1;
-        }
-
-        Ok(options)
-    }
-}
-
-fn required_path(args: &[OsString], index: usize, flag: &str) -> Result<PathBuf, String> {
-    args.get(index)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("missing value for {flag}"))
-}
-
-fn required_parse<T: std::str::FromStr>(
-    args: &[OsString],
-    index: usize,
-    flag: &str,
-) -> Result<T, String>
-where
-    T::Err: std::fmt::Display,
-{
-    args.get(index)
-        .ok_or_else(|| format!("missing value for {flag}"))?
-        .to_string_lossy()
-        .parse()
-        .map_err(|err| format!("invalid value for {flag}: {err}"))
-}
-
-fn print_help() {
-    println!(
-        "\
-Local vrm-rs CI runner
-
-Usage:
-  cargo +nightly -Zscript tools/ci/local-ci.rs
-  cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
-  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
-
-Options:
-  --external-fixtures        Download external samples, build three-vrm, generate goldens, and run ignored parity tests
-  --render-parity            Render Seed-san through three-vrm, wgpu, and Bevy, then write PSNR reports
-  --skip-core                Skip fmt/test/clippy
-  --skip-coverage            Skip cargo-llvm-cov
-  --skip-download            Reuse existing external fixture files
-  --skip-three-vrm-build     Reuse an existing built three-vrm checkout
-  --skip-golden-generation   Reuse existing generated golden JSON files
-  --skip-playwright-install  Reuse existing local Playwright installation
-  --fixture-dir PATH         Override .external-fixtures/official
-  --golden-dir PATH          Override .external-fixtures/golden
-  --three-vrm-root PATH      Override .external-fixtures/three-vrm
-  --render-parity-dir PATH   Override .external-fixtures/render-parity
-  --render-width N           Render width, default 256
-  --render-height N          Render height, default 256
-  --render-camera-z N        Camera Z distance, default 3.0
-  --render-fail-under N      Optional PSNR threshold for wgpu and Bevy reports
-"
-    );
 }
 
 fn run(options: Options) -> Result<(), String> {

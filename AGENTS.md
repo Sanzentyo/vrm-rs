@@ -13,6 +13,14 @@ Repository guidance for Codex agents working on `vrm-rs`.
 cargo +nightly -Zscript tools/ci/local-ci.rs
 ```
 
+- `just` is available as a convenience wrapper. Prefer `just ci` for the normal gate, while keeping the Rust script as the implementation source of truth:
+
+```powershell
+just ci
+just ci-external
+just render-parity
+```
+
 - The repository intentionally does not carry GitHub Actions workflows. `tools/ci/local-ci.rs` fails fast if `.github/workflows/*.yml` or `.github/workflows/*.yaml` files are present. Use the local Rust CI script when you want the old CI-equivalent gate:
 
 ```powershell

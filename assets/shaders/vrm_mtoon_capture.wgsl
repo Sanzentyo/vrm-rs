@@ -128,8 +128,8 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         material.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, rim_sampler, uv).rgb;
-    let lit_rim = mix(vec3<f32>(1.0), vec3<f32>(max(ndotl, 0.0)), material.rim_params.x);
-    let rim = rim_base * rim_texel * lit_rim;
-    let color = (direct + ambient + matcap + rim + material.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
+    let rim = (rim_base + matcap) * rim_texel * rim_mix;
+    let color = (direct + ambient + rim + material.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
     return vec4<f32>(color, opaque_alpha);
 }

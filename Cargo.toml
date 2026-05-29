@@ -21,6 +21,7 @@ resolver = "3"
 [workspace.dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 bitflags = "2.11.1"
+clap = { version = "4.6.1", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 glam = "0.32.1"
 gltf = { version = "1.4.1", features = ["extensions"] }
@@ -65,6 +66,7 @@ bevy = { workspace = true, features = [
     "zstd_rust",
 ] }
 bytemuck.workspace = true
+clap.workspace = true
 crossbeam-channel.workspace = true
 glam.workspace = true
 image.workspace = true

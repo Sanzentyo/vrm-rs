@@ -6,6 +6,7 @@
 //! `tools/render-parity/compare-psnr.mjs`.
 
 use bytemuck::{Pod, Zeroable};
+use clap::Parser;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::json;
 use std::collections::HashMap;
@@ -59,15 +60,23 @@ struct Uniforms {
     camera_pos: [f32; 4],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Parser)]
 struct CaptureOptions {
+    #[arg(long)]
     fixture: PathBuf,
+    #[arg(long)]
     out: PathBuf,
+    #[arg(long)]
     png_out: Option<PathBuf>,
+    #[arg(long, default_value_t = 512)]
     width: u32,
+    #[arg(long, default_value_t = 512)]
     height: u32,
+    #[arg(long, default_value_t = 1.0)]
     camera_y: f32,
+    #[arg(long, default_value_t = 5.0)]
     camera_z: f32,
+    #[arg(long, default_value_t = 1.0)]
     target_y: f32,
 }
 
@@ -167,7 +176,7 @@ struct CpuRgbaImage {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let options = CaptureOptions::parse()?;
+    let options = CaptureOptions::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
     let mesh = mesh_draw_data(&loaded)?;
     let rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
@@ -177,67 +186,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         write_png(path, options.width, options.height, &rgba)?;
     }
     Ok(())
-}
-
-impl CaptureOptions {
-    fn parse() -> Result<Self, Box<dyn Error>> {
-        let args = std::env::args().skip(1).collect::<Vec<_>>();
-        let mut values = HashMap::new();
-        let mut index = 0;
-        while index < args.len() {
-            let key = &args[index];
-            if !key.starts_with("--") {
-                return Err(format!("unexpected positional argument: {key}").into());
-            }
-            let Some(value) = args.get(index + 1) else {
-                return Err(format!("missing value for {key}").into());
-            };
-            values.insert(key.trim_start_matches("--").to_string(), value.clone());
-            index += 2;
-        }
-
-        let fixture = required_path(&values, "fixture")?;
-        let out = required_path(&values, "out")?;
-        Ok(Self {
-            fixture,
-            out,
-            png_out: values.get("png-out").map(PathBuf::from),
-            width: parse_u32(&values, "width", 512)?,
-            height: parse_u32(&values, "height", 512)?,
-            camera_y: parse_f32(&values, "camera-y", 1.0)?,
-            camera_z: parse_f32(&values, "camera-z", 5.0)?,
-            target_y: parse_f32(&values, "target-y", 1.0)?,
-        })
-    }
-}
-
-fn required_path(values: &HashMap<String, String>, name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    values
-        .get(name)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("missing --{name}").into())
-}
-
-fn parse_u32(
-    values: &HashMap<String, String>,
-    name: &str,
-    default: u32,
-) -> Result<u32, Box<dyn Error>> {
-    match values.get(name) {
-        Some(value) => Ok(value.parse()?),
-        None => Ok(default),
-    }
-}
-
-fn parse_f32(
-    values: &HashMap<String, String>,
-    name: &str,
-    default: f32,
-) -> Result<f32, Box<dyn Error>> {
-    match values.get(name) {
-        Some(value) => Ok(value.parse()?),
-        None => Ok(default),
-    }
 }
 
 fn mesh_draw_data(loaded: &LoadedVrm) -> Result<MeshDrawData, Box<dyn Error>> {
@@ -1653,9 +1601,9 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
         input.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
-    let lit_rim = mix(vec3<f32>(1.0), vec3<f32>(max(ndotl, 0.0)), input.rim_params.x);
-    let rim = rim_base * rim_texel * lit_rim;
-    let color = (direct + ambient + matcap + rim + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
+    let rim = (rim_base + matcap) * rim_texel * rim_mix;
+    let color = (direct + ambient + rim + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
     return vec4<f32>(color, opaque_alpha);
 }
 "#;

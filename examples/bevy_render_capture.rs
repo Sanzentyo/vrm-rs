@@ -31,10 +31,10 @@ use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::shader::ShaderRef;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
+use clap::Parser;
 use crossbeam_channel::{Receiver, Sender};
 use glam::{Mat4, Vec3 as GVec3};
 use serde_json::json;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ use vrm_io::{
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let options = CaptureOptions::parse()?;
+    let options = CaptureOptions::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
     let (tx, rx) = crossbeam_channel::bounded(1);
 
@@ -82,73 +82,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     rx.recv()?.map_err(|message| message.into())
 }
 
-#[derive(Clone, Debug, Resource)]
+#[derive(Clone, Debug, Parser, Resource)]
 struct CaptureOptions {
+    #[arg(long)]
     fixture: PathBuf,
+    #[arg(long)]
     out: PathBuf,
+    #[arg(long)]
     png_out: Option<PathBuf>,
+    #[arg(long, default_value_t = 512)]
     width: u32,
+    #[arg(long, default_value_t = 512)]
     height: u32,
+    #[arg(long, default_value_t = 1.0)]
     camera_y: f32,
+    #[arg(long, default_value_t = 5.0)]
     camera_z: f32,
+    #[arg(long, default_value_t = 1.0)]
     target_y: f32,
-}
-
-impl CaptureOptions {
-    fn parse() -> Result<Self, Box<dyn Error>> {
-        let args = std::env::args().skip(1).collect::<Vec<_>>();
-        let mut values = HashMap::new();
-        let mut index = 0;
-        while index < args.len() {
-            let key = &args[index];
-            if !key.starts_with("--") {
-                return Err(format!("unexpected positional argument: {key}").into());
-            }
-            let Some(value) = args.get(index + 1) else {
-                return Err(format!("missing value for {key}").into());
-            };
-            values.insert(key.trim_start_matches("--").to_string(), value.clone());
-            index += 2;
-        }
-
-        Ok(Self {
-            fixture: required_path(&values, "fixture")?,
-            out: required_path(&values, "out")?,
-            png_out: values.get("png-out").map(PathBuf::from),
-            width: parse_u32(&values, "width", 512)?,
-            height: parse_u32(&values, "height", 512)?,
-            camera_y: parse_f32(&values, "camera-y", 1.0)?,
-            camera_z: parse_f32(&values, "camera-z", 5.0)?,
-            target_y: parse_f32(&values, "target-y", 1.0)?,
-        })
-    }
-}
-
-fn required_path(values: &HashMap<String, String>, name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    values
-        .get(name)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("missing --{name}").into())
-}
-
-fn parse_u32(
-    values: &HashMap<String, String>,
-    name: &str,
-    default: u32,
-) -> Result<u32, Box<dyn Error>> {
-    values
-        .get(name)
-        .map_or(Ok(default), |value| value.parse().map_err(Into::into))
-}
-
-fn parse_f32(
-    values: &HashMap<String, String>,
-    name: &str,
-    default: f32,
-) -> Result<f32, Box<dyn Error>> {
-    values
-        .get(name)
-        .map_or(Ok(default), |value| value.parse().map_err(Into::into))
 }
 
 #[derive(Resource)]
@@ -298,14 +249,20 @@ fn spawn_vrm_meshes(
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
             let render_order = material_render_order(loaded, primitive.material);
+            let (mesh, has_tangents) = bevy_mesh(
+                primitive,
+                world,
+                skin_matrices.as_deref(),
+                shading.normal_scale > 0.0,
+            );
             let surface = BevyPrimitive {
-                mesh: bevy_mesh(primitive, world, skin_matrices.as_deref()),
+                mesh,
                 material: BevyPrimitiveMaterial::Mtoon(bevy_mtoon_material(
                     loaded,
                     primitive,
                     shading,
                     render_depth_bias(render_order),
-                    if primitive.tangents.len() == primitive.positions.len() {
+                    if has_tangents {
                         shading.normal_scale
                     } else {
                         0.0
@@ -489,7 +446,12 @@ struct BevyImageHandles {
     neutral_normal: Handle<Image>,
 }
 
-fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&[Mat4]>) -> Mesh {
+fn bevy_mesh(
+    primitive: &GltfPrimitiveData,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    generate_tangents: bool,
+) -> (Mesh, bool) {
     let positions = primitive
         .positions
         .iter()
@@ -519,23 +481,35 @@ fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&
             normal.to_array()
         })
         .collect::<Vec<_>>();
-    let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
-        primitive
-            .tangents
-            .iter()
-            .enumerate()
-            .map(|(index, tangent)| {
-                let direction = transform_direction(
-                    GVec3::new(tangent[0], tangent[1], tangent[2]),
-                    world,
-                    skin_matrices,
-                    primitive.joints_0.get(index).copied(),
-                    primitive.weights_0.get(index).copied(),
-                );
-                [direction.x, direction.y, direction.z, tangent[3]]
-            })
-            .collect::<Vec<_>>()
-    });
+    let tangents = if primitive.tangents.len() == primitive.positions.len() {
+        Some(
+            primitive
+                .tangents
+                .iter()
+                .enumerate()
+                .map(|(index, tangent)| {
+                    let direction = transform_direction(
+                        GVec3::new(tangent[0], tangent[1], tangent[2]),
+                        world,
+                        skin_matrices,
+                        primitive.joints_0.get(index).copied(),
+                        primitive.weights_0.get(index).copied(),
+                    );
+                    [direction.x, direction.y, direction.z, tangent[3]]
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else if generate_tangents {
+        generated_tangents(
+            &positions,
+            &normals,
+            &tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
+            &primitive.indices,
+        )
+    } else {
+        None
+    };
+    let has_tangents = tangents.is_some();
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
@@ -550,7 +524,68 @@ fn bevy_mesh(primitive: &GltfPrimitiveData, world: Mat4, skin_matrices: Option<&
         tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
     );
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
-    mesh
+    (mesh, has_tangents)
+}
+
+fn generated_tangents(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    tex_coords: &[[f32; 2]],
+    indices: &[u32],
+) -> Option<Vec<[f32; 4]>> {
+    let mut tangents = vec![GVec3::ZERO; positions.len()];
+    let mut bitangents = vec![GVec3::ZERO; positions.len()];
+    for triangle in indices.chunks_exact(3) {
+        let [i0, i1, i2] = [
+            usize::try_from(triangle[0]).ok()?,
+            usize::try_from(triangle[1]).ok()?,
+            usize::try_from(triangle[2]).ok()?,
+        ];
+        let [p0, p1, p2] = [
+            GVec3::from_array(*positions.get(i0)?),
+            GVec3::from_array(*positions.get(i1)?),
+            GVec3::from_array(*positions.get(i2)?),
+        ];
+        let [uv0, uv1, uv2] = [
+            *tex_coords.get(i0)?,
+            *tex_coords.get(i1)?,
+            *tex_coords.get(i2)?,
+        ];
+        let delta_pos1 = p1 - p0;
+        let delta_pos2 = p2 - p0;
+        let delta_uv1 = GVec3::new(uv1[0] - uv0[0], uv1[1] - uv0[1], 0.0);
+        let delta_uv2 = GVec3::new(uv2[0] - uv0[0], uv2[1] - uv0[1], 0.0);
+        let determinant = delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x;
+        if determinant.abs() <= f32::EPSILON {
+            continue;
+        }
+        let scale = determinant.recip();
+        let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * scale;
+        let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * scale;
+        for index in [i0, i1, i2] {
+            tangents[index] += tangent;
+            bitangents[index] += bitangent;
+        }
+    }
+    tangents
+        .into_iter()
+        .zip(bitangents)
+        .zip(normals)
+        .map(|((tangent, bitangent), normal)| {
+            let normal = GVec3::from_array(*normal).normalize_or_zero();
+            let tangent = tangent - normal * normal.dot(tangent);
+            if tangent.length_squared() <= f32::EPSILON {
+                return None;
+            }
+            let tangent = tangent.normalize();
+            let handedness = if normal.cross(tangent).dot(bitangent) < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            Some([tangent.x, tangent.y, tangent.z, handedness])
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -970,8 +1005,8 @@ fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
     }
 }
 
-fn render_depth_bias(render_order: i32) -> f32 {
-    render_order as f32
+fn render_depth_bias(_render_order: i32) -> f32 {
+    0.0
 }
 
 fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Face> {
