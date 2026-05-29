@@ -47,7 +47,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode};
+use vrm_core::{MtoonAlphaMode, MtoonCullMode, TextureTransform2d};
 use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
@@ -148,6 +148,17 @@ struct CpuRgbaImage {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MaterialUvTransforms {
+    base: Option<TextureTransform2d>,
+    shade: Option<TextureTransform2d>,
+    shading_shift: Option<TextureTransform2d>,
+    normal: Option<TextureTransform2d>,
+    rim: Option<TextureTransform2d>,
+    outline_width: Option<TextureTransform2d>,
+    emissive: Option<TextureTransform2d>,
 }
 
 impl SceneController {
@@ -369,12 +380,14 @@ fn bevy_outline_primitive(
         mtoon.outline_lighting_mix_factor,
     ];
     let width_texture = material_outline_width_image(loaded, primitive.material);
+    let uv_transforms = material_uv_transforms(loaded, primitive.material);
     let mesh = bevy_outline_mesh(
         primitive,
         world,
         skin_matrices,
         mtoon.outline_width_factor,
         width_texture.as_ref(),
+        uv_transforms.outline_width,
     );
     let mut material = bevy_mtoon_material(
         loaded,
@@ -402,6 +415,7 @@ fn bevy_outline_mesh(
     skin_matrices: Option<&[Mat4]>,
     width: f32,
     width_texture: Option<&CpuRgbaImage>,
+    outline_width_transform: Option<TextureTransform2d>,
 ) -> Mesh {
     let positions = primitive
         .positions
@@ -418,7 +432,12 @@ fn bevy_outline_mesh(
             );
             let width = width
                 * width_texture
-                    .map(|image| image.sample_green(primitive_tex_coord(primitive, index)))
+                    .map(|image| {
+                        image.sample_green(transform_uv(
+                            primitive_tex_coord(primitive, index),
+                            outline_width_transform,
+                        ))
+                    })
                     .unwrap_or(1.0);
             (position + normal * width).to_array()
         })
@@ -745,6 +764,14 @@ struct BevyMtoonMaterial {
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
+    base_uv_transform: BVec4,
+    shade_uv_transform: BVec4,
+    shading_shift_uv_transform: BVec4,
+    normal_uv_transform: BVec4,
+    rim_uv_transform: BVec4,
+    emissive_uv_transform: BVec4,
+    uv_rotation_a: BVec4,
+    uv_rotation_b: BVec4,
     #[texture(1)]
     #[sampler(2)]
     base_texture: Handle<Image>,
@@ -788,6 +815,14 @@ struct BevyMtoonUniform {
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
+    base_uv_transform: BVec4,
+    shade_uv_transform: BVec4,
+    shading_shift_uv_transform: BVec4,
+    normal_uv_transform: BVec4,
+    rim_uv_transform: BVec4,
+    emissive_uv_transform: BVec4,
+    uv_rotation_a: BVec4,
+    uv_rotation_b: BVec4,
 }
 
 impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
@@ -803,6 +838,14 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             outline_color: material.outline_color,
             pipeline: material.pipeline,
             lighting: material.lighting,
+            base_uv_transform: material.base_uv_transform,
+            shade_uv_transform: material.shade_uv_transform,
+            shading_shift_uv_transform: material.shading_shift_uv_transform,
+            normal_uv_transform: material.normal_uv_transform,
+            rim_uv_transform: material.rim_uv_transform,
+            emissive_uv_transform: material.emissive_uv_transform,
+            uv_rotation_a: material.uv_rotation_a,
+            uv_rotation_b: material.uv_rotation_b,
         }
     }
 }
@@ -854,6 +897,7 @@ fn bevy_mtoon_material(
 ) -> BevyMtoonMaterial {
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
     let cull_mode = material_cull_mode(loaded, primitive.material);
+    let uv_transforms = material_uv_transforms(loaded, primitive.material);
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -899,6 +943,24 @@ fn bevy_mtoon_material(
             options.mtoon_ambient_base,
             options.mtoon_ambient_gi_scale,
             options.pbr_ambient,
+        ),
+        base_uv_transform: bevy_uv_transform(uv_transforms.base),
+        shade_uv_transform: bevy_uv_transform(uv_transforms.shade),
+        shading_shift_uv_transform: bevy_uv_transform(uv_transforms.shading_shift),
+        normal_uv_transform: bevy_uv_transform(uv_transforms.normal),
+        rim_uv_transform: bevy_uv_transform(uv_transforms.rim),
+        emissive_uv_transform: bevy_uv_transform(uv_transforms.emissive),
+        uv_rotation_a: BVec4::new(
+            bevy_uv_rotation(uv_transforms.base),
+            bevy_uv_rotation(uv_transforms.shade),
+            bevy_uv_rotation(uv_transforms.shading_shift),
+            bevy_uv_rotation(uv_transforms.normal),
+        ),
+        uv_rotation_b: BVec4::new(
+            bevy_uv_rotation(uv_transforms.rim),
+            bevy_uv_rotation(uv_transforms.emissive),
+            0.0,
+            0.0,
         ),
         base_texture: material_main_image(loaded, primitive.material)
             .and_then(|image| image_handles.color_images.get(image))
@@ -1143,6 +1205,66 @@ fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Optio
             .and_then(|index| loaded.gltf_materials.get(index))
             .and_then(|material| material.normal_texture)
     })
+}
+
+fn material_uv_transforms(loaded: &LoadedVrm, material: Option<usize>) -> MaterialUvTransforms {
+    let mtoon = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref());
+    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
+    let base = mtoon
+        .and_then(|mtoon| mtoon.texture_transforms.main_texture)
+        .or_else(|| gltf.and_then(|material| material.base_color_texture_transform));
+    let shade = mtoon
+        .and_then(|mtoon| mtoon.texture_transforms.shade_multiply_texture)
+        .or(base);
+    MaterialUvTransforms {
+        base,
+        shade,
+        shading_shift: mtoon.and_then(|mtoon| mtoon.texture_transforms.shading_shift_texture),
+        normal: mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
+            .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
+        rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
+        outline_width: mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
+        emissive: gltf.and_then(|material| material.emissive_texture_transform),
+    }
+}
+
+fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2] {
+    let Some(transform) = transform else {
+        return uv;
+    };
+    if transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0) {
+        return uv;
+    }
+    let (sin, cos) = transform.rotation.sin_cos();
+    let scaled = [uv[0] * transform.scale[0], uv[1] * transform.scale[1]];
+    [
+        cos * scaled[0] - sin * scaled[1] + transform.offset[0],
+        sin * scaled[0] + cos * scaled[1] + transform.offset[1],
+    ]
+}
+
+fn bevy_uv_transform(transform: Option<TextureTransform2d>) -> BVec4 {
+    let Some(transform) =
+        transform.filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+    else {
+        return BVec4::new(0.0, 0.0, 1.0, 1.0);
+    };
+    BVec4::new(
+        transform.offset[0],
+        transform.offset[1],
+        transform.scale[0],
+        transform.scale[1],
+    )
+}
+
+fn bevy_uv_rotation(transform: Option<TextureTransform2d>) -> f32 {
+    transform
+        .filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        .map_or(0.0, |transform| transform.rotation)
 }
 
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {

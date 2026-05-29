@@ -14,6 +14,14 @@ struct BevyMtoonUniform {
     outline_color: vec4<f32>,
     pipeline: vec4<f32>,
     lighting: vec4<f32>,
+    base_uv_transform: vec4<f32>,
+    shade_uv_transform: vec4<f32>,
+    shading_shift_uv_transform: vec4<f32>,
+    normal_uv_transform: vec4<f32>,
+    rim_uv_transform: vec4<f32>,
+    emissive_uv_transform: vec4<f32>,
+    uv_rotation_a: vec4<f32>,
+    uv_rotation_b: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -88,7 +96,17 @@ fn pbr_direct(
     return (diffuse_lobe + specular) * pi * n_dot_l;
 }
 
-fn surface_normal(input: VertexOutput, front_facing: bool) -> vec3<f32> {
+fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f32> {
+    let scaled = uv * offset_scale.zw;
+    let c = cos(rotation);
+    let s = sin(rotation);
+    return vec2<f32>(
+        c * scaled.x - s * scaled.y + offset_scale.x,
+        s * scaled.x + c * scaled.y + offset_scale.y,
+    );
+}
+
+fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || material.pipeline.w < 0.5);
     let geometric_normal = normalize(input.world_normal) * face_sign;
     if material.pipeline.z <= 0.0 {
@@ -97,7 +115,7 @@ fn surface_normal(input: VertexOutput, front_facing: bool) -> vec3<f32> {
 #ifdef VERTEX_TANGENTS
     let tangent = normalize(input.world_tangent.xyz) * face_sign;
     let bitangent = normalize(cross(geometric_normal, tangent) * input.world_tangent.w) * face_sign;
-    let sampled = textureSample(normal_texture, normal_sampler, input.uv).xyz;
+    let sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * material.pipeline.z,
         (sampled.y * 2.0 - 1.0) * material.pipeline.z,
@@ -115,18 +133,25 @@ fn surface_normal(input: VertexOutput, front_facing: bool) -> vec3<f32> {
 
 @fragment
 fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    let normal = surface_normal(input, front_facing);
-    let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));
-    let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
-
 #ifdef VERTEX_UVS_A
     let uv = input.uv;
 #else
     let uv = vec2<f32>(0.0, 0.0);
 #endif
 
-    let texel = textureSample(base_texture, base_sampler, uv);
-    let emissive_texel = textureSample(emissive_texture, emissive_sampler, uv).rgb;
+    let base_uv = transform_uv(uv, material.base_uv_transform, material.uv_rotation_a.x);
+    let shade_uv = transform_uv(uv, material.shade_uv_transform, material.uv_rotation_a.y);
+    let shading_shift_uv = transform_uv(uv, material.shading_shift_uv_transform, material.uv_rotation_a.z);
+    let normal_uv = transform_uv(uv, material.normal_uv_transform, material.uv_rotation_a.w);
+    let rim_uv = transform_uv(uv, material.rim_uv_transform, material.uv_rotation_b.x);
+    let emissive_uv = transform_uv(uv, material.emissive_uv_transform, material.uv_rotation_b.y);
+
+    let normal = surface_normal(input, front_facing, normal_uv);
+    let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));
+    let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
+
+    let texel = textureSample(base_texture, base_sampler, base_uv);
+    let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     let alpha = material.base_color.a * texel.a;
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
@@ -152,9 +177,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         return vec4<f32>(pbr_color, opaque_alpha);
     }
 
-    let shade_texel = textureSample(shade_texture, shade_sampler, uv);
+    let shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
     let shade = material.shade_color.rgb * shade_texel.rgb;
-    let shift_texel = textureSample(shading_shift_texture, shading_shift_sampler, uv).r;
+    let shift_texel = textureSample(shading_shift_texture, shading_shift_sampler, shading_shift_uv).r;
     let shift = material.shading.x + shift_texel * material.shading.w;
     let toon = linearstep(
         -1.0 + material.shading.y,
@@ -175,7 +200,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         clamp(1.0 - dot(view_dir, normal) + material.rim_params.z, 0.0, 1.0),
         material.rim_params.y,
     );
-    let rim_texel = textureSample(rim_texture, rim_sampler, uv).rgb;
+    let rim_texel = textureSample(rim_texture, rim_sampler, rim_uv).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + material.emissive.rgb * emissive_texel) * material.lighting.x;

@@ -17,7 +17,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode};
+use vrm_core::{MtoonAlphaMode, MtoonCullMode, TextureTransform2d};
 use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
     load_vrm_from_path,
@@ -106,6 +106,7 @@ struct DrawPrimitive {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     images: MaterialImages,
+    uv_transforms: MaterialUvTransforms,
     policy: MaterialPolicy,
 }
 
@@ -174,13 +175,78 @@ impl CaptureBackground {
     }
 }
 
+impl From<MaterialUvTransforms> for MaterialUvUniform {
+    fn from(transforms: MaterialUvTransforms) -> Self {
+        Self {
+            base_transform: uv_transform_uniform(transforms.base),
+            shade_transform: uv_transform_uniform(transforms.shade),
+            shading_shift_transform: uv_transform_uniform(transforms.shading_shift),
+            normal_transform: uv_transform_uniform(transforms.normal),
+            rim_transform: uv_transform_uniform(transforms.rim),
+            emissive_transform: uv_transform_uniform(transforms.emissive),
+            rotation_a: [
+                uv_rotation_uniform(transforms.base),
+                uv_rotation_uniform(transforms.shade),
+                uv_rotation_uniform(transforms.shading_shift),
+                uv_rotation_uniform(transforms.normal),
+            ],
+            rotation_b: [
+                uv_rotation_uniform(transforms.rim),
+                uv_rotation_uniform(transforms.emissive),
+                0.0,
+                0.0,
+            ],
+        }
+    }
+}
+
+fn uv_transform_uniform(transform: Option<TextureTransform2d>) -> [f32; 4] {
+    let Some(transform) =
+        transform.filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+    else {
+        return [0.0, 0.0, 1.0, 1.0];
+    };
+    [
+        transform.offset[0],
+        transform.offset[1],
+        transform.scale[0],
+        transform.scale[1],
+    ]
+}
+
+fn uv_rotation_uniform(transform: Option<TextureTransform2d>) -> f32 {
+    transform
+        .filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        .map_or(0.0, |transform| transform.rotation)
+}
+
 struct TextureBindGroup {
     bind_group: wgpu::BindGroup,
+    _uv_uniform_buffer: wgpu::Buffer,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct MaterialUvUniform {
+    base_transform: [f32; 4],
+    shade_transform: [f32; 4],
+    shading_shift_transform: [f32; 4],
+    normal_transform: [f32; 4],
+    rim_transform: [f32; 4],
+    emissive_transform: [f32; 4],
+    rotation_a: [f32; 4],
+    rotation_b: [f32; 4],
 }
 
 struct TextureResource {
     image: Option<usize>,
     view: wgpu::TextureView,
+}
+
+struct TextureResourceTables<'a> {
+    color: &'a [TextureResource],
+    normal: &'a [TextureResource],
+    indices: &'a HashMap<usize, usize>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -205,6 +271,17 @@ struct CpuRgbaImage {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MaterialUvTransforms {
+    base: Option<TextureTransform2d>,
+    shade: Option<TextureTransform2d>,
+    shading_shift: Option<TextureTransform2d>,
+    normal: Option<TextureTransform2d>,
+    rim: Option<TextureTransform2d>,
+    outline_width: Option<TextureTransform2d>,
+    emissive: Option<TextureTransform2d>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -279,16 +356,18 @@ fn outline_primitive(
         .textures
         .outline_width_multiply_texture
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
+    let uv_transforms = material_uv_transforms(loaded, primitive.material);
     let width = mtoon.outline_width_factor;
     let vertices = surface
         .vertices
         .iter()
         .map(|vertex| {
             let normal = Vec3::from_array(vertex.normal).normalize_or_zero();
+            let outline_coord = transform_uv(vertex.tex_coord, uv_transforms.outline_width);
             let width = width
                 * width_texture
                     .as_ref()
-                    .map(|image| image.sample_green(vertex.tex_coord))
+                    .map(|image| image.sample_green(outline_coord))
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
             vertex.position = (Vec3::from_array(vertex.position) + normal * width).to_array();
@@ -302,6 +381,7 @@ fn outline_primitive(
         vertices,
         indices: surface.indices.clone(),
         images: surface.images,
+        uv_transforms: surface.uv_transforms,
         policy: MaterialPolicy {
             render_order: surface.policy.render_order.saturating_add(1),
             cull_mode: CaptureCullMode::Front,
@@ -319,6 +399,7 @@ fn draw_primitive(
     skin_matrices: Option<&[Mat4]>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let shading = material_shading(loaded, primitive.material);
+    let uv_transforms = material_uv_transforms(loaded, primitive.material);
     let policy = material_policy(loaded, primitive.material);
     let mut vertices = primitive
         .positions
@@ -417,6 +498,7 @@ fn draw_primitive(
         vertices,
         indices: primitive.indices.clone(),
         images: material_images(loaded, primitive.material),
+        uv_transforms,
         policy,
     })
 }
@@ -745,6 +827,46 @@ fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Optio
     })
 }
 
+fn material_uv_transforms(loaded: &LoadedVrm, material: Option<usize>) -> MaterialUvTransforms {
+    let mtoon = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref());
+    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
+    let base = mtoon
+        .and_then(|mtoon| mtoon.texture_transforms.main_texture)
+        .or_else(|| gltf.and_then(|material| material.base_color_texture_transform));
+    let shade = mtoon
+        .and_then(|mtoon| mtoon.texture_transforms.shade_multiply_texture)
+        .or(base);
+    MaterialUvTransforms {
+        base,
+        shade,
+        shading_shift: mtoon.and_then(|mtoon| mtoon.texture_transforms.shading_shift_texture),
+        normal: mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
+            .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
+        rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
+        outline_width: mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
+        emissive: gltf.and_then(|material| material.emissive_texture_transform),
+    }
+}
+
+fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2] {
+    let Some(transform) = transform else {
+        return uv;
+    };
+    if transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0) {
+        return uv;
+    }
+    let (sin, cos) = transform.rotation.sin_cos();
+    let scaled = [uv[0] * transform.scale[0], uv[1] * transform.scale[1]];
+    [
+        cos * scaled[0] - sin * scaled[1] + transform.offset[0],
+        sin * scaled[0] + cos * scaled[1] + transform.offset[1],
+    ]
+}
+
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
     let mtoon_texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
@@ -991,18 +1113,27 @@ fn material_texture_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
-    color_resources: &[TextureResource],
-    normal_resources: &[TextureResource],
-    indices: &HashMap<usize, usize>,
+    resources: TextureResourceTables<'_>,
     images: MaterialImages,
+    uv_transforms: MaterialUvTransforms,
 ) -> TextureBindGroup {
-    let base = texture_view(color_resources, indices, images.base, 0);
-    let shade = texture_view(color_resources, indices, images.shade.or(images.base), 0);
-    let shading_shift = texture_view(color_resources, indices, images.shading_shift, 1);
-    let matcap = texture_view(color_resources, indices, images.matcap, 1);
-    let rim = texture_view(color_resources, indices, images.rim, 0);
-    let emissive = texture_view(color_resources, indices, images.emissive, 0);
-    let normal = texture_view(normal_resources, indices, images.normal, 2);
+    let base = texture_view(resources.color, resources.indices, images.base, 0);
+    let shade = texture_view(
+        resources.color,
+        resources.indices,
+        images.shade.or(images.base),
+        0,
+    );
+    let shading_shift = texture_view(resources.color, resources.indices, images.shading_shift, 1);
+    let matcap = texture_view(resources.color, resources.indices, images.matcap, 1);
+    let rim = texture_view(resources.color, resources.indices, images.rim, 0);
+    let emissive = texture_view(resources.color, resources.indices, images.emissive, 0);
+    let normal = texture_view(resources.normal, resources.indices, images.normal, 2);
+    let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("render parity material uv transform uniform"),
+        contents: bytemuck::bytes_of(&MaterialUvUniform::from(uv_transforms)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
         layout,
@@ -1039,9 +1170,16 @@ fn material_texture_bind_group(
                 binding: 7,
                 resource: wgpu::BindingResource::TextureView(emissive),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: uv_uniform_buffer.as_entire_binding(),
+            },
         ],
     });
-    TextureBindGroup { bind_group }
+    TextureBindGroup {
+        bind_group,
+        _uv_uniform_buffer: uv_uniform_buffer,
+    }
 }
 
 fn texture_view<'a>(
@@ -1339,6 +1477,16 @@ async fn render_capture(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1382,10 +1530,13 @@ async fn render_capture(
                 &device,
                 &texture_bind_group_layout,
                 &sampler,
-                &color_texture_resources,
-                &normal_texture_resources,
-                &texture_resource_indices,
+                TextureResourceTables {
+                    color: &color_texture_resources,
+                    normal: &normal_texture_resources,
+                    indices: &texture_resource_indices,
+                },
                 primitive.images,
+                primitive.uv_transforms,
             )
         })
         .collect::<Vec<_>>();
@@ -1609,6 +1760,20 @@ var base_sampler: sampler;
 @group(1) @binding(7)
 var emissive_texture: texture_2d<f32>;
 
+struct MaterialUvUniform {
+    base_transform: vec4<f32>,
+    shade_transform: vec4<f32>,
+    shading_shift_transform: vec4<f32>,
+    normal_transform: vec4<f32>,
+    rim_transform: vec4<f32>,
+    emissive_transform: vec4<f32>,
+    rotation_a: vec4<f32>,
+    rotation_b: vec4<f32>,
+};
+
+@group(1) @binding(8)
+var<uniform> material_uv: MaterialUvUniform;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -1702,7 +1867,17 @@ fn pbr_direct(
     return (diffuse_lobe + specular) * pi * n_dot_l;
 }
 
-fn surface_normal(input: VertexOut, front_facing: bool) -> vec3<f32> {
+fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f32> {
+    let scaled = uv * offset_scale.zw;
+    let c = cos(rotation);
+    let s = sin(rotation);
+    return vec2<f32>(
+        c * scaled.x - s * scaled.y + offset_scale.x,
+        s * scaled.x + c * scaled.y + offset_scale.y,
+    );
+}
+
+fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
     let geometric_normal = normalize(input.normal) * face_sign;
     if input.normal_scale <= 0.0 {
@@ -1710,7 +1885,7 @@ fn surface_normal(input: VertexOut, front_facing: bool) -> vec3<f32> {
     }
     let tangent = normalize(input.tangent.xyz) * face_sign;
     let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w) * face_sign;
-    let sampled = textureSample(normal_texture, base_sampler, input.tex_coord).xyz;
+    let sampled = textureSample(normal_texture, base_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * input.normal_scale,
         (sampled.y * 2.0 - 1.0) * input.normal_scale,
@@ -1725,10 +1900,16 @@ fn surface_normal(input: VertexOut, front_facing: bool) -> vec3<f32> {
 
 @fragment
 fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    let normal = surface_normal(input, front_facing);
+    let base_uv = transform_uv(input.tex_coord, material_uv.base_transform, material_uv.rotation_a.x);
+    let shade_uv = transform_uv(input.tex_coord, material_uv.shade_transform, material_uv.rotation_a.y);
+    let shading_shift_uv = transform_uv(input.tex_coord, material_uv.shading_shift_transform, material_uv.rotation_a.z);
+    let normal_uv = transform_uv(input.tex_coord, material_uv.normal_transform, material_uv.rotation_a.w);
+    let rim_uv = transform_uv(input.tex_coord, material_uv.rim_transform, material_uv.rotation_b.x);
+    let emissive_uv = transform_uv(input.tex_coord, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let normal = surface_normal(input, front_facing, normal_uv);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
-    let texel = textureSample(base_texture, base_sampler, input.tex_coord);
-    let emissive_texel = textureSample(emissive_texture, base_sampler, input.tex_coord).rgb;
+    let texel = textureSample(base_texture, base_sampler, base_uv);
+    let emissive_texel = textureSample(emissive_texture, base_sampler, emissive_uv).rgb;
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
         discard;
@@ -1752,9 +1933,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         }
         return vec4<f32>(pbr_color, opaque_alpha);
     }
-    let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
+    let shade_texel = textureSample(shade_texture, base_sampler, shade_uv);
     let shade = input.shade_color.rgb * shade_texel.rgb;
-    let shift_texel = textureSample(shading_shift_texture, base_sampler, input.tex_coord).r;
+    let shift_texel = textureSample(shading_shift_texture, base_sampler, shading_shift_uv).r;
     let shift = input.shading.x + shift_texel * input.shading.w;
     let toony = input.shading.y;
     let gi = input.shading.z;
@@ -1772,7 +1953,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         clamp(1.0 - dot(view_dir, normal) + input.rim_params.z, 0.0, 1.0),
         input.rim_params.y,
     );
-    let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
+    let rim_texel = textureSample(rim_texture, base_sampler, rim_uv).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + input.emissive.rgb * emissive_texel) * uniforms.mtoon_lighting.x;

@@ -362,9 +362,14 @@ layers: VRMC MToon texture infos round-trip nested transform extensions,
 `vrm-io` extracts glTF base/normal/emissive texture transforms and merges them
 into resolved MToon materials. The current two official render fixtures only
 exercise identity transforms, so this does not move their PSNR by itself. The
-next renderer slice should consume `MtoonTextureTransformSet` in the wgpu and
-Bevy capture shaders, including separate UVs for base, shade, normal, rim,
-emissive, outline-width, and UV-animation-mask texture slots.
+wgpu and Bevy capture paths now consume the retained transforms: wgpu binds a
+per-primitive UV-transform uniform beside its material textures, Bevy includes
+the same slot-specific transforms in its custom material uniform, and both
+shader paths sample base, shade, shading-shift, normal, rim, and emissive
+textures through those transforms. Outline-width texture sampling applies the
+transform on the CPU side while baking the outline mesh. The remaining
+texture-transform parity gap is animated UV offsets/rotation over time and
+dedicated UV-animation-mask sampling.
 
 ## Next Renderer Work
 
