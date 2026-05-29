@@ -150,6 +150,7 @@
 - Deepened `examples/mtoon_renderer_skeletons.rs` from simple pipeline keys into concrete wgpu-like and ash-like descriptors covering pass order, alpha/depth/cull state, render order, texture/sampler bindings, uniform layout sizing, shader entry naming, and material texture binding tables.
 - Expanded VRMA external parity with Spark's branch-only `idle_loop.vrma` finding from pixiv/three-vrm. The clip remains external-only and exposed a missing three-vrm behavior: hips translation tracks are scaled by target normalized hips height divided by the VRMA source rest hips height before normalized-to-raw writeback. `VrmAnimationFrame` now carries the source rest hips position from `sample_vrm_animation`, and `apply_vrma_humanoid_frame` applies that scale for parity.
 - Started the render parity harness with `tools/render-parity/compare-psnr.mjs` and `docs/render-parity.md`. The first slice defines a renderer-neutral RGBA JSON artifact, PSNR/MSE/max-delta report generation, initial thresholds, and `.external-fixtures/render-parity/` artifact policy before adding concrete three-vrm/Bevy/wgpu capture paths.
+- Verified the manual GitHub Actions external fixture parity job on `master`: run `26633741797` passed normal test, coverage, pinned three-vrm build, external fixture downloads, golden generation, ignored fixture parity tests, and golden artifact upload.
 
 Open work:
 
