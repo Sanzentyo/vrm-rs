@@ -103,6 +103,17 @@ pub struct GltfTextureData {
 pub struct GltfMaterialData {
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
+    pub alpha_mode: GltfAlphaMode,
+    pub alpha_cutoff: Option<f32>,
+    pub double_sided: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfAlphaMode {
+    #[default]
+    Opaque,
+    Mask,
+    Blend,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -246,6 +257,13 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
                 base_color_texture: pbr
                     .base_color_texture()
                     .map(|texture| texture.texture().index()),
+                alpha_mode: match material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => GltfAlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => GltfAlphaMode::Mask,
+                    gltf::material::AlphaMode::Blend => GltfAlphaMode::Blend,
+                },
+                alpha_cutoff: material.alpha_cutoff(),
+                double_sided: material.double_sided(),
             }
         })
         .collect()
@@ -1244,7 +1262,10 @@ mod tests {
             loaded.gltf_materials[0],
             GltfMaterialData {
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
-                base_color_texture: Some(0)
+                base_color_texture: Some(0),
+                alpha_mode: GltfAlphaMode::Opaque,
+                alpha_cutoff: None,
+                double_sided: false,
             }
         );
     }

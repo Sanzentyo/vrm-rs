@@ -40,7 +40,9 @@ use std::sync::{
 };
 use std::time::Duration;
 use vrm_core::{MtoonAlphaMode, MtoonCullMode};
-use vrm_io::{GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path};
+use vrm_io::{
+    GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+};
 
 const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
 
@@ -656,15 +658,23 @@ fn bevy_material(
 }
 
 fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
-    material
+    let render_order = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
         .map(|mtoon| mtoon.pipeline_hints().render_order)
-        .unwrap_or(2000)
+        .unwrap_or(2000);
+    if material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .is_some_and(|material| material.alpha_mode == GltfAlphaMode::Blend)
+    {
+        render_order.max(3000)
+    } else {
+        render_order
+    }
 }
 
 fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Face> {
-    material
+    let cull_mode = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
         .map(|mtoon| match mtoon.pipeline_hints().cull_mode {
@@ -672,11 +682,19 @@ fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Fac
             MtoonCullMode::Front => Some(Face::Front),
             MtoonCullMode::Back => Some(Face::Back),
         })
-        .unwrap_or(Some(Face::Back))
+        .unwrap_or(Some(Face::Back));
+    if material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .is_some_and(|material| material.double_sided)
+    {
+        None
+    } else {
+        cull_mode
+    }
 }
 
 fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode {
-    material
+    let mtoon_alpha = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
         .map(|mtoon| match mtoon.pipeline_hints().alpha_mode {
@@ -684,7 +702,15 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
             MtoonAlphaMode::Mask => AlphaMode::Mask(mtoon.cutoff_factor),
             MtoonAlphaMode::Blend => AlphaMode::Blend,
         })
-        .unwrap_or(AlphaMode::Opaque)
+        .unwrap_or(AlphaMode::Opaque);
+    material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .map(|material| match material.alpha_mode {
+            GltfAlphaMode::Opaque => mtoon_alpha,
+            GltfAlphaMode::Mask => AlphaMode::Mask(material.alpha_cutoff.unwrap_or(0.5)),
+            GltfAlphaMode::Blend => AlphaMode::Blend,
+        })
+        .unwrap_or(mtoon_alpha)
 }
 
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {

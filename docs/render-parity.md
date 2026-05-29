@@ -150,6 +150,10 @@ now exercises a real secondary MToon texture slot. Adding core/sans-IO support
 for VRM1 `shadingShiftTexture` scale, applying that red-channel shift in wgpu,
 using the three-vrm view-direction matcap UV, and adding parametric rim input
 raises the current local Seed-san baseline to `27.63 dB`.
+The renderer-facing glTF material data now also exposes alpha mode, alpha
+cutoff, and double-sided flags; wgpu and Bevy capture policies consume those
+inputs so transparent and double-sided materials do not rely on MToon-only
+defaults.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, normal maps, screen-space outline details, or exact
 three.js/MToon light accumulation.

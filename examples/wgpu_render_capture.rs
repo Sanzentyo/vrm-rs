@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{MtoonAlphaMode, MtoonCullMode};
 use vrm_io::{
-    GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+    GltfAlphaMode, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
+    load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -412,7 +413,7 @@ fn draw_primitive(
 }
 
 fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicy {
-    material
+    let mut policy = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
         .map(|mtoon| {
@@ -425,7 +426,26 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
                 blend: hints.blend,
             }
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(gltf) = material.and_then(|index| loaded.gltf_materials.get(index)) {
+        match gltf.alpha_mode {
+            GltfAlphaMode::Opaque => {}
+            GltfAlphaMode::Mask => {
+                policy.alpha_mode = CaptureAlphaMode::Mask;
+                policy.depth_write = true;
+                policy.blend = false;
+            }
+            GltfAlphaMode::Blend => {
+                policy.alpha_mode = CaptureAlphaMode::Blend;
+                policy.blend = true;
+                policy.render_order = policy.render_order.max(3000);
+            }
+        }
+        if gltf.double_sided {
+            policy.cull_mode = CaptureCullMode::Off;
+        }
+    }
+    policy
 }
 
 fn capture_cull_mode(mode: MtoonCullMode) -> CaptureCullMode {

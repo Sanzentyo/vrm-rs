@@ -141,7 +141,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.82%, and `vrm-adapter-bevy` line coverage is 94.47%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.81%, and `vrm-adapter-bevy` line coverage is 94.47%.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture local automation, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.
 - Added optional external-fixture automation. It downloads documented fixtures into ignored workspace paths, builds a pinned three-vrm checkout, regenerates spring/constraint/VRMA golden JSON, and runs exact ignored parity tests without committing binaries.
@@ -172,6 +172,7 @@
 - Tuned the capture-only MToon lighting approximation after measuring that both Rust render paths were roughly 9% brighter than the three-vrm reference on opaque shared pixels. The wgpu Seed-san baseline rose to `27.50 dB`, and the Bevy baseline rose to `24.98 dB`.
 - Added secondary MToon texture bindings to the wgpu capture for `shadeMultiplyTexture` and `matcapTexture`. On Seed-san, most shade textures alias the main texture, but matcap improves arm material matching slightly; the local wgpu-vs-three-vrm baseline is now `27.52 dB` while Bevy remains `24.98 dB`.
 - Added VRM1 `shadingShiftTexture` plus scale to the core/sans-IO MToon model and propagated it through adapter material descriptors, Bevy texture plans, and wgpu capture bindings. The wgpu capture also now computes matcap UVs from the camera view direction and applies parametric rim lighting/rim multiply inputs. The local Seed-san wgpu-vs-three-vrm baseline is now `27.63 dB`; Bevy remains `24.98 dB`.
+- Extended renderer-facing glTF material extraction with alpha mode, alpha cutoff, and double-sided flags, then wired those inputs into the wgpu and Bevy capture material policies. Seed-san's current static frame remains wgpu `27.63 dB` and Bevy `24.98 dB`, but transparent/double-sided material handling is no longer implicit in the capture paths.
 
 Open work:
 
