@@ -636,6 +636,8 @@ struct MaterialShading {
     parametric_rim_fresnel_power: f32,
     parametric_rim_lift: f32,
     normal_scale: f32,
+    metallic: f32,
+    roughness: f32,
     pbr_fallback: bool,
 }
 
@@ -672,6 +674,8 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                         .and_then(|index| loaded.gltf_materials.get(index))
                         .map_or(1.0, |gltf_material| gltf_material.normal_scale)
                 }),
+                metallic: 0.0,
+                roughness: 1.0,
                 pbr_fallback: false,
             })
         })
@@ -704,6 +708,8 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         parametric_rim_lift: 0.0,
         normal_scale: material_normal_texture(loaded, material)
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
+        metallic: gltf.map_or(0.0, |material| material.metallic_factor),
+        roughness: gltf.map_or(1.0, |material| material.roughness_factor),
         pbr_fallback: true,
     }
 }
@@ -740,6 +746,9 @@ struct BevyMtoonMaterial {
     #[texture(11)]
     #[sampler(12)]
     normal_texture: Handle<Image>,
+    #[texture(13)]
+    #[sampler(14)]
+    emissive_texture: Handle<Image>,
     alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
     depth_bias: f32,
@@ -847,13 +856,13 @@ fn bevy_mtoon_material(
             shading.matcap_factor[0],
             shading.matcap_factor[1],
             shading.matcap_factor[2],
-            0.0,
+            shading.metallic,
         ),
         rim_color: BVec4::new(
             shading.parametric_rim_color[0],
             shading.parametric_rim_color[1],
             shading.parametric_rim_color[2],
-            0.0,
+            shading.roughness,
         ),
         rim_params: BVec4::new(
             shading.rim_lighting_mix,
@@ -901,6 +910,10 @@ fn bevy_mtoon_material(
             .and_then(|image| image_handles.linear_images.get(image))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.neutral_normal.clone()),
+        emissive_texture: material_emissive_image(loaded, primitive.material)
+            .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.white.clone()),
         alpha_mode,
         cull_mode,
         depth_bias,
@@ -1161,6 +1174,13 @@ fn material_rim_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usi
         .and_then(|material| material.mtoon.as_ref())
         .and_then(|mtoon| mtoon.textures.rim_multiply_texture)?;
     loaded.textures.get(texture.0).map(|texture| texture.image)
+}
+
+fn material_emissive_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.emissive_texture)?;
+    loaded.textures.get(texture).map(|texture| texture.image)
 }
 
 fn material_outline_width_image(

@@ -49,8 +49,43 @@ var normal_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(12)
 var normal_sampler: sampler;
 
+@group(#{MATERIAL_BIND_GROUP}) @binding(13)
+var emissive_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(14)
+var emissive_sampler: sampler;
+
 fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
+}
+
+fn pbr_direct(
+    diffuse: vec3<f32>,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+) -> vec3<f32> {
+    let pi = 3.141592653589793;
+    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let half_dir = normalize(light_dir + view_dir);
+    let n_dot_h = max(dot(normal, half_dir), 0.0001);
+    let v_dot_h = max(dot(view_dir, half_dir), 0.0);
+    let rough = clamp(roughness, 0.04, 1.0);
+    let alpha = rough * rough;
+    let alpha2 = alpha * alpha;
+    let denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
+    let distribution = alpha2 / max(pi * denom * denom, 0.0001);
+    let k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    let geometry_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
+    let geometry_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
+    let geometry = geometry_l * geometry_v;
+    let f0 = mix(vec3<f32>(0.04), diffuse, metallic);
+    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
+    let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.0001);
+    let diffuse_lobe = diffuse * (1.0 - metallic) / pi;
+    return (diffuse_lobe + specular) * pi * n_dot_l;
 }
 
 fn surface_normal(input: VertexOutput, front_facing: bool) -> vec3<f32> {
@@ -91,17 +126,26 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
 #endif
 
     let texel = textureSample(base_texture, base_sampler, uv);
+    let emissive_texel = textureSample(emissive_texture, emissive_sampler, uv).rgb;
     let alpha = material.base_color.a * texel.a;
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
     }
     let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 0.5);
     let diffuse = material.base_color.rgb * texel.rgb;
+    let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
 
     if material.rim_params.w > 0.5 {
-        let direct = diffuse * max(ndotl, 0.0);
-        let ambient = diffuse * material.lighting.w;
-        var pbr_color = direct + ambient + material.emissive.rgb;
+        let direct = pbr_direct(
+            diffuse,
+            normal,
+            view_dir,
+            light_dir,
+            material.matcap_factor.w,
+            material.rim_color.w,
+        );
+        let ambient = diffuse * (1.0 - material.matcap_factor.w) * material.lighting.w;
+        var pbr_color = direct + ambient + material.emissive.rgb * emissive_texel;
         if material.outline_color.a >= 0.0 {
             pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
         }
@@ -120,7 +164,6 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let direct = mix(shade, diffuse, toon);
     let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z);
 
-    let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
     let matcap_uv = vec2<f32>(
@@ -135,7 +178,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let rim_texel = textureSample(rim_texture, rim_sampler, uv).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    var color = (direct + ambient + rim + material.emissive.rgb) * material.lighting.x;
+    var color = (direct + ambient + rim + material.emissive.rgb * emissive_texel) * material.lighting.x;
     if material.outline_color.a >= 0.0 {
         color = material.outline_color.rgb * mix(vec3<f32>(1.0), color, material.outline_color.a);
     }

@@ -103,6 +103,8 @@ pub struct GltfTextureData {
 pub struct GltfMaterialData {
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
     pub normal_texture: Option<usize>,
     pub normal_scale: f32,
     pub emissive_factor: [f32; 3],
@@ -269,6 +271,8 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
                 base_color_texture: pbr
                     .base_color_texture()
                     .map(|texture| texture.texture().index()),
+                metallic_factor: pbr.metallic_factor(),
+                roughness_factor: pbr.roughness_factor(),
                 normal_texture: normal_texture
                     .as_ref()
                     .map(|texture| texture.texture().index()),
@@ -1279,7 +1283,9 @@ mod tests {
         sample["textures"] = json!([{ "source": 0 }]);
         sample["materials"][0]["pbrMetallicRoughness"] = json!({
             "baseColorTexture": { "index": 0 },
-            "baseColorFactor": [0.25, 0.5, 0.75, 1.0]
+            "baseColorFactor": [0.25, 0.5, 0.75, 1.0],
+            "metallicFactor": 0.75,
+            "roughnessFactor": 0.25
         });
         sample["materials"][0]["normalTexture"] = json!({ "index": 0, "scale": 0.25 });
         sample["materials"][0]["emissiveFactor"] = json!([0.1, 0.2, 0.3]);
@@ -1301,6 +1307,8 @@ mod tests {
             GltfMaterialData {
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
                 base_color_texture: Some(0),
+                metallic_factor: 0.75,
+                roughness_factor: 0.25,
                 normal_texture: Some(0),
                 normal_scale: 0.25,
                 emissive_factor: [0.1, 0.2, 0.3],
@@ -1407,6 +1415,8 @@ mod tests {
         assert_eq!(primitive.material, Some(0));
         assert_eq!(loaded.gltf_materials[0].base_color_factor, [1.0; 4]);
         assert_eq!(loaded.gltf_materials[0].base_color_texture, None);
+        assert_eq!(loaded.gltf_materials[0].metallic_factor, 1.0);
+        assert_eq!(loaded.gltf_materials[0].roughness_factor, 1.0);
         assert_eq!(loaded.gltf_materials[0].normal_texture, None);
         assert_eq!(loaded.gltf_materials[0].normal_scale, 1.0);
         assert_eq!(primitive.positions.len(), 3);

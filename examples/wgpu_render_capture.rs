@@ -174,6 +174,7 @@ struct MaterialImages {
     normal: Option<usize>,
     matcap: Option<usize>,
     rim: Option<usize>,
+    emissive: Option<usize>,
 }
 
 struct TextureUpload<'a> {
@@ -366,13 +367,13 @@ fn draw_primitive(
                     shading.matcap_factor[0],
                     shading.matcap_factor[1],
                     shading.matcap_factor[2],
-                    0.0,
+                    shading.metallic,
                 ],
                 rim_color: [
                     shading.parametric_rim_color[0],
                     shading.parametric_rim_color[1],
                     shading.parametric_rim_color[2],
-                    0.0,
+                    shading.roughness,
                 ],
                 rim_params: [
                     shading.rim_lighting_mix,
@@ -636,6 +637,8 @@ struct MaterialShading {
     parametric_rim_fresnel_power: f32,
     parametric_rim_lift: f32,
     normal_scale: f32,
+    metallic: f32,
+    roughness: f32,
     pbr_fallback: bool,
 }
 
@@ -672,6 +675,8 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                         .and_then(|index| loaded.gltf_materials.get(index))
                         .map_or(1.0, |gltf_material| gltf_material.normal_scale)
                 }),
+                metallic: 0.0,
+                roughness: 1.0,
                 pbr_fallback: false,
             })
         })
@@ -704,6 +709,8 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         parametric_rim_lift: 0.0,
         normal_scale: material_normal_texture(loaded, material)
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
+        metallic: gltf.map_or(0.0, |material| material.metallic_factor),
+        roughness: gltf.map_or(1.0, |material| material.roughness_factor),
         pbr_fallback: true,
     }
 }
@@ -759,6 +766,11 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         .and_then(|mtoon| mtoon.textures.rim_multiply_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
         .map(|texture| texture.image);
+    let emissive = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.emissive_texture)
+        .and_then(|texture| loaded.textures.get(texture))
+        .map(|texture| texture.image);
     MaterialImages {
         base,
         shade,
@@ -766,6 +778,7 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         normal,
         matcap,
         rim,
+        emissive,
     }
 }
 
@@ -971,6 +984,7 @@ fn material_texture_bind_group(
     let shading_shift = texture_view(color_resources, indices, images.shading_shift, 1);
     let matcap = texture_view(color_resources, indices, images.matcap, 1);
     let rim = texture_view(color_resources, indices, images.rim, 0);
+    let emissive = texture_view(color_resources, indices, images.emissive, 0);
     let normal = texture_view(normal_resources, indices, images.normal, 2);
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
@@ -1003,6 +1017,10 @@ fn material_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(emissive),
             },
         ],
     });
@@ -1294,6 +1312,16 @@ async fn render_capture(
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1561,6 +1589,9 @@ var normal_texture: texture_2d<f32>;
 @group(1) @binding(6)
 var base_sampler: sampler;
 
+@group(1) @binding(7)
+var emissive_texture: texture_2d<f32>;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -1624,6 +1655,36 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
+fn pbr_direct(
+    diffuse: vec3<f32>,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+) -> vec3<f32> {
+    let pi = 3.141592653589793;
+    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let half_dir = normalize(light_dir + view_dir);
+    let n_dot_h = max(dot(normal, half_dir), 0.0001);
+    let v_dot_h = max(dot(view_dir, half_dir), 0.0);
+    let rough = clamp(roughness, 0.04, 1.0);
+    let alpha = rough * rough;
+    let alpha2 = alpha * alpha;
+    let denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
+    let distribution = alpha2 / max(pi * denom * denom, 0.0001);
+    let k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    let geometry_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
+    let geometry_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
+    let geometry = geometry_l * geometry_v;
+    let f0 = mix(vec3<f32>(0.04), diffuse, metallic);
+    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
+    let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.0001);
+    let diffuse_lobe = diffuse * (1.0 - metallic) / pi;
+    return (diffuse_lobe + specular) * pi * n_dot_l;
+}
+
 fn surface_normal(input: VertexOut, front_facing: bool) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
     let geometric_normal = normalize(input.normal) * face_sign;
@@ -1650,16 +1711,25 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let normal = surface_normal(input, front_facing);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, input.tex_coord);
+    let emissive_texel = textureSample(emissive_texture, base_sampler, input.tex_coord).rgb;
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
         discard;
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
     let diffuse = input.color.rgb * texel.rgb;
+    let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     if input.rim_params.w > 0.5 {
-        let direct = diffuse * max(ndotl, 0.0);
-        let ambient = diffuse * uniforms.mtoon_lighting.w;
-        var pbr_color = direct + ambient + input.emissive.rgb;
+        let direct = pbr_direct(
+            diffuse,
+            normal,
+            view_dir,
+            normalize(uniforms.light_dir.xyz),
+            input.matcap_factor.w,
+            input.rim_color.w,
+        );
+        let ambient = diffuse * (1.0 - input.matcap_factor.w) * uniforms.mtoon_lighting.w;
+        var pbr_color = direct + ambient + input.emissive.rgb * emissive_texel;
         if input.outline_color.a >= 0.0 {
             pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
         }
@@ -1674,7 +1744,6 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     let direct = mix(shade, diffuse, toon);
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi);
-    let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
     let matcap_uv = vec2<f32>(
@@ -1689,7 +1758,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
     let rim_mix = mix(vec3<f32>(1.0), vec3<f32>(1.03183099), input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
-    var color = (direct + ambient + rim + input.emissive.rgb) * uniforms.mtoon_lighting.x;
+    var color = (direct + ambient + rim + input.emissive.rgb * emissive_texel) * uniforms.mtoon_lighting.x;
     if input.outline_color.a >= 0.0 {
         color = input.outline_color.rgb * mix(vec3<f32>(1.0), color, input.outline_color.a);
     }

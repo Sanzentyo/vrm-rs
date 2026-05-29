@@ -310,6 +310,13 @@ Seed-san, and `52644/12892/0` for Bevy Seed-san. The constraint sample reports
 Double-sided materials now also carry a capture-shader flag so both wgpu and
 Bevy flip normals/TBN for back-facing fragments, matching three.js' MToon
 double-sided normal path.
+The wgpu and Bevy captures now also consume glTF emissive textures and
+metallic/roughness factors for non-MToon fallback materials. The fallback is
+still intentionally compact, but it uses a GGX-style direct specular term
+instead of treating `MeshStandardMaterial` inputs as pure Lambert. The
+2026-05-30 sweep after this change reports Seed-san wgpu `28.4228 dB`,
+Seed-san Bevy `28.2468 dB`, and unchanged all-MToon constraint values of
+wgpu/Bevy `34.2969 dB`.
 
 ## Next Renderer Work
 
