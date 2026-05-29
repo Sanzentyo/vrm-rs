@@ -161,9 +161,15 @@ The outline draw order now follows the core `MtoonPipelineHints` convention by
 placing outline primitives immediately after their base material order; the
 current Seed-san frame stays at `27.64 dB`, so this is a pass-order correctness
 normalization rather than a measured PSNR improvement on that fixture.
+Exposing glTF material `normalTexture` data and primitive `TANGENT` attributes
+through `vrm-io`, then sampling tangent-space normal maps in the wgpu capture
+raises the current Seed-san baseline to `27.77 dB`. When glTF tangents are
+missing, the capture path generates triangle tangents from transformed
+positions/UVs and disables normal-map contribution on vertices where no stable
+tangent frame can be accumulated.
 This is still a failing visual parity baseline: the current path does not yet
-apply expression state, normal maps, screen-space outline details, or exact
-three.js/MToon light accumulation.
+apply expression state, Bevy-side normal/custom MToon shading, screen-space
+outline details, or exact three.js/MToon light accumulation.
 
 ## Bevy Capture
 

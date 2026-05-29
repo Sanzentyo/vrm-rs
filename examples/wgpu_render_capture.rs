@@ -6,7 +6,7 @@
 //! `tools/render-parity/compare-psnr.mjs`.
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
@@ -25,6 +25,7 @@ use wgpu::util::DeviceExt;
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    tangent: [f32; 4],
     tex_coord: [f32; 2],
     color: [f32; 4],
     shade_color: [f32; 4],
@@ -34,11 +35,12 @@ struct Vertex {
     rim_color: [f32; 4],
     rim_params: [f32; 4],
     alpha_mode: f32,
-    _padding: [f32; 3],
+    normal_scale: f32,
+    _padding: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32, 12 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -146,6 +148,7 @@ struct MaterialImages {
     base: Option<usize>,
     shade: Option<usize>,
     shading_shift: Option<usize>,
+    normal: Option<usize>,
     matcap: Option<usize>,
     rim: Option<usize>,
 }
@@ -305,6 +308,7 @@ fn outline_primitive(
             Vertex {
                 position: (Vec3::from_array(vertex.position) + normal * width).to_array(),
                 normal: vertex.normal,
+                tangent: vertex.tangent,
                 tex_coord: vertex.tex_coord,
                 color,
                 shade_color: color,
@@ -314,7 +318,8 @@ fn outline_primitive(
                 rim_color: [0.0, 0.0, 0.0, 0.0],
                 rim_params: [0.0, 1.0, 0.0, 0.0],
                 alpha_mode: alpha_mode_code(CaptureAlphaMode::Opaque),
-                _padding: [0.0; 3],
+                normal_scale: 0.0,
+                _padding: [0.0; 2],
             }
         })
         .collect();
@@ -340,7 +345,7 @@ fn draw_primitive(
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let shading = material_shading(loaded, primitive.material);
     let policy = material_policy(loaded, primitive.material);
-    let vertices = primitive
+    let mut vertices = primitive
         .positions
         .iter()
         .enumerate()
@@ -355,6 +360,16 @@ fn draw_primitive(
                 .get(index)
                 .copied()
                 .unwrap_or([0.0, 0.0]);
+            let tangent = primitive
+                .tangents
+                .get(index)
+                .copied()
+                .unwrap_or([1.0, 0.0, 0.0, 1.0]);
+            let normal_scale = if primitive.tangents.get(index).is_some() {
+                shading.normal_scale
+            } else {
+                0.0
+            };
             let (position, normal) = transform_vertex(
                 Vec3::from_array(*position),
                 Vec3::from_array(normal),
@@ -363,9 +378,18 @@ fn draw_primitive(
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             );
+            let tangent = transform_direction(
+                Vec3::new(tangent[0], tangent[1], tangent[2]),
+                world,
+                skin_matrices,
+                primitive.joints_0.get(index).copied(),
+                primitive.weights_0.get(index).copied(),
+            )
+            .extend(tangent[3]);
             Vertex {
                 position: position.to_array(),
                 normal: normal.to_array(),
+                tangent: tangent.to_array(),
                 tex_coord,
                 color: shading.base_color,
                 shade_color: shading.shade_color,
@@ -400,10 +424,14 @@ fn draw_primitive(
                     if shading.pbr_fallback { 1.0 } else { 0.0 },
                 ],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
-                _padding: [0.0; 3],
+                normal_scale,
+                _padding: [0.0; 2],
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if shading.normal_scale > 0.0 && primitive.tangents.is_empty() {
+        generate_missing_tangents(&mut vertices, &primitive.indices, shading.normal_scale);
+    }
     Ok(DrawPrimitive {
         vertices,
         indices: primitive.indices.clone(),
@@ -532,6 +560,99 @@ fn transform_vertex(
     }
 }
 
+fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_scale: f32) {
+    let mut tangents = vec![Vec3::ZERO; vertices.len()];
+    let mut bitangents = vec![Vec3::ZERO; vertices.len()];
+
+    for triangle in indices.chunks_exact(3) {
+        let [Some(i0), Some(i1), Some(i2)] = [
+            usize::try_from(triangle[0])
+                .ok()
+                .filter(|index| *index < vertices.len()),
+            usize::try_from(triangle[1])
+                .ok()
+                .filter(|index| *index < vertices.len()),
+            usize::try_from(triangle[2])
+                .ok()
+                .filter(|index| *index < vertices.len()),
+        ] else {
+            continue;
+        };
+
+        let p0 = Vec3::from_array(vertices[i0].position);
+        let p1 = Vec3::from_array(vertices[i1].position);
+        let p2 = Vec3::from_array(vertices[i2].position);
+        let uv0 = Vec2::from_array(vertices[i0].tex_coord);
+        let uv1 = Vec2::from_array(vertices[i1].tex_coord);
+        let uv2 = Vec2::from_array(vertices[i2].tex_coord);
+        let edge1 = p1 - p0;
+        let edge2 = p2 - p0;
+        let delta_uv1 = uv1 - uv0;
+        let delta_uv2 = uv2 - uv0;
+        let determinant = delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x;
+        if determinant.abs() < 0.000001 {
+            continue;
+        }
+        let scale = determinant.recip();
+        let tangent = (edge1 * delta_uv2.y - edge2 * delta_uv1.y) * scale;
+        let bitangent = (edge2 * delta_uv1.x - edge1 * delta_uv2.x) * scale;
+        for index in [i0, i1, i2] {
+            tangents[index] += tangent;
+            bitangents[index] += bitangent;
+        }
+    }
+
+    for (index, vertex) in vertices.iter_mut().enumerate() {
+        let normal = Vec3::from_array(vertex.normal).normalize_or_zero();
+        let tangent = tangents[index] - normal * normal.dot(tangents[index]);
+        if tangent.length_squared() < 0.000001 || bitangents[index].length_squared() < 0.000001 {
+            vertex.normal_scale = 0.0;
+            continue;
+        }
+        let tangent = tangent.normalize();
+        let handedness = if normal.cross(tangent).dot(bitangents[index]) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        vertex.tangent = tangent.extend(handedness).to_array();
+        vertex.normal_scale = normal_scale;
+    }
+}
+
+fn transform_direction(
+    direction: Vec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> Vec3 {
+    let Some(skin_matrices) = skin_matrices else {
+        return world.transform_vector3(direction).normalize_or_zero();
+    };
+    let (Some(joints), Some(weights)) = (joints, weights) else {
+        return world.transform_vector3(direction).normalize_or_zero();
+    };
+
+    let mut transformed = Vec3::ZERO;
+    let mut total_weight = 0.0;
+    for (joint, weight) in joints.into_iter().zip(weights) {
+        if weight <= 0.0 {
+            continue;
+        }
+        let Some(matrix) = skin_matrices.get(joint as usize) else {
+            continue;
+        };
+        transformed += matrix.transform_vector3(direction) * weight;
+        total_weight += weight;
+    }
+    if total_weight > 0.0 {
+        transformed.normalize_or_zero()
+    } else {
+        world.transform_vector3(direction).normalize_or_zero()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct MaterialShading {
     base_color: [f32; 4],
@@ -546,15 +667,16 @@ struct MaterialShading {
     rim_lighting_mix: f32,
     parametric_rim_fresnel_power: f32,
     parametric_rim_lift: f32,
+    normal_scale: f32,
     pbr_fallback: bool,
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
     if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| {
-            let mtoon = material.mtoon.as_ref()?;
-            let (emissive_strength, _) = material.effective_emissive_strength();
+        .and_then(|core_material| {
+            let mtoon = core_material.mtoon.as_ref()?;
+            let (emissive_strength, _) = core_material.effective_emissive_strength();
             Some(MaterialShading {
                 base_color: mtoon.base_color_factor,
                 shade_color: [
@@ -577,6 +699,11 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 rim_lighting_mix: mtoon.rim_lighting_mix_factor,
                 parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
                 parametric_rim_lift: mtoon.parametric_rim_lift_factor,
+                normal_scale: material_normal_texture(loaded, material).map_or(0.0, |_| {
+                    material
+                        .and_then(|index| loaded.gltf_materials.get(index))
+                        .map_or(1.0, |gltf_material| gltf_material.normal_scale)
+                }),
                 pbr_fallback: false,
             })
         })
@@ -607,8 +734,23 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         rim_lighting_mix: 1.0,
         parametric_rim_fresnel_power: 5.0,
         parametric_rim_lift: 0.0,
+        normal_scale: material_normal_texture(loaded, material)
+            .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
         pbr_fallback: true,
     }
+}
+
+fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let mtoon_texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.normal_texture)
+        .map(|texture| texture.0);
+    mtoon_texture.or_else(|| {
+        material
+            .and_then(|index| loaded.gltf_materials.get(index))
+            .and_then(|material| material.normal_texture)
+    })
 }
 
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
@@ -638,6 +780,9 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         .and_then(|mtoon| mtoon.textures.shading_shift_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
         .map(|texture| texture.image);
+    let normal = material_normal_texture(loaded, material)
+        .and_then(|texture| loaded.textures.get(texture))
+        .map(|texture| texture.image);
     let matcap = mtoon
         .and_then(|mtoon| mtoon.textures.matcap_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
@@ -650,6 +795,7 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         base,
         shade,
         shading_shift,
+        normal,
         matcap,
         rim,
     }
@@ -700,11 +846,13 @@ fn texture_resources(
     loaded: &LoadedVrm,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
 ) -> Result<Vec<TextureResource>, Box<dyn Error>> {
     let mut resources = vec![
         texture_resource(
             device,
             queue,
+            format,
             TextureUpload {
                 image: None,
                 width: 1,
@@ -715,11 +863,23 @@ fn texture_resources(
         texture_resource(
             device,
             queue,
+            format,
             TextureUpload {
                 image: None,
                 width: 1,
                 height: 1,
                 rgba: &[0, 0, 0, 255],
+            },
+        ),
+        texture_resource(
+            device,
+            queue,
+            format,
+            TextureUpload {
+                image: None,
+                width: 1,
+                height: 1,
+                rgba: &[128, 128, 255, 255],
             },
         ),
     ];
@@ -728,6 +888,7 @@ fn texture_resources(
         resources.push(texture_resource(
             device,
             queue,
+            format,
             TextureUpload {
                 image: Some(index),
                 width: image.width,
@@ -742,6 +903,7 @@ fn texture_resources(
 fn texture_resource(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
     upload: TextureUpload<'_>,
 ) -> TextureResource {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -754,7 +916,7 @@ fn texture_resource(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -788,15 +950,17 @@ fn material_texture_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
-    resources: &[TextureResource],
+    color_resources: &[TextureResource],
+    normal_resources: &[TextureResource],
     indices: &HashMap<usize, usize>,
     images: MaterialImages,
 ) -> TextureBindGroup {
-    let base = texture_view(resources, indices, images.base, 0);
-    let shade = texture_view(resources, indices, images.shade.or(images.base), 0);
-    let shading_shift = texture_view(resources, indices, images.shading_shift, 1);
-    let matcap = texture_view(resources, indices, images.matcap, 1);
-    let rim = texture_view(resources, indices, images.rim, 0);
+    let base = texture_view(color_resources, indices, images.base, 0);
+    let shade = texture_view(color_resources, indices, images.shade.or(images.base), 0);
+    let shading_shift = texture_view(color_resources, indices, images.shading_shift, 1);
+    let matcap = texture_view(color_resources, indices, images.matcap, 1);
+    let rim = texture_view(color_resources, indices, images.rim, 0);
+    let normal = texture_view(normal_resources, indices, images.normal, 2);
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
         layout,
@@ -823,6 +987,10 @@ fn material_texture_bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 5,
+                resource: wgpu::BindingResource::TextureView(normal),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
         ],
@@ -1102,6 +1270,16 @@ async fn render_capture(
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
@@ -1115,8 +1293,11 @@ async fn render_capture(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    let texture_resources = texture_resources(loaded, &device, &queue)?;
-    let texture_resource_indices = texture_resource_indices(&texture_resources);
+    let color_texture_resources =
+        texture_resources(loaded, &device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let normal_texture_resources =
+        texture_resources(loaded, &device, &queue, wgpu::TextureFormat::Rgba8Unorm)?;
+    let texture_resource_indices = texture_resource_indices(&color_texture_resources);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("render parity shader"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -1144,7 +1325,8 @@ async fn render_capture(
                 &device,
                 &texture_bind_group_layout,
                 &sampler,
-                &texture_resources,
+                &color_texture_resources,
+                &normal_texture_resources,
                 &texture_resource_indices,
                 primitive.images,
             )
@@ -1349,35 +1531,42 @@ var matcap_texture: texture_2d<f32>;
 var rim_texture: texture_2d<f32>;
 
 @group(1) @binding(5)
+var normal_texture: texture_2d<f32>;
+
+@group(1) @binding(6)
 var base_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) tangent: vec4<f32>,
+    @location(3) tex_coord: vec2<f32>,
+    @location(4) color: vec4<f32>,
+    @location(5) shade_color: vec4<f32>,
+    @location(6) shading: vec4<f32>,
+    @location(7) emissive: vec4<f32>,
+    @location(8) matcap_factor: vec4<f32>,
+    @location(9) rim_color: vec4<f32>,
+    @location(10) rim_params: vec4<f32>,
+    @location(11) alpha_mode: f32,
+    @location(12) normal_scale: f32,
+};
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+    @location(1) tangent: vec4<f32>,
     @location(2) tex_coord: vec2<f32>,
     @location(3) color: vec4<f32>,
     @location(4) shade_color: vec4<f32>,
     @location(5) shading: vec4<f32>,
     @location(6) emissive: vec4<f32>,
     @location(7) matcap_factor: vec4<f32>,
-    @location(8) rim_color: vec4<f32>,
-    @location(9) rim_params: vec4<f32>,
-    @location(10) alpha_mode: f32,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
-    @location(1) tex_coord: vec2<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) shade_color: vec4<f32>,
-    @location(4) shading: vec4<f32>,
-    @location(5) emissive: vec4<f32>,
-    @location(6) matcap_factor: vec4<f32>,
-    @location(7) world_position: vec3<f32>,
-    @location(8) rim_color: vec4<f32>,
-    @location(9) rim_params: vec4<f32>,
-    @location(10) alpha_mode: f32,
+    @location(8) world_position: vec3<f32>,
+    @location(9) rim_color: vec4<f32>,
+    @location(10) rim_params: vec4<f32>,
+    @location(11) alpha_mode: f32,
+    @location(12) normal_scale: f32,
 };
 
 @vertex
@@ -1385,6 +1574,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.position = uniforms.view_projection * vec4<f32>(input.position, 1.0);
     out.normal = normalize(input.normal);
+    out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
     out.world_position = input.position;
     out.tex_coord = input.tex_coord;
     out.color = input.color;
@@ -1395,6 +1585,7 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.rim_color = input.rim_color;
     out.rim_params = input.rim_params;
     out.alpha_mode = input.alpha_mode;
+    out.normal_scale = input.normal_scale;
     return out;
 }
 
@@ -1404,9 +1595,30 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
 
 const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
 
+fn surface_normal(input: VertexOut) -> vec3<f32> {
+    let geometric_normal = normalize(input.normal);
+    if input.normal_scale <= 0.0 {
+        return geometric_normal;
+    }
+    let tangent = normalize(input.tangent.xyz);
+    let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w);
+    let sampled = textureSample(normal_texture, base_sampler, input.tex_coord).xyz;
+    let tangent_normal = vec3<f32>(
+        (sampled.x * 2.0 - 1.0) * input.normal_scale,
+        (sampled.y * 2.0 - 1.0) * input.normal_scale,
+        sampled.z * 2.0 - 1.0,
+    );
+    return normalize(
+        tangent * tangent_normal.x +
+        bitangent * tangent_normal.y +
+        geometric_normal * tangent_normal.z,
+    );
+}
+
 @fragment
 fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let ndotl = clamp(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
+    let normal = surface_normal(input);
+    let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, input.tex_coord);
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
@@ -1432,12 +1644,12 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
     let matcap_uv = vec2<f32>(
-        0.5 + 0.5 * dot(matcap_x, normalize(input.normal)),
-        0.5 - 0.5 * dot(matcap_y, normalize(input.normal)),
+        0.5 + 0.5 * dot(matcap_x, normal),
+        0.5 - 0.5 * dot(matcap_y, normal),
     );
     let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
     let rim_base = input.rim_color.rgb * pow(
-        clamp(1.0 - dot(view_dir, normalize(input.normal)) + input.rim_params.z, 0.0, 1.0),
+        clamp(1.0 - dot(view_dir, normal) + input.rim_params.z, 0.0, 1.0),
         input.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;

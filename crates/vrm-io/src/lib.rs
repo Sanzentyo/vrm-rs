@@ -103,6 +103,8 @@ pub struct GltfTextureData {
 pub struct GltfMaterialData {
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
+    pub normal_texture: Option<usize>,
+    pub normal_scale: f32,
     pub emissive_factor: [f32; 3],
     pub emissive_texture: Option<usize>,
     pub emissive_strength: f32,
@@ -157,6 +159,7 @@ pub struct GltfPrimitiveData {
     pub material: Option<usize>,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
+    pub tangents: Vec<[f32; 4]>,
     pub tex_coords_0: Vec<[f32; 2]>,
     pub joints_0: Vec<[u16; 4]>,
     pub weights_0: Vec<[f32; 4]>,
@@ -188,6 +191,10 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         .read_normals()
                         .map(Iterator::collect)
                         .unwrap_or_default();
+                    let tangents: Vec<[f32; 4]> = reader
+                        .read_tangents()
+                        .map(Iterator::collect)
+                        .unwrap_or_default();
                     let tex_coords_0: Vec<[f32; 2]> = reader
                         .read_tex_coords(0)
                         .map(|coords| coords.into_f32().collect())
@@ -208,6 +215,7 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         material: primitive.material().index(),
                         positions,
                         normals,
+                        tangents,
                         tex_coords_0,
                         joints_0,
                         weights_0,
@@ -255,11 +263,18 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
         .materials()
         .map(|material| {
             let pbr = material.pbr_metallic_roughness();
+            let normal_texture = material.normal_texture();
             GltfMaterialData {
                 base_color_factor: pbr.base_color_factor(),
                 base_color_texture: pbr
                     .base_color_texture()
                     .map(|texture| texture.texture().index()),
+                normal_texture: normal_texture
+                    .as_ref()
+                    .map(|texture| texture.texture().index()),
+                normal_scale: normal_texture
+                    .as_ref()
+                    .map_or(1.0, |texture| texture.scale()),
                 emissive_factor: material.emissive_factor(),
                 emissive_texture: material
                     .emissive_texture()
@@ -1266,6 +1281,7 @@ mod tests {
             "baseColorTexture": { "index": 0 },
             "baseColorFactor": [0.25, 0.5, 0.75, 1.0]
         });
+        sample["materials"][0]["normalTexture"] = json!({ "index": 0, "scale": 0.25 });
         sample["materials"][0]["emissiveFactor"] = json!([0.1, 0.2, 0.3]);
         sample["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
         sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"] =
@@ -1285,6 +1301,8 @@ mod tests {
             GltfMaterialData {
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
                 base_color_texture: Some(0),
+                normal_texture: Some(0),
+                normal_scale: 0.25,
                 emissive_factor: [0.1, 0.2, 0.3],
                 emissive_texture: Some(0),
                 emissive_strength: 2.0,
@@ -1301,8 +1319,8 @@ mod tests {
         sample["nodes"][0]["mesh"] = json!(0);
         sample["nodes"][0]["skin"] = json!(0);
         sample["buffers"] = json!([{
-            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAABAAIA",
-            "byteLength": 174
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AAABAAIA",
+            "byteLength": 222
         }]);
         sample["bufferViews"] = json!([
             { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
@@ -1310,7 +1328,8 @@ mod tests {
             { "buffer": 0, "byteOffset": 72, "byteLength": 24 },
             { "buffer": 0, "byteOffset": 96, "byteLength": 24 },
             { "buffer": 0, "byteOffset": 120, "byteLength": 48 },
-            { "buffer": 0, "byteOffset": 168, "byteLength": 6 }
+            { "buffer": 0, "byteOffset": 168, "byteLength": 48 },
+            { "buffer": 0, "byteOffset": 216, "byteLength": 6 }
         ]);
         sample["accessors"] = json!([
             {
@@ -1347,6 +1366,12 @@ mod tests {
             },
             {
                 "bufferView": 5,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC4"
+            },
+            {
+                "bufferView": 6,
                 "componentType": 5123,
                 "count": 3,
                 "type": "SCALAR"
@@ -1359,9 +1384,10 @@ mod tests {
                     "NORMAL": 1,
                     "TEXCOORD_0": 2,
                     "JOINTS_0": 3,
-                    "WEIGHTS_0": 4
+                    "WEIGHTS_0": 4,
+                    "TANGENT": 5
                 },
-                "indices": 5,
+                "indices": 6,
                 "material": 0
             }]
         }]);
@@ -1381,9 +1407,12 @@ mod tests {
         assert_eq!(primitive.material, Some(0));
         assert_eq!(loaded.gltf_materials[0].base_color_factor, [1.0; 4]);
         assert_eq!(loaded.gltf_materials[0].base_color_texture, None);
+        assert_eq!(loaded.gltf_materials[0].normal_texture, None);
+        assert_eq!(loaded.gltf_materials[0].normal_scale, 1.0);
         assert_eq!(primitive.positions.len(), 3);
         assert_eq!(primitive.positions[1], [1.0, 0.0, 0.0]);
         assert_eq!(primitive.normals, vec![[0.0, 0.0, 1.0]; 3]);
+        assert_eq!(primitive.tangents, vec![[1.0, 0.0, 0.0, 1.0]; 3]);
         assert_eq!(
             primitive.tex_coords_0,
             vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
