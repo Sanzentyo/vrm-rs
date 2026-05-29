@@ -142,9 +142,12 @@
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
 - Re-measured coverage after workspace coverage refresh on 2026-05-05: workspace line coverage is 81.46%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
+- Started P3 render parity work. The new target is optional external-fixture CI, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.
+- Added the optional external-fixture GitHub Actions job. It is manual-only, downloads documented fixtures into ignored CI workspace paths, builds a pinned three-vrm checkout, regenerates spring/constraint/VRMA golden JSON, runs exact ignored parity tests, and uploads generated goldens as CI artifacts without committing binaries.
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. Current coverage snapshot is workspace 81.46% line coverage, with `vrm-io` at 74.75%, `vrm-protocol` at 90.70%, `vrm-sans-io` at 95.17%, and facade docs/examples covered by doc-tests.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 81.46% line coverage, with `vrm-io` at 74.75%, `vrm-protocol` at 90.70%, `vrm-sans-io` at 95.17%, and facade docs/examples covered by doc-tests.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
-- Future work should be tracked as a new TODO section before implementation. Likely future directions are renderer-specific MToon shader/material crates, additional redistributable official VRMA clips, and deeper downstream engine integrations beyond the current renderer-agnostic traits and Bevy skeleton.
+- P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.

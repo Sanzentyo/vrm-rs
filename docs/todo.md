@@ -67,6 +67,19 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 - [x] Add docs.rs-ready examples.
   - Done when facade, sans-IO, runtime driver, and adapter usage have short examples that compile in docs or integration tests.
 
+## P3: Render Parity And External Automation
+
+- [x] Add optional external-fixture CI.
+  - Done when a manually dispatched CI job downloads documented external fixtures into `.external-fixtures/official`, generates three-vrm golden files under `.external-fixtures/golden`, and runs ignored fixture/golden tests without committing binaries.
+- [ ] Expand redistributable official VRMA clip parity.
+  - Done when fixture discovery records additional official VRMA clips, their license/provenance status, and semantic or golden parity assertions beyond the current `test.vrma` baseline where redistribution and CI use are acceptable.
+- [ ] Add a non-Bevy engine adapter implementation.
+  - Done when a concrete renderer-neutral or wgpu-oriented scene/material state implements the adapter traits enough for runtime-driver ticks, material writeback, and render-preparation examples without Bevy.
+- [ ] Deepen wgpu/ash material pipeline examples.
+  - Done when examples map MToon descriptors into concrete pass ordering, alpha/depth/cull state, render order, texture/sampler bindings, uniform layouts, and pipeline/material keys for wgpu-style and ash-style renderers.
+- [ ] Build the three-vrm render parity harness.
+  - Done when three-vrm, Bevy, and wgpu render paths can produce comparable image artifacts, compute PSNR, store visual-review outputs under `.external-fixtures/`, and document thresholds used to judge compatibility.
+
 ## Ongoing Maintenance
 
 - [ ] Keep `docs/progress.md` as a chronological log.

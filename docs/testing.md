@@ -26,11 +26,13 @@ Later fixture strategy:
 Run external fixture tests with:
 
 ```powershell
-$env:VRM_RS_FIXTURE_DIR = ".external-fixtures/official"
-cargo test -p vrm-io -- --ignored
+$env:VRM_RS_FIXTURE_DIR = (Resolve-Path ".external-fixtures/official")
+cargo test -p vrm-io tests::loads_external_fixture_directory -- --ignored --exact
 ```
 
 `.external-fixtures/` is ignored by git so official samples can be downloaded for local validation without becoming repository source assets.
+
+The GitHub workflow also provides a manual external-fixture job. It is disabled for normal push and pull request runs because it downloads large third-party assets and builds the sibling three-vrm comparison stack. Trigger it with `workflow_dispatch` and `run_external_fixtures=true` when a maintainer wants CI to recreate the local ignored fixture pass. Fixture and golden environment variables should use absolute paths because Rust unit tests run with the package directory as their current directory.
 
 ## Coverage
 
@@ -67,6 +69,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
+- Render parity is not yet measured with image artifacts. P3 will add a three-vrm, Bevy, and wgpu comparison harness that records PSNR and visual-review outputs under `.external-fixtures/`.
 
 ## Current Coverage Snapshot
 
@@ -156,17 +159,18 @@ Run the ignored comparison with:
 
 ```powershell
 $env:VRM_RS_THREE_VRM_GOLDEN = "D:\git\vrm-rs\.external-fixtures\golden\Seed-san.spring.json"
-cargo test -p vrm-adapter spring_parity_matches_three_vrm_golden_rotations -- --ignored
-cargo test -p vrm-adapter humanoid_pose_matches_three_vrm_golden_rest_state -- --ignored
-cargo test -p vrm-adapter humanoid_pose_writeback_matches_three_vrm_golden -- --ignored
-cargo test -p vrm-adapter vrm0_alicia_humanoid_pose -- --ignored
+cargo test -p vrm-adapter tests::spring_parity_matches_three_vrm_golden_rotations -- --ignored --exact
+cargo test -p vrm-adapter tests::humanoid_pose_matches_three_vrm_golden_rest_state -- --ignored --exact
+cargo test -p vrm-adapter tests::humanoid_pose_writeback_matches_three_vrm_golden -- --ignored --exact
+cargo test -p vrm-adapter tests::vrm0_alicia_humanoid_pose_matches_three_vrm_golden_rest_state -- --ignored --exact
+cargo test -p vrm-adapter tests::vrm0_alicia_humanoid_pose_writeback_matches_three_vrm_golden -- --ignored --exact
 $env:VRM_RS_THREE_VRM_GOLDEN_DIR = "D:\git\vrm-rs\.external-fixtures\golden"
-cargo test -p vrm-adapter spring_parity_matches_three_vrm_golden_directory -- --ignored
-cargo test -p vrm-adapter node_constraint_manager_matches_three_vrm_golden -- --ignored
+cargo test -p vrm-adapter tests::spring_parity_matches_three_vrm_golden_directory -- --ignored --exact
+cargo test -p vrm-adapter tests::node_constraint_manager_matches_three_vrm_golden -- --ignored --exact
 $env:VRM_RS_THREE_VRM_VRMA_GOLDEN = "D:\git\vrm-rs\.external-fixtures\golden\Seed-san.test-vrma.json"
-cargo test -p vrm-adapter vrma_application_matches_three_vrm_golden -- --ignored
+cargo test -p vrm-adapter tests::vrma_application_matches_three_vrm_golden -- --ignored --exact
 $env:VRM_RS_THREE_VRM_VRMA_GOLDEN_DIR = "D:\git\vrm-rs\.external-fixtures\golden"
-cargo test -p vrm-adapter vrma_application_matches_three_vrm_golden_directory -- --ignored
+cargo test -p vrm-adapter tests::vrma_application_matches_three_vrm_golden_directory -- --ignored --exact
 ```
 
 The golden output records public local rotations, three-vrm's private center-space spring tail state, humanoid raw/normalized rest/current poses, deterministic posed humanoid writeback scenarios, and VRMA application samples. The spring comparison checks center tails for all joints over multiple frames, including tiny-tail joints, and compares rotations only for stable-length joints. Extremely tiny tail vectors (`<= 0.001`) are skipped for quaternion comparison because their normalized direction is numerically sensitive, but their simulation state remains covered by the center-tail assertion. Spring tests now collect maximum tail and rotation component deltas per golden file; normal fixtures use `0.001` tail and `0.0015` rotation tolerance, while collider-heavy constraint fixtures use `0.003` tail and `0.0015` rotation tolerance because collider resolution accumulates small three.js/Rust float-path differences over chained joints. VRMA application parity compares raw humanoid pose after normalized-to-raw writeback, normalized pose reconstructed from the written raw scene, expression weights without allowing unexpected Rust-only keys, and lookAt quaternion at deterministic sample times.
