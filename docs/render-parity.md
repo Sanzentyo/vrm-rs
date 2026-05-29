@@ -40,8 +40,9 @@ selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, and `--metric rgb-interior1px`; pass/fail thresholds
 use the selected metric. The local render-parity runner defaults to
-`rgb-visible` because the canonical transparent background should not let
-fully transparent pixels dominate compatibility decisions.
+`rgb-visible`; with the canonical opaque-black review background this is the
+visible RGB surface metric, and it also remains useful for explicit transparent
+alpha-mask audits.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
@@ -54,11 +55,13 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- `
   --skip-three-vrm-build `
   --skip-playwright-install `
   --three-vrm-root D:\git\three-vrm `
+  --render-background opaque-black `
   --render-fixture Seed-san.vrm `
   --render-fixture VRM1_Constraint_Twist_Sample.vrm `
   --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_materials_mtoon_UV_Animation_Test\VRMC_materials_mtoon_UV_Animation_Test.vrm `
   --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_vrm_expressions_isBinary_Overridden\VRMC_vrm_expressions_isBinary_Overridden.vrm `
-  --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_vrm_expressions_isBinary_Overrides\VRMC_vrm_expressions_isBinary_Overrides.vrm
+  --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_vrm_expressions_isBinary_Overrides\VRMC_vrm_expressions_isBinary_Overrides.vrm `
+  --render-fixture .external-fixtures\official\UniVRM\AliciaSolid_vrm-0.51.vrm
 ```
 
 Without the `--skip-*` flags, the same script can download external fixtures,
@@ -79,12 +82,14 @@ delta and blue shows alpha-channel delta, amplified for review. It is generated
 data and stays outside git.
 
 The local runner encodes every renderer PNG from its `.rgba.json` artifact with
-the same Rust PNG writer. The canonical run uses `--render-background
-transparent`, so the three-vrm reference PNG, wgpu PNG, and Bevy PNG all use
-the same transparent background/alpha contract. `--render-background
-opaque-black` remains available for targeted fully opaque investigations. This keeps
-preview PNGs aligned with the exact RGBA buffers used for PSNR instead of
-relying on browser element screenshots or canvas compositing. At the start of
+the same Rust PNG writer. The canonical visual-review run uses
+`--render-background opaque-black`, so the three-vrm reference PNG, wgpu PNG,
+and Bevy PNG all use the same fully opaque background/alpha contract.
+`--render-background transparent` remains available for targeted alpha-mask
+audits when the goal is to inspect the silhouette or transparent-background
+readback path. This keeps preview PNGs aligned with the exact RGBA buffers used
+for PSNR instead of relying on browser element screenshots or canvas
+compositing. At the start of
 each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`, `reports`, and
 `diff` directories are recreated so older direct-capture smoke images cannot be
 mistaken for the current canonical comparison set. Each PNG is decoded after
@@ -94,7 +99,10 @@ The official sample sweep intentionally includes the expression override
 fixtures because their text and meter materials exercise glTF/MToon `MASK`
 alpha. The wgpu and Bevy capture shaders treat pixels that survive the cutoff
 as fully opaque, matching three-vrm/three.js alpha-test output rather than
-preserving the source texture alpha in the readback buffer.
+preserving the source texture alpha in the readback buffer. It also includes
+the external UniVRM Alicia VRM0 fixture, kept outside git, to keep legacy
+transparent and transparent-Z-write materials in the same rendered-output
+parity loop.
 
 ## three-vrm Capture
 
@@ -128,7 +136,8 @@ node tools\render-parity\three-vrm-browser-capture.mjs `
   --png-out .external-fixtures\render-parity\three-vrm\Seed-san.frame000.png `
   --width 512 `
   --height 512 `
-  --camera-z 3.0
+  --camera-z 3.0 `
+  --background opaque-black
 ```
 
 The local smoke run on 2026-05-29 captured Seed-san at `256x256`, wrote a PNG
@@ -339,9 +348,10 @@ numeric report before declaring parity. The local render runner writes
 The runner treats the background alpha policy as part of the contract:
 three-vrm, wgpu, and Bevy captures are written through the same Rust PNG
 encoder, and the wgpu and Bevy alpha masks are checked against the three-vrm
-reference before PSNR is reported. Canonical parity now uses a transparent
-background so the review PNGs stay consistent on checkerboard viewers; fully
-opaque capture remains available with `--render-background opaque-black`.
+reference before PSNR is reported. Canonical parity now uses
+`--render-background opaque-black` so all three preview PNGs have the same
+opaque review background; transparent capture remains available with
+`--render-background transparent` for alpha-mask and silhouette audits.
 When `tools/render-parity/three-vrm-browser-capture.mjs` is run directly with
 `--png-out`, it also writes PNG bytes from the raw `gl.readPixels` RGBA buffer
 instead of from a browser canvas data URL, keeping the three-vrm preview PNG
@@ -374,20 +384,20 @@ Seed-san Bevy `28.2468 dB`, and unchanged all-MToon constraint values of
 wgpu/Bevy `34.2969 dB`.
 After glTF base/emissive/texture parameters are merged into resolved MToon
 materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
-while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. A later
-opaque-black official sample sweep reported `transparent/opaque/partial =
-0/65536/0` for three-vrm, wgpu, and Bevy, with alpha mismatches `0`, and PSNR
-values of Seed-san wgpu `28.7208 dB`, Seed-san Bevy `28.6162 dB`, constraint
-sample wgpu/Bevy `34.8595 dB`, and UV animation sample wgpu/Bevy `36.1575 dB`
-at time `0`. The current default is transparent again; the transparent sweep
-reports full-RGBA PSNR of Seed-san wgpu `28.4228 dB`, Seed-san Bevy
-`28.2468 dB`, constraint sample wgpu/Bevy `34.3346 dB`, and UV animation
-sample wgpu/Bevy `36.1575 dB`. The selected `rgb-visible` metric for the same
-reports is Seed-san wgpu `20.4135 dB`, Seed-san Bevy `20.3099 dB`, constraint
-sample wgpu/Bevy `25.6527 dB`, and UV animation time `0` wgpu/Bevy
-`27.4533 dB`. The transparent time `1.0` UV-animation sweep reports full-RGBA
-wgpu/Bevy `35.9209 dB` and selected `rgb-visible` wgpu/Bevy `27.2167 dB`. Use
-explicit `opaque-black` only when the review needs opaque alpha.
+while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
+opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
+0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
+mismatches `0`. Full-RGBA PSNR is Seed-san wgpu `28.7208 dB`, Seed-san Bevy
+`28.6162 dB`, constraint sample wgpu/Bevy `34.8595 dB`, UV animation sample
+wgpu/Bevy `36.1575 dB`, mask samples wgpu/Bevy `40.5553 dB` and `40.5557 dB`,
+and Alicia VRM0 wgpu/Bevy `29.0481 dB`. The selected `rgb-visible` metric for
+the same sweep is Seed-san wgpu `27.4714 dB`, Seed-san Bevy `27.3668 dB`,
+constraint sample wgpu/Bevy `33.6101 dB`, UV animation sample wgpu/Bevy
+`34.9081 dB`, mask samples wgpu/Bevy `39.3059 dB` and `39.3063 dB`, and Alicia
+VRM0 wgpu/Bevy `27.7987 dB`. Use explicit `transparent` only when the review
+needs transparent alpha. The last transparent time `1.0` UV-animation audit
+reported full-RGBA wgpu/Bevy `35.9209 dB` and selected `rgb-visible`
+wgpu/Bevy `27.2167 dB`.
 Static `KHR_texture_transform` data is now retained through the non-rendering
 layers: VRMC MToon texture infos round-trip nested transform extensions,
 `MtoonTextureTransformSet` stores slot-specific transforms in core, and

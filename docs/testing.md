@@ -67,15 +67,18 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
-`Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, and the official
-`VRMC_materials_mtoon_UV_Animation_Test.vrm` fixture. Use
+`Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, the official
+`VRMC_materials_mtoon_UV_Animation_Test.vrm` fixture, the two official
+`VRMC_vrm_expressions_isBinary_*` mask fixtures, and the external
+`UniVRM/AliciaSolid_vrm-0.51.vrm` VRM0 transparent-material fixture. Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as
 UV animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
 the canonical static sweep. The canonical local runner now uses
-`--render-background transparent`, so the three-vrm reference, wgpu capture, and
-Bevy capture are all reviewed with the same alpha-background contract. Use
-`--render-background opaque-black` only for explicit fully opaque experiments.
+`--render-background opaque-black`, so the three-vrm reference, wgpu capture,
+and Bevy capture are all reviewed with the same opaque-background contract. Use
+`--render-background transparent` only for explicit alpha-mask and silhouette
+audits.
 The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
@@ -95,10 +98,10 @@ The PSNR report additionally includes alpha counts/mismatches plus RGB-only
 opaque, visible, and 1px-interior metrics to identify whether remaining deltas
 come from silhouettes/alpha or from opaque-surface shading. When
 `--render-fail-under N` is used, the local runner evaluates the selected
-`--render-psnr-metric`, which defaults to `rgb-visible` for transparent
-canonical captures. Use `--render-psnr-metric rgba` for old full-buffer checks,
-or `rgb-opaque`/`rgb-interior1px` when edge alpha disagreement should be kept
-out of the threshold.
+`--render-psnr-metric`, which defaults to `rgb-visible` for the visible surface
+metric. Use `--render-psnr-metric rgba` for old full-buffer checks, or
+`rgb-opaque`/`rgb-interior1px` when edge alpha disagreement should be kept out
+of the threshold.
 
 ## Coverage
 

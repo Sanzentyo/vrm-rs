@@ -94,7 +94,7 @@ struct CaptureOptions {
     pbr_ambient: f32,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,
-    #[arg(long, value_enum, default_value_t = CaptureBackground::Transparent)]
+    #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
     background: CaptureBackground,
 }
 

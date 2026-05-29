@@ -30,7 +30,7 @@ const cameraY = Number(args.get('camera-y') ?? '1.0');
 const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
 const mtoonTime = Number(args.get('mtoon-time') ?? '0.0');
-const background = args.get('background') ?? 'transparent';
+const background = args.get('background') ?? 'opaque-black';
 
 if (!fixture || !out) {
   console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent]');

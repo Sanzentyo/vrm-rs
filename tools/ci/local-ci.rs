@@ -83,7 +83,7 @@ struct Options {
     render_psnr_metric: RenderPsnrMetric,
     #[arg(long, default_value_t = 128)]
     render_alpha_mismatch_tolerance: usize,
-    #[arg(long, value_enum, default_value_t = RenderBackground::Transparent)]
+    #[arg(long, value_enum, default_value_t = RenderBackground::OpaqueBlack)]
     render_background: RenderBackground,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
