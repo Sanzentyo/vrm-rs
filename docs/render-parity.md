@@ -157,6 +157,10 @@ defaults. It now also exposes glTF emissive factor, emissive texture index, and
 `KHR_materials_emissive_strength`; the wgpu capture uses a simple Lambert-style
 fallback for non-MToon glTF materials instead of feeding them through the MToon
 shader approximation, nudging the Seed-san baseline to `27.64 dB`.
+The outline draw order now follows the core `MtoonPipelineHints` convention by
+placing outline primitives immediately after their base material order; the
+current Seed-san frame stays at `27.64 dB`, so this is a pass-order correctness
+normalization rather than a measured PSNR improvement on that fixture.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, normal maps, screen-space outline details, or exact
 three.js/MToon light accumulation.
@@ -206,6 +210,10 @@ because the visible Bevy delta is still dominated by stock `StandardMaterial`
 instead of a custom MToon shader/runtime path. Feeding MToon
 `shadingShiftTexture` into the baked vertex-color toon threshold nudges the
 current Bevy baseline to `25.00 dB` while preserving Bevy's main texture path.
+Bevy outline primitives now use the same base-plus-one pass ordering as the
+renderer-agnostic MToon pipeline hints. The local Seed-san PSNR remains
+`25.00 dB`, but the example no longer relies on equal-order stable sorting for
+base/outline sequencing.
 
 ## Review Criteria
 

@@ -176,6 +176,7 @@
 - Confirmed that no `.github` workflow files are tracked, then hardened `tools/ci/local-ci.rs` so the local CI-equivalent runner fails fast if GitHub Actions workflow YAML files reappear. Updated agent/testing/TODO docs to make the Rust script the canonical gate.
 - Extended renderer-facing glTF material extraction with emissive factor, emissive texture index, and `KHR_materials_emissive_strength`. The wgpu render capture now uses a Lambert-style fallback for non-MToon glTF materials and nudges Seed-san from `27.63 dB` to `27.64 dB`; Bevy consumes the same emissive values in its baked color path but remains `24.98 dB` until a custom MToon/runtime render path replaces stock `StandardMaterial`.
 - Fed MToon `shadingShiftTexture` into the Bevy capture's baked vertex-color toon threshold while preserving Bevy's main texture path. The local Seed-san Bevy-vs-three-vrm baseline nudged from `24.98 dB` to `25.00 dB`; wgpu remains `27.64 dB`.
+- Normalized capture outline pass ordering to match `MtoonPipelineHints`: both wgpu and Bevy outline primitives now render at base material order plus one. Re-running the Seed-san local render parity loop leaves wgpu at `27.64 dB` and Bevy at `25.00 dB`, so this closes a pass-order mismatch without changing the current fixture's measured PSNR.
 
 Open work:
 

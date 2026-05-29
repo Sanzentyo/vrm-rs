@@ -340,7 +340,7 @@ fn bevy_outline_primitive(
     Some(BevyPrimitive {
         mesh,
         material,
-        render_order: material_render_order(loaded, primitive.material),
+        render_order: material_render_order(loaded, primitive.material).saturating_add(1),
     })
 }
 

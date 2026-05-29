@@ -323,7 +323,7 @@ fn outline_primitive(
         indices: surface.indices.clone(),
         images: MaterialImages::default(),
         policy: MaterialPolicy {
-            render_order: surface.policy.render_order,
+            render_order: surface.policy.render_order.saturating_add(1),
             cull_mode: CaptureCullMode::Front,
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
