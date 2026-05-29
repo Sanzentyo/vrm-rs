@@ -496,17 +496,24 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
     {
         return shading;
     }
-    let base_color = material
-        .and_then(|index| loaded.gltf_materials.get(index))
+    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
+    let base_color = gltf
         .map(|material| material.base_color_factor)
         .unwrap_or([0.78, 0.78, 0.78, 1.0]);
+    let emissive = gltf
+        .map(|material| {
+            material
+                .emissive_factor
+                .map(|channel| channel * material.emissive_strength)
+        })
+        .unwrap_or([0.0, 0.0, 0.0]);
     MaterialShading {
         base_color,
         shade_color: base_color,
         shading_shift: 0.0,
         shading_toony: 0.0,
         gi_equalization: 0.0,
-        emissive: [0.0, 0.0, 0.0],
+        emissive,
     }
 }
 

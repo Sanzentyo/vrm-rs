@@ -141,7 +141,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.81%, and `vrm-adapter-bevy` line coverage is 94.47%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-30: workspace line coverage is 81.84%, and `vrm-adapter-bevy` line coverage is 94.47%.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture local automation, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.
 - Added optional external-fixture automation. It downloads documented fixtures into ignored workspace paths, builds a pinned three-vrm checkout, regenerates spring/constraint/VRMA golden JSON, and runs exact ignored parity tests without committing binaries.
@@ -174,9 +174,10 @@
 - Added VRM1 `shadingShiftTexture` plus scale to the core/sans-IO MToon model and propagated it through adapter material descriptors, Bevy texture plans, and wgpu capture bindings. The wgpu capture also now computes matcap UVs from the camera view direction and applies parametric rim lighting/rim multiply inputs. The local Seed-san wgpu-vs-three-vrm baseline is now `27.63 dB`; Bevy remains `24.98 dB`.
 - Extended renderer-facing glTF material extraction with alpha mode, alpha cutoff, and double-sided flags, then wired those inputs into the wgpu and Bevy capture material policies. Seed-san's current static frame remains wgpu `27.63 dB` and Bevy `24.98 dB`, but transparent/double-sided material handling is no longer implicit in the capture paths.
 - Confirmed that no `.github` workflow files are tracked, then hardened `tools/ci/local-ci.rs` so the local CI-equivalent runner fails fast if GitHub Actions workflow YAML files reappear. Updated agent/testing/TODO docs to make the Rust script the canonical gate.
+- Extended renderer-facing glTF material extraction with emissive factor, emissive texture index, and `KHR_materials_emissive_strength`. The wgpu render capture now uses a Lambert-style fallback for non-MToon glTF materials and nudges Seed-san from `27.63 dB` to `27.64 dB`; Bevy consumes the same emissive values in its baked color path but remains `24.98 dB` until a custom MToon/runtime render path replaces stock `StandardMaterial`.
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 81.46% line coverage, with `vrm-io` at 74.75%, `vrm-protocol` at 90.70%, `vrm-sans-io` at 95.17%, and facade docs/examples covered by doc-tests.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 81.84% line coverage, with `vrm-io` at 77.18%, `vrm-protocol` at 90.70%, `vrm-sans-io` at 95.23%, and facade docs/examples covered by doc-tests.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
 - P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.

@@ -153,7 +153,10 @@ raises the current local Seed-san baseline to `27.63 dB`.
 The renderer-facing glTF material data now also exposes alpha mode, alpha
 cutoff, and double-sided flags; wgpu and Bevy capture policies consume those
 inputs so transparent and double-sided materials do not rely on MToon-only
-defaults.
+defaults. It now also exposes glTF emissive factor, emissive texture index, and
+`KHR_materials_emissive_strength`; the wgpu capture uses a simple Lambert-style
+fallback for non-MToon glTF materials instead of feeding them through the MToon
+shader approximation, nudging the Seed-san baseline to `27.64 dB`.
 This is still a failing visual parity baseline: the current path does not yet
 apply expression state, normal maps, screen-space outline details, or exact
 three.js/MToon light accumulation.
@@ -196,7 +199,11 @@ directional-light response into vertex colors while staying on Bevy's stock
 `StandardMaterial`, raising the local baseline to `23.77 dB`. Adding the same
 expanded outline mesh approach plus outline width multiply texture sampling
 raises the Bevy baseline to `24.07 dB`. Applying the same reference-exposure
-correction to the baked vertex colors raises it to `24.98 dB`.
+correction to the baked vertex colors raises it to `24.98 dB`. glTF emissive
+factor and `KHR_materials_emissive_strength` now flow into the baked color path
+for non-MToon materials, but the current Seed-san frame remains `24.98 dB`
+because the visible Bevy delta is still dominated by stock `StandardMaterial`
+instead of a custom MToon shader/runtime path.
 
 ## Review Criteria
 

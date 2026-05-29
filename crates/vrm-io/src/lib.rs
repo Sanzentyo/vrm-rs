@@ -103,6 +103,9 @@ pub struct GltfTextureData {
 pub struct GltfMaterialData {
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
+    pub emissive_factor: [f32; 3],
+    pub emissive_texture: Option<usize>,
+    pub emissive_strength: f32,
     pub alpha_mode: GltfAlphaMode,
     pub alpha_cutoff: Option<f32>,
     pub double_sided: bool,
@@ -257,6 +260,13 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
                 base_color_texture: pbr
                     .base_color_texture()
                     .map(|texture| texture.texture().index()),
+                emissive_factor: material.emissive_factor(),
+                emissive_texture: material
+                    .emissive_texture()
+                    .map(|texture| texture.texture().index()),
+                emissive_strength: khr_emissive_strength(
+                    material.extension_value("KHR_materials_emissive_strength"),
+                ),
                 alpha_mode: match material.alpha_mode() {
                     gltf::material::AlphaMode::Opaque => GltfAlphaMode::Opaque,
                     gltf::material::AlphaMode::Mask => GltfAlphaMode::Mask,
@@ -267,6 +277,14 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
             }
         })
         .collect()
+}
+
+fn khr_emissive_strength(extension: Option<&Value>) -> f32 {
+    extension
+        .and_then(|value| value.get("emissiveStrength"))
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(1.0)
 }
 
 fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
@@ -1248,6 +1266,10 @@ mod tests {
             "baseColorTexture": { "index": 0 },
             "baseColorFactor": [0.25, 0.5, 0.75, 1.0]
         });
+        sample["materials"][0]["emissiveFactor"] = json!([0.1, 0.2, 0.3]);
+        sample["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
+        sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"] =
+            json!({ "emissiveStrength": 2.0 });
 
         let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
 
@@ -1263,6 +1285,9 @@ mod tests {
             GltfMaterialData {
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
                 base_color_texture: Some(0),
+                emissive_factor: [0.1, 0.2, 0.3],
+                emissive_texture: Some(0),
+                emissive_strength: 2.0,
                 alpha_mode: GltfAlphaMode::Opaque,
                 alpha_cutoff: None,
                 double_sided: false,

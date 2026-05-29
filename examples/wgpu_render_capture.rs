@@ -397,7 +397,7 @@ fn draw_primitive(
                     shading.rim_lighting_mix,
                     shading.parametric_rim_fresnel_power,
                     shading.parametric_rim_lift,
-                    0.0,
+                    if shading.pbr_fallback { 1.0 } else { 0.0 },
                 ],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
                 _padding: [0.0; 3],
@@ -546,6 +546,7 @@ struct MaterialShading {
     rim_lighting_mix: f32,
     parametric_rim_fresnel_power: f32,
     parametric_rim_lift: f32,
+    pbr_fallback: bool,
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
@@ -576,15 +577,23 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 rim_lighting_mix: mtoon.rim_lighting_mix_factor,
                 parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
                 parametric_rim_lift: mtoon.parametric_rim_lift_factor,
+                pbr_fallback: false,
             })
         })
     {
         return shading;
     }
-    let base_color = material
-        .and_then(|index| loaded.gltf_materials.get(index))
+    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
+    let base_color = gltf
         .map(|material| material.base_color_factor)
         .unwrap_or([0.78, 0.78, 0.78, 1.0]);
+    let emissive = gltf
+        .map(|material| {
+            material
+                .emissive_factor
+                .map(|channel| channel * material.emissive_strength)
+        })
+        .unwrap_or([0.0, 0.0, 0.0]);
     MaterialShading {
         base_color,
         shade_color: base_color,
@@ -592,12 +601,13 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         shading_toony: 0.0,
         shading_shift_texture_scale: 1.0,
         gi_equalization: 0.0,
-        emissive: [0.0, 0.0, 0.0],
+        emissive,
         matcap_factor: [0.0, 0.0, 0.0],
         parametric_rim_color: [0.0, 0.0, 0.0],
         rim_lighting_mix: 1.0,
         parametric_rim_fresnel_power: 5.0,
         parametric_rim_lift: 0.0,
+        pbr_fallback: true,
     }
 }
 
@@ -1404,6 +1414,11 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
     let diffuse = input.color.rgb * texel.rgb;
+    if input.rim_params.w > 0.5 {
+        let direct = diffuse * max(ndotl, 0.0);
+        let ambient = diffuse * 0.03183099;
+        return vec4<f32>(direct + ambient + input.emissive.rgb, opaque_alpha);
+    }
     let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
     let shade = input.shade_color.rgb * shade_texel.rgb;
     let shift_texel = textureSample(shading_shift_texture, base_sampler, input.tex_coord).r;
