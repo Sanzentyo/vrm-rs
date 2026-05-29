@@ -155,6 +155,12 @@ struct SceneController {
     height: u32,
 }
 
+struct CpuRgbaImage {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
 impl SceneController {
     fn new(width: u32, height: u32, pre_roll_frames: u32) -> Self {
         Self {
@@ -301,7 +307,17 @@ fn bevy_outline_primitive(
         mtoon.outline_color_factor[2],
         mtoon.base_color_factor[3],
     ];
-    let mesh = bevy_outline_mesh(primitive, world, skin_matrices, mtoon.outline_width_factor);
+    let width_texture = mtoon
+        .textures
+        .outline_width_multiply_texture
+        .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
+    let mesh = bevy_outline_mesh(
+        primitive,
+        world,
+        skin_matrices,
+        mtoon.outline_width_factor,
+        width_texture.as_ref(),
+    );
     let material = StandardMaterial {
         base_color: Color::srgba(color[0], color[1], color[2], color[3]),
         unlit: true,
@@ -322,6 +338,7 @@ fn bevy_outline_mesh(
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     width: f32,
+    width_texture: Option<&CpuRgbaImage>,
 ) -> Mesh {
     let positions = primitive
         .positions
@@ -336,6 +353,10 @@ fn bevy_outline_mesh(
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             );
+            let width = width
+                * width_texture
+                    .map(|image| image.sample_green(primitive_tex_coord(primitive, index)))
+                    .unwrap_or(1.0);
             (position + normal * width).to_array()
         })
         .collect::<Vec<_>>();
@@ -364,6 +385,14 @@ fn bevy_outline_mesh(
     );
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     mesh
+}
+
+fn primitive_tex_coord(primitive: &GltfPrimitiveData, index: usize) -> [f32; 2] {
+    primitive
+        .tex_coords_0
+        .get(index)
+        .copied()
+        .unwrap_or([0.0, 0.0])
 }
 
 struct BevyPrimitive {
@@ -667,6 +696,47 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
             .and_then(|material| material.base_color_texture)
     })?;
     loaded.textures.get(texture).map(|texture| texture.image)
+}
+
+fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgbaImage> {
+    let image = loaded.textures.get(texture)?.image;
+    let image = loaded.images.get(image)?;
+    Some(CpuRgbaImage {
+        width: image.width,
+        height: image.height,
+        rgba: image_rgba8(image)?,
+    })
+}
+
+impl CpuRgbaImage {
+    fn sample_green(&self, tex_coord: [f32; 2]) -> f32 {
+        let u = tex_coord[0].rem_euclid(1.0);
+        let v = tex_coord[1].rem_euclid(1.0);
+        let x = u * self.width as f32 - 0.5;
+        let y = (1.0 - v) * self.height as f32 - 0.5;
+        let x0 = x.floor();
+        let y0 = y.floor();
+        let tx = x - x0;
+        let ty = y - y0;
+        let x0 = x0 as i32;
+        let y0 = y0 as i32;
+        let top = lerp(self.green_at(x0, y0), self.green_at(x0 + 1, y0), tx);
+        let bottom = lerp(self.green_at(x0, y0 + 1), self.green_at(x0 + 1, y0 + 1), tx);
+        lerp(top, bottom, ty)
+    }
+
+    fn green_at(&self, x: i32, y: i32) -> f32 {
+        let width = self.width as i32;
+        let height = self.height as i32;
+        let x = x.rem_euclid(width) as u32;
+        let y = y.rem_euclid(height) as u32;
+        let index = ((y * self.width + x) * 4 + 1) as usize;
+        self.rgba.get(index).copied().unwrap_or(255) as f32 / 255.0
+    }
+}
+
+fn lerp(left: f32, right: f32, t: f32) -> f32 {
+    left + (right - left) * t
 }
 
 fn bevy_image(image: &ImageData) -> Option<Image> {
