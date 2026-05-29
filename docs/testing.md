@@ -69,7 +69,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet measured with real renderer image artifacts. P3 now has a PSNR comparator and RGBA artifact format; concrete three-vrm, Bevy, and wgpu capture paths are still pending.
+- Render parity is not yet measured across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, and concrete three-vrm browser reference capture; Bevy and wgpu capture paths are still pending.
 
 ## Current Coverage Snapshot
 
@@ -81,11 +81,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.03% | 81.57% |
+| Workspace total | 78.26% | 81.73% |
 | `vrm-adapter-bevy` | 92.71% | 94.46% |
 | `vrm-adapter` | 61.36% | 71.17% |
 | `vrm-core` | 70.28% | 77.47% |
-| `vrm-io` | 77.99% | 74.75% |
+| `vrm-io` | 79.37% | 76.26% |
 | `vrm-protocol` | 92.32% | 90.70% |
 | `vrm-runtime` | 87.27% | 88.10% |
 | `vrm-sans-io` | 91.89% | 95.17% |

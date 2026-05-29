@@ -57,6 +57,31 @@ localhost server, opens Chromium, renders with a fixed camera/light setup, and
 reads RGBA bytes from the WebGL drawing buffer. The next Bevy and wgpu capture
 paths should match this camera/light setup before comparing PSNR.
 
+For human review, also request a PNG:
+
+```powershell
+node tools\render-parity\three-vrm-browser-capture.mjs `
+  --fixture .external-fixtures\official\Seed-san.vrm `
+  --three-vrm-root D:\git\three-vrm `
+  --out .external-fixtures\render-parity\three-vrm\Seed-san.frame000.rgba.json `
+  --png-out .external-fixtures\render-parity\three-vrm\Seed-san.frame000.png `
+  --width 512 `
+  --height 512 `
+  --camera-z 3.0
+```
+
+The local smoke run on 2026-05-29 captured Seed-san at `256x256`, wrote a PNG
+for visual review, and self-compared the RGBA output with PSNR `Infinity`.
+
+## Renderer Input Data
+
+`vrm-io` now exposes renderer-facing glTF primitive data through
+`LoadedVrm::meshes` and node-to-mesh references through `GltfNodeRest::mesh`.
+Each `GltfPrimitiveData` stores material index, positions, normals,
+`TEXCOORD_0`, and u32 indices. Bevy and wgpu capture paths should build their
+mesh buffers from this data so they render the same primitives loaded from the
+VRM file rather than using ad hoc sample geometry.
+
 ## Review Criteria
 
 Initial thresholds are intentionally conservative until real renderer captures
@@ -75,6 +100,7 @@ report before declaring parity.
 ## Next Renderer Work
 
 - Add a Bevy capture path that renders the same camera/light/material setup and
-  writes RGBA JSON after readback.
+  writes RGBA JSON after readback using `LoadedVrm::meshes`.
 - Add a wgpu capture path using `HeadlessSceneState` plus the MToon descriptor
-  example layout, then write RGBA JSON from a staging buffer.
+  example layout and `LoadedVrm::meshes`, then write RGBA JSON from a staging
+  buffer.

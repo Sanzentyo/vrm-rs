@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -23,6 +22,7 @@ for (let index = 2; index < process.argv.length; index += 1) {
 const fixture = args.get('fixture');
 const threeVrmRoot = path.resolve(args.get('three-vrm-root') ?? '../three-vrm');
 const out = args.get('out');
+const pngOut = args.get('png-out');
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
@@ -30,7 +30,7 @@ const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--width 512] [--height 512]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -53,13 +53,9 @@ try {
 
 const fixturePath = path.resolve(fixture);
 const threePackage = path.join(threeVrmRoot, 'packages/three-vrm');
+const threeModuleRoot = path.join(threePackage, 'node_modules/three');
 const routes = new Map([
   ['/fixture.vrm', fixturePath],
-  ['/three/build/three.module.js', path.join(threePackage, 'node_modules/three/build/three.module.js')],
-  [
-    '/three/examples/jsm/loaders/GLTFLoader.js',
-    path.join(threePackage, 'node_modules/three/examples/jsm/loaders/GLTFLoader.js'),
-  ],
   ['/three-vrm/lib/three-vrm.module.js', path.join(threePackage, 'lib/three-vrm.module.js')],
 ]);
 
@@ -79,14 +75,25 @@ const server = http.createServer((request, response) => {
   }
 
   const file = routes.get(url.pathname);
-  if (!file) {
+  if (file) {
+    serveFile(response, file);
+    return;
+  }
+
+  if (url.pathname.startsWith('/three/')) {
+    const file = path.resolve(threeModuleRoot, `.${url.pathname.slice('/three'.length)}`);
+    if (file.startsWith(path.resolve(threeModuleRoot)) && fs.existsSync(file)) {
+      serveFile(response, file);
+      return;
+    }
+  }
+
+  {
+    console.error(`browser requested unknown path: ${url.pathname}`);
     response.writeHead(404);
     response.end('not found');
     return;
   }
-
-  response.writeHead(200, { 'content-type': contentType(file) });
-  fs.createReadStream(file).pipe(response);
 });
 
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -96,7 +103,18 @@ let browser;
 try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      console.error(`browser ${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on('pageerror', (error) => {
+    console.error(`browser pageerror: ${error.message}`);
+  });
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => typeof globalThis.captureVrmFrame === 'function', null, {
+    timeout: 15000,
+  });
   const capture = await page.evaluate(() => globalThis.captureVrmFrame());
   const json = `${JSON.stringify({
     generator: 'vrm-rs tools/render-parity/three-vrm-browser-capture.mjs',
@@ -109,6 +127,10 @@ try {
   }, null, 2)}\n`;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, json);
+  if (pngOut) {
+    fs.mkdirSync(path.dirname(pngOut), { recursive: true });
+    await page.locator('#canvas').screenshot({ path: pngOut, omitBackground: false });
+  }
 } finally {
   if (browser) await browser.close();
   await new Promise((resolve) => server.close(resolve));
@@ -118,6 +140,13 @@ function capturePage(options) {
   return `<!doctype html>
 <meta charset="utf-8">
 <canvas id="canvas" width="${options.width}" height="${options.height}"></canvas>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "/three/build/three.module.js"
+    }
+  }
+</script>
 <script type="module">
   import * as THREE from '/three/build/three.module.js';
   import { GLTFLoader } from '/three/examples/jsm/loaders/GLTFLoader.js';
@@ -172,4 +201,9 @@ function contentType(file) {
   if (file.endsWith('.js')) return 'text/javascript; charset=utf-8';
   if (file.endsWith('.vrm')) return 'model/gltf-binary';
   return 'application/octet-stream';
+}
+
+function serveFile(response, file) {
+  response.writeHead(200, { 'content-type': contentType(file) });
+  fs.createReadStream(file).pipe(response);
 }

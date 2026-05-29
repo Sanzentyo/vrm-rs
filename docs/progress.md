@@ -141,7 +141,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.57%, and `vrm-adapter-bevy` line coverage is 94.46%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-29: workspace line coverage is 81.73%, and `vrm-adapter-bevy` line coverage is 94.46%.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture CI, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.
 - Added the optional external-fixture GitHub Actions job. It is manual-only, downloads documented fixtures into ignored CI workspace paths, builds a pinned three-vrm checkout, regenerates spring/constraint/VRMA golden JSON, runs exact ignored parity tests, and uploads generated goldens as CI artifacts without committing binaries.
@@ -152,6 +152,7 @@
 - Started the render parity harness with `tools/render-parity/compare-psnr.mjs` and `docs/render-parity.md`. The first slice defines a renderer-neutral RGBA JSON artifact, PSNR/MSE/max-delta report generation, initial thresholds, and `.external-fixtures/render-parity/` artifact policy before adding concrete three-vrm/Bevy/wgpu capture paths.
 - Verified the manual GitHub Actions external fixture parity job on `master`: run `26633741797` passed normal test, coverage, pinned three-vrm build, external fixture downloads, golden generation, ignored fixture parity tests, and golden artifact upload.
 - Added `tools/render-parity/three-vrm-browser-capture.mjs`, an optional Playwright/Chromium reference capture path that serves a local three-vrm build and VRM fixture, renders a fixed camera/light frame in WebGL, and writes RGBA JSON for PSNR comparison.
+- Extended the three-vrm browser capture to optionally write a PNG visual-review artifact and verified a local Seed-san reference capture plus self-PSNR report. Added renderer-facing mesh primitive extraction to `vrm-io` (`LoadedVrm::meshes` and `GltfNodeRest::mesh`) so Bevy/wgpu capture paths can build real mesh buffers from the loaded VRM instead of placeholder geometry.
 
 Open work:
 

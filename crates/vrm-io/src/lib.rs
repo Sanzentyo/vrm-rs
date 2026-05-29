@@ -21,6 +21,7 @@ use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 pub struct LoadedVrm {
     model: VrmModel<Resolved>,
     pub scene: GltfSceneRest,
+    pub meshes: Vec<GltfMeshData>,
     pub buffers: Vec<Vec<u8>>,
     pub images: Vec<ImageData>,
     pub warnings: Vec<VrmIoWarning>,
@@ -71,9 +72,24 @@ impl GltfSceneRest {
 pub struct GltfNodeRest {
     pub parent: Option<usize>,
     pub children: Vec<usize>,
+    pub mesh: Option<usize>,
     pub local: Transform,
     pub world: Transform,
     pub world_matrix: Mat4,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfMeshData {
+    pub primitives: Vec<GltfPrimitiveData>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfPrimitiveData {
+    pub material: Option<usize>,
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub tex_coords_0: Vec<[f32; 2]>,
+    pub indices: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +98,44 @@ pub enum VrmIoWarning {
     DraftSpecVersion { extension: String, version: String },
     UnknownSpecVersion { extension: String, version: String },
     IgnoredAnimationChannel { node: usize, message: String },
+}
+
+fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<GltfMeshData> {
+    document
+        .meshes()
+        .map(|mesh| GltfMeshData {
+            primitives: mesh
+                .primitives()
+                .map(|primitive| {
+                    let reader = primitive
+                        .reader(|buffer| buffers.get(buffer.index()).map(|data| data.0.as_slice()));
+                    let positions: Vec<[f32; 3]> = reader
+                        .read_positions()
+                        .map(Iterator::collect)
+                        .unwrap_or_default();
+                    let normals: Vec<[f32; 3]> = reader
+                        .read_normals()
+                        .map(Iterator::collect)
+                        .unwrap_or_default();
+                    let tex_coords_0: Vec<[f32; 2]> = reader
+                        .read_tex_coords(0)
+                        .map(|coords| coords.into_f32().collect())
+                        .unwrap_or_default();
+                    let indices = reader
+                        .read_indices()
+                        .map(|indices| indices.into_u32().collect())
+                        .unwrap_or_else(|| (0..positions.len() as u32).collect());
+                    GltfPrimitiveData {
+                        material: primitive.material().index(),
+                        positions,
+                        normals,
+                        tex_coords_0,
+                        indices,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
@@ -108,6 +162,7 @@ fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
 pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
     let scene = GltfSceneRest::from_document(&document);
+    let meshes = extract_meshes(&document, &buffers);
     let root_extensions = extension_map(document.as_json().extensions.as_ref());
     let mut warnings = vrma_extension_warnings(&root_extensions);
     let mut bundle = parse_root_extensions(&root_extensions)?;
@@ -145,6 +200,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     Ok(LoadedVrm {
         model,
         scene,
+        meshes,
         buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
         images: image_data,
         warnings,
@@ -451,6 +507,7 @@ impl VrmaRestPose {
 struct NodeRestGraph {
     parents: Vec<Option<usize>>,
     children: Vec<Vec<usize>>,
+    meshes: Vec<Option<usize>>,
     local_transforms: Vec<Transform>,
     world_transforms: Vec<Transform>,
     world_rotations: Vec<Quat>,
@@ -463,6 +520,7 @@ impl NodeRestGraph {
         let mut graph = Self {
             parents: vec![None; node_count],
             children: vec![Vec::new(); node_count],
+            meshes: vec![None; node_count],
             local_transforms: vec![Transform::default(); node_count],
             world_transforms: vec![Transform::default(); node_count],
             world_rotations: vec![Quat::IDENTITY; node_count],
@@ -484,6 +542,7 @@ impl NodeRestGraph {
                 .map(|index| GltfNodeRest {
                     parent: self.parents[index],
                     children: self.children[index].clone(),
+                    mesh: self.meshes[index],
                     local: self.local_transforms[index],
                     world: self.world_transforms[index],
                     world_matrix: self.world_matrices[index],
@@ -517,6 +576,7 @@ impl NodeRestGraph {
         let (world_scale, world_rotation_decomposed, world_translation) =
             world_matrix.to_scale_rotation_translation();
         self.parents[index] = parent;
+        self.meshes[index] = node.mesh().map(|mesh| mesh.index());
         if let Some(parent) = parent {
             self.children[parent].push(index);
         }
@@ -1045,6 +1105,76 @@ mod tests {
         assert_eq!(loaded.buffers.len(), 1);
         assert_eq!(loaded.images.len(), 1);
         assert!(!loaded.images[0].bytes.is_empty());
+    }
+
+    #[test]
+    fn generated_sample_extracts_mesh_primitives_for_renderers() {
+        let mut sample = generated_vrm1_gltf();
+        sample["nodes"][0]["mesh"] = json!(0);
+        sample["buffers"] = json!([{
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAABAAIA",
+            "byteLength": 102
+        }]);
+        sample["bufferViews"] = json!([
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 72, "byteLength": 24 },
+            { "buffer": 0, "byteOffset": 96, "byteLength": 6 }
+        ]);
+        sample["accessors"] = json!([
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 0.0]
+            },
+            {
+                "bufferView": 1,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3"
+            },
+            {
+                "bufferView": 2,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC2"
+            },
+            {
+                "bufferView": 3,
+                "componentType": 5123,
+                "count": 3,
+                "type": "SCALAR"
+            }
+        ]);
+        sample["meshes"] = json!([{
+            "primitives": [{
+                "attributes": {
+                    "POSITION": 0,
+                    "NORMAL": 1,
+                    "TEXCOORD_0": 2
+                },
+                "indices": 3,
+                "material": 0
+            }]
+        }]);
+
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        assert_eq!(loaded.scene.node(0).unwrap().mesh, Some(0));
+        assert_eq!(loaded.meshes.len(), 1);
+        let primitive = &loaded.meshes[0].primitives[0];
+        assert_eq!(primitive.material, Some(0));
+        assert_eq!(primitive.positions.len(), 3);
+        assert_eq!(primitive.positions[1], [1.0, 0.0, 0.0]);
+        assert_eq!(primitive.normals, vec![[0.0, 0.0, 1.0]; 3]);
+        assert_eq!(
+            primitive.tex_coords_0,
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+        );
+        assert_eq!(primitive.indices, vec![0, 1, 2]);
     }
 
     #[test]

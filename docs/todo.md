@@ -80,7 +80,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
   - Done when examples map MToon descriptors into concrete pass ordering, alpha/depth/cull state, render order, texture/sampler bindings, uniform layouts, and pipeline/material keys for wgpu-style and ash-style renderers.
 - [ ] Build the three-vrm render parity harness.
   - Done when three-vrm, Bevy, and wgpu render paths can produce comparable image artifacts, compute PSNR, store visual-review outputs under `.external-fixtures/`, and document thresholds used to judge compatibility.
-  - First slices landed: `tools/render-parity/compare-psnr.mjs` and `docs/render-parity.md` define the RGBA artifact format, PSNR report, and initial visual-review thresholds; `tools/render-parity/three-vrm-browser-capture.mjs` captures the three-vrm WebGL reference frame through Chromium.
+  - First slices landed: `tools/render-parity/compare-psnr.mjs` and `docs/render-parity.md` define the RGBA artifact format, PSNR report, and initial visual-review thresholds; `tools/render-parity/three-vrm-browser-capture.mjs` captures the three-vrm WebGL reference frame through Chromium and can write PNG review artifacts; `vrm-io` exposes mesh primitives for Bevy/wgpu buffer construction.
 
 ## Ongoing Maintenance
 
