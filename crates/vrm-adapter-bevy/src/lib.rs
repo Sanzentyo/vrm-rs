@@ -922,6 +922,7 @@ pub enum BevyMtoonPass {
 pub struct BevyMtoonTextureRefs {
     pub base_color: Option<TextureRef>,
     pub shade: Option<TextureRef>,
+    pub shading_shift: Option<TextureRef>,
     pub normal: Option<TextureRef>,
     pub matcap: Option<TextureRef>,
     pub rim: Option<TextureRef>,
@@ -969,6 +970,7 @@ impl BevyMtoonMaterialPlan {
             textures: BevyMtoonTextureRefs {
                 base_color: descriptor.textures.main_texture,
                 shade: descriptor.textures.shade_multiply_texture,
+                shading_shift: descriptor.textures.shading_shift_texture,
                 normal: descriptor.textures.normal_texture,
                 matcap: descriptor.textures.matcap_texture,
                 rim: descriptor.textures.rim_multiply_texture,
@@ -1321,6 +1323,7 @@ mod tests {
                     textures: vrm_core::MtoonTextureSet {
                         main_texture: Some(TextureRef(1)),
                         shade_multiply_texture: Some(TextureRef(2)),
+                        shading_shift_texture: Some(TextureRef(4)),
                         normal_texture: Some(TextureRef(3)),
                         ..Default::default()
                     },
@@ -1346,6 +1349,7 @@ mod tests {
         assert_eq!(plans[0].textures.base_color, Some(TextureRef(1)));
         assert_eq!(plans[0].textures.shade, Some(TextureRef(2)));
         assert_eq!(plans[0].textures.normal, Some(TextureRef(3)));
+        assert_eq!(plans[0].textures.shading_shift, Some(TextureRef(4)));
         assert_eq!(plans[1].pass, BevyMtoonPass::Outline);
         assert_eq!(plans[1].outline_width, Some(0.01));
     }

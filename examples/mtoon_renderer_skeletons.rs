@@ -43,6 +43,7 @@ enum CompareOp {
 enum TextureSlot {
     Main,
     ShadeMultiply,
+    ShadingShift,
     Normal,
     Matcap,
     RimMultiply,
@@ -301,6 +302,11 @@ fn texture_bindings(textures: &MtoonTextureSet) -> Vec<TextureBinding> {
             SamplerKind::LinearRepeat,
         ),
         (
+            TextureSlot::ShadingShift,
+            textures.shading_shift_texture,
+            SamplerKind::LinearRepeat,
+        ),
+        (
             TextureSlot::Normal,
             textures.normal_texture,
             SamplerKind::NormalMap,
@@ -352,6 +358,7 @@ fn sample_document() -> VrmDocument {
                 textures: MtoonTextureSet {
                     main_texture: Some(TextureRef(1)),
                     shade_multiply_texture: Some(TextureRef(2)),
+                    shading_shift_texture: Some(TextureRef(8)),
                     normal_texture: Some(TextureRef(3)),
                     matcap_texture: Some(TextureRef(4)),
                     ..MtoonTextureSet::default()
@@ -380,12 +387,13 @@ fn main() {
         vec![
             TextureSlot::Main,
             TextureSlot::ShadeMultiply,
+            TextureSlot::ShadingShift,
             TextureSlot::Normal,
             TextureSlot::Matcap,
         ]
     );
     assert_eq!(wgpu.materials[&MaterialRef(0)].emissive, [0.2, 0.4, 0.6]);
-    assert_eq!(wgpu.materials[&MaterialRef(0)].texture_bindings.len(), 4);
+    assert_eq!(wgpu.materials[&MaterialRef(0)].texture_bindings.len(), 5);
     assert_eq!(
         ash.materials[&MaterialRef(0)].base_texture,
         Some(TextureRef(1))

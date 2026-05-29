@@ -628,6 +628,7 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
         textures: MtoonTextureSet {
             main_texture: texture_property(&texture_properties, "_MainTex"),
             shade_multiply_texture: texture_property(&texture_properties, "_ShadeTexture"),
+            shading_shift_texture: None,
             normal_texture: texture_property(&texture_properties, "_BumpMap"),
             matcap_texture: texture_property(&texture_properties, "_SphereAdd"),
             rim_multiply_texture: texture_property(&texture_properties, "_RimTexture"),
@@ -650,6 +651,7 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
         shading_grade_rate_factor: float_property(&float_properties, "_ShadingGradeRate")
             .unwrap_or(MtoonMaterial::default().shading_grade_rate_factor),
         shading_shift_factor: float_property(&float_properties, "_ShadeShift").unwrap_or(0.0),
+        shading_shift_texture_scale: MtoonMaterial::default().shading_shift_texture_scale,
         shading_toony_factor: float_property(&float_properties, "_ShadeToony").unwrap_or(0.9),
         light_color_attenuation_factor: float_property(&float_properties, "_LightColorAttenuation")
             .unwrap_or(MtoonMaterial::default().light_color_attenuation_factor),
@@ -867,6 +869,10 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
             shade_multiply_texture: material
                 .shade_multiply_texture
                 .map(|texture| TextureRef(texture.index)),
+            shading_shift_texture: material
+                .shading_shift_texture
+                .as_ref()
+                .map(|texture| TextureRef(texture.index)),
             normal_texture: None,
             matcap_texture: material
                 .matcap_texture
@@ -888,6 +894,11 @@ fn map_mtoon(material: vrm_protocol::materials_mtoon::VrmcMaterialsMtoon) -> Mto
         receive_shadow_rate_factor: MtoonMaterial::default().receive_shadow_rate_factor,
         shading_grade_rate_factor: MtoonMaterial::default().shading_grade_rate_factor,
         shading_shift_factor: material.shading_shift_factor.unwrap_or(0.0),
+        shading_shift_texture_scale: material
+            .shading_shift_texture
+            .as_ref()
+            .and_then(|texture| texture.scale)
+            .unwrap_or(MtoonMaterial::default().shading_shift_texture_scale),
         shading_toony_factor: material.shading_toony_factor.unwrap_or(0.9),
         light_color_attenuation_factor: MtoonMaterial::default().light_color_attenuation_factor,
         gi_equalization_factor: material.gi_equalization_factor.unwrap_or(0.9),
@@ -1634,6 +1645,13 @@ mod tests {
                     spec_version: "1.0".to_owned(),
                     shade_color_factor: Some([0.1, 0.2, 0.3]),
                     shading_shift_factor: Some(-0.2),
+                    shading_shift_texture: Some(
+                        vrm_protocol::materials_mtoon::ShadingShiftTextureInfo {
+                            index: 11,
+                            tex_coord: Some(0),
+                            scale: Some(0.5),
+                        },
+                    ),
                     shading_toony_factor: Some(0.7),
                     gi_equalization_factor: Some(0.4),
                     matcap_factor: Some([0.5, 0.6, 0.7]),
@@ -1687,6 +1705,8 @@ mod tests {
         let mtoon = asset.document.materials[2].mtoon.as_ref().unwrap();
         assert_eq!(mtoon.shade_color_factor, [0.1, 0.2, 0.3]);
         assert_eq!(mtoon.shading_shift_factor, -0.2);
+        assert_eq!(mtoon.shading_shift_texture_scale, 0.5);
+        assert_eq!(mtoon.textures.shading_shift_texture, Some(TextureRef(11)));
         assert_eq!(mtoon.shading_toony_factor, 0.7);
         assert_eq!(mtoon.gi_equalization_factor, 0.4);
         assert_eq!(mtoon.matcap_factor, [0.5, 0.6, 0.7]);

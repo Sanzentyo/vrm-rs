@@ -30,12 +30,14 @@ struct Vertex {
     shading: [f32; 4],
     emissive: [f32; 4],
     matcap_factor: [f32; 4],
+    rim_color: [f32; 4],
+    rim_params: [f32; 4],
     alpha_mode: f32,
     _padding: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -51,6 +53,7 @@ impl Vertex {
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
     light_dir: [f32; 4],
+    camera_pos: [f32; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +144,9 @@ struct TextureResource {
 struct MaterialImages {
     base: Option<usize>,
     shade: Option<usize>,
+    shading_shift: Option<usize>,
     matcap: Option<usize>,
+    rim: Option<usize>,
 }
 
 struct TextureUpload<'a> {
@@ -305,6 +310,8 @@ fn outline_primitive(
                 shading: [0.0, 0.0, 0.0, 0.0],
                 emissive: [0.0, 0.0, 0.0, 0.0],
                 matcap_factor: [0.0, 0.0, 0.0, 0.0],
+                rim_color: [0.0, 0.0, 0.0, 0.0],
+                rim_params: [0.0, 1.0, 0.0, 0.0],
                 alpha_mode: alpha_mode_code(CaptureAlphaMode::Opaque),
                 _padding: [0.0; 3],
             }
@@ -365,7 +372,7 @@ fn draw_primitive(
                     shading.shading_shift,
                     shading.shading_toony,
                     shading.gi_equalization,
-                    0.0,
+                    shading.shading_shift_texture_scale,
                 ],
                 emissive: [
                     shading.emissive[0],
@@ -377,6 +384,18 @@ fn draw_primitive(
                     shading.matcap_factor[0],
                     shading.matcap_factor[1],
                     shading.matcap_factor[2],
+                    0.0,
+                ],
+                rim_color: [
+                    shading.parametric_rim_color[0],
+                    shading.parametric_rim_color[1],
+                    shading.parametric_rim_color[2],
+                    0.0,
+                ],
+                rim_params: [
+                    shading.rim_lighting_mix,
+                    shading.parametric_rim_fresnel_power,
+                    shading.parametric_rim_lift,
                     0.0,
                 ],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
@@ -499,9 +518,14 @@ struct MaterialShading {
     shade_color: [f32; 4],
     shading_shift: f32,
     shading_toony: f32,
+    shading_shift_texture_scale: f32,
     gi_equalization: f32,
     emissive: [f32; 3],
     matcap_factor: [f32; 3],
+    parametric_rim_color: [f32; 3],
+    rim_lighting_mix: f32,
+    parametric_rim_fresnel_power: f32,
+    parametric_rim_lift: f32,
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
@@ -520,6 +544,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 ],
                 shading_shift: mtoon.shading_shift_factor,
                 shading_toony: mtoon.shading_toony_factor,
+                shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
                 gi_equalization: mtoon.gi_equalization_factor,
                 emissive: [
                     mtoon.emissive_factor[0] * emissive_strength.0,
@@ -527,6 +552,10 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                     mtoon.emissive_factor[2] * emissive_strength.0,
                 ],
                 matcap_factor: mtoon.matcap_factor,
+                parametric_rim_color: mtoon.parametric_rim_color_factor,
+                rim_lighting_mix: mtoon.rim_lighting_mix_factor,
+                parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
+                parametric_rim_lift: mtoon.parametric_rim_lift_factor,
             })
         })
     {
@@ -541,9 +570,14 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         shade_color: base_color,
         shading_shift: 0.0,
         shading_toony: 0.0,
+        shading_shift_texture_scale: 1.0,
         gi_equalization: 0.0,
         emissive: [0.0, 0.0, 0.0],
         matcap_factor: [0.0, 0.0, 0.0],
+        parametric_rim_color: [0.0, 0.0, 0.0],
+        rim_lighting_mix: 1.0,
+        parametric_rim_fresnel_power: 5.0,
+        parametric_rim_lift: 0.0,
     }
 }
 
@@ -570,14 +604,24 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         .and_then(|texture| loaded.textures.get(texture.0))
         .map(|texture| texture.image)
         .or(base);
+    let shading_shift = mtoon
+        .and_then(|mtoon| mtoon.textures.shading_shift_texture)
+        .and_then(|texture| loaded.textures.get(texture.0))
+        .map(|texture| texture.image);
     let matcap = mtoon
         .and_then(|mtoon| mtoon.textures.matcap_texture)
+        .and_then(|texture| loaded.textures.get(texture.0))
+        .map(|texture| texture.image);
+    let rim = mtoon
+        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
         .map(|texture| texture.image);
     MaterialImages {
         base,
         shade,
+        shading_shift,
         matcap,
+        rim,
     }
 }
 
@@ -720,7 +764,9 @@ fn material_texture_bind_group(
 ) -> TextureBindGroup {
     let base = texture_view(resources, indices, images.base, 0);
     let shade = texture_view(resources, indices, images.shade.or(images.base), 0);
+    let shading_shift = texture_view(resources, indices, images.shading_shift, 1);
     let matcap = texture_view(resources, indices, images.matcap, 1);
+    let rim = texture_view(resources, indices, images.rim, 0);
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
         layout,
@@ -735,10 +781,18 @@ fn material_texture_bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureView(matcap),
+                resource: wgpu::BindingResource::TextureView(shading_shift),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
+                resource: wgpu::BindingResource::TextureView(matcap),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(rim),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
         ],
@@ -998,6 +1052,26 @@ async fn render_capture(
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
@@ -1175,6 +1249,7 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
     Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
+        camera_pos: Vec4::new(eye.x, eye.y, eye.z, 1.0).to_array(),
     }
 }
 
@@ -1222,6 +1297,7 @@ const SHADER: &str = r#"
 struct Uniforms {
     view_projection: mat4x4<f32>,
     light_dir: vec4<f32>,
+    camera_pos: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -1234,9 +1310,15 @@ var base_texture: texture_2d<f32>;
 var shade_texture: texture_2d<f32>;
 
 @group(1) @binding(2)
-var matcap_texture: texture_2d<f32>;
+var shading_shift_texture: texture_2d<f32>;
 
 @group(1) @binding(3)
+var matcap_texture: texture_2d<f32>;
+
+@group(1) @binding(4)
+var rim_texture: texture_2d<f32>;
+
+@group(1) @binding(5)
 var base_sampler: sampler;
 
 struct VertexIn {
@@ -1248,7 +1330,9 @@ struct VertexIn {
     @location(5) shading: vec4<f32>,
     @location(6) emissive: vec4<f32>,
     @location(7) matcap_factor: vec4<f32>,
-    @location(8) alpha_mode: f32,
+    @location(8) rim_color: vec4<f32>,
+    @location(9) rim_params: vec4<f32>,
+    @location(10) alpha_mode: f32,
 };
 
 struct VertexOut {
@@ -1260,7 +1344,10 @@ struct VertexOut {
     @location(4) shading: vec4<f32>,
     @location(5) emissive: vec4<f32>,
     @location(6) matcap_factor: vec4<f32>,
-    @location(7) alpha_mode: f32,
+    @location(7) world_position: vec3<f32>,
+    @location(8) rim_color: vec4<f32>,
+    @location(9) rim_params: vec4<f32>,
+    @location(10) alpha_mode: f32,
 };
 
 @vertex
@@ -1268,12 +1355,15 @@ fn vs_main(input: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.position = uniforms.view_projection * vec4<f32>(input.position, 1.0);
     out.normal = normalize(input.normal);
+    out.world_position = input.position;
     out.tex_coord = input.tex_coord;
     out.color = input.color;
     out.shade_color = input.shade_color;
     out.shading = input.shading;
     out.emissive = input.emissive;
     out.matcap_factor = input.matcap_factor;
+    out.rim_color = input.rim_color;
+    out.rim_params = input.rim_params;
     out.alpha_mode = input.alpha_mode;
     return out;
 }
@@ -1296,15 +1386,29 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let diffuse = input.color.rgb * texel.rgb;
     let shade_texel = textureSample(shade_texture, base_sampler, input.tex_coord);
     let shade = input.shade_color.rgb * shade_texel.rgb;
-    let shift = input.shading.x;
+    let shift_texel = textureSample(shading_shift_texture, base_sampler, input.tex_coord).r;
+    let shift = input.shading.x + shift_texel * input.shading.w;
     let toony = input.shading.y;
     let gi = input.shading.z;
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     let direct = mix(shade, diffuse, toon);
     let ambient = diffuse * (0.1 + 0.15 * gi);
-    let matcap_uv = normalize(input.normal).xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+    let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
+    let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
+    let matcap_y = cross(view_dir, matcap_x);
+    let matcap_uv = vec2<f32>(
+        0.5 + 0.5 * dot(matcap_x, normalize(input.normal)),
+        0.5 - 0.5 * dot(matcap_y, normalize(input.normal)),
+    );
     let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
-    let color = (direct + ambient + matcap + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
+    let rim_base = input.rim_color.rgb * pow(
+        clamp(1.0 - dot(view_dir, normalize(input.normal)) + input.rim_params.z, 0.0, 1.0),
+        input.rim_params.y,
+    );
+    let rim_texel = textureSample(rim_texture, base_sampler, input.tex_coord).rgb;
+    let lit_rim = mix(vec3<f32>(1.0), vec3<f32>(max(ndotl, 0.0)), input.rim_params.x);
+    let rim = rim_base * rim_texel * lit_rim;
+    let color = (direct + ambient + matcap + rim + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
     return vec4<f32>(color, opaque_alpha);
 }
 "#;

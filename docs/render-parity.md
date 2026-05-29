@@ -146,10 +146,13 @@ lighting approximation raises the baseline to `27.50 dB`. Adding separate
 wgpu bindings for MToon `shadeMultiplyTexture` and `matcapTexture` lifts the
 current Seed-san baseline to `27.52 dB`; the improvement is small because the
 fixture's shade textures mostly alias its main textures, but the renderer path
-now exercises a real secondary MToon texture slot.
+now exercises a real secondary MToon texture slot. Adding core/sans-IO support
+for VRM1 `shadingShiftTexture` scale, applying that red-channel shift in wgpu,
+using the three-vrm view-direction matcap UV, and adding parametric rim input
+raises the current local Seed-san baseline to `27.63 dB`.
 This is still a failing visual parity baseline: the current path does not yet
-apply expression state, rim/normal secondary textures, screen-space outline
-details, or exact three.js/MToon light accumulation.
+apply expression state, normal maps, screen-space outline details, or exact
+three.js/MToon light accumulation.
 
 ## Bevy Capture
 

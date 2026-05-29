@@ -105,6 +105,7 @@ fn sample_document() -> VrmDocument {
                 textures: MtoonTextureSet {
                     main_texture: Some(TextureRef(1)),
                     shade_multiply_texture: Some(TextureRef(2)),
+                    shading_shift_texture: Some(TextureRef(8)),
                     normal_texture: Some(TextureRef(3)),
                     matcap_texture: Some(TextureRef(4)),
                     rim_multiply_texture: Some(TextureRef(5)),
@@ -167,6 +168,7 @@ fn main() {
     assert_eq!(asset.emissive_strength, 3.0);
     assert_eq!(asset.textures.base_color, Some(TextureRef(1)));
     assert_eq!(asset.textures.uv_animation_mask, Some(TextureRef(7)));
+    assert_eq!(asset.textures.shading_shift, Some(TextureRef(8)));
     assert_eq!(asset.runtime_colors[0].0, "_Color");
 
     let pass_count = document.materials[0]

@@ -841,6 +841,7 @@ pub struct MtoonMaterial {
     pub receive_shadow_rate_factor: f32,
     pub shading_grade_rate_factor: f32,
     pub shading_shift_factor: f32,
+    pub shading_shift_texture_scale: f32,
     pub shading_toony_factor: f32,
     pub light_color_attenuation_factor: f32,
     pub gi_equalization_factor: f32,
@@ -871,6 +872,7 @@ impl Default for MtoonMaterial {
             receive_shadow_rate_factor: 1.0,
             shading_grade_rate_factor: 1.0,
             shading_shift_factor: 0.0,
+            shading_shift_texture_scale: 1.0,
             shading_toony_factor: 0.9,
             light_color_attenuation_factor: 0.0,
             gi_equalization_factor: 0.9,
@@ -900,6 +902,7 @@ pub enum MtoonCullMode {
 pub struct MtoonTextureSet {
     pub main_texture: Option<TextureRef>,
     pub shade_multiply_texture: Option<TextureRef>,
+    pub shading_shift_texture: Option<TextureRef>,
     pub normal_texture: Option<TextureRef>,
     pub matcap_texture: Option<TextureRef>,
     pub rim_multiply_texture: Option<TextureRef>,

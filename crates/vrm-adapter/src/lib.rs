@@ -1208,6 +1208,7 @@ pub struct MtoonMaterialDescriptor {
     pub receive_shadow_rate_factor: f32,
     pub shading_grade_rate_factor: f32,
     pub shading_shift_factor: f32,
+    pub shading_shift_texture_scale: f32,
     pub shading_toony_factor: f32,
     pub light_color_attenuation_factor: f32,
     pub gi_equalization_factor: f32,
@@ -1699,6 +1700,7 @@ fn mtoon_material_descriptor(
         receive_shadow_rate_factor: mtoon.receive_shadow_rate_factor,
         shading_grade_rate_factor: mtoon.shading_grade_rate_factor,
         shading_shift_factor: mtoon.shading_shift_factor,
+        shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
         shading_toony_factor: mtoon.shading_toony_factor,
         light_color_attenuation_factor: mtoon.light_color_attenuation_factor,
         gi_equalization_factor: mtoon.gi_equalization_factor,
@@ -3546,6 +3548,7 @@ mod tests {
                     shade_color_factor: [0.5, 0.6, 0.7],
                     receive_shadow_rate_factor: 0.8,
                     shading_grade_rate_factor: 0.75,
+                    shading_shift_texture_scale: 0.45,
                     light_color_attenuation_factor: 0.25,
                     matcap_factor: [0.4, 0.3, 0.2],
                     parametric_rim_color_factor: [0.2, 0.3, 0.4],
@@ -3581,6 +3584,7 @@ mod tests {
         assert_eq!(descriptors[0].shade_color_factor, [0.5, 0.6, 0.7]);
         assert_eq!(descriptors[0].receive_shadow_rate_factor, 0.8);
         assert_eq!(descriptors[0].shading_grade_rate_factor, 0.75);
+        assert_eq!(descriptors[0].shading_shift_texture_scale, 0.45);
         assert_eq!(descriptors[0].light_color_attenuation_factor, 0.25);
         assert_eq!(descriptors[0].matcap_factor, [0.4, 0.3, 0.2]);
         assert_eq!(descriptors[0].parametric_rim_color_factor, [0.2, 0.3, 0.4]);
