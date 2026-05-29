@@ -1,2 +1,3 @@
 /target
 .external-fixtures/
+node_modules/

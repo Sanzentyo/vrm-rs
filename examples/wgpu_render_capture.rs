@@ -26,12 +26,15 @@ struct Vertex {
     normal: [f32; 3],
     tex_coord: [f32; 2],
     color: [f32; 4],
+    shade_color: [f32; 4],
+    shading: [f32; 4],
+    emissive: [f32; 4],
     alpha_mode: f32,
     _padding: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -249,7 +252,7 @@ fn draw_primitive(
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
-    let color = material_color(loaded, primitive.material);
+    let shading = material_shading(loaded, primitive.material);
     let policy = material_policy(loaded, primitive.material);
     let vertices = primitive
         .positions
@@ -278,7 +281,20 @@ fn draw_primitive(
                 position: position.to_array(),
                 normal: normal.to_array(),
                 tex_coord,
-                color,
+                color: shading.base_color,
+                shade_color: shading.shade_color,
+                shading: [
+                    shading.shading_shift,
+                    shading.shading_toony,
+                    shading.gi_equalization,
+                    0.0,
+                ],
+                emissive: [
+                    shading.emissive[0],
+                    shading.emissive[1],
+                    shading.emissive[2],
+                    0.0,
+                ],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
                 _padding: [0.0; 3],
             }
@@ -393,18 +409,55 @@ fn transform_vertex(
     }
 }
 
-fn material_color(loaded: &LoadedVrm, material: Option<usize>) -> [f32; 4] {
-    if let Some(color) = material
+#[derive(Clone, Copy, Debug)]
+struct MaterialShading {
+    base_color: [f32; 4],
+    shade_color: [f32; 4],
+    shading_shift: f32,
+    shading_toony: f32,
+    gi_equalization: f32,
+    emissive: [f32; 3],
+}
+
+fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
+    if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .map(|mtoon| mtoon.base_color_factor)
+        .and_then(|material| {
+            let mtoon = material.mtoon.as_ref()?;
+            let (emissive_strength, _) = material.effective_emissive_strength();
+            Some(MaterialShading {
+                base_color: mtoon.base_color_factor,
+                shade_color: [
+                    mtoon.shade_color_factor[0],
+                    mtoon.shade_color_factor[1],
+                    mtoon.shade_color_factor[2],
+                    1.0,
+                ],
+                shading_shift: mtoon.shading_shift_factor,
+                shading_toony: mtoon.shading_toony_factor,
+                gi_equalization: mtoon.gi_equalization_factor,
+                emissive: [
+                    mtoon.emissive_factor[0] * emissive_strength.0,
+                    mtoon.emissive_factor[1] * emissive_strength.0,
+                    mtoon.emissive_factor[2] * emissive_strength.0,
+                ],
+            })
+        })
     {
-        return color;
+        return shading;
     }
-    material
+    let base_color = material
         .and_then(|index| loaded.gltf_materials.get(index))
         .map(|material| material.base_color_factor)
-        .unwrap_or([0.78, 0.78, 0.78, 1.0])
+        .unwrap_or([0.78, 0.78, 0.78, 1.0]);
+    MaterialShading {
+        base_color,
+        shade_color: base_color,
+        shading_shift: 0.0,
+        shading_toony: 0.0,
+        gi_equalization: 0.0,
+        emissive: [0.0, 0.0, 0.0],
+    }
 }
 
 fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
@@ -903,7 +956,7 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
         0.01,
         100.0,
     );
-    let light_dir = Vec3::new(0.5, 1.0, 0.5).normalize();
+    let light_dir = Vec3::new(1.0, 1.0, 1.0).normalize();
     Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
@@ -970,7 +1023,10 @@ struct VertexIn {
     @location(1) normal: vec3<f32>,
     @location(2) tex_coord: vec2<f32>,
     @location(3) color: vec4<f32>,
-    @location(4) alpha_mode: f32,
+    @location(4) shade_color: vec4<f32>,
+    @location(5) shading: vec4<f32>,
+    @location(6) emissive: vec4<f32>,
+    @location(7) alpha_mode: f32,
 };
 
 struct VertexOut {
@@ -978,7 +1034,10 @@ struct VertexOut {
     @location(0) normal: vec3<f32>,
     @location(1) tex_coord: vec2<f32>,
     @location(2) color: vec4<f32>,
-    @location(3) alpha_mode: f32,
+    @location(3) shade_color: vec4<f32>,
+    @location(4) shading: vec4<f32>,
+    @location(5) emissive: vec4<f32>,
+    @location(6) alpha_mode: f32,
 };
 
 @vertex
@@ -988,20 +1047,35 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.normal = normalize(input.normal);
     out.tex_coord = input.tex_coord;
     out.color = input.color;
+    out.shade_color = input.shade_color;
+    out.shading = input.shading;
+    out.emissive = input.emissive;
     out.alpha_mode = input.alpha_mode;
     return out;
 }
 
+fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
+}
+
 @fragment
 fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let ndotl = max(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), 0.0);
-    let lit = 0.25 + 0.75 * ndotl;
+    let ndotl = clamp(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, input.tex_coord);
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
         discard;
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 0.5);
-    return vec4<f32>(input.color.rgb * texel.rgb * lit, opaque_alpha);
+    let diffuse = input.color.rgb * texel.rgb;
+    let shade = input.shade_color.rgb * texel.rgb;
+    let shift = input.shading.x;
+    let toony = input.shading.y;
+    let gi = input.shading.z;
+    let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
+    let direct = mix(shade, diffuse, toon);
+    let ambient = diffuse * (0.1 + 0.15 * gi);
+    let color = direct + ambient + input.emissive.rgb;
+    return vec4<f32>(color, opaque_alpha);
 }
 "#;

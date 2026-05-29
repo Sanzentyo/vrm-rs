@@ -72,6 +72,9 @@ node tools\render-parity\three-vrm-browser-capture.mjs `
 
 The local smoke run on 2026-05-29 captured Seed-san at `256x256`, wrote a PNG
 for visual review, and self-compared the RGBA output with PSNR `Infinity`.
+The capture JSON is normalized to top-left row order even though WebGL
+`readPixels` returns bottom-left rows, so Bevy/wgpu/ash readbacks can compare
+the same row convention.
 
 ## Renderer Input Data
 
@@ -101,13 +104,13 @@ cargo run --example wgpu_render_capture -- `
 ```
 
 The local smoke run on 2026-05-29 successfully wrote wgpu RGBA/PNG artifacts
-from the real Seed-san mesh primitives. The first textured, rest-skinned PSNR
-against the three-vrm reference is `9.70 dB`, which is intentionally recorded
-as a failing visual parity baseline: the current path draws rest-pose mesh
-primitives with PBR base-color texture fallback and a small diffuse shader.
-The capture path now consumes MToon-derived render order, cull mode, alpha mask
-discard, blend state, and depth-write policy. Next parity work should add
-expression state and fuller MToon lighting before tightening thresholds.
+from the real Seed-san mesh primitives. The early textured, rest-skinned PSNR
+against the three-vrm reference was `9.70 dB`. After normalizing the three-vrm
+readback row order and adding a first MToon-like shade color/toony/shift,
+ambient, and emissive pass, the local Seed-san baseline is `20.75 dB`.
+This is still a failing visual parity baseline: the current path does not yet
+apply expression state, outline expansion, shade/matcap/rim secondary textures,
+normal maps, or exact three.js/MToon light accumulation.
 
 ## Review Criteria
 

@@ -157,6 +157,8 @@
 - Extended `vrm-io` with decoded image metadata, texture-to-image mapping, and glTF PBR material base-color texture data. The wgpu capture now samples base-color textures and uses the three-vrm-facing camera convention; the Seed-san local PSNR baseline rose to `9.64 dB`.
 - Added glTF skin extraction (`LoadedVrm::skins`, node skin refs, `JOINTS_0`, `WEIGHTS_0`, inverse bind matrices) and CPU rest-skinning in the wgpu capture path. The local Seed-san PSNR baseline is now `9.70 dB`, with the remaining gap concentrated in MToon lighting/material ordering/expression state rather than basic textured mesh input.
 - Wired MToon-derived render order, cull mode, alpha mask discard, blend state, and depth-write policy into the wgpu render capture pipelines. The Seed-san baseline remains `9.70 dB`, but alpha/cull/material-order parity is no longer hard-coded to a single back-face opaque pipeline.
+- Fixed the three-vrm browser capture RGBA row convention by flipping WebGL `readPixels` output into top-left order, and fixed the canvas CSS size used for PNG review. The corrected local Seed-san wgpu-vs-three-vrm PSNR baseline rose to `17.73 dB`.
+- Added a first MToon-like shading approximation to the wgpu render capture: shade color, shading shift/toony, GI-biased ambient, directional light direction matching the three-vrm capture, and effective KHR/HDR emissive strength now feed the shader. The local Seed-san baseline rose to `20.75 dB`; remaining parity work is exact MToon light accumulation, secondary MToon textures, outlines, normal maps, and runtime expression state.
 
 Open work:
 

@@ -139,7 +139,7 @@ try {
 function capturePage(options) {
   return `<!doctype html>
 <meta charset="utf-8">
-<canvas id="canvas" width="${options.width}" height="${options.height}"></canvas>
+<canvas id="canvas" width="${options.width}" height="${options.height}" style="width:${options.width}px;height:${options.height}px;display:block"></canvas>
 <script type="importmap">
   {
     "imports": {
@@ -189,8 +189,15 @@ function capturePage(options) {
     renderer.render(scene, camera);
 
     const gl = renderer.getContext();
-    const rgba = new Uint8Array(${options.width} * ${options.height} * 4);
-    gl.readPixels(0, 0, ${options.width}, ${options.height}, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    const readback = new Uint8Array(${options.width} * ${options.height} * 4);
+    gl.readPixels(0, 0, ${options.width}, ${options.height}, gl.RGBA, gl.UNSIGNED_BYTE, readback);
+    const rgba = new Uint8Array(readback.length);
+    const rowBytes = ${options.width} * 4;
+    for (let y = 0; y < ${options.height}; y += 1) {
+      const source = (${options.height} - 1 - y) * rowBytes;
+      const destination = y * rowBytes;
+      rgba.set(readback.subarray(source, source + rowBytes), destination);
+    }
     renderer.dispose();
     return { rgba: Array.from(rgba) };
   };
