@@ -318,17 +318,13 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
     let humanoid = vrm.humanoid.unwrap_or_default();
     let first_person = vrm.first_person;
     let secondary_animation = vrm.secondary_animation;
-    let material_properties = vrm.material_properties;
+    let material_properties = vrm.material_properties.unwrap_or_default();
     let material_name_to_index = material_properties
-        .as_ref()
-        .map(|materials| {
-            materials
-                .iter()
-                .enumerate()
-                .filter_map(|(index, material)| material.name.clone().map(|name| (name, index)))
-                .collect::<std::collections::HashMap<_, _>>()
-        })
-        .unwrap_or_default();
+        .iter()
+        .enumerate()
+        .filter_map(|(index, material)| material.name.clone().map(|name| (name, index)))
+        .collect::<std::collections::HashMap<_, _>>();
+    let material_queue_map = Vrm0MaterialQueueMap::from_materials(&material_properties);
     let mut document = VrmDocument {
         kind: VrmKind::Vrm0Compat,
         compatibility: Compatibility {
@@ -396,9 +392,8 @@ fn map_vrm0(vrm: vrm0::Vrm) -> Result<VrmDocument, BuildError> {
     }
 
     document.materials = material_properties
-        .unwrap_or_default()
         .into_iter()
-        .map(map_vrm0_material)
+        .map(|material| map_vrm0_material(material, &material_queue_map))
         .collect();
 
     Ok(document)
@@ -600,15 +595,75 @@ fn vec3_vrm0_collider(value: Option<[f32; 3]>) -> Vec3 {
     value.map_or(Vec3::ZERO, |value| Vec3::new(value[0], value[1], -value[2]))
 }
 
-fn map_vrm0_material(material: vrm0::Material) -> Material {
-    let render_queue = material.render_queue.unwrap_or(2000);
+#[derive(Clone, Debug, Default)]
+struct Vrm0MaterialQueueMap {
+    transparent: std::collections::HashMap<i32, i32>,
+    transparent_z_write: std::collections::HashMap<i32, i32>,
+}
+
+impl Vrm0MaterialQueueMap {
+    fn from_materials(materials: &[vrm0::Material]) -> Self {
+        let mut transparent = std::collections::BTreeSet::new();
+        let mut transparent_z_write = std::collections::BTreeSet::new();
+
+        materials
+            .iter()
+            .filter(|material| is_vrm0_transparent_material(material))
+            .filter_map(|material| material.render_queue.map(|queue| (material, queue)))
+            .for_each(|(material, queue)| {
+                if is_vrm0_z_write_enabled(material) {
+                    transparent_z_write.insert(queue);
+                } else {
+                    transparent.insert(queue);
+                }
+            });
+
+        Self {
+            transparent: transparent
+                .iter()
+                .enumerate()
+                .map(|(index, queue)| {
+                    let offset = ((index as i32) - (transparent.len() as i32) + 1).clamp(-9, 0);
+                    (*queue, offset)
+                })
+                .collect(),
+            transparent_z_write: transparent_z_write
+                .iter()
+                .enumerate()
+                .map(|(index, queue)| (*queue, (index as i32).clamp(0, 9)))
+                .collect(),
+        }
+    }
+
+    fn offset_for(&self, material: &vrm0::Material) -> i32 {
+        if !is_vrm0_transparent_material(material) {
+            return 0;
+        }
+        material
+            .render_queue
+            .and_then(|queue| {
+                if is_vrm0_z_write_enabled(material) {
+                    self.transparent_z_write.get(&queue).copied()
+                } else {
+                    self.transparent.get(&queue).copied()
+                }
+            })
+            .unwrap_or(0)
+    }
+}
+
+fn map_vrm0_material(
+    material: vrm0::Material,
+    material_queue_map: &Vrm0MaterialQueueMap,
+) -> Material {
+    let render_queue_offset_number = material_queue_map.offset_for(&material);
     let float_properties = material.float_properties.unwrap_or_default();
     let vector_properties = material.vector_properties.unwrap_or_default();
     let texture_properties = material.texture_properties.unwrap_or_default();
     let keyword_map = material.keyword_map.unwrap_or_default();
-    let is_transparent = keyword_map.contains_key("_ALPHABLEND_ON") || render_queue >= 3000;
-    let is_cutoff =
-        keyword_map.contains_key("_ALPHATEST_ON") || (2450..3000).contains(&render_queue);
+    let is_transparent =
+        is_vrm0_transparent_from_parts(material.shader.as_deref(), Some(&keyword_map));
+    let is_cutoff = keyword_map.contains_key("_ALPHATEST_ON");
     let queue = if is_transparent {
         MtoonRenderQueue::Transparent
     } else if is_cutoff {
@@ -616,19 +671,12 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
     } else {
         MtoonRenderQueue::Opaque
     };
-    let render_queue_offset_number = render_queue
-        - match queue {
-            MtoonRenderQueue::Auto | MtoonRenderQueue::Opaque => 2000,
-            MtoonRenderQueue::AlphaTest => 2450,
-            MtoonRenderQueue::Transparent => 3000,
-        };
-
     let shader = material.shader.unwrap_or_default();
     let (shading_shift_factor, shading_toony_factor) = map_vrm0_mtoon_shading(&float_properties);
     let gi_equalization_factor = map_vrm0_gi_equalization(&float_properties);
     let mtoon = shader.contains("MToon").then(|| MtoonMaterial {
         transparent_with_z_write: is_transparent
-            && float_property(&float_properties, "_ZWrite").unwrap_or(0.0) > 0.0,
+            && is_vrm0_z_write_enabled_from_parts(Some(shader.as_str()), Some(&float_properties)),
         render_queue_offset_number,
         render_queue: queue,
         cull_mode: map_vrm0_cull_mode(float_property(&float_properties, "_CullMode")),
@@ -702,6 +750,34 @@ fn map_vrm0_material(material: vrm0::Material) -> Material {
         mtoon: mtoon.map_or(Feature::Absent, Feature::Present),
         ..Material::default()
     }
+}
+
+fn is_vrm0_transparent_material(material: &vrm0::Material) -> bool {
+    is_vrm0_transparent_from_parts(material.shader.as_deref(), material.keyword_map.as_ref())
+}
+
+fn is_vrm0_transparent_from_parts(
+    shader: Option<&str>,
+    keyword_map: Option<&vrm_protocol::AnyMap>,
+) -> bool {
+    keyword_map.is_some_and(|map| map.contains_key("_ALPHABLEND_ON"))
+        || shader == Some("VRM/UnlitTransparent")
+        || shader == Some("VRM/UnlitTransparentZWrite")
+}
+
+fn is_vrm0_z_write_enabled(material: &vrm0::Material) -> bool {
+    is_vrm0_z_write_enabled_from_parts(
+        material.shader.as_deref(),
+        material.float_properties.as_ref(),
+    )
+}
+
+fn is_vrm0_z_write_enabled_from_parts(
+    shader: Option<&str>,
+    float_properties: Option<&vrm_protocol::AnyMap>,
+) -> bool {
+    shader == Some("VRM/UnlitTransparentZWrite")
+        || float_properties.and_then(|map| float_property(map, "_ZWrite")) == Some(1.0)
 }
 
 fn map_vrm0_mtoon_shading(float_properties: &vrm_protocol::AnyMap) -> (f32, f32) {
@@ -1327,6 +1403,11 @@ mod tests {
                     name: Some("legacy-mtoon".to_owned()),
                     shader: Some("VRM/MToon".to_owned()),
                     render_queue: Some(3001),
+                    keyword_map: Some(
+                        [("_ALPHABLEND_ON".to_owned(), serde_json::json!(true))]
+                            .into_iter()
+                            .collect(),
+                    ),
                     float_properties: Some(
                         [
                             ("_OutlineWidthMode".to_owned(), serde_json::json!(1.0)),
@@ -1416,7 +1497,7 @@ mod tests {
         assert_eq!(spring_bone.springs[0].joints[0].node, NodeRef(2));
         let mtoon = asset.document.materials[0].mtoon.as_ref().unwrap();
         assert!(mtoon.outline_enabled());
-        assert_eq!(mtoon.render_order(), 3001);
+        assert_eq!(mtoon.render_order(), 3000);
         assert_eq!(mtoon.cull_mode, MtoonCullMode::Off);
         assert_eq!(mtoon.pipeline_hints().alpha_mode, MtoonAlphaMode::Blend);
         assert_vec4_close(
@@ -1468,6 +1549,78 @@ mod tests {
             mtoon.textures.uv_animation_mask_texture,
             Some(TextureRef(9))
         );
+    }
+
+    #[test]
+    fn maps_vrm0_transparent_render_queues_like_three_vrm_v0compat() {
+        fn transparent_material(name: &str, queue: i32, z_write: bool) -> vrm0::Material {
+            let mut float_properties = vrm_protocol::AnyMap::default();
+            if z_write {
+                float_properties.insert("_ZWrite".to_owned(), serde_json::json!(1.0));
+            }
+            vrm0::Material {
+                name: Some(name.to_owned()),
+                shader: Some("VRM/MToon".to_owned()),
+                render_queue: Some(queue),
+                keyword_map: Some(
+                    [("_ALPHABLEND_ON".to_owned(), serde_json::json!(true))]
+                        .into_iter()
+                        .collect(),
+                ),
+                float_properties: Some(float_properties),
+                ..Default::default()
+            }
+        }
+
+        let bundle = ExtensionBundle {
+            vrm: Some(VrmExtension::Vrm0(Box::new(vrm0::Vrm {
+                meta: Some(vrm0::Meta {
+                    title: Some("legacy".to_owned()),
+                    ..Default::default()
+                }),
+                humanoid: Some(vrm0::Humanoid {
+                    human_bones: required_vrm0_bones(),
+                    ..Default::default()
+                }),
+                material_properties: Some(vec![
+                    transparent_material("blend-a", 3000, false),
+                    transparent_material("blend-b", 3100, false),
+                    transparent_material("blend-c", 3200, false),
+                    transparent_material("zwrite-a", 3000, true),
+                    transparent_material("zwrite-b", 3100, true),
+                    vrm0::Material {
+                        name: Some("queue-alone-is-opaque".to_owned()),
+                        shader: Some("VRM/MToon".to_owned()),
+                        render_queue: Some(2999),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+
+        let asset = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap();
+        let mtoon = |index: usize| asset.document.materials[index].mtoon.as_ref().unwrap();
+
+        assert_eq!(mtoon(0).render_queue_offset_number, -2);
+        assert_eq!(mtoon(1).render_queue_offset_number, -1);
+        assert_eq!(mtoon(2).render_queue_offset_number, 0);
+        assert_eq!(mtoon(0).render_order(), 2998);
+        assert_eq!(mtoon(1).render_order(), 2999);
+        assert_eq!(mtoon(2).render_order(), 3000);
+
+        assert_eq!(mtoon(3).render_queue_offset_number, 0);
+        assert_eq!(mtoon(4).render_queue_offset_number, 1);
+        assert!(mtoon(3).pipeline_hints().depth_write);
+        assert!(mtoon(4).pipeline_hints().depth_write);
+
+        assert_eq!(mtoon(5).render_queue, MtoonRenderQueue::Opaque);
+        assert_eq!(mtoon(5).render_queue_offset_number, 0);
+        assert_eq!(mtoon(5).render_order(), 2000);
     }
 
     #[test]

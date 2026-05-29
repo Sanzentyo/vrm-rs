@@ -147,14 +147,14 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.64% | 81.93% |
+| Workspace total | 78.93% | 82.17% |
 | `vrm-adapter-bevy` | 92.73% | 94.47% |
 | `vrm-adapter` | 61.38% | 71.19% |
 | `vrm-core` | 69.52% | 75.92% |
 | `vrm-io` | 80.24% | 77.49% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.27% | 88.10% |
-| `vrm-sans-io` | 91.77% | 95.14% |
+| `vrm-sans-io` | 92.69% | 95.68% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
 The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, and stable errors for invalid expression/lookAt animation paths.
