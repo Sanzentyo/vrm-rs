@@ -114,6 +114,20 @@ indirect diffuse uses `pbrAmbient`, and rim lighting uses the same
 direct-plus-indirect accumulator (`1.0 + pbrAmbient`) as the three-vrm
 non-physical-light path.
 
+For a license-safe transparent material audit, generate the local source-like
+fixture and render it on a transparent background:
+
+```powershell
+just render-parity-transparent-generated
+```
+
+This writes `.external-fixtures/generated/transparent-blend.vrm.gltf` and
+renders it into `.external-fixtures/render-parity-transparent-generated/`. The
+fixture contains two overlapping VRM1 MToon `BLEND` primitives, one with
+`transparentWithZWrite`, so the run checks both partial-alpha accumulation and
+depth-write policy without committing binary sample assets. The alpha mismatch
+tolerance is intentionally zero for this generated fixture.
+
 ## three-vrm Capture
 
 The first reference capture path is a browser script that renders a VRM through

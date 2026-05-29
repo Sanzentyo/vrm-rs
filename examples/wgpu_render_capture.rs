@@ -576,9 +576,10 @@ fn draw_primitive(
 }
 
 fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicy {
-    let mut policy = material
+    let mtoon = material
         .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|material| material.mtoon.as_ref());
+    let mut policy = mtoon
         .map(|mtoon| {
             let hints = mtoon.pipeline_hints();
             MaterialPolicy {
@@ -600,6 +601,7 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
             }
             GltfAlphaMode::Blend => {
                 policy.alpha_mode = CaptureAlphaMode::Blend;
+                policy.depth_write = mtoon.is_some_and(|mtoon| mtoon.transparent_with_z_write);
                 policy.blend = true;
                 policy.render_order = policy.render_order.max(3000);
             }

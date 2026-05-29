@@ -23,6 +23,15 @@ render-parity-samples three_vrm_root="D:/git/three-vrm" background="opaque-black
 render-parity-uv-animation three_vrm_root="D:/git/three-vrm" time="1.0" background="opaque-black" light_accumulation="tuned":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-uv-animation --render-mtoon-time {{ time }} --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}" --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_materials_mtoon_UV_Animation_Test/VRMC_materials_mtoon_UV_Animation_Test.vrm
 
+# Generate the source-like local transparent MToon fixture.
+generate-transparent-fixture:
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
+
+# Regenerate transparent-background alpha/blend parity artifacts for the generated fixture.
+render-parity-transparent-generated three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-fixture .external-fixtures/generated/transparent-blend.vrm.gltf
+
 # Prepare external inputs and regenerate the default render parity artifact set from scratch.
 render-parity-full:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
