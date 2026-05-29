@@ -42,6 +42,8 @@ use std::time::Duration;
 use vrm_core::{MtoonAlphaMode, MtoonCullMode};
 use vrm_io::{GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path};
 
+const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
+
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse()?;
     let loaded = load_vrm_from_path(&options.fixture)?;
@@ -528,7 +530,7 @@ fn vertex_mtoon_color(normal: GVec3, shading: MaterialShading) -> [f32; 4] {
     ]);
     let ambient = diffuse * (0.1 + 0.15 * shading.gi_equalization);
     let emissive = GVec3::from_array(shading.emissive);
-    let color = shade.lerp(diffuse, toon) + ambient + emissive;
+    let color = (shade.lerp(diffuse, toon) + ambient + emissive) * MTOON_REFERENCE_EXPOSURE;
     [color.x, color.y, color.z, shading.base_color[3]]
 }
 

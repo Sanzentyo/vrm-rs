@@ -1164,6 +1164,8 @@ fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
+const MTOON_REFERENCE_EXPOSURE: f32 = 0.80;
+
 @fragment
 fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let ndotl = clamp(dot(normalize(input.normal), normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
@@ -1181,7 +1183,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     let direct = mix(shade, diffuse, toon);
     let ambient = diffuse * (0.1 + 0.15 * gi);
-    let color = direct + ambient + input.emissive.rgb;
+    let color = (direct + ambient + input.emissive.rgb) * MTOON_REFERENCE_EXPOSURE;
     return vec4<f32>(color, opaque_alpha);
 }
 "#;

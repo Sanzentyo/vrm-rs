@@ -169,6 +169,7 @@
 - Improved renderer parity baselines from the heatmap pass. The wgpu capture now matches the three-vrm camera clip range and directional-light vector convention, raising Seed-san from `20.75 dB` to `24.32 dB`. The Bevy capture keeps stock `StandardMaterial` but bakes an approximate MToon light response into vertex colors, raising Seed-san from `23.64 dB` to `23.77 dB`.
 - Added first-pass world-coordinate MToon outline expansion to both capture paths. The wgpu Seed-san baseline rose to `25.89 dB`, and the Bevy baseline rose to `24.07 dB`; the remaining outline gap is exact width texture handling and shader-level details.
 - Added outline width multiply texture sampling for expanded outline capture geometry. The wgpu Seed-san baseline rose again to `25.98 dB`; the Bevy baseline is effectively unchanged at `24.07 dB` but now follows the same outline width input path.
+- Tuned the capture-only MToon lighting approximation after measuring that both Rust render paths were roughly 9% brighter than the three-vrm reference on opaque shared pixels. The wgpu Seed-san baseline rose to `27.50 dB`, and the Bevy baseline rose to `24.98 dB`.
 
 Open work:
 
