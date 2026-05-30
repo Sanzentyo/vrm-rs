@@ -59,7 +59,8 @@ fn fixture_json() -> String {
         },
         "extensionsUsed": [
             "VRMC_vrm",
-            "VRMC_materials_mtoon"
+            "VRMC_materials_mtoon",
+            "KHR_materials_emissive_strength"
         ],
         "scene": 0,
         "scenes": [{ "nodes": [0] }],
@@ -229,6 +230,8 @@ fn mtoon_materials() -> Vec<Value> {
         mtoon_material("mixed-rim", [0.25, 0.18, 0.50, 1.0], [0.04, 0.03, 0.10], 0.0, 0.9, 0.5, 1.0, [0.4, 0.8, 1.0], Some([0.35, 0.55, 1.0]), false),
         mtoon_material("toon-ramp-lit-normal", [0.94, 0.58, 0.08, 1.0], [0.08, 0.04, 0.01], 0.0, 0.0, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
         mtoon_material("toon-ramp-shade-normal", [0.58, 1.0, 0.18, 1.0], [0.02, 0.16, 0.02], 0.0, 0.0, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+        emissive_mtoon_material("emissive-factor", [0.16, 0.24, 0.42], None, false),
+        emissive_mtoon_material("emissive-texture-strength", [0.18, 0.22, 0.36], Some(1.75), true),
     ]
 }
 
@@ -280,16 +283,47 @@ fn mtoon_material(
     material
 }
 
+fn emissive_mtoon_material(
+    name: &str,
+    emissive_factor: [f32; 3],
+    emissive_strength: Option<f32>,
+    emissive_texture: bool,
+) -> Value {
+    let mut material = mtoon_material(
+        name,
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0],
+        -1.5,
+        0.9,
+        0.0,
+        0.0,
+        [0.0, 0.0, 0.0],
+        None,
+        false,
+    );
+    material["emissiveFactor"] = json!(emissive_factor);
+    if emissive_texture {
+        material["emissiveTexture"] = json!({ "index": 0 });
+    }
+    if let Some(strength) = emissive_strength {
+        material["extensions"]["KHR_materials_emissive_strength"] =
+            json!({ "emissiveStrength": strength });
+    }
+    material
+}
+
 fn mesh_buffer() -> Vec<u8> {
     let quads = [
-        (-0.78f32, -0.43f32, 0.25f32, 0.95f32),
-        (-0.38, -0.03, 0.25, 0.95),
-        (0.03, 0.38, 0.25, 0.95),
-        (0.43, 0.78, 0.25, 0.95),
-        (-0.78, -0.43, 1.05, 1.75),
-        (-0.38, -0.03, 1.05, 1.75),
-        (0.03, 0.38, 1.05, 1.75),
-        (0.43, 0.78, 1.05, 1.75),
+        (-0.78f32, -0.43f32, 0.25f32, 0.67f32),
+        (-0.38, -0.03, 0.25, 0.67),
+        (0.03, 0.38, 0.25, 0.67),
+        (0.43, 0.78, 0.25, 0.67),
+        (-0.78, -0.43, 0.79, 1.21),
+        (-0.38, -0.03, 0.79, 1.21),
+        (0.03, 0.38, 0.79, 1.21),
+        (0.43, 0.78, 0.79, 1.21),
+        (-0.38, -0.03, 1.33, 1.75),
+        (0.03, 0.38, 1.33, 1.75),
     ];
     let normal_vectors = [
         [0.0f32, 0.0, 1.0],
@@ -300,6 +334,8 @@ fn mesh_buffer() -> Vec<u8> {
         [0.0, 0.0, 1.0],
         [-0.8164966, -0.4082483, 0.4082483],
         [0.8164966, 0.0, 0.57735026],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
     ];
     let positions = quads
         .iter()

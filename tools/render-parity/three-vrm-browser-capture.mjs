@@ -130,6 +130,7 @@ try {
     width,
     height,
     camera: { y: cameraY, z: cameraZ, targetY },
+    reference: capture.reference,
     mtoonTime,
     format: 'rgba8',
     rgba: capture.rgba,
@@ -190,7 +191,8 @@ function capturePage(options) {
     const light = new THREE.DirectionalLight(0xffffff, Math.PI);
     light.position.set(1.0, 1.0, 1.0).normalize();
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.1));
+    const ambient = new THREE.AmbientLight(0xffffff, 0.1);
+    scene.add(ambient);
 
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -216,8 +218,39 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
+    const reference = {
+      threeRevision: THREE.REVISION,
+      renderer: {
+        outputColorSpace: renderer.outputColorSpace,
+        toneMapping: renderer.toneMapping,
+        toneMappingExposure: renderer.toneMappingExposure,
+        alpha: ${transparent},
+        clearAlpha: ${clearAlpha},
+        antialias: false,
+        premultipliedAlpha: false,
+      },
+      lighting: {
+        directional: {
+          color: '#ffffff',
+          intensity: Math.PI,
+          position: light.position.toArray(),
+        },
+        ambient: {
+          color: '#ffffff',
+          intensity: ambient.intensity,
+        },
+      },
+      camera: {
+        fov: camera.fov,
+        aspect: camera.aspect,
+        near: camera.near,
+        far: camera.far,
+        position: camera.position.toArray(),
+        target: [0.0, ${options.targetY}, 0.0],
+      },
+    };
     renderer.dispose();
-    return { rgba: Array.from(rgba) };
+    return { rgba: Array.from(rgba), reference };
   };
 </script>`;
 }

@@ -153,27 +153,28 @@ just render-parity-mtoon-light-generated
 
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
-contains eight opaque MToon quads for forced base lighting, forced shade
+contains ten opaque MToon quads for forced base lighting, forced shade
 lighting, ambient behavior with a glTF `occlusionTexture` that three-vrm MToon
-ignores, parametric rim, matcap rim, mixed rim/matcap, and two low-toony ramp
-materials with angled normals. It
+ignores, parametric rim, matcap rim, mixed rim/matcap, two low-toony ramp
+materials with angled normals, pure `emissiveFactor`, and `emissiveTexture`
+multiplied by `KHR_materials_emissive_strength`. It
 uses `--mtoon-light-accumulation three-vrm`,
 `--render-background transparent`, and selected metric `rgb-interior1px` so a
 one-pixel silhouette/rasterization disagreement does not dominate the shader
-color score. The current run reports selected PSNR wgpu `58.9193 dB` with max
-selected channel delta `1`, and Bevy `52.3057 dB` with max selected channel
+color score. The current run reports selected PSNR wgpu `58.9968 dB` with max
+selected channel delta `1`, and Bevy `51.8032 dB` with max selected channel
 delta `2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
 disabled for parity while still extracting and applying glTF occlusion to
 non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is
-`444` pixels and the recipe
+`330` pixels and the recipe
 allows up to `512`; use the strict transparent generated fixture below for
 alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
 when changing MToon accumulation code. The remaining broad-fixture PSNR gap is
 therefore more likely to come from real model runtime/material breadth,
 post-correction, outline edges, and fixture coverage than from this isolated
-base/shade/rim/matcap color formula.
+base/shade/rim/matcap/emission color formula.
 
 For a generated MToon texture-slot audit, run:
 
@@ -370,6 +371,12 @@ for visual review, and self-compared the RGBA output with PSNR `Infinity`.
 The capture JSON is normalized to top-left row order even though WebGL
 `readPixels` returns bottom-left rows, so Bevy/wgpu/ash readbacks can compare
 the same row convention.
+The three-vrm capture JSON also records a `reference` metadata block with the
+Three.js revision, renderer output color space/tone mapping, alpha mode, the
+directional and ambient light setup, and the fixed camera frustum. This makes
+MToon light/color comparisons traceable even though the three-vrm shader uses
+Three.js scene-light accumulation rather than vrm-rs' aggregate capture
+uniform.
 
 The canonical comparison images for the current local sample sweep are:
 

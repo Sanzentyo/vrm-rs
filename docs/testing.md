@@ -103,6 +103,10 @@ under `.external-fixtures/render-parity/three-vrm/`,
 If `tools/render-parity/three-vrm-browser-capture.mjs` is invoked directly
 with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
 not from a browser canvas screenshot/data URL.
+The three-vrm RGBA JSON additionally records `reference` metadata for the
+Three.js revision, output color space, tone mapping, directional/ambient light
+setup, alpha mode, and camera frustum so light/color parity reports can be
+audited against the actual reference scene conditions.
 The PSNR report additionally includes alpha counts/mismatches plus RGB-only
 full-canvas, opaque, visible, and 1px-interior metrics to identify whether
 remaining deltas come from silhouettes/alpha or from opaque-surface shading. When
