@@ -39,7 +39,7 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{Receiver, Sender};
-use glam::{Mat4, Vec3 as GVec3};
+use glam::{Mat4, Vec3 as GVec3, Vec4 as GVec4};
 use serde_json::json;
 use std::error::Error;
 use std::fs;
@@ -51,7 +51,8 @@ use std::sync::{
 use std::time::Duration;
 use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d, VrmKind};
 use vrm_io::{
-    GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+    GltfAlphaMode, GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat,
+    LoadedVrm, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -333,11 +334,13 @@ fn spawn_vrm_meshes(
             .skin
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
+        let morph_weights = active_morph_weights(node, mesh);
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
             let render_order = material_render_order(loaded, primitive.material);
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
+                morph_weights,
                 world,
                 skin_matrices.as_deref(),
                 shading.normal_scale > 0.0,
@@ -365,6 +368,7 @@ fn spawn_vrm_meshes(
                 && let Some(outline) = bevy_outline_primitive(
                     loaded,
                     primitive,
+                    morph_weights,
                     world,
                     skin_matrices.as_deref(),
                     options,
@@ -396,6 +400,7 @@ fn spawn_vrm_meshes(
 fn bevy_outline_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
+    morph_weights: &[f32],
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     options: &CaptureOptions,
@@ -418,6 +423,7 @@ fn bevy_outline_primitive(
     let uv_transforms = material_uv_transforms(loaded, primitive.material, options.mtoon_time);
     let mesh = bevy_outline_mesh(
         primitive,
+        morph_weights,
         world,
         skin_matrices,
         BevyOutlineMeshSettings {
@@ -451,6 +457,7 @@ fn bevy_outline_primitive(
 
 fn bevy_outline_mesh(
     primitive: &GltfPrimitiveData,
+    morph_weights: &[f32],
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     settings: BevyOutlineMeshSettings<'_>,
@@ -460,10 +467,12 @@ fn bevy_outline_mesh(
         .positions
         .iter()
         .enumerate()
-        .map(|(index, position)| {
+        .map(|(index, _)| {
+            let (local_position, local_normal, _) = morphed_vertex(primitive, index, morph_weights)
+                .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
             let (position, normal) = transform_vertex(
-                GVec3::from_array(*position),
-                primitive_normal(primitive, index),
+                local_position,
+                local_normal,
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
@@ -479,16 +488,26 @@ fn bevy_outline_mesh(
                         ))
                     })
                     .unwrap_or(1.0);
-            outline_position(primitive, index, width, outline_scale, world, skin_matrices)
-                .unwrap_or(position + normal * width * outline_scale.at(position))
-                .to_array()
+            outline_position(
+                primitive,
+                index,
+                morph_weights,
+                width,
+                outline_scale,
+                world,
+                skin_matrices,
+            )
+            .unwrap_or(position + normal * width * outline_scale.at(position))
+            .to_array()
         })
         .collect::<Vec<_>>();
     let normals = (0..primitive.positions.len())
         .map(|index| {
+            let (local_position, local_normal, _) = morphed_vertex(primitive, index, morph_weights)
+                .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
             let (_, normal) = transform_vertex(
-                GVec3::from_array(primitive.positions[index]),
-                primitive_normal(primitive, index),
+                local_position,
+                local_normal,
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
@@ -497,23 +516,26 @@ fn bevy_outline_mesh(
             normal.to_array()
         })
         .collect::<Vec<_>>();
-    let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
-        primitive
-            .tangents
-            .iter()
-            .enumerate()
-            .map(|(index, tangent)| {
-                let direction = transform_direction(
-                    GVec3::new(tangent[0], tangent[1], tangent[2]),
-                    world,
-                    skin_matrices,
-                    primitive.joints_0.get(index).copied(),
-                    primitive.weights_0.get(index).copied(),
-                );
-                [direction.x, direction.y, direction.z, tangent[3]]
-            })
-            .collect::<Vec<_>>()
-    });
+    let tangents =
+        (primitive.tangents.len() == primitive.positions.len()).then(|| {
+            primitive
+                .tangents
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let (_, _, tangent) = morphed_vertex(primitive, index, morph_weights)
+                        .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
+                    let direction = transform_direction(
+                        tangent.truncate(),
+                        world,
+                        skin_matrices,
+                        primitive.joints_0.get(index).copied(),
+                        primitive.weights_0.get(index).copied(),
+                    );
+                    [direction.x, direction.y, direction.z, tangent.w]
+                })
+                .collect::<Vec<_>>()
+        });
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
@@ -572,13 +594,14 @@ impl OutlineScale {
 fn outline_position(
     primitive: &GltfPrimitiveData,
     index: usize,
+    morph_weights: &[f32],
     width: f32,
     outline_scale: OutlineScale,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
 ) -> Option<GVec3> {
-    let position = GVec3::from_array(*primitive.positions.get(index)?);
-    let normal = primitive_normal(primitive, index).normalize_or_zero();
+    let (position, normal, _) = morphed_vertex(primitive, index, morph_weights)?;
+    let normal = normal.normalize_or_zero();
     let transform = blended_vertex_transform(
         world,
         skin_matrices,
@@ -663,8 +686,51 @@ struct BevyImageHandles {
     neutral_normal: Handle<Image>,
 }
 
+fn active_morph_weights<'a>(node: &'a GltfNodeRest, mesh: &'a GltfMeshData) -> &'a [f32] {
+    if node.weights.is_empty() {
+        &mesh.weights
+    } else {
+        &node.weights
+    }
+}
+
+fn morphed_vertex(
+    primitive: &GltfPrimitiveData,
+    index: usize,
+    morph_weights: &[f32],
+) -> Option<(GVec3, GVec3, GVec4)> {
+    let mut position = GVec3::from_array(*primitive.positions.get(index)?);
+    let mut normal = primitive_normal(primitive, index);
+    let base_tangent = primitive
+        .tangents
+        .get(index)
+        .copied()
+        .unwrap_or([1.0, 0.0, 0.0, 1.0]);
+    let mut tangent = GVec3::new(base_tangent[0], base_tangent[1], base_tangent[2]);
+
+    for (target, weight) in primitive
+        .morph_targets
+        .iter()
+        .zip(morph_weights.iter().copied())
+        .filter(|(_, weight)| weight.abs() > f32::EPSILON)
+    {
+        if let Some(delta) = target.positions.get(index).copied() {
+            position += GVec3::from_array(delta) * weight;
+        }
+        if let Some(delta) = target.normals.get(index).copied() {
+            normal += GVec3::from_array(delta) * weight;
+        }
+        if let Some(delta) = target.tangents.get(index).copied() {
+            tangent += GVec3::from_array(delta) * weight;
+        }
+    }
+
+    Some((position, normal, tangent.extend(base_tangent[3])))
+}
+
 fn bevy_mesh(
     primitive: &GltfPrimitiveData,
+    morph_weights: &[f32],
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     generate_tangents: bool,
@@ -673,10 +739,12 @@ fn bevy_mesh(
         .positions
         .iter()
         .enumerate()
-        .map(|(index, position)| {
+        .map(|(index, _)| {
+            let (local_position, local_normal, _) = morphed_vertex(primitive, index, morph_weights)
+                .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
             let (position, _) = transform_vertex(
-                GVec3::from_array(*position),
-                primitive_normal(primitive, index),
+                local_position,
+                local_normal,
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
@@ -687,9 +755,11 @@ fn bevy_mesh(
         .collect::<Vec<_>>();
     let normals = (0..primitive.positions.len())
         .map(|index| {
+            let (local_position, local_normal, _) = morphed_vertex(primitive, index, morph_weights)
+                .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
             let (_, normal) = transform_vertex(
-                GVec3::from_array(primitive.positions[index]),
-                primitive_normal(primitive, index),
+                local_position,
+                local_normal,
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
@@ -704,15 +774,17 @@ fn bevy_mesh(
                 .tangents
                 .iter()
                 .enumerate()
-                .map(|(index, tangent)| {
+                .map(|(index, _)| {
+                    let (_, _, tangent) = morphed_vertex(primitive, index, morph_weights)
+                        .unwrap_or((GVec3::ZERO, GVec3::Z, GVec4::new(1.0, 0.0, 0.0, 1.0)));
                     let direction = transform_direction(
-                        GVec3::new(tangent[0], tangent[1], tangent[2]),
+                        tangent.truncate(),
                         world,
                         skin_matrices,
                         primitive.joints_0.get(index).copied(),
                         primitive.weights_0.get(index).copied(),
                     );
-                    [direction.x, direction.y, direction.z, tangent[3]]
+                    [direction.x, direction.y, direction.z, tangent.w]
                 })
                 .collect::<Vec<_>>(),
         )

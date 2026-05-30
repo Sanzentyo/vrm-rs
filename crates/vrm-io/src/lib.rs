@@ -146,6 +146,7 @@ pub struct GltfNodeRest {
     pub children: Vec<usize>,
     pub mesh: Option<usize>,
     pub skin: Option<usize>,
+    pub weights: Vec<f32>,
     pub local: Transform,
     pub world: Transform,
     pub world_matrix: Mat4,
@@ -159,7 +160,15 @@ pub struct GltfSkinData {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GltfMeshData {
+    pub weights: Vec<f32>,
     pub primitives: Vec<GltfPrimitiveData>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfMorphTargetData {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub tangents: Vec<[f32; 3]>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -173,6 +182,7 @@ pub struct GltfPrimitiveData {
     pub joints_0: Vec<[u16; 4]>,
     pub weights_0: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
+    pub morph_targets: Vec<GltfMorphTargetData>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +197,7 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
     document
         .meshes()
         .map(|mesh| GltfMeshData {
+            weights: mesh.weights().unwrap_or_default().to_vec(),
             primitives: mesh
                 .primitives()
                 .map(|primitive| {
@@ -224,6 +235,14 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         .read_indices()
                         .map(|indices| indices.into_u32().collect())
                         .unwrap_or_else(|| (0..positions.len() as u32).collect());
+                    let morph_targets = reader
+                        .read_morph_targets()
+                        .map(|(positions, normals, tangents)| GltfMorphTargetData {
+                            positions: positions.map(Iterator::collect).unwrap_or_default(),
+                            normals: normals.map(Iterator::collect).unwrap_or_default(),
+                            tangents: tangents.map(Iterator::collect).unwrap_or_default(),
+                        })
+                        .collect();
                     GltfPrimitiveData {
                         material: primitive.material().index(),
                         positions,
@@ -234,6 +253,7 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         joints_0,
                         weights_0,
                         indices,
+                        morph_targets,
                     }
                 })
                 .collect(),
@@ -796,6 +816,7 @@ struct NodeRestGraph {
     children: Vec<Vec<usize>>,
     meshes: Vec<Option<usize>>,
     skins: Vec<Option<usize>>,
+    weights: Vec<Vec<f32>>,
     local_transforms: Vec<Transform>,
     world_transforms: Vec<Transform>,
     world_rotations: Vec<Quat>,
@@ -810,6 +831,7 @@ impl NodeRestGraph {
             children: vec![Vec::new(); node_count],
             meshes: vec![None; node_count],
             skins: vec![None; node_count],
+            weights: vec![Vec::new(); node_count],
             local_transforms: vec![Transform::default(); node_count],
             world_transforms: vec![Transform::default(); node_count],
             world_rotations: vec![Quat::IDENTITY; node_count],
@@ -833,6 +855,7 @@ impl NodeRestGraph {
                     children: self.children[index].clone(),
                     mesh: self.meshes[index],
                     skin: self.skins[index],
+                    weights: self.weights[index].clone(),
                     local: self.local_transforms[index],
                     world: self.world_transforms[index],
                     world_matrix: self.world_matrices[index],
@@ -868,6 +891,7 @@ impl NodeRestGraph {
         self.parents[index] = parent;
         self.meshes[index] = node.mesh().map(|mesh| mesh.index());
         self.skins[index] = node.skin().map(|skin| skin.index());
+        self.weights[index] = node.weights().unwrap_or_default().to_vec();
         if let Some(parent) = parent {
             self.children[parent].push(index);
         }
@@ -1524,9 +1548,10 @@ mod tests {
         let mut sample = generated_vrm1_gltf();
         sample["nodes"][0]["mesh"] = json!(0);
         sample["nodes"][0]["skin"] = json!(0);
+        sample["nodes"][0]["weights"] = json!([0.75]);
         sample["buffers"] = json!([{
-            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AAABAAIA",
-            "byteLength": 222
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AAABAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8=",
+            "byteLength": 260
         }]);
         sample["bufferViews"] = json!([
             { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
@@ -1535,7 +1560,8 @@ mod tests {
             { "buffer": 0, "byteOffset": 96, "byteLength": 24 },
             { "buffer": 0, "byteOffset": 120, "byteLength": 48 },
             { "buffer": 0, "byteOffset": 168, "byteLength": 48 },
-            { "buffer": 0, "byteOffset": 216, "byteLength": 6 }
+            { "buffer": 0, "byteOffset": 216, "byteLength": 6 },
+            { "buffer": 0, "byteOffset": 224, "byteLength": 36 }
         ]);
         sample["accessors"] = json!([
             {
@@ -1581,9 +1607,16 @@ mod tests {
                 "componentType": 5123,
                 "count": 3,
                 "type": "SCALAR"
+            },
+            {
+                "bufferView": 7,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3"
             }
         ]);
         sample["meshes"] = json!([{
+            "weights": [0.25],
             "primitives": [{
                 "attributes": {
                     "POSITION": 0,
@@ -1595,7 +1628,12 @@ mod tests {
                     "TANGENT": 5
                 },
                 "indices": 6,
-                "material": 0
+                "material": 0,
+                "targets": [
+                    {
+                        "POSITION": 7
+                    }
+                ]
             }]
         }]);
         sample["skins"] = json!([{
@@ -1606,10 +1644,12 @@ mod tests {
 
         assert_eq!(loaded.scene.node(0).unwrap().mesh, Some(0));
         assert_eq!(loaded.scene.node(0).unwrap().skin, Some(0));
+        assert_eq!(loaded.scene.node(0).unwrap().weights, vec![0.75]);
         assert_eq!(loaded.skins.len(), 1);
         assert_eq!(loaded.skins[0].joints, vec![0]);
         assert_eq!(loaded.skins[0].inverse_bind_matrices, vec![Mat4::IDENTITY]);
         assert_eq!(loaded.meshes.len(), 1);
+        assert_eq!(loaded.meshes[0].weights, vec![0.25]);
         let primitive = &loaded.meshes[0].primitives[0];
         assert_eq!(primitive.material, Some(0));
         assert_eq!(loaded.gltf_materials[0].base_color_factor, [1.0; 4]);
@@ -1633,6 +1673,8 @@ mod tests {
         );
         assert_eq!(primitive.weights_0, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
         assert_eq!(primitive.indices, vec![0, 1, 2]);
+        assert_eq!(primitive.morph_targets.len(), 1);
+        assert_eq!(primitive.morph_targets[0].positions[2], [0.0, 0.0, 0.5]);
     }
 
     #[test]

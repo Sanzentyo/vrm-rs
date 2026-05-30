@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d, VrmKind};
 use vrm_io::{
-    GltfAlphaMode, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
-    load_vrm_from_path,
+    GltfAlphaMode, GltfMeshData, GltfNodeRest, GltfPrimitiveData, GltfSkinData, ImageData,
+    ImageFormat, LoadedVrm, load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -375,14 +375,22 @@ fn mesh_draw_data(
             .skin
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
+        let morph_weights = active_morph_weights(node, mesh);
         for primitive in &mesh.primitives {
-            let surface =
-                draw_primitive(loaded, primitive, world, skin_matrices.as_deref(), options)?;
+            let surface = draw_primitive(
+                loaded,
+                primitive,
+                morph_weights,
+                world,
+                skin_matrices.as_deref(),
+                options,
+            )?;
             primitives.push(surface.clone());
             if !options.disable_outlines
                 && let Some(outline) = outline_primitive(
                     loaded,
                     primitive,
+                    morph_weights,
                     &surface,
                     world,
                     skin_matrices.as_deref(),
@@ -404,6 +412,7 @@ fn mesh_draw_data(
 fn outline_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
+    morph_weights: &[f32],
     surface: &DrawPrimitive,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
@@ -441,10 +450,17 @@ fn outline_primitive(
                     .map(|image| image.sample_green(outline_coord))
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
-            vertex.position =
-                outline_position(primitive, index, width, outline_scale, world, skin_matrices)
-                    .unwrap_or_else(|| Vec3::from_array(vertex.position))
-                    .to_array();
+            vertex.position = outline_position(
+                primitive,
+                index,
+                morph_weights,
+                width,
+                outline_scale,
+                world,
+                skin_matrices,
+            )
+            .unwrap_or_else(|| Vec3::from_array(vertex.position))
+            .to_array();
             vertex.outline_color = outline_color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;
@@ -500,19 +516,14 @@ impl OutlineScale {
 fn outline_position(
     primitive: &GltfPrimitiveData,
     index: usize,
+    morph_weights: &[f32],
     width: f32,
     outline_scale: OutlineScale,
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
 ) -> Option<Vec3> {
-    let position = Vec3::from_array(*primitive.positions.get(index)?);
-    let normal = primitive
-        .normals
-        .get(index)
-        .copied()
-        .map(Vec3::from_array)
-        .unwrap_or(Vec3::Z)
-        .normalize_or_zero();
+    let (position, normal, _) = morphed_vertex(primitive, index, morph_weights)?;
+    let normal = normal.normalize_or_zero();
     let transform = blended_vertex_transform(
         world,
         skin_matrices,
@@ -570,6 +581,7 @@ fn normal_matrix_length(transform: Mat4, normal: Vec3) -> f32 {
 fn draw_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
+    morph_weights: &[f32],
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
     options: &CaptureOptions,
@@ -581,12 +593,9 @@ fn draw_primitive(
         .positions
         .iter()
         .enumerate()
-        .map(|(index, position)| {
-            let normal = primitive
-                .normals
-                .get(index)
-                .copied()
-                .unwrap_or([0.0, 0.0, 1.0]);
+        .map(|(index, _)| {
+            let (position, normal, tangent) = morphed_vertex(primitive, index, morph_weights)
+                .unwrap_or((Vec3::ZERO, Vec3::Z, Vec4::new(1.0, 0.0, 0.0, 1.0)));
             let tex_coord = primitive
                 .tex_coords_0
                 .get(index)
@@ -597,32 +606,27 @@ fn draw_primitive(
                 .get(index)
                 .copied()
                 .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-            let tangent = primitive
-                .tangents
-                .get(index)
-                .copied()
-                .unwrap_or([1.0, 0.0, 0.0, 1.0]);
             let normal_scale = if primitive.tangents.get(index).is_some() {
                 shading.normal_scale
             } else {
                 0.0
             };
             let (position, normal) = transform_vertex(
-                Vec3::from_array(*position),
-                Vec3::from_array(normal),
+                position,
+                normal,
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             );
             let tangent = transform_direction(
-                Vec3::new(tangent[0], tangent[1], tangent[2]),
+                tangent.truncate(),
                 world,
                 skin_matrices,
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             )
-            .extend(tangent[3]);
+            .extend(tangent.w);
             Vertex {
                 position: position.to_array(),
                 normal: normal.to_array(),
@@ -687,6 +691,53 @@ fn draw_primitive(
         material_extra: material_extra_uniform(shading, options),
         policy,
     })
+}
+
+fn active_morph_weights<'a>(node: &'a GltfNodeRest, mesh: &'a GltfMeshData) -> &'a [f32] {
+    if node.weights.is_empty() {
+        &mesh.weights
+    } else {
+        &node.weights
+    }
+}
+
+fn morphed_vertex(
+    primitive: &GltfPrimitiveData,
+    index: usize,
+    morph_weights: &[f32],
+) -> Option<(Vec3, Vec3, Vec4)> {
+    let mut position = Vec3::from_array(*primitive.positions.get(index)?);
+    let mut normal = primitive
+        .normals
+        .get(index)
+        .copied()
+        .map(Vec3::from_array)
+        .unwrap_or(Vec3::Z);
+    let base_tangent = primitive
+        .tangents
+        .get(index)
+        .copied()
+        .unwrap_or([1.0, 0.0, 0.0, 1.0]);
+    let mut tangent = Vec3::new(base_tangent[0], base_tangent[1], base_tangent[2]);
+
+    for (target, weight) in primitive
+        .morph_targets
+        .iter()
+        .zip(morph_weights.iter().copied())
+        .filter(|(_, weight)| weight.abs() > f32::EPSILON)
+    {
+        if let Some(delta) = target.positions.get(index).copied() {
+            position += Vec3::from_array(delta) * weight;
+        }
+        if let Some(delta) = target.normals.get(index).copied() {
+            normal += Vec3::from_array(delta) * weight;
+        }
+        if let Some(delta) = target.tangents.get(index).copied() {
+            tangent += Vec3::from_array(delta) * weight;
+        }
+    }
+
+    Some((position, normal, tangent.extend(base_tangent[3])))
 }
 
 fn material_extra_uniform(

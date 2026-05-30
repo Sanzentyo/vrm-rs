@@ -761,6 +761,14 @@ outline mesh expansion multiplies width by view depth divided by the fixed
 The current official sweep does not exercise that branch, so the remaining
 outline gap is fixture breadth plus exact edge/color parity rather than a
 missing mode in wgpu/Bevy captures.
+Renderer-facing morph target data is also available to the concrete capture
+paths. `vrm-io` retains mesh default weights, node weights, and per-target
+position/normal/tangent deltas; the wgpu and Bevy captures apply active node
+weights before CPU skinning and outline expansion. The 2026-05-30 real
+tangentless normal/outline sweep stayed at Seed-san wgpu `32.8751 dB`, Seed-san
+Bevy `32.5273 dB`, constraint wgpu `35.9456 dB`, and constraint Bevy
+`35.9394 dB`, so the current real-model residual is not explained by omitted
+default morph targets in the static frame.
 Generated transparent MToon blend coverage now includes RGB accumulation as
 well as alpha buckets. The capture shaders manually sRGB-encode fragment output
 into `Rgba8Unorm` targets so blending happens after the same color correction
@@ -806,6 +814,9 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 - Add or discover broader transparent-material fixtures with real textures and
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
+- Add a source-generated or redistributable morph-expression render fixture
+  with non-zero target weights so morph writeback can be measured visually, not
+  only covered by IO/capture plumbing.
 - Review real tangentless official normal-map primitives and raise the normal
   fixture floor beyond the current `45 dB` when stable.
 - For Bevy specifically, deepen the new custom MToon material/shader path
