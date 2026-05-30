@@ -175,6 +175,25 @@ therefore more likely to come from real model runtime/material breadth,
 post-correction, outline edges, and fixture coverage than from this isolated
 base/shade/rim/matcap color formula.
 
+For a generated MToon texture-slot audit, run:
+
+```powershell
+just render-parity-mtoon-textures-generated
+```
+
+This writes `.external-fixtures/generated/mtoon-texture-slots.vrm.gltf` and
+renders it into `.external-fixtures/render-parity-mtoon-textures-generated/`.
+The fixture exercises `shadingShiftTexture`, `rimMultiplyTexture`,
+`uvAnimationMaskTexture` at `mtoon-time=1.0`, and
+`outlineWidthMultiplyTexture` while keeping all source data generated in the
+repository. The current run has exact alpha buckets and mismatches `0`.
+Selected `rgb-interior1px` PSNR is wgpu `53.3872 dB` and Bevy `50.9296 dB`,
+with max selected channel delta `8`; the recipe enforces a `50 dB` floor.
+Generated MToon normal-map coverage is intentionally not part of this fixture:
+the three-vrm WebGL reference rejected the synthetic normal-map material with a
+`vTangent` shader varying validation error. Normal-map breadth is therefore
+tracked through the official fixture inventory and real-fixture sweeps.
+
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
 
@@ -263,11 +282,12 @@ slot, and UV-animation coverage. The current official fixture inventory has
 `74` MToon materials, `0` screen-coordinate outline materials, `4`
 transparent-ZWrite materials, `3` UV-animation materials, `13` normal-textured
 materials, and `11` matcap-textured materials. The generated fixture inventory
-adds the missing screen-coordinate outline guard and three source-like
-transparent-ZWrite cases. This is why screen-coordinate outline is currently
-measured by the generated fixture above, while real-model material breadth work
-should focus on Seed-san, the constraint sample, the UV-animation sample, and
-Alicia VRM0.
+adds the missing screen-coordinate outline guard, three source-like
+transparent-ZWrite cases, and a texture-slot guard for shading shift, rim, UV
+animation mask, and outline width textures. This is why screen-coordinate
+outline is currently measured by the generated fixture above, while real-model
+normal-map and material breadth work should focus on Seed-san, the constraint
+sample, the UV-animation sample, and Alicia VRM0.
 
 ## three-vrm Capture
 
