@@ -514,6 +514,26 @@ for all three renderers (`transparent=512`, `opaque=0`, `partial=65024`).
 Selected `rgb-visible` PSNR is wgpu `49.1446 dB` with max selected channel
 delta `3`, and Bevy `47.2056 dB` with max selected channel delta `4`.
 
+For transparent layers that also exercise MToon lighting, rim color, texture
+alpha, `transparentWithZWrite`, and `KHR_materials_emissive_strength`, use:
+
+```powershell
+just render-parity-transparent-lighted
+```
+
+This writes `.external-fixtures/generated/transparent-lighted.vrm.gltf` and
+renders into `.external-fixtures/render-parity-transparent-lighted/`. The
+fixture keeps the same source-like embedded-buffer approach as the other
+generated transparent guards, but its overlapping `BLEND` layers cover lit
+base color, forced shade, parametric rim, and emissive texture/strength
+accumulation before transparent blending. The recipe uses the exact
+`three-vrm` light accumulator, requires selected `rgb-visible >= 50 dB`, bounds
+selected RGB channel delta to `<= 3`, and allows only 2-LSB alpha-channel
+rounding. The current run has identical alpha buckets for all three renderers
+(`transparent=512`, `opaque=0`, `partial=65024`). Selected `rgb-visible` PSNR
+is wgpu `53.7519 dB` with max selected channel delta `2`, and Bevy
+`50.2049 dB` with max selected channel delta `3`.
+
 For same-render-order transparent layers at different depths, use:
 
 ```powershell

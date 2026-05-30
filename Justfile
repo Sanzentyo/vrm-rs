@@ -137,6 +137,11 @@ render-parity-transparent-texture-transform three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --case texture-transform --out .external-fixtures/generated/transparent-texture-transform.vrm.gltf
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-texture-transform --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 2 --render-psnr-metric rgb-visible --render-fail-under 47 --render-max-selected-channel-delta 4 --render-max-alpha-delta 2 --render-fixture .external-fixtures/generated/transparent-texture-transform.vrm.gltf
 
+# Regenerate transparent material artifacts where BLEND layers also exercise MToon lighting, rim, and emissive strength.
+render-parity-transparent-lighted three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --case lighted --palette high-contrast --out .external-fixtures/generated/transparent-lighted.vrm.gltf
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-lighted --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 2 --render-psnr-metric rgb-visible --render-fail-under 50 --render-max-selected-channel-delta 3 --render-max-alpha-delta 2 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/transparent-lighted.vrm.gltf
+
 # Regenerate alpha-mode transparent material artifacts for OPAQUE/MASK/BLEND cutoff parity.
 render-parity-transparent-alpha-modes three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-alpha-modes-fixture.rs

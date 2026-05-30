@@ -94,6 +94,8 @@ audits. Generated transparent-material guards currently include
 `just render-parity-transparent-high-contrast`,
 `just render-parity-transparent-broad`, and
 `just render-parity-transparent-alpha-modes`. Use
+`just render-parity-transparent-lighted` for overlapping transparent layers
+that also exercise MToon direct/shade/rim/emissive accumulation, and use
 `just render-parity-transparent-depth-stack` for same-render-order BLEND layers
 at different depths, including one texture-alpha layer; it keeps alpha buckets
 exact while allowing only 1-LSB alpha channel rounding. The alpha-modes guard

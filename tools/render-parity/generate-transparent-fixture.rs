@@ -46,6 +46,7 @@ enum TransparentCase {
     Overlap,
     Broad,
     TextureTransform,
+    Lighted,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,7 +66,7 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
     let mesh = mesh_buffer();
     let texture = checker_texture_png(matches!(
         fixture_case,
-        TransparentCase::Broad | TransparentCase::TextureTransform
+        TransparentCase::Broad | TransparentCase::TextureTransform | TransparentCase::Lighted
     ));
     let mesh_len = mesh.len();
     let texture_len = texture.len();
@@ -75,7 +76,7 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
     let primitives = transparent_primitives(materials.len());
     let min_filter = match fixture_case {
         TransparentCase::Overlap => 9729,
-        TransparentCase::Broad | TransparentCase::TextureTransform => 9985,
+        TransparentCase::Broad | TransparentCase::TextureTransform | TransparentCase::Lighted => 9985,
     };
     let extensions_used = match fixture_case {
         TransparentCase::Overlap | TransparentCase::Broad => {
@@ -83,6 +84,13 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
         }
         TransparentCase::TextureTransform => {
             vec!["VRMC_vrm", "VRMC_materials_mtoon", "KHR_texture_transform"]
+        }
+        TransparentCase::Lighted => {
+            vec![
+                "VRMC_vrm",
+                "VRMC_materials_mtoon",
+                "KHR_materials_emissive_strength",
+            ]
         }
     };
     serde_json::to_string_pretty(&json!({
@@ -279,6 +287,60 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 None,
             ),
         ],
+        TransparentCase::Lighted => vec![
+            lighted_mtoon_material(
+                "transparent-lit-textured",
+                [0.92, 0.18, 0.08, 0.40],
+                [0.08, 0.02, 0.01],
+                -2,
+                false,
+                true,
+                0.65,
+                0.0,
+                [0.0, 0.0, 0.0],
+                None,
+                None,
+            ),
+            lighted_mtoon_material(
+                "transparent-forced-shade",
+                [0.06, 0.64, 1.0, 0.36],
+                [0.01, 0.08, 0.28],
+                -1,
+                false,
+                false,
+                -1.5,
+                0.0,
+                [0.0, 0.0, 0.0],
+                None,
+                None,
+            ),
+            lighted_mtoon_material(
+                "transparent-parametric-rim",
+                [0.03, 0.03, 0.04, 0.44],
+                [0.01, 0.01, 0.02],
+                1,
+                false,
+                true,
+                -1.5,
+                1.0,
+                [1.0, 0.48, 0.12],
+                None,
+                None,
+            ),
+            lighted_mtoon_material(
+                "transparent-emissive-zwrite",
+                [0.0, 0.0, 0.0, 0.32],
+                [0.0, 0.0, 0.0],
+                3,
+                true,
+                true,
+                -1.5,
+                0.0,
+                [0.0, 0.0, 0.0],
+                Some([0.16, 0.26, 0.48]),
+                Some(1.75),
+            ),
+        ],
     }
 }
 
@@ -370,6 +432,42 @@ fn mtoon_material(
             }
         }
     })
+}
+
+fn lighted_mtoon_material(
+    name: &str,
+    base_color: [f32; 4],
+    shade_color: [f32; 3],
+    offset: i32,
+    zwrite: bool,
+    textured: bool,
+    shading_shift: f32,
+    rim_lighting_mix: f32,
+    rim_color: [f32; 3],
+    emissive_factor: Option<[f32; 3]>,
+    emissive_strength: Option<f32>,
+) -> Value {
+    let mut material = mtoon_material(name, base_color, offset, zwrite, textured, None);
+    let mtoon = &mut material["extensions"]["VRMC_materials_mtoon"];
+    mtoon["shadeColorFactor"] = json!(shade_color);
+    mtoon["shadingShiftFactor"] = json!(shading_shift);
+    mtoon["shadingToonyFactor"] = json!(0.9);
+    mtoon["giEqualizationFactor"] = json!(1.0);
+    mtoon["parametricRimColorFactor"] = json!(rim_color);
+    mtoon["rimLightingMixFactor"] = json!(rim_lighting_mix);
+    mtoon["parametricRimFresnelPowerFactor"] = json!(1.0);
+    mtoon["parametricRimLiftFactor"] = json!(0.25);
+    if let Some(factor) = emissive_factor {
+        material["emissiveFactor"] = json!(factor);
+        if textured {
+            material["emissiveTexture"] = json!({ "index": 0 });
+        }
+    }
+    if let Some(strength) = emissive_strength {
+        material["extensions"]["KHR_materials_emissive_strength"] =
+            json!({ "emissiveStrength": strength });
+    }
+    material
 }
 
 fn mesh_buffer() -> Vec<u8> {
