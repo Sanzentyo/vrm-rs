@@ -249,6 +249,26 @@ delta `0`, and Bevy `53.2689 dB` with max selected channel delta `1`. Review
 when changing outline expansion, front-face culling, or screen-coordinate width
 logic.
 
+To decide whether a new local or downloaded fixture meaningfully broadens
+material coverage before adding it to a parity sweep, run:
+
+```powershell
+just inspect-mtoon-fixtures
+just inspect-mtoon-fixtures .external-fixtures/generated
+```
+
+The scanner reads local `.vrm`, `.glb`, and `.gltf` files without committing
+them and reports MToon alpha mode, transparent-ZWrite, outline mode, texture
+slot, and UV-animation coverage. The current official fixture inventory has
+`74` MToon materials, `0` screen-coordinate outline materials, `4`
+transparent-ZWrite materials, `3` UV-animation materials, `13` normal-textured
+materials, and `11` matcap-textured materials. The generated fixture inventory
+adds the missing screen-coordinate outline guard and three source-like
+transparent-ZWrite cases. This is why screen-coordinate outline is currently
+measured by the generated fixture above, while real-model material breadth work
+should focus on Seed-san, the constraint sample, the UV-animation sample, and
+Alicia VRM0.
+
 ## three-vrm Capture
 
 The first reference capture path is a browser script that renders a VRM through
