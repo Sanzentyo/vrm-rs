@@ -128,7 +128,7 @@ struct CaptureOptions {
     directional_g: f32,
     #[arg(long, default_value_t = 1.0)]
     directional_b: f32,
-    #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
+    #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::ThreeVrm)]
     mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
     mtoon_time: f32,

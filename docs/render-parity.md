@@ -62,7 +62,7 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- `
   --skip-playwright-install `
   --three-vrm-root D:\git\three-vrm `
   --render-background opaque-black `
-  --render-mtoon-light-accumulation tuned `
+  --render-mtoon-light-accumulation three-vrm `
   --render-fixture Seed-san.vrm `
   --render-fixture VRM1_Constraint_Twist_Sample.vrm `
   --render-fixture .external-fixtures\official\vrm-specification\samples\VRMC_materials_mtoon_UV_Animation_Test\VRMC_materials_mtoon_UV_Animation_Test.vrm `
@@ -122,10 +122,10 @@ This writes `.external-fixtures/render-parity-real-transparent/` and uses
 separately. The current run keeps alpha mismatches under `64` for all six
 fixtures: Seed-san wgpu/Bevy `25/32`, constraint `11/11`, UV animation `0/0`,
 expression mask samples `12/12`, and Alicia VRM0 `32/32`. Selected `rgb-all`
-PSNR is Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint
-wgpu `35.9456 dB`, constraint Bevy `35.9394 dB`, UV animation wgpu
-`34.8985 dB`, UV animation Bevy `34.8819 dB`, expression mask samples around
-`39.29-39.30 dB`, Alicia wgpu `32.3424 dB`, and Alicia Bevy `32.3410 dB`.
+PSNR is Seed-san wgpu `34.5647 dB`, Seed-san Bevy `34.0434 dB`, constraint
+wgpu `36.2028 dB`, constraint Bevy `36.1877 dB`, UV animation wgpu
+`35.2517 dB`, UV animation Bevy `35.2073 dB`, expression mask samples around
+`39.29-39.30 dB`, Alicia wgpu `32.6863 dB`, and Alicia Bevy `32.6757 dB`.
 Review
 `.external-fixtures/render-parity-real-transparent/visual-review.html` when
 working on broader transparent silhouettes, VRM0 material ordering, or runtime
@@ -143,9 +143,9 @@ covers the unique official/local fixtures reported by `inspect-mtoon-fixtures`:
 `Seed-san.vrm` has `6` normal-mapped primitives without tangents, and
 `VRM1_Constraint_Twist_Sample.vrm` has `3`. The run uses the canonical
 opaque-black review background, selected `rgb-visible`, exact alpha parity, and
-`--render-fail-under 32.5`. Current selected PSNR is Seed-san wgpu `32.8751 dB` /
-Bevy `32.5273 dB`, and constraint sample wgpu `35.9456 dB` / Bevy
-`35.9394 dB`, all with alpha mismatches `0`. Review
+`--render-fail-under 34`. Current selected PSNR is Seed-san wgpu `34.5647 dB` /
+Bevy `34.0434 dB`, and constraint sample wgpu `36.2028 dB` / Bevy
+`36.1877 dB`, all with alpha mismatches `0`. Review
 `.external-fixtures/render-parity-real-normal-maps/visual-review.html` and the
 diff heatmaps when changing tangent generation, normal sampling, back-face TBN
 handling, or MToon light/color accumulation.
@@ -160,10 +160,10 @@ This writes `.external-fixtures/render-parity-normal-maps-off/` and disables
 normal maps in the three-vrm reference, wgpu capture, and Bevy capture. It is a
 diagnostic for separating tangentless normal-map residuals from material,
 skinning, pose, and outline deltas. The current run uses selected
-`rgb-visible`, exact alpha parity, and `--render-fail-under 33`. Seed-san
-improves from the normal-map-enabled sweep to wgpu `33.5967 dB` / Bevy
-`33.1992 dB`, while the constraint sample remains roughly flat at wgpu
-`35.9609 dB` / Bevy `35.9543 dB`. That makes Seed-san's remaining residual
+`rgb-visible`, exact alpha parity, and `--render-fail-under 35`. Seed-san
+improves from the normal-map-enabled sweep to wgpu `36.0858 dB` / Bevy
+`35.3848 dB`, while the constraint sample remains roughly flat at wgpu
+`36.2203 dB` / Bevy `36.2054 dB`. That makes Seed-san's remaining residual
 partly normal-map/tangentless-related, while the constraint sample continues to
 point more toward outline, geometry, or rasterization differences.
 
@@ -182,16 +182,14 @@ but was worse than the generated-tangent path, with Seed-san wgpu `30.8717 dB`
 Keep using generated tangents for the current real-fixture guard until a closer
 formulation beats `just render-parity-real-normal-maps`.
 
-The Rust capture paths also accept
-`--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
-current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
-`three-vrm` mode uses the closer WebGL MToon accumulator shape for light/color
-audits: direct diffuse is normalized by the `DirectionalLight(Math.PI)` setup,
-indirect diffuse uses `pbrAmbient`, rim lighting uses the same
-direct-plus-indirect accumulator (`1.0 + pbrAmbient`) as the three-vrm
-non-physical-light path, and the final exposure multiplier is fixed at `1.0`
-instead of inheriting the tuned `0.78` capture coefficient. Re-run that focused
-path with:
+The Rust capture paths default to `--mtoon-light-accumulation three-vrm`. That
+mode uses the closer WebGL MToon accumulator shape for light/color audits:
+direct diffuse is normalized by the `DirectionalLight(Math.PI)` setup, indirect
+diffuse uses `pbrAmbient`, rim lighting uses the same direct-plus-indirect
+accumulator (`1.0 + pbrAmbient`) as the three-vrm non-physical-light path, and
+the final exposure multiplier is fixed at `1.0` instead of inheriting the old
+PSNR-tuned `0.78` capture coefficient. The older `tuned` mode remains available
+as an explicit diagnostic switch. Re-run the focused exact-light path with:
 
 ```powershell
 just render-parity-light-three-vrm
@@ -211,10 +209,10 @@ just render-parity-outline-off
 This writes `.external-fixtures/render-parity-outline-off/` and is meant to
 separate outline expansion from material, skinning, and pose deltas. The current
 diagnostic keeps exact alpha parity. Seed-san stays essentially flat at wgpu
-`32.5179 dB` / Bevy `32.5257 dB`, so its remaining error is not explained by
+`34.4260 dB` / Bevy `34.4200 dB`, so its remaining error is not explained by
 outline alone. The constraint sample improves from the normal sweep's
-wgpu `35.9456 dB` / Bevy `35.9394 dB` to wgpu `36.8185 dB` / Bevy
-`36.8061 dB`, which marks outline expansion as a real contributor for that
+wgpu `36.2028 dB` / Bevy `36.1877 dB` to wgpu `37.1221 dB` / Bevy
+`37.0988 dB`, which marks outline expansion as a real contributor for that
 fixture. The capture outline geometry now follows three-vrm's local/object
 normal expansion with normal-matrix length compensation, uses post-skin normal
 directions for skinned outline vertices, and wgpu also applies the three-vrm
@@ -227,7 +225,7 @@ the local runner forwards it through `--render-outline-width-scale` for
 diagnostic sweeps. The default scale `1.0` remains the measured best setting on
 the constraint sample; a corrected `0.9` run dropped to wgpu `35.4088 dB` and
 Bevy `35.3977 dB`, while `1.0` stayed at wgpu `35.9456 dB` and Bevy
-`35.9394 dB`.
+`35.9394 dB` under the previous tuned sweep.
 
 For isolated experiments, the local runner can also override the three-vrm
 reference light setup with `--render-three-vrm-directional-intensity`,
@@ -889,11 +887,11 @@ while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
 opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
 0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
 mismatches `0`. The selected `rgb-visible` metric for the same sweep is
-Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint sample wgpu
-`35.9456 dB`, constraint sample Bevy `35.9394 dB`, UV animation sample wgpu
-`34.8985 dB`, UV animation sample Bevy `34.8819 dB`, mask samples wgpu/Bevy
+Seed-san wgpu `34.5647 dB`, Seed-san Bevy `34.0434 dB`, constraint sample wgpu
+`36.2028 dB`, constraint sample Bevy `36.1877 dB`, UV animation sample wgpu
+`35.2517 dB`, UV animation sample Bevy `35.2073 dB`, mask samples wgpu/Bevy
 `39.3000/39.2891 dB` and `39.3004/39.2896 dB`, and Alicia VRM0 wgpu
-`32.3424 dB` / Bevy `32.3410 dB`. Use explicit `transparent` only when the review
+`32.6863 dB` / Bevy `32.6757 dB`. Use explicit `transparent` only when the review
 needs transparent alpha. The last transparent time `1.0` UV-animation audit
 reported full-RGBA wgpu/Bevy `35.9209 dB` and selected `rgb-visible`
 wgpu/Bevy `27.2167 dB`.
@@ -901,10 +899,10 @@ For the broader real transparent-material audit, run
 `just render-parity-real-transparent`. This keeps the transparent background
 and uses `rgb-all` with fail-under `32`, while alpha-mask drift is enforced
 separately with tolerance `64`. The current six-fixture run passes with
-selected PSNR Seed-san wgpu `32.8751 dB`/Bevy `32.5273 dB`, constraint wgpu
-`35.9456 dB`/Bevy `35.9394 dB`, UV animation wgpu `34.8985 dB`/Bevy
-`34.8819 dB`, expression mask samples around `39.29-39.30 dB`, and Alicia
-VRM0 wgpu `32.3424 dB`/Bevy `32.3410 dB`. Alpha mismatches remain below the
+selected PSNR Seed-san wgpu `34.5647 dB`/Bevy `34.0434 dB`, constraint wgpu
+`36.2028 dB`/Bevy `36.1877 dB`, UV animation wgpu `35.2517 dB`/Bevy
+`35.2073 dB`, expression mask samples around `39.29-39.30 dB`, and Alicia
+VRM0 wgpu `32.6863 dB`/Bevy `32.6757 dB`. Alpha mismatches remain below the
 tolerance: Seed-san `25/32`, constraint `11/11`, UV animation `0/0`,
 expression masks `12/12`, and Alicia `32/32`.
 Static `KHR_texture_transform` data is now retained through the non-rendering
@@ -922,8 +920,8 @@ transform on the CPU side while baking the outline mesh. The capture harness
 now also passes MToon material time into three-vrm, wgpu, and Bevy; the wgpu and
 Bevy shader paths apply UV animation scroll/rotation before slot-specific
 texture transforms and bind the UV-animation-mask texture. The official UV
-animation sample at `--render-mtoon-time 1.0` reports wgpu/Bevy `35.9209 dB`
-with alpha mismatches `0`. The remaining texture-animation gap is broader
+animation sample at `--render-mtoon-time 1.0` reports wgpu `35.0181 dB` and
+Bevy `34.9716 dB` with alpha mismatches `0`. The remaining texture-animation gap is broader
 mask-texture fixture coverage and raising the MToon-lit PSNR threshold.
 Screen-coordinate outline scaling is also implemented in the concrete capture
 paths: when a material requests `outlineWidthMode = screenCoordinates`, the CPU
@@ -941,9 +939,10 @@ position/normal/tangent deltas; the wgpu and Bevy captures apply active node
 weights before CPU skinning and outline expansion. The render harness also
 accepts expression weights and maps resolved VRM expression morph binds into
 those active weights, matching three-vrm's `expressionManager.setValue()`
-reference path. The 2026-05-30 real tangentless normal/outline sweep stayed at
-Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint wgpu
-`35.9456 dB`, and constraint Bevy `35.9394 dB`, so the current real-model
+reference path. The 2026-05-30 real tangentless normal/outline sweep using the
+exact light accumulator reports Seed-san wgpu `34.5647 dB`, Seed-san Bevy
+`34.0434 dB`, constraint wgpu `36.2028 dB`, and constraint Bevy `36.1877 dB`,
+so the current real-model
 residual is not explained by omitted default morph targets in the static frame.
 The generated morph-expression guard closes the previously unmeasured non-zero
 target-weight render path.
@@ -994,7 +993,7 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
 - Review real tangentless official normal-map primitives and raise the normal
   generated fixture floor beyond the current `45 dB` when stable; the focused
-  real normal-map sweep now enforces `rgb-visible >= 32.5 dB`.
+  real normal-map sweep now enforces `rgb-visible >= 34 dB`.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize remaining outline, material breadth,

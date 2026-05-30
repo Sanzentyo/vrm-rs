@@ -93,7 +93,7 @@ struct Options {
     render_directional_b: f32,
     #[arg(long, default_value_t = 0.1)]
     render_three_vrm_ambient_intensity: f32,
-    #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::Tuned)]
+    #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::ThreeVrm)]
     render_mtoon_light_accumulation: RenderMtoonLightAccumulation,
     #[arg(long)]
     render_sync_three_vrm_light_units: bool,
