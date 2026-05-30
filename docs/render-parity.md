@@ -152,13 +152,18 @@ just render-parity-mtoon-light-generated
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
 contains six opaque MToon quads for forced base lighting, forced shade lighting,
-ambient-only behavior, parametric rim, matcap rim, and mixed rim/matcap. It
+ambient behavior with a glTF `occlusionTexture` that three-vrm MToon ignores,
+parametric rim, matcap rim, and mixed rim/matcap. It
 uses `--mtoon-light-accumulation three-vrm`,
 `--render-background transparent`, and selected metric `rgb-interior1px` so a
 one-pixel silhouette/rasterization disagreement does not dominate the shader
 color score. The current run reports selected PSNR wgpu `54.4445 dB` with max
 selected channel delta `1`, and Bevy `51.0870 dB` with max selected channel
-delta `2`. The expected edge-only alpha mismatch is `240` pixels and the recipe
+delta `2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
+ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
+disabled for parity while still extracting and applying glTF occlusion to
+non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is
+`240` pixels and the recipe
 allows up to `512`; use the strict transparent generated fixture below for
 alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`

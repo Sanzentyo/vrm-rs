@@ -122,12 +122,12 @@ fn fixture_json() -> String {
             index_accessor(8)
         ],
         "materials": [
-            mtoon_material("direct-base", [0.92, 0.18, 0.10, 1.0], [0.06, 0.02, 0.02], 1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None),
-            mtoon_material("forced-shade", [0.12, 0.62, 1.0, 1.0], [0.02, 0.08, 0.28], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None),
-            mtoon_material("ambient-only", [0.75, 0.75, 0.75, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 0.0, [0.0, 0.0, 0.0], None),
-            mtoon_material("parametric-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 1.0, 1.0, [1.0, 0.48, 0.12], None),
-            mtoon_material("matcap-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], Some([0.65, 0.35, 1.0])),
-            mtoon_material("mixed-rim", [0.25, 0.18, 0.50, 1.0], [0.04, 0.03, 0.10], 0.0, 0.5, 1.0, [0.4, 0.8, 1.0], Some([0.35, 0.55, 1.0]))
+            mtoon_material("direct-base", [0.92, 0.18, 0.10, 1.0], [0.06, 0.02, 0.02], 1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+            mtoon_material("forced-shade", [0.12, 0.62, 1.0, 1.0], [0.02, 0.08, 0.28], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+            mtoon_material("ambient-ao-ignored", [0.75, 0.75, 0.75, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 0.0, [0.0, 0.0, 0.0], None, true),
+            mtoon_material("parametric-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 1.0, 1.0, [1.0, 0.48, 0.12], None, false),
+            mtoon_material("matcap-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], Some([0.65, 0.35, 1.0]), false),
+            mtoon_material("mixed-rim", [0.25, 0.18, 0.50, 1.0], [0.04, 0.03, 0.10], 0.0, 0.5, 1.0, [0.4, 0.8, 1.0], Some([0.35, 0.55, 1.0]), false)
         ],
         "meshes": [{
             "name": "mtoon-light-grid",
@@ -205,6 +205,7 @@ fn mtoon_material(
     gi_equalization: f32,
     rim_color: [f32; 3],
     matcap_factor: Option<[f32; 3]>,
+    occlusion: bool,
 ) -> Value {
     let mut extension = json!({
         "specVersion": "1.0",
@@ -223,7 +224,7 @@ fn mtoon_material(
         extension["matcapTexture"] = json!({ "index": 0 });
     }
 
-    json!({
+    let mut material = json!({
         "name": name,
         "alphaMode": "OPAQUE",
         "doubleSided": true,
@@ -235,7 +236,11 @@ fn mtoon_material(
         "extensions": {
             "VRMC_materials_mtoon": extension
         }
-    })
+    });
+    if occlusion {
+        material["occlusionTexture"] = json!({ "index": 0, "strength": 0.65 });
+    }
+    material
 }
 
 fn mesh_buffer() -> Vec<u8> {

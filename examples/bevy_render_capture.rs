@@ -182,6 +182,7 @@ struct MaterialUvTransforms {
     rim: Option<TextureTransform2d>,
     outline_width: Option<TextureTransform2d>,
     emissive: Option<TextureTransform2d>,
+    occlusion: Option<TextureTransform2d>,
     uv_animation_mask: Option<TextureTransform2d>,
     uv_animation_scroll: [f32; 2],
     uv_animation_rotation: f32,
@@ -749,6 +750,7 @@ struct MaterialShading {
     normal_scale: f32,
     metallic: f32,
     roughness: f32,
+    occlusion_strength: f32,
     pbr_fallback: bool,
     v0_compat_shade: bool,
 }
@@ -789,6 +791,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 }),
                 metallic: 0.0,
                 roughness: 1.0,
+                occlusion_strength: 0.0,
                 pbr_fallback: false,
                 v0_compat_shade,
             })
@@ -824,6 +827,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
         metallic: gltf.map_or(0.0, |material| material.metallic_factor),
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
+        occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
         pbr_fallback: true,
         v0_compat_shade: false,
     }
@@ -852,6 +856,7 @@ struct BevyMtoonMaterial {
     matcap_uv_transform: BVec4,
     rim_uv_transform: BVec4,
     emissive_uv_transform: BVec4,
+    occlusion_uv_transform: BVec4,
     uv_animation_mask_uv_transform: BVec4,
     uv_rotation_a: BVec4,
     uv_rotation_b: BVec4,
@@ -880,6 +885,9 @@ struct BevyMtoonMaterial {
     #[texture(15)]
     #[sampler(16)]
     uv_animation_mask_texture: Handle<Image>,
+    #[texture(17)]
+    #[sampler(18)]
+    occlusion_texture: Handle<Image>,
     alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
     depth_write: bool,
@@ -913,6 +921,7 @@ struct BevyMtoonUniform {
     matcap_uv_transform: BVec4,
     rim_uv_transform: BVec4,
     emissive_uv_transform: BVec4,
+    occlusion_uv_transform: BVec4,
     uv_animation_mask_uv_transform: BVec4,
     uv_rotation_a: BVec4,
     uv_rotation_b: BVec4,
@@ -941,6 +950,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             matcap_uv_transform: material.matcap_uv_transform,
             rim_uv_transform: material.rim_uv_transform,
             emissive_uv_transform: material.emissive_uv_transform,
+            occlusion_uv_transform: material.occlusion_uv_transform,
             uv_animation_mask_uv_transform: material.uv_animation_mask_uv_transform,
             uv_rotation_a: material.uv_rotation_a,
             uv_rotation_b: material.uv_rotation_b,
@@ -1041,7 +1051,12 @@ fn bevy_mtoon_material(
             0.0,
             0.0,
         ),
-        pbr_params: BVec4::new(shading.metallic, shading.roughness, 0.0, 0.0),
+        pbr_params: BVec4::new(
+            shading.metallic,
+            shading.roughness,
+            shading.occlusion_strength,
+            0.0,
+        ),
         outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
             alpha_mode_code(alpha_mode),
@@ -1057,6 +1072,7 @@ fn bevy_mtoon_material(
         matcap_uv_transform: bevy_uv_transform(uv_transforms.matcap),
         rim_uv_transform: bevy_uv_transform(uv_transforms.rim),
         emissive_uv_transform: bevy_uv_transform(uv_transforms.emissive),
+        occlusion_uv_transform: bevy_uv_transform(uv_transforms.occlusion),
         uv_animation_mask_uv_transform: bevy_uv_transform(uv_transforms.uv_animation_mask),
         uv_rotation_a: BVec4::new(
             bevy_uv_rotation(uv_transforms.base),
@@ -1074,7 +1090,7 @@ fn bevy_mtoon_material(
             uv_transforms.uv_animation_scroll[0],
             uv_transforms.uv_animation_scroll[1],
             uv_transforms.uv_animation_rotation,
-            0.0,
+            bevy_uv_rotation(uv_transforms.occlusion),
         ),
         base_texture: material_main_image(loaded, primitive.material)
             .and_then(|image| image_handles.color_images.get(image))
@@ -1108,6 +1124,10 @@ fn bevy_mtoon_material(
             .unwrap_or_else(|| image_handles.white.clone()),
         uv_animation_mask_texture: material_uv_animation_mask_image(loaded, primitive.material)
             .and_then(|image| image_handles.color_images.get(image))
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| image_handles.white.clone()),
+        occlusion_texture: material_occlusion_image(loaded, primitive.material)
+            .and_then(|image| image_handles.linear_images.get(image))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
         alpha_mode,
@@ -1423,6 +1443,7 @@ fn material_uv_transforms(
         outline_width: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
         emissive: gltf.and_then(|material| material.emissive_texture_transform),
+        occlusion: gltf.and_then(|material| material.occlusion_texture_transform),
         uv_animation_mask: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.uv_animation_mask_texture),
         uv_animation_scroll: mtoon.map_or([0.0, 0.0], |mtoon| {
@@ -1453,7 +1474,7 @@ fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2]
 
 fn bevy_uv_transform(transform: Option<TextureTransform2d>) -> BVec4 {
     let Some(transform) =
-        transform.filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        transform.filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
     else {
         return BVec4::new(0.0, 0.0, 1.0, 1.0);
     };
@@ -1467,7 +1488,7 @@ fn bevy_uv_transform(transform: Option<TextureTransform2d>) -> BVec4 {
 
 fn bevy_uv_rotation(transform: Option<TextureTransform2d>) -> f32 {
     transform
-        .filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        .filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
         .map_or(0.0, |transform| transform.rotation)
 }
 
@@ -1523,6 +1544,13 @@ fn material_emissive_image(loaded: &LoadedVrm, material: Option<usize>) -> Optio
     let texture = material
         .and_then(|index| loaded.gltf_materials.get(index))
         .and_then(|material| material.emissive_texture)?;
+    loaded.textures.get(texture).map(|texture| texture.image)
+}
+
+fn material_occlusion_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.occlusion_texture)?;
     loaded.textures.get(texture).map(|texture| texture.image)
 }
 

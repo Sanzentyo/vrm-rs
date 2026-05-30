@@ -205,6 +205,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
             matcap_transform: uv_transform_uniform(transforms.matcap),
             rim_transform: uv_transform_uniform(transforms.rim),
             emissive_transform: uv_transform_uniform(transforms.emissive),
+            occlusion_transform: uv_transform_uniform(transforms.occlusion),
             uv_animation_mask_transform: uv_transform_uniform(transforms.uv_animation_mask),
             rotation_a: [
                 uv_rotation_uniform(transforms.base),
@@ -222,7 +223,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
                 transforms.uv_animation_scroll[0],
                 transforms.uv_animation_scroll[1],
                 transforms.uv_animation_rotation,
-                0.0,
+                uv_rotation_uniform(transforms.occlusion),
             ],
         }
     }
@@ -230,7 +231,7 @@ impl From<MaterialUvTransforms> for MaterialUvUniform {
 
 fn uv_transform_uniform(transform: Option<TextureTransform2d>) -> [f32; 4] {
     let Some(transform) =
-        transform.filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        transform.filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
     else {
         return [0.0, 0.0, 1.0, 1.0];
     };
@@ -244,7 +245,7 @@ fn uv_transform_uniform(transform: Option<TextureTransform2d>) -> [f32; 4] {
 
 fn uv_rotation_uniform(transform: Option<TextureTransform2d>) -> f32 {
     transform
-        .filter(|transform| !transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0))
+        .filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
         .map_or(0.0, |transform| transform.rotation)
 }
 
@@ -264,6 +265,7 @@ struct MaterialUvUniform {
     matcap_transform: [f32; 4],
     rim_transform: [f32; 4],
     emissive_transform: [f32; 4],
+    occlusion_transform: [f32; 4],
     uv_animation_mask_transform: [f32; 4],
     rotation_a: [f32; 4],
     rotation_b: [f32; 4],
@@ -297,6 +299,7 @@ struct MaterialImages {
     matcap: Option<usize>,
     rim: Option<usize>,
     emissive: Option<usize>,
+    occlusion: Option<usize>,
     uv_animation_mask: Option<usize>,
 }
 
@@ -323,6 +326,7 @@ struct MaterialUvTransforms {
     rim: Option<TextureTransform2d>,
     outline_width: Option<TextureTransform2d>,
     emissive: Option<TextureTransform2d>,
+    occlusion: Option<TextureTransform2d>,
     uv_animation_mask: Option<TextureTransform2d>,
     uv_animation_scroll: [f32; 2],
     uv_animation_rotation: f32,
@@ -603,7 +607,12 @@ fn material_extra_uniform(shading: MaterialShading) -> MaterialExtraUniform {
             0.0,
             0.0,
         ],
-        pbr_params: [shading.metallic, shading.roughness, 0.0, 0.0],
+        pbr_params: [
+            shading.metallic,
+            shading.roughness,
+            shading.occlusion_strength,
+            0.0,
+        ],
     }
 }
 
@@ -859,6 +868,7 @@ struct MaterialShading {
     normal_scale: f32,
     metallic: f32,
     roughness: f32,
+    occlusion_strength: f32,
     pbr_fallback: bool,
     v0_compat_shade: bool,
 }
@@ -899,6 +909,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 }),
                 metallic: 0.0,
                 roughness: 1.0,
+                occlusion_strength: 0.0,
                 pbr_fallback: false,
                 v0_compat_shade,
             })
@@ -934,6 +945,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
         metallic: gltf.map_or(0.0, |material| material.metallic_factor),
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
+        occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
         pbr_fallback: true,
         v0_compat_shade: false,
     }
@@ -979,6 +991,7 @@ fn material_uv_transforms(
         outline_width: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
         emissive: gltf.and_then(|material| material.emissive_texture_transform),
+        occlusion: gltf.and_then(|material| material.occlusion_texture_transform),
         uv_animation_mask: mtoon
             .and_then(|mtoon| mtoon.texture_transforms.uv_animation_mask_texture),
         uv_animation_scroll: mtoon.map_or([0.0, 0.0], |mtoon| {
@@ -1049,6 +1062,11 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         .and_then(|material| material.emissive_texture)
         .and_then(|texture| loaded.textures.get(texture))
         .map(|texture| texture.image);
+    let occlusion = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.occlusion_texture)
+        .and_then(|texture| loaded.textures.get(texture))
+        .map(|texture| texture.image);
     let uv_animation_mask = mtoon
         .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)
         .and_then(|texture| loaded.textures.get(texture.0))
@@ -1061,6 +1079,7 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
         matcap,
         rim,
         emissive,
+        occlusion,
         uv_animation_mask,
     }
 }
@@ -1268,6 +1287,7 @@ fn material_texture_bind_group(
     let matcap = texture_view(resources.color, resources.indices, images.matcap, 1);
     let rim = texture_view(resources.color, resources.indices, images.rim, 0);
     let emissive = texture_view(resources.color, resources.indices, images.emissive, 0);
+    let occlusion = texture_view(resources.normal, resources.indices, images.occlusion, 0);
     let uv_animation_mask = texture_view(
         resources.color,
         resources.indices,
@@ -1332,6 +1352,10 @@ fn material_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: material_extra_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: wgpu::BindingResource::TextureView(occlusion),
             },
         ],
     });
@@ -1667,6 +1691,16 @@ async fn render_capture(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1980,6 +2014,7 @@ struct MaterialUvUniform {
     matcap_transform: vec4<f32>,
     rim_transform: vec4<f32>,
     emissive_transform: vec4<f32>,
+    occlusion_transform: vec4<f32>,
     uv_animation_mask_transform: vec4<f32>,
     rotation_a: vec4<f32>,
     rotation_b: vec4<f32>,
@@ -1999,6 +2034,9 @@ struct MaterialExtraUniform {
 
 @group(1) @binding(10)
 var<uniform> material_extra: MaterialExtraUniform;
+
+@group(1) @binding(11)
+var occlusion_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -2165,6 +2203,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let normal_uv = transform_uv(animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
     let rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
     let emissive_uv = transform_uv(animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let occlusion_uv = transform_uv(animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
     let normal = surface_normal(input, front_facing, normal_uv);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, base_uv);
@@ -2185,7 +2224,8 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
             material_extra.pbr_params.x,
             material_extra.pbr_params.y,
         );
-        let ambient = diffuse * (1.0 - material_extra.pbr_params.x) * uniforms.mtoon_lighting.w;
+        let occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+        let ambient = diffuse * (1.0 - material_extra.pbr_params.x) * uniforms.mtoon_lighting.w * occlusion;
         var pbr_color = direct + ambient + input.emissive.rgb * emissive_texel;
         if input.outline_color.a >= 0.0 {
             pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
@@ -2203,7 +2243,8 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if material_extra.flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
-    let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi);
+    let occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi) * occlusion;
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
     let raw_matcap_uv = vec2<f32>(

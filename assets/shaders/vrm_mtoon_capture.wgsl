@@ -23,6 +23,7 @@ struct BevyMtoonUniform {
     matcap_uv_transform: vec4<f32>,
     rim_uv_transform: vec4<f32>,
     emissive_uv_transform: vec4<f32>,
+    occlusion_uv_transform: vec4<f32>,
     uv_animation_mask_uv_transform: vec4<f32>,
     uv_rotation_a: vec4<f32>,
     uv_rotation_b: vec4<f32>,
@@ -71,6 +72,11 @@ var emissive_sampler: sampler;
 var uv_animation_mask_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(16)
 var uv_animation_mask_sampler: sampler;
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(17)
+var occlusion_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(18)
+var occlusion_sampler: sampler;
 
 fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
@@ -188,6 +194,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let normal_uv = transform_uv(animated_uv, material.normal_uv_transform, material.uv_rotation_a.w);
     let rim_uv = transform_uv(animated_uv, material.rim_uv_transform, material.uv_rotation_b.x);
     let emissive_uv = transform_uv(animated_uv, material.emissive_uv_transform, material.uv_rotation_b.y);
+    let occlusion_uv = transform_uv(animated_uv, material.occlusion_uv_transform, material.uv_animation.w);
 
     let normal = surface_normal(input, front_facing, normal_uv);
     let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));
@@ -213,7 +220,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             material.pbr_params.x,
             material.pbr_params.y,
         );
-        let ambient = diffuse * (1.0 - material.pbr_params.x) * material.lighting.w;
+        let occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material.pbr_params.z + 1.0;
+        let ambient = diffuse * (1.0 - material.pbr_params.x) * material.lighting.w * occlusion;
         var pbr_color = direct + ambient + material.emissive.rgb * emissive_texel;
         if material.outline_color.a >= 0.0 {
             pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
@@ -234,7 +242,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     if material.material_flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
-    let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z);
+    let occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material.pbr_params.z + 1.0;
+    let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z) * occlusion;
 
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);

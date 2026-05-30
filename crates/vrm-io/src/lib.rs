@@ -109,6 +109,9 @@ pub struct GltfMaterialData {
     pub normal_texture: Option<usize>,
     pub normal_texture_transform: Option<TextureTransform2d>,
     pub normal_scale: f32,
+    pub occlusion_texture: Option<usize>,
+    pub occlusion_texture_transform: Option<TextureTransform2d>,
+    pub occlusion_strength: f32,
     pub emissive_factor: [f32; 3],
     pub emissive_texture: Option<usize>,
     pub emissive_texture_transform: Option<TextureTransform2d>,
@@ -276,6 +279,7 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
             let pbr = material.pbr_metallic_roughness();
             let base_color_texture = pbr.base_color_texture();
             let normal_texture = material.normal_texture();
+            let occlusion_texture = material.occlusion_texture();
             let emissive_texture = material.emissive_texture();
             GltfMaterialData {
                 base_color_factor: pbr.base_color_factor(),
@@ -299,6 +303,18 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
                 normal_scale: normal_texture
                     .as_ref()
                     .map_or(1.0, |texture| texture.scale()),
+                occlusion_texture: occlusion_texture
+                    .as_ref()
+                    .map(|texture| texture.texture().index()),
+                occlusion_texture_transform: occlusion_texture.as_ref().and_then(|texture| {
+                    texture_transform_value(
+                        texture.extension_value("KHR_texture_transform"),
+                        Some(texture.tex_coord()),
+                    )
+                }),
+                occlusion_strength: occlusion_texture
+                    .as_ref()
+                    .map_or(1.0, |texture| texture.strength()),
                 emissive_factor: material.emissive_factor(),
                 emissive_texture: emissive_texture
                     .as_ref()
@@ -1416,6 +1432,13 @@ mod tests {
                 "KHR_texture_transform": { "offset": [0.1, 0.2], "scale": [0.5, 0.75] }
             }
         });
+        sample["materials"][0]["occlusionTexture"] = json!({
+            "index": 0,
+            "strength": 0.5,
+            "extensions": {
+                "KHR_texture_transform": { "offset": [0.3, 0.4], "scale": [0.6, 0.7], "texCoord": 0 }
+            }
+        });
         sample["materials"][0]["emissiveFactor"] = json!([0.1, 0.2, 0.3]);
         sample["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
         sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"] =
@@ -1451,6 +1474,14 @@ mod tests {
                     tex_coord: Some(0),
                 }),
                 normal_scale: 0.25,
+                occlusion_texture: Some(0),
+                occlusion_texture_transform: Some(TextureTransform2d {
+                    offset: [0.3, 0.4],
+                    scale: [0.6, 0.7],
+                    rotation: 0.0,
+                    tex_coord: Some(0),
+                }),
+                occlusion_strength: 0.5,
                 emissive_factor: [0.1, 0.2, 0.3],
                 emissive_texture: Some(0),
                 emissive_texture_transform: None,
