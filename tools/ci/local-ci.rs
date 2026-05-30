@@ -108,6 +108,7 @@ enum RenderBackground {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RenderPsnrMetric {
     Rgba,
+    RgbAll,
     RgbOpaque,
     RgbVisible,
     RgbInterior1px,
@@ -132,6 +133,7 @@ impl RenderPsnrMetric {
     fn as_cli_value(self) -> &'static str {
         match self {
             Self::Rgba => "rgba",
+            Self::RgbAll => "rgb-all",
             Self::RgbOpaque => "rgb-opaque",
             Self::RgbVisible => "rgb-visible",
             Self::RgbInterior1px => "rgb-interior1px",

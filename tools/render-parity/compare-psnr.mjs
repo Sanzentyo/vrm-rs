@@ -23,10 +23,10 @@ const actualPath = args.get('actual');
 const outPath = args.get('out');
 const failUnder = args.has('fail-under') ? Number(args.get('fail-under')) : null;
 const metricName = args.get('metric') ?? 'rgba';
-const metricNames = new Set(['rgba', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px']);
+const metricNames = new Set(['rgba', 'rgb-all', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px']);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
@@ -50,12 +50,14 @@ if (expected.rgba.length !== actual.rgba.length) {
 }
 
 const fullImage = compareChannels(() => true, [0, 1, 2, 3]);
+const allRgb = compareChannels(() => true, [0, 1, 2]);
 const opaqueRgb = compareChannels((pixel) => expected.rgba[pixel + 3] === 255 && actual.rgba[pixel + 3] === 255, [0, 1, 2]);
 const visibleRgb = compareChannels((pixel) => expected.rgba[pixel + 3] > 0 || actual.rgba[pixel + 3] > 0, [0, 1, 2]);
 const interiorRgb = compareChannels((pixel) => isInteriorOpaque(pixel), [0, 1, 2]);
 const alpha = alphaStats();
 const selectedMetric = selectMetric(metricName, {
   rgba: fullImage,
+  'rgb-all': allRgb,
   'rgb-opaque': opaqueRgb,
   'rgb-visible': visibleRgb,
   'rgb-interior1px': interiorRgb,
@@ -73,6 +75,7 @@ const report = {
   maxChannelDelta: fullImage.maxChannelDelta,
   maxPixelDelta: fullImage.maxPixelDelta,
   alpha,
+  rgbAll: metricReport(allRgb),
   rgbOpaque: metricReport(opaqueRgb),
   rgbVisible: metricReport(visibleRgb),
   rgbInterior1px: metricReport(interiorRgb),

@@ -514,6 +514,16 @@ VRM0 wgpu/Bevy `27.7987 dB`. Use explicit `transparent` only when the review
 needs transparent alpha. The last transparent time `1.0` UV-animation audit
 reported full-RGBA wgpu/Bevy `35.9209 dB` and selected `rgb-visible`
 wgpu/Bevy `27.2167 dB`.
+For the broader real transparent-material audit, run
+`just render-parity-real-transparent`. This keeps the transparent background
+and uses `rgb-all` with fail-under `27`, while alpha-mask drift is enforced
+separately with tolerance `64`. The current six-fixture run passes with
+selected PSNR Seed-san wgpu `27.4709 dB`/Bevy `27.3634 dB`, constraint wgpu
+`33.6106 dB`/Bevy `33.6050 dB`, UV animation wgpu `34.8985 dB`/Bevy
+`34.8819 dB`, expression mask samples around `39.29-39.30 dB`, and Alicia
+VRM0 wgpu `27.7958 dB`/Bevy `27.7923 dB`. Alpha mismatches remain below the
+tolerance: Seed-san `25/32`, constraint `11/11`, UV animation `0/0`,
+expression masks `12/12`, and Alicia `32/32`.
 Static `KHR_texture_transform` data is now retained through the non-rendering
 layers: VRMC MToon texture infos round-trip nested transform extensions,
 `MtoonTextureTransformSet` stores slot-specific transforms in core, and
@@ -574,8 +584,8 @@ coverage.
   implemented screen-width path is measured against three-vrm instead of only
   being compile/render-path covered.
 - Add or discover broader transparent-material fixtures with real textures and
-  mixed render queues so the generated blend fixture is not the only
-  transparent RGB parity guard.
+  mixed render queues so the generated blend fixture and current six-fixture
+  `rgb-all` transparent sweep are not the only transparent RGB parity guards.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize the remaining MToon shader deltas.
