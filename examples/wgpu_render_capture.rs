@@ -114,6 +114,8 @@ struct CaptureOptions {
     disable_outlines: bool,
     #[arg(long)]
     disable_normal_maps: bool,
+    #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
+    normal_map_mode: NormalMapMode,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -198,6 +200,21 @@ enum CaptureAlphaMode {
     Opaque,
     Mask,
     Blend,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum NormalMapMode {
+    GeneratedTangents,
+    Derivative,
+}
+
+impl NormalMapMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::GeneratedTangents => "generated-tangents",
+            Self::Derivative => "derivative",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -658,7 +675,13 @@ fn draw_primitive(
                 .get(index)
                 .copied()
                 .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-            let normal_scale = if primitive.tangents.get(index).is_some() {
+            let use_derivative_normals = context.options.normal_map_mode
+                == NormalMapMode::Derivative
+                && primitive.tangents.is_empty()
+                && shading.normal_scale > 0.0;
+            let normal_scale = if use_derivative_normals {
+                -shading.normal_scale
+            } else if primitive.tangents.get(index).is_some() {
                 shading.normal_scale
             } else {
                 0.0
@@ -732,7 +755,10 @@ fn draw_primitive(
             }
         })
         .collect::<Vec<_>>();
-    if shading.normal_scale > 0.0 && primitive.tangents.is_empty() {
+    if shading.normal_scale > 0.0
+        && primitive.tangents.is_empty()
+        && context.options.normal_map_mode == NormalMapMode::GeneratedTangents
+    {
         generate_missing_tangents(&mut vertices, &primitive.indices, shading.normal_scale);
     }
     Ok(DrawPrimitive {
@@ -2443,6 +2469,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "height": options.height,
         "disableOutlines": options.disable_outlines,
         "disableNormalMaps": options.disable_normal_maps,
+        "normalMapMode": options.normal_map_mode.as_str(),
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
@@ -2692,17 +2719,40 @@ fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
 fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) -> vec3<f32> {
     let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
     let geometric_normal = normalize(input.normal) * face_sign;
-    if input.normal_scale <= 0.0 {
+    if input.normal_scale == 0.0 {
         return geometric_normal;
     }
+    let normal_scale = abs(input.normal_scale);
     let tangent = normalize(input.tangent.xyz) * face_sign;
     let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w) * face_sign;
     let sampled = textureSample(normal_texture, base_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
-        (sampled.x * 2.0 - 1.0) * input.normal_scale,
-        (1.0 - sampled.y * 2.0) * input.normal_scale,
+        (sampled.x * 2.0 - 1.0) * normal_scale,
+        (1.0 - sampled.y * 2.0) * normal_scale,
         sampled.z * 2.0 - 1.0,
     );
+    if input.normal_scale < 0.0 {
+        let q0 = dpdx(input.world_position);
+        let q1 = dpdy(input.world_position);
+        let st0 = dpdx(normal_uv);
+        let st1 = dpdy(normal_uv);
+        let q1perp = cross(q1, geometric_normal);
+        let q0perp = cross(geometric_normal, q0);
+        var tangent = q1perp * st0.x + q0perp * st1.x;
+        var bitangent = q1perp * st0.y + q0perp * st1.y;
+        let det = max(dot(tangent, tangent), dot(bitangent, bitangent));
+        if det <= 0.0 {
+            return geometric_normal;
+        }
+        let scale = 1.0 / sqrt(det);
+        tangent = tangent * scale * face_sign;
+        bitangent = bitangent * scale * face_sign;
+        return normalize(
+            tangent * tangent_normal.x +
+            bitangent * tangent_normal.y +
+            geometric_normal * tangent_normal.z,
+        );
+    }
     return normalize(
         tangent * tangent_normal.x +
         bitangent * tangent_normal.y +

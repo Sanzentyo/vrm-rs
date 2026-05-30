@@ -80,6 +80,9 @@ fixtures; it writes `.external-fixtures/render-parity-real-normal-maps/`.
 Use `just render-parity-normal-maps-off` to disable normal maps across
 three-vrm, wgpu, and Bevy when isolating whether a real-fixture delta comes from
 tangentless normal-map behavior or another part of the material/geometry path.
+Use `just render-parity-normal-maps-derivative` only as a diagnostic for the
+shader-derivative tangent-frame fallback; the current measured path is worse
+than generated tangents on Seed-san and is not the default guard.
 Use `just render-parity-outline-off` as a diagnostic for separating MToon
 outline expansion deltas from material, skinning, and pose deltas.
 The canonical local runner now uses

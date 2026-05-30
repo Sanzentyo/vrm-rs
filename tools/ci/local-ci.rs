@@ -119,6 +119,8 @@ struct Options {
     render_disable_outlines: bool,
     #[arg(long)]
     render_disable_normal_maps: bool,
+    #[arg(long, value_enum, default_value_t = RenderNormalMapMode::GeneratedTangents)]
+    render_normal_map_mode: RenderNormalMapMode,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
@@ -153,11 +155,26 @@ enum RenderMtoonLightAccumulation {
     ThreeVrm,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RenderNormalMapMode {
+    GeneratedTangents,
+    Derivative,
+}
+
 impl RenderMtoonLightAccumulation {
     fn as_cli_value(self) -> &'static str {
         match self {
             Self::Tuned => "tuned",
             Self::ThreeVrm => "three-vrm",
+        }
+    }
+}
+
+impl RenderNormalMapMode {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::GeneratedTangents => "generated-tangents",
+            Self::Derivative => "derivative",
         }
     }
 }
@@ -738,6 +755,9 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_normal_maps {
         command.arg("--disable-normal-maps");
     }
+    command
+        .arg("--normal-map-mode")
+        .arg(options.render_normal_map_mode.as_cli_value());
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);
     }
@@ -790,6 +810,9 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_normal_maps {
         command.arg("--disable-normal-maps");
     }
+    command
+        .arg("--normal-map-mode")
+        .arg(options.render_normal_map_mode.as_cli_value());
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);
     }

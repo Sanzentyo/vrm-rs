@@ -138,6 +138,8 @@ struct CaptureOptions {
     disable_outlines: bool,
     #[arg(long)]
     disable_normal_maps: bool,
+    #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
+    normal_map_mode: NormalMapMode,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -153,6 +155,21 @@ impl MtoonLightAccumulation {
         match self {
             Self::Tuned => "tuned",
             Self::ThreeVrm => "three-vrm",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum NormalMapMode {
+    GeneratedTangents,
+    Derivative,
+}
+
+impl NormalMapMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::GeneratedTangents => "generated-tangents",
+            Self::Derivative => "derivative",
         }
     }
 }
@@ -363,12 +380,15 @@ fn spawn_vrm_meshes(
                 shading.normal_scale = 0.0;
             }
             let render_order = material_render_order(loaded, primitive.material);
+            let use_derivative_normals = options.normal_map_mode == NormalMapMode::Derivative
+                && primitive.tangents.is_empty()
+                && shading.normal_scale > 0.0;
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
                 &morph_weights,
                 world,
                 skin_matrices.as_deref(),
-                shading.normal_scale > 0.0,
+                shading.normal_scale > 0.0 && !use_derivative_normals,
             );
             let surface = BevyPrimitive {
                 mesh,
@@ -378,11 +398,12 @@ fn spawn_vrm_meshes(
                     shading,
                     &primitive_context,
                     render_depth_bias(render_order),
-                    if has_tangents {
+                    if has_tangents || use_derivative_normals {
                         shading.normal_scale
                     } else {
                         0.0
                     },
+                    use_derivative_normals,
                 )),
                 render_order,
                 phase_order: material_phase_order(loaded, primitive.material),
@@ -474,6 +495,7 @@ fn bevy_outline_primitive(
         context,
         render_depth_bias(material_render_order(loaded, primitive.material) + 1),
         0.0,
+        false,
     );
     material.outline_color = BVec4::from_array(outline_color);
     material.alpha_mode = AlphaMode::Opaque;
@@ -1463,6 +1485,7 @@ fn bevy_mtoon_material(
     context: &BevyPrimitiveContext<'_>,
     depth_bias: f32,
     normal_scale: f32,
+    use_derivative_normals: bool,
 ) -> BevyMtoonMaterial {
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
     let cull_mode = material_cull_mode(loaded, primitive.material);
@@ -1515,7 +1538,7 @@ fn bevy_mtoon_material(
             } else {
                 0.0
             },
-            0.0,
+            if use_derivative_normals { 1.0 } else { 0.0 },
         ),
         pbr_params: BVec4::new(
             shading.metallic,
@@ -2516,6 +2539,7 @@ fn write_capture(
         "height": options.height,
         "disableOutlines": options.disable_outlines,
         "disableNormalMaps": options.disable_normal_maps,
+        "normalMapMode": options.normal_map_mode.as_str(),
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {

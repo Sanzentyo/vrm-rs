@@ -161,15 +161,37 @@ fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>)
     if material.pipeline.z <= 0.0 {
         return geometric_normal;
     }
-#ifdef VERTEX_TANGENTS
-    let tangent = normalize(input.world_tangent.xyz) * face_sign;
-    let bitangent = normalize(cross(geometric_normal, tangent) * input.world_tangent.w) * face_sign;
     let sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * material.pipeline.z,
         (1.0 - sampled.y * 2.0) * material.pipeline.z,
         sampled.z * 2.0 - 1.0,
     );
+    if material.material_flags.w > 0.5 {
+        let q0 = dpdx(input.world_position.xyz);
+        let q1 = dpdy(input.world_position.xyz);
+        let st0 = dpdx(normal_uv);
+        let st1 = dpdy(normal_uv);
+        let q1perp = cross(q1, geometric_normal);
+        let q0perp = cross(geometric_normal, q0);
+        var tangent = q1perp * st0.x + q0perp * st1.x;
+        var bitangent = q1perp * st0.y + q0perp * st1.y;
+        let det = max(dot(tangent, tangent), dot(bitangent, bitangent));
+        if det <= 0.0 {
+            return geometric_normal;
+        }
+        let scale = 1.0 / sqrt(det);
+        tangent = tangent * scale * face_sign;
+        bitangent = bitangent * scale * face_sign;
+        return normalize(
+            tangent * tangent_normal.x +
+            bitangent * tangent_normal.y +
+            geometric_normal * tangent_normal.z,
+        );
+    }
+#ifdef VERTEX_TANGENTS
+    let tangent = normalize(input.world_tangent.xyz) * face_sign;
+    let bitangent = normalize(cross(geometric_normal, tangent) * input.world_tangent.w) * face_sign;
     return normalize(
         tangent * tangent_normal.x +
         bitangent * tangent_normal.y +

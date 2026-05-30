@@ -33,6 +33,10 @@ render-parity-real-normal-maps three_vrm_root="D:/git/three-vrm" background="opa
 render-parity-normal-maps-off three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-normal-maps-off --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 33 --render-mtoon-light-accumulation tuned --render-disable-normal-maps --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
 
+# Diagnostic: use shader derivative tangent frames for tangentless normal maps.
+render-parity-normal-maps-derivative three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-normal-maps-derivative --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 30 --render-mtoon-light-accumulation tuned --render-normal-map-mode derivative --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
+
 # Re-measure the reference-shaped MToon light/color accumulator without tuned exposure.
 render-parity-light-three-vrm three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-three-vrm-light --render-background opaque-black --render-mtoon-light-accumulation three-vrm --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm

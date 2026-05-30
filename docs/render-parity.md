@@ -167,6 +167,21 @@ improves from the normal-map-enabled sweep to wgpu `33.5967 dB` / Bevy
 partly normal-map/tangentless-related, while the constraint sample continues to
 point more toward outline, geometry, or rasterization differences.
 
+For a shader-derivative tangent-frame diagnostic over the same real fixtures,
+run:
+
+```powershell
+just render-parity-normal-maps-derivative
+```
+
+This forwards `--render-normal-map-mode derivative` into the wgpu and Bevy
+captures while leaving three-vrm on its native tangentless fallback. It is not
+the default renderer path: the 2026-05-30 measurement passed exact alpha parity
+but was worse than the generated-tangent path, with Seed-san wgpu `30.8717 dB`
+/ Bevy `30.6436 dB` and constraint wgpu `35.9214 dB` / Bevy `35.9149 dB`.
+Keep using generated tangents for the current real-fixture guard until a closer
+formulation beats `just render-parity-real-normal-maps`.
+
 The Rust capture paths also accept
 `--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
 current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
