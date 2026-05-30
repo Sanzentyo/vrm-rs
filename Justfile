@@ -27,7 +27,7 @@ render-parity-real-transparent three_vrm_root="D:/git/three-vrm":
 
 # Regenerate focused artifacts for real official MToon normal-map fixtures whose primitives omit glTF TANGENT.
 render-parity-real-normal-maps three_vrm_root="D:/git/three-vrm" background="opaque-black":
-    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-real-normal-maps --render-background "{{ background }}" --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 32 --render-mtoon-light-accumulation tuned --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-real-normal-maps --render-background "{{ background }}" --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 32.5 --render-mtoon-light-accumulation tuned --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
 
 # Re-measure the reference-shaped MToon light/color accumulator without tuned exposure.
 render-parity-light-three-vrm three_vrm_root="D:/git/three-vrm":

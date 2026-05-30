@@ -137,7 +137,7 @@ covers the unique official/local fixtures reported by `inspect-mtoon-fixtures`:
 `Seed-san.vrm` has `6` normal-mapped primitives without tangents, and
 `VRM1_Constraint_Twist_Sample.vrm` has `3`. The run uses the canonical
 opaque-black review background, selected `rgb-visible`, exact alpha parity, and
-`--render-fail-under 32`. Current selected PSNR is Seed-san wgpu `32.8751 dB` /
+`--render-fail-under 32.5`. Current selected PSNR is Seed-san wgpu `32.8751 dB` /
 Bevy `32.5273 dB`, and constraint sample wgpu `35.9456 dB` / Bevy
 `35.9394 dB`, all with alpha mismatches `0`. Review
 `.external-fixtures/render-parity-real-normal-maps/visual-review.html` and the
@@ -849,7 +849,8 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
 - Review real tangentless official normal-map primitives and raise the normal
-  fixture floor beyond the current `45 dB` when stable.
+  generated fixture floor beyond the current `45 dB` when stable; the focused
+  real normal-map sweep now enforces `rgb-visible >= 32.5 dB`.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize remaining outline, material breadth,
