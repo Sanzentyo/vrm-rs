@@ -181,11 +181,12 @@ outline alone. The constraint sample improves from the normal sweep's
 wgpu `35.9456 dB` / Bevy `35.9394 dB` to wgpu `36.8185 dB` / Bevy
 `36.8061 dB`, which marks outline expansion as a real contributor for that
 fixture. The capture outline geometry now follows three-vrm's local/object
-normal expansion with normal-matrix length compensation, and wgpu also applies
-the three-vrm outline clip-depth nudge. Re-running the focused guards did not
-move the measured PSNR, so remaining constraint outline residuals are more
-likely in rasterization/fill, material color, or Bevy's lack of a custom
-outline vertex stage than in transform-scale handling.
+normal expansion with normal-matrix length compensation, uses post-skin normal
+directions for skinned outline vertices, and wgpu also applies the three-vrm
+outline clip-depth nudge. Re-running the focused guards did not move the
+measured PSNR, so remaining constraint outline residuals are more likely in
+rasterization/fill, material color, or Bevy's lack of a custom outline vertex
+stage than in transform-scale or pre/post-skin offset ordering.
 
 For isolated experiments, the local runner can also override the three-vrm
 reference light setup with `--render-three-vrm-directional-intensity`,
@@ -807,6 +808,9 @@ Screen-coordinate outline scaling is also implemented in the concrete capture
 paths: when a material requests `outlineWidthMode = screenCoordinates`, the CPU
 outline mesh expansion multiplies width by view depth divided by the fixed
 30 degree projection Y scale, matching three-vrm's vertex shader convention.
+Skinned outline vertices are expanded after the blended skin transform along
+the skinned normal direction; unskinned primitives keep the local/object normal
+offset path so non-uniform object transforms keep matching the shader formula.
 The current official sweep does not exercise that branch, so the remaining
 outline gap is fixture breadth plus exact edge/color parity rather than a
 missing mode in wgpu/Bevy captures.
