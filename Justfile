@@ -23,6 +23,11 @@ render-parity-samples three_vrm_root="D:/git/three-vrm" background="opaque-black
 render-parity-light-three-vrm three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-three-vrm-light --render-background opaque-black --render-mtoon-light-accumulation three-vrm --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
 
+# Generate and render a source-like MToon light/color accumulation fixture.
+render-parity-mtoon-light-generated three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-light-generated --render-background opaque-black --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/mtoon-light.vrm.gltf
+
 # Regenerate a time-advanced MToon UV animation parity artifact.
 render-parity-uv-animation three_vrm_root="D:/git/three-vrm" time="1.0" background="opaque-black" light_accumulation="tuned":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-uv-animation --render-mtoon-time {{ time }} --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}" --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_materials_mtoon_UV_Animation_Test/VRMC_materials_mtoon_UV_Animation_Test.vrm

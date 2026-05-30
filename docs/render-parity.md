@@ -120,6 +120,25 @@ path with:
 just render-parity-light-three-vrm
 ```
 
+For a generated MToon light/color accumulation audit that isolates shader
+terms without relying on redistributable binary model assets, run:
+
+```powershell
+just render-parity-mtoon-light-generated
+```
+
+This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
+into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
+contains six opaque MToon quads for forced base lighting, forced shade lighting,
+ambient-only behavior, parametric rim, matcap rim, and mixed rim/matcap. The
+current run uses `--mtoon-light-accumulation three-vrm` and reports selected
+`rgb-visible` PSNR wgpu `28.6300 dB` and Bevy `28.6100 dB`; full-RGBA PSNR is
+wgpu `29.8794 dB` and Bevy `29.8594 dB`. Review
+`.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
+when changing MToon accumulation code. The remaining high max-channel deltas on
+that fixture are a focused signal for exact reflected-light loop, color-space
+post-correction, rim, and matcap differences.
+
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
 
