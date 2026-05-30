@@ -85,6 +85,12 @@ struct Options {
     render_three_vrm_directional_y: f32,
     #[arg(long, default_value_t = 1.0)]
     render_three_vrm_directional_z: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_directional_r: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_directional_g: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_directional_b: f32,
     #[arg(long, default_value_t = 0.1)]
     render_three_vrm_ambient_intensity: f32,
     #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::Tuned)]
@@ -658,6 +664,12 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
         .arg(options.render_three_vrm_directional_y.to_string())
         .arg("--directional-z")
         .arg(options.render_three_vrm_directional_z.to_string())
+        .arg("--directional-r")
+        .arg(options.render_directional_r.to_string())
+        .arg("--directional-g")
+        .arg(options.render_directional_g.to_string())
+        .arg("--directional-b")
+        .arg(options.render_directional_b.to_string())
         .arg("--ambient-intensity")
         .arg(options.render_three_vrm_ambient_intensity.to_string())
         .arg("--mtoon-time")
@@ -698,6 +710,12 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_pbr_ambient.to_string())
         .arg("--direct-light-scale")
         .arg(options.render_direct_light_scale.to_string())
+        .arg("--directional-r")
+        .arg(options.render_directional_r.to_string())
+        .arg("--directional-g")
+        .arg(options.render_directional_g.to_string())
+        .arg("--directional-b")
+        .arg(options.render_directional_b.to_string())
         .arg("--mtoon-light-accumulation")
         .arg(options.render_mtoon_light_accumulation.as_cli_value())
         .arg("--mtoon-time")
@@ -740,6 +758,12 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_pbr_ambient.to_string())
         .arg("--direct-light-scale")
         .arg(options.render_direct_light_scale.to_string())
+        .arg("--directional-r")
+        .arg(options.render_directional_r.to_string())
+        .arg("--directional-g")
+        .arg(options.render_directional_g.to_string())
+        .arg("--directional-b")
+        .arg(options.render_directional_b.to_string())
         .arg("--mtoon-light-accumulation")
         .arg(options.render_mtoon_light_accumulation.as_cli_value())
         .arg("--mtoon-time")

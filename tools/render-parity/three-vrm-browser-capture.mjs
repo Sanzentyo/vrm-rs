@@ -36,13 +36,16 @@ const directionalIntensity = Number(args.get('directional-intensity') ?? Math.PI
 const directionalX = Number(args.get('directional-x') ?? '1.0');
 const directionalY = Number(args.get('directional-y') ?? '1.0');
 const directionalZ = Number(args.get('directional-z') ?? '1.0');
+const directionalR = Number(args.get('directional-r') ?? '1.0');
+const directionalG = Number(args.get('directional-g') ?? '1.0');
+const directionalB = Number(args.get('directional-b') ?? '1.0');
 const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--expression happy=1.0] [--disable-outlines]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -59,6 +62,9 @@ if (
     directionalX,
     directionalY,
     directionalZ,
+    directionalR,
+    directionalG,
+    directionalB,
     ambientIntensity,
   ].every(Number.isFinite)
 ) {
@@ -108,13 +114,16 @@ const server = http.createServer((request, response) => {
       cameraY,
       cameraZ,
       targetY,
-    mtoonTime,
-    expressions: expressionWeights,
-    background,
+      mtoonTime,
+      expressions: expressionWeights,
+      background,
       directionalIntensity,
       directionalX,
       directionalY,
       directionalZ,
+      directionalR,
+      directionalG,
+      directionalB,
       ambientIntensity,
     }));
     return;
@@ -228,7 +237,10 @@ function capturePage(options) {
     camera.lookAt(0.0, ${options.targetY}, 0.0);
 
     const scene = new THREE.Scene();
-    const light = new THREE.DirectionalLight(0xffffff, ${options.directionalIntensity});
+    const light = new THREE.DirectionalLight(
+      new THREE.Color(${options.directionalR}, ${options.directionalG}, ${options.directionalB}),
+      ${options.directionalIntensity},
+    );
     light.position.set(${options.directionalX}, ${options.directionalY}, ${options.directionalZ}).normalize();
     scene.add(light);
     const ambient = new THREE.AmbientLight(0xffffff, ${options.ambientIntensity});
@@ -289,8 +301,8 @@ function capturePage(options) {
       expressions,
       lighting: {
         directional: {
-          color: '#ffffff',
-          intensity: Math.PI,
+          color: [${options.directionalR}, ${options.directionalG}, ${options.directionalB}],
+          intensity: ${options.directionalIntensity},
           position: light.position.toArray(),
         },
         ambient: {

@@ -122,6 +122,12 @@ struct CaptureOptions {
     pbr_ambient: f32,
     #[arg(long, default_value_t = 1.0)]
     direct_light_scale: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_r: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_g: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_b: f32,
     #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
     mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
@@ -1286,6 +1292,7 @@ struct BevyMtoonMaterial {
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
+    light_color: BVec4,
     base_uv_transform: BVec4,
     shade_uv_transform: BVec4,
     shading_shift_uv_transform: BVec4,
@@ -1351,6 +1358,7 @@ struct BevyMtoonUniform {
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
+    light_color: BVec4,
     base_uv_transform: BVec4,
     shade_uv_transform: BVec4,
     shading_shift_uv_transform: BVec4,
@@ -1380,6 +1388,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             outline_color: material.outline_color,
             pipeline: material.pipeline,
             lighting: material.lighting,
+            light_color: material.light_color,
             base_uv_transform: material.base_uv_transform,
             shade_uv_transform: material.shade_uv_transform,
             shading_shift_uv_transform: material.shading_shift_uv_transform,
@@ -1517,6 +1526,12 @@ fn bevy_mtoon_material(
             if cull_mode.is_none() { 1.0 } else { 0.0 },
         ),
         lighting: bevy_mtoon_lighting(context.options),
+        light_color: BVec4::new(
+            context.options.directional_r,
+            context.options.directional_g,
+            context.options.directional_b,
+            0.0,
+        ),
         base_uv_transform: bevy_uv_transform(uv_transforms.base),
         shade_uv_transform: bevy_uv_transform(uv_transforms.shade),
         shading_shift_uv_transform: bevy_uv_transform(uv_transforms.shading_shift),
@@ -2503,6 +2518,11 @@ fn write_capture(
             "ambientGiScale": options.mtoon_ambient_gi_scale,
             "pbrAmbient": options.pbr_ambient,
             "directLightScale": options.direct_light_scale,
+            "directionalColor": [
+                options.directional_r,
+                options.directional_g,
+                options.directional_b
+            ],
             "lightAccumulation": options.mtoon_light_accumulation.as_str(),
             "effective": {
                 "exposure": effective_lighting[0],

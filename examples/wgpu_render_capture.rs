@@ -65,6 +65,7 @@ impl Vertex {
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
     light_dir: [f32; 4],
+    light_color: [f32; 4],
     camera_pos: [f32; 4],
     mtoon_lighting: [f32; 4],
 }
@@ -97,6 +98,12 @@ struct CaptureOptions {
     pbr_ambient: f32,
     #[arg(long, default_value_t = 1.0)]
     direct_light_scale: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_r: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_g: f32,
+    #[arg(long, default_value_t = 1.0)]
+    directional_b: f32,
     #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
     mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
@@ -2367,6 +2374,13 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
             options.direct_light_scale,
         )
         .to_array(),
+        light_color: Vec4::new(
+            options.directional_r,
+            options.directional_g,
+            options.directional_b,
+            0.0,
+        )
+        .to_array(),
         camera_pos: Vec4::new(eye.x, eye.y, eye.z, 1.0).to_array(),
         mtoon_lighting: mtoon_lighting_uniform(options),
     }
@@ -2431,6 +2445,11 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
             "ambientGiScale": options.mtoon_ambient_gi_scale,
             "pbrAmbient": options.pbr_ambient,
             "directLightScale": options.direct_light_scale,
+            "directionalColor": [
+                options.directional_r,
+                options.directional_g,
+                options.directional_b
+            ],
             "lightAccumulation": options.mtoon_light_accumulation.as_str(),
             "effective": {
                 "exposure": effective_lighting[0],
@@ -2462,6 +2481,7 @@ const SHADER: &str = r#"
 struct Uniforms {
     view_projection: mat4x4<f32>,
     light_dir: vec4<f32>,
+    light_color: vec4<f32>,
     camera_pos: vec4<f32>,
     mtoon_lighting: vec4<f32>,
 };
@@ -2713,7 +2733,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
             normalize(uniforms.light_dir.xyz),
             material_extra.pbr_params.x,
             material_extra.pbr_params.y,
-        ) * uniforms.light_dir.w;
+        ) * uniforms.light_color.rgb * uniforms.light_dir.w;
         let occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
         let ambient = diffuse * (1.0 - material_extra.pbr_params.x) * uniforms.mtoon_lighting.w * occlusion;
         var pbr_color = direct + ambient + input.emissive.rgb * emissive_texel;
@@ -2729,7 +2749,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let toony = input.shading.y;
     let gi = input.shading.z;
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
-    var direct = mix(shade, diffuse, toon) * uniforms.light_dir.w;
+    var direct = mix(shade, diffuse, toon) * uniforms.light_color.rgb * uniforms.light_dir.w;
     if material_extra.flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
@@ -2749,7 +2769,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         input.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, base_sampler, rim_uv).rgb;
-    let rim_light = vec3<f32>(uniforms.light_dir.w + uniforms.mtoon_lighting.w);
+    let rim_light = uniforms.light_color.rgb * uniforms.light_dir.w + vec3<f32>(uniforms.mtoon_lighting.w);
     let rim_mix = mix(vec3<f32>(1.0), rim_light, input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + input.emissive.rgb * emissive_texel) * uniforms.mtoon_lighting.x;

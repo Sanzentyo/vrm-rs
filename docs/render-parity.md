@@ -237,9 +237,10 @@ The current swatch guard requires wgpu max channel delta `<= 1` with every
 swatch at least `50 dB`; Bevy is allowed max channel delta `<= 2` with every
 swatch at least `47 dB`. This prevents a high aggregate score from hiding a
 broken individual MToon term such as forced shade, rim, matcap, or emissive
-strength. The same swatch guard is also run for the direct-only and
-ambient-only recipes below, so default, direct, and indirect accumulation drift
-are separated in their own report directories.
+strength. The same swatch guard is also run for the direct-only,
+colored-direct, and ambient-only recipes below, so default, direct, colored
+direct/rim, and indirect accumulation drift are separated in their own report
+directories.
 
 For the same generated fixture with ambient disabled on both sides, run:
 
@@ -257,6 +258,23 @@ rim/emission behavior. The current selected `rgb-interior1px` PSNR is wgpu
 enforces the same wgpu `<= 1` / Bevy `<= 2` per-swatch max channel deltas. This
 keeps direct-light color parity measured separately from the default reference
 run that includes ambient `0.1`.
+
+For the same direct-only setup under a non-white directional light, run:
+
+```powershell
+just render-parity-mtoon-light-colored-generated
+```
+
+This writes
+`.external-fixtures/render-parity-mtoon-light-colored-generated/`. It passes
+`--render-directional-r 1.0 --render-directional-g 0.55
+--render-directional-b 0.25` into the three-vrm reference, wgpu capture, and
+Bevy capture while keeping ambient disabled. The current selected
+`rgb-interior1px` PSNR is wgpu `58.8377 dB` and Bevy `52.0812 dB`, with max
+selected channel deltas `1` and `2`. The per-swatch guard also passes, with
+wgpu max channel delta `<= 1` and Bevy max channel delta `<= 2`, proving that
+the direct diffuse and rim-light mix paths are not only matching for white
+lights.
 
 For the same generated fixture with directional light disabled on both sides,
 run:

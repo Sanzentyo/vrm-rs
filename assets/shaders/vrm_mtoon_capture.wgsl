@@ -16,6 +16,7 @@ struct BevyMtoonUniform {
     outline_color: vec4<f32>,
     pipeline: vec4<f32>,
     lighting: vec4<f32>,
+    light_color: vec4<f32>,
     base_uv_transform: vec4<f32>,
     shade_uv_transform: vec4<f32>,
     shading_shift_uv_transform: vec4<f32>,
@@ -219,7 +220,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             light_dir,
             material.pbr_params.x,
             material.pbr_params.y,
-        ) * material.pbr_params.w;
+        ) * material.light_color.rgb * material.pbr_params.w;
         let occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material.pbr_params.z + 1.0;
         let ambient = diffuse * (1.0 - material.pbr_params.x) * material.lighting.w * occlusion;
         var pbr_color = direct + ambient + material.emissive.rgb * emissive_texel;
@@ -238,7 +239,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         1.0 - material.shading.y,
         ndotl + shift,
     );
-    var direct = mix(shade, diffuse, toon) * material.pbr_params.w;
+    var direct = mix(shade, diffuse, toon) * material.light_color.rgb * material.pbr_params.w;
     if material.material_flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
@@ -259,7 +260,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         material.rim_params.y,
     );
     let rim_texel = textureSample(rim_texture, rim_sampler, rim_uv).rgb;
-    let rim_light = vec3<f32>(material.pbr_params.w + material.lighting.w);
+    let rim_light = material.light_color.rgb * material.pbr_params.w + vec3<f32>(material.lighting.w);
     let rim_mix = mix(vec3<f32>(1.0), rim_light, material.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
     var color = (direct + ambient + rim + material.emissive.rgb * emissive_texel) * material.lighting.x;
