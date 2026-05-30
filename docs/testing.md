@@ -74,7 +74,10 @@ keeping binaries external. `just render-parity-samples` currently renders
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as
 UV animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
-the canonical static sweep. The canonical local runner now uses
+the canonical static sweep. Use `just render-parity-real-normal-maps` for the
+focused real-fixture review of the known official tangentless normal-map
+fixtures; it writes `.external-fixtures/render-parity-real-normal-maps/`.
+The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use
 `--render-background transparent` only for explicit alpha-mask and silhouette

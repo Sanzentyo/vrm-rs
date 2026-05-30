@@ -125,6 +125,25 @@ Review
 working on broader transparent silhouettes, VRM0 material ordering, or runtime
 pose/material breadth.
 
+For a focused real-fixture sweep over currently known MToon normal-map fixtures
+whose primitives omit glTF `TANGENT`, run:
+
+```powershell
+just render-parity-real-normal-maps
+```
+
+This writes `.external-fixtures/render-parity-real-normal-maps/` and currently
+covers the unique official/local fixtures reported by `inspect-mtoon-fixtures`:
+`Seed-san.vrm` has `6` normal-mapped primitives without tangents, and
+`VRM1_Constraint_Twist_Sample.vrm` has `3`. The run uses the canonical
+opaque-black review background, selected `rgb-visible`, exact alpha parity, and
+`--render-fail-under 32`. Current selected PSNR is Seed-san wgpu `32.8751 dB` /
+Bevy `32.5273 dB`, and constraint sample wgpu `35.9456 dB` / Bevy
+`35.9394 dB`, all with alpha mismatches `0`. Review
+`.external-fixtures/render-parity-real-normal-maps/visual-review.html` and the
+diff heatmaps when changing tangent generation, normal sampling, back-face TBN
+handling, or MToon light/color accumulation.
+
 The Rust capture paths also accept
 `--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
 current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
@@ -379,11 +398,13 @@ rim, UV animation mask, outline width textures, and an opt-in tangentless
 normal-map guard. This is why screen-coordinate outline and normal-map
 tangentless behavior now have generated parity gates, while real-model
 material breadth work should focus on Seed-san, the constraint sample, the
-UV-animation sample, and Alicia VRM0. A naive derivative normal-map fallback
-was measured and rejected because it dropped Seed-san to `20.3102 dB`; the
-current path uses CPU-generated tangents with the measured normal-Y convention
-until a closer three-vrm derivative formulation improves both the generated
-normal guard and real fixture sweep.
+UV-animation sample, and Alicia VRM0. `just render-parity-real-normal-maps`
+keeps the unique real tangentless normal-map fixtures in a focused review
+directory. A naive derivative normal-map fallback was measured and rejected
+because it dropped Seed-san to `20.3102 dB`; the current path uses CPU-generated
+tangents with the measured normal-Y convention until a closer three-vrm
+derivative formulation improves both the generated normal guard and real fixture
+sweep.
 
 ## three-vrm Capture
 
