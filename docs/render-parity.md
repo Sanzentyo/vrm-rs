@@ -368,12 +368,13 @@ just render-parity-mtoon-textures-generated
 
 This writes `.external-fixtures/generated/mtoon-texture-slots.vrm.gltf` and
 renders it into `.external-fixtures/render-parity-mtoon-textures-generated/`.
-The fixture exercises `shadingShiftTexture`, `rimMultiplyTexture`,
-`uvAnimationMaskTexture` at `mtoon-time=1.0`, and
+The fixture exercises `shadeMultiplyTexture`, `shadingShiftTexture`,
+`rimMultiplyTexture`, `uvAnimationMaskTexture` at `mtoon-time=1.0`, and
 `outlineWidthMultiplyTexture` while keeping all source data generated in the
 repository. The current run has exact alpha buckets and mismatches `0`.
-Selected `rgb-interior1px` PSNR is wgpu `53.5556 dB` and Bevy `50.9425 dB`,
-with max selected channel delta `8`; the recipe enforces a `50 dB` floor.
+Selected `rgb-interior1px` PSNR is wgpu `53.8749 dB` and Bevy `51.2935 dB`,
+with max selected channel delta `8`; the recipe enforces a `50 dB` floor,
+selected-channel delta `<= 8`, and exact alpha.
 
 For a generated MToon normal-map audit, run:
 

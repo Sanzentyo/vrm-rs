@@ -248,6 +248,17 @@ fn accessors(primitive_count: usize) -> Vec<Value> {
 fn materials(include_normal: bool) -> Vec<Value> {
     let mut materials = vec![
         material(
+            "shade-multiply-texture",
+            [0.95, 0.78, 0.24, 1.0],
+            json!({
+                "shadeColorFactor": [0.08, 0.04, 0.02],
+                "shadeMultiplyTexture": { "index": 0 },
+                "shadingShiftFactor": -1.5,
+                "shadingToonyFactor": 0.85
+            }),
+            None,
+        ),
+        material(
             "shading-shift-texture",
             [0.95, 0.55, 0.12, 1.0],
             json!({
@@ -388,8 +399,9 @@ fn mesh_buffer(primitive_count: usize) -> Vec<u8> {
         (-0.82f32, -0.32f32, 0.25f32, 0.95f32),
         (-0.25, 0.25, 0.25, 0.95),
         (0.32, 0.82, 0.25, 0.95),
-        (-0.54, -0.04, 1.05, 1.75),
-        (0.04, 0.54, 1.05, 1.75),
+        (-0.82, -0.32, 1.05, 1.75),
+        (-0.25, 0.25, 1.05, 1.75),
+        (0.32, 0.82, 1.05, 1.75),
     ];
     let positions = quads
         .iter()
