@@ -223,6 +223,18 @@ therefore more likely to come from real model runtime/material breadth,
 post-correction, outline edges, and fixture coverage than from this isolated
 base/shade/rim/matcap/emission color formula.
 
+The recipe also runs the Rust swatch comparator after aggregate PSNR. It labels
+each opaque generated swatch by connected alpha component, drops one-pixel
+edges, and writes per-swatch color reports at
+`.external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.wgpu.swatches.json`
+and
+`.external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.bevy.swatches.json`.
+The current swatch guard requires wgpu max channel delta `<= 1` with every
+swatch at least `50 dB`; Bevy is allowed max channel delta `<= 2` with every
+swatch at least `47 dB`. This prevents a high aggregate score from hiding a
+broken individual MToon term such as forced shade, rim, matcap, or emissive
+strength.
+
 For the same generated fixture with ambient disabled on both sides, run:
 
 ```powershell

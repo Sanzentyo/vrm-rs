@@ -1,5 +1,7 @@
 set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+light_swatch_names := "direct-base,forced-shade,ambient-ao-ignored,parametric-rim,matcap-rim,mixed-rim,toon-ramp-lit-normal,toon-ramp-shade-normal,emissive-factor,emissive-texture-strength"
+
 default:
     @just --list
 
@@ -39,6 +41,8 @@ render-parity-outline-off three_vrm_root="D:/git/three-vrm":
 render-parity-mtoon-light-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-light-generated --render-background transparent --render-alpha-mismatch-tolerance 512 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/mtoon-light.vrm.gltf
+    cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-generated/wgpu/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 50 --max-channel-delta 1 --json-out .external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.wgpu.swatches.json
+    cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-generated/bevy/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 47 --max-channel-delta 2 --json-out .external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.bevy.swatches.json
 
 # Generate and render the MToon light/color fixture with ambient disabled on both sides.
 render-parity-mtoon-light-direct-generated three_vrm_root="D:/git/three-vrm":
