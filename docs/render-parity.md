@@ -112,17 +112,15 @@ just render-parity-real-transparent
 ```
 
 This writes `.external-fixtures/render-parity-real-transparent/` and uses
-`rgb-visible` with a low `--render-fail-under 20` regression floor. That floor
-does not mean final visual compatibility is complete; it keeps the current
-real-fixture transparent path from regressing while generated transparent
-fixtures continue to enforce stricter alpha/blend behavior. The current run
-keeps alpha mismatches under `64` for all six fixtures: Seed-san wgpu/Bevy
-`25/32`, constraint `11/11`, UV animation `0/0`, expression mask samples
-`12/12`, and Alicia VRM0 `32/32`. Selected `rgb-visible` PSNR is Seed-san wgpu
-`20.4130 dB`, Seed-san Bevy `20.3065 dB`, constraint wgpu `25.6531 dB`,
-constraint Bevy `25.6476 dB`, UV animation wgpu `27.4437 dB`, UV animation
-Bevy `27.4271 dB`, expression mask samples around `29.84 dB`, Alicia wgpu
-`20.3469 dB`, and Alicia Bevy `20.3434 dB`. Review
+`rgb-all` with `--render-fail-under 32`, while alpha-mask drift is enforced
+separately. The current run keeps alpha mismatches under `64` for all six
+fixtures: Seed-san wgpu/Bevy `25/32`, constraint `11/11`, UV animation `0/0`,
+expression mask samples `12/12`, and Alicia VRM0 `32/32`. Selected `rgb-all`
+PSNR is Seed-san wgpu `32.3546 dB`, Seed-san Bevy `32.0485 dB`, constraint
+wgpu `35.9421 dB`, constraint Bevy `35.9362 dB`, UV animation wgpu
+`34.8985 dB`, UV animation Bevy `34.8819 dB`, expression mask samples around
+`39.29-39.30 dB`, Alicia wgpu `32.3424 dB`, and Alicia Bevy `32.3410 dB`.
+Review
 `.external-fixtures/render-parity-real-transparent/visual-review.html` when
 working on broader transparent silhouettes, VRM0 material ordering, or runtime
 pose/material breadth.
@@ -142,6 +140,10 @@ path with:
 just render-parity-light-three-vrm
 ```
 
+The current focused exact-accumulator run reports Seed-san wgpu `33.7678 dB` /
+Bevy `33.3385 dB` and constraint sample wgpu `36.1974 dB` / Bevy
+`36.1825 dB` on selected `rgb-visible`.
+
 For a generated MToon light/color accumulation audit that isolates shader
 terms without relying on redistributable binary model assets, run:
 
@@ -151,19 +153,20 @@ just render-parity-mtoon-light-generated
 
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
-contains six opaque MToon quads for forced base lighting, forced shade lighting,
-ambient behavior with a glTF `occlusionTexture` that three-vrm MToon ignores,
-parametric rim, matcap rim, and mixed rim/matcap. It
+contains eight opaque MToon quads for forced base lighting, forced shade
+lighting, ambient behavior with a glTF `occlusionTexture` that three-vrm MToon
+ignores, parametric rim, matcap rim, mixed rim/matcap, and two low-toony ramp
+materials with angled normals. It
 uses `--mtoon-light-accumulation three-vrm`,
 `--render-background transparent`, and selected metric `rgb-interior1px` so a
 one-pixel silhouette/rasterization disagreement does not dominate the shader
-color score. The current run reports selected PSNR wgpu `54.4445 dB` with max
-selected channel delta `1`, and Bevy `51.0870 dB` with max selected channel
+color score. The current run reports selected PSNR wgpu `58.9193 dB` with max
+selected channel delta `1`, and Bevy `52.3057 dB` with max selected channel
 delta `2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
 disabled for parity while still extracting and applying glTF occlusion to
 non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is
-`240` pixels and the recipe
+`444` pixels and the recipe
 allows up to `512`; use the strict transparent generated fixture below for
 alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
@@ -529,25 +532,23 @@ materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
 while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
 opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
 0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
-mismatches `0`. Full-RGBA PSNR is Seed-san wgpu `28.7208 dB`, Seed-san Bevy
-`28.6162 dB`, constraint sample wgpu/Bevy `34.8595 dB`, UV animation sample
-wgpu/Bevy `36.1575 dB`, mask samples wgpu/Bevy `40.5553 dB` and `40.5557 dB`,
-and Alicia VRM0 wgpu/Bevy `29.0481 dB`. The selected `rgb-visible` metric for
-the same sweep is Seed-san wgpu `27.4714 dB`, Seed-san Bevy `27.3668 dB`,
-constraint sample wgpu/Bevy `33.6101 dB`, UV animation sample wgpu/Bevy
-`34.9081 dB`, mask samples wgpu/Bevy `39.3059 dB` and `39.3063 dB`, and Alicia
-VRM0 wgpu/Bevy `27.7987 dB`. Use explicit `transparent` only when the review
+mismatches `0`. The selected `rgb-visible` metric for the same sweep is
+Seed-san wgpu `32.3546 dB`, Seed-san Bevy `32.0485 dB`, constraint sample wgpu
+`35.9421 dB`, constraint sample Bevy `35.9362 dB`, UV animation sample wgpu
+`34.8985 dB`, UV animation sample Bevy `34.8819 dB`, mask samples wgpu/Bevy
+`39.3000/39.2891 dB` and `39.3004/39.2896 dB`, and Alicia VRM0 wgpu
+`32.3424 dB` / Bevy `32.3410 dB`. Use explicit `transparent` only when the review
 needs transparent alpha. The last transparent time `1.0` UV-animation audit
 reported full-RGBA wgpu/Bevy `35.9209 dB` and selected `rgb-visible`
 wgpu/Bevy `27.2167 dB`.
 For the broader real transparent-material audit, run
 `just render-parity-real-transparent`. This keeps the transparent background
-and uses `rgb-all` with fail-under `27`, while alpha-mask drift is enforced
+and uses `rgb-all` with fail-under `32`, while alpha-mask drift is enforced
 separately with tolerance `64`. The current six-fixture run passes with
-selected PSNR Seed-san wgpu `27.4709 dB`/Bevy `27.3634 dB`, constraint wgpu
-`33.6106 dB`/Bevy `33.6050 dB`, UV animation wgpu `34.8985 dB`/Bevy
+selected PSNR Seed-san wgpu `32.3546 dB`/Bevy `32.0485 dB`, constraint wgpu
+`35.9421 dB`/Bevy `35.9362 dB`, UV animation wgpu `34.8985 dB`/Bevy
 `34.8819 dB`, expression mask samples around `39.29-39.30 dB`, and Alicia
-VRM0 wgpu `27.7958 dB`/Bevy `27.7923 dB`. Alpha mismatches remain below the
+VRM0 wgpu `32.3424 dB`/Bevy `32.3410 dB`. Alpha mismatches remain below the
 tolerance: Seed-san `25/32`, constraint `11/11`, UV animation `0/0`,
 expression masks `12/12`, and Alicia `32/32`.
 Static `KHR_texture_transform` data is now retained through the non-rendering
@@ -601,15 +602,18 @@ VRM0 compatibility shading now includes the three-vrm `V0_COMPAT_SHADE` branch:
 wgpu and Bevy capture materials flag VRM0 MToon primitives through the spare
 `emissive.w` lane, and the shader clamps the direct toon contribution with
 `min(direct, diffuse)`. The current six-fixture sweep is stable after this
-exactness fix, so the remaining PSNR gap is not this branch; the heatmaps still
-point at broader MToon light/color accumulation, outline edges, and fixture
-coverage.
+exactness fix. The capture light vector now also follows three-vrm's
+`DirectionalLight(1,1,1)` convention after applying the VRM orientation
+compensation, which raises the current six-fixture `rgb-visible` floor to
+`32 dB`. The remaining PSNR gap is no longer the isolated base/shade/rim/matcap
+formula; the heatmaps now point more toward runtime/material breadth, outline
+edges, real-model screen-coordinate outline coverage, and higher thresholds.
 
 ## Next Renderer Work
 
-- Deepen the wgpu and Bevy capture paths with fuller MToon lighting/color
-  accumulation beyond the now-covered VRM0 compat shade clamp
-  before raising PSNR thresholds.
+- Deepen real-model runtime/material breadth now that isolated MToon
+  light/color, angled-normal ramp, MToon occlusion-ignore, and VRM0 compat shade
+  guards are covered by generated or official parity runs.
 - Add or discover an external screen-coordinate outline fixture so the newly
   implemented screen-width path is measured against three-vrm instead of only
   being compile/render-path covered.
@@ -618,4 +622,5 @@ coverage.
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
-- Use the generated heatmaps to prioritize the remaining MToon shader deltas.
+- Use the generated heatmaps to prioritize remaining outline, material breadth,
+  and real-model shader deltas before raising thresholds again.

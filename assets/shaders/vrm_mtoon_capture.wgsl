@@ -197,7 +197,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let occlusion_uv = transform_uv(animated_uv, material.occlusion_uv_transform, material.uv_animation.w);
 
     let normal = surface_normal(input, front_facing, normal_uv);
-    let light_dir = normalize(vec3<f32>(-1.0, -1.0, -1.0));
+    let light_dir = normalize(vec3<f32>(-1.0, 1.0, -1.0));
     let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
 
     let texel = textureSample(base_texture, base_sampler, base_uv);

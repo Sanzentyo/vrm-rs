@@ -46,6 +46,11 @@ fn fixture_json() -> String {
     let texture_len = texture.len();
     let mut buffer = mesh;
     buffer.extend(texture);
+    let materials = mtoon_materials();
+    let primitive_count = materials.len();
+    let buffer_views = buffer_views(primitive_count, mesh_len, texture_len);
+    let accessors = accessors(primitive_count);
+    let image_buffer_view = 3 + primitive_count;
 
     serde_json::to_string_pretty(&json!({
         "asset": {
@@ -71,67 +76,18 @@ fn fixture_json() -> String {
         }],
         "images": [{
             "mimeType": "image/png",
-            "bufferView": 9
+            "bufferView": image_buffer_view
         }],
         "textures": [{
             "sampler": 0,
             "source": 0
         }],
-        "bufferViews": [
-            { "buffer": 0, "byteOffset": 0, "byteLength": 288, "target": 34962 },
-            { "buffer": 0, "byteOffset": 288, "byteLength": 288, "target": 34962 },
-            { "buffer": 0, "byteOffset": 576, "byteLength": 192, "target": 34962 },
-            { "buffer": 0, "byteOffset": 768, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": 780, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": 792, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": 804, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": 816, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": 828, "byteLength": 12, "target": 34963 },
-            { "buffer": 0, "byteOffset": mesh_len, "byteLength": texture_len }
-        ],
-        "accessors": [
-            {
-                "bufferView": 0,
-                "componentType": 5126,
-                "count": 24,
-                "type": "VEC3",
-                "min": [-1.85, 0.15, 0.0],
-                "max": [1.85, 1.85, 0.0]
-            },
-            {
-                "bufferView": 1,
-                "componentType": 5126,
-                "count": 24,
-                "type": "VEC3",
-                "min": [0.0, 0.0, 1.0],
-                "max": [0.0, 0.0, 1.0]
-            },
-            {
-                "bufferView": 2,
-                "componentType": 5126,
-                "count": 24,
-                "type": "VEC2",
-                "min": [0.0, 0.0],
-                "max": [1.0, 1.0]
-            },
-            index_accessor(3),
-            index_accessor(4),
-            index_accessor(5),
-            index_accessor(6),
-            index_accessor(7),
-            index_accessor(8)
-        ],
-        "materials": [
-            mtoon_material("direct-base", [0.92, 0.18, 0.10, 1.0], [0.06, 0.02, 0.02], 1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
-            mtoon_material("forced-shade", [0.12, 0.62, 1.0, 1.0], [0.02, 0.08, 0.28], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
-            mtoon_material("ambient-ao-ignored", [0.75, 0.75, 0.75, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 0.0, [0.0, 0.0, 0.0], None, true),
-            mtoon_material("parametric-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 1.0, 1.0, [1.0, 0.48, 0.12], None, false),
-            mtoon_material("matcap-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 0.0, 1.0, [0.0, 0.0, 0.0], Some([0.65, 0.35, 1.0]), false),
-            mtoon_material("mixed-rim", [0.25, 0.18, 0.50, 1.0], [0.04, 0.03, 0.10], 0.0, 0.5, 1.0, [0.4, 0.8, 1.0], Some([0.35, 0.55, 1.0]), false)
-        ],
+        "bufferViews": buffer_views,
+        "accessors": accessors,
+        "materials": materials,
         "meshes": [{
             "name": "mtoon-light-grid",
-            "primitives": (0..6)
+            "primitives": (0..primitive_count)
                 .map(|index| json!({
                     "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
                     "indices": 3 + index,
@@ -153,6 +109,73 @@ fn fixture_json() -> String {
         }
     }))
     .expect("fixture JSON should serialize")
+}
+
+fn buffer_views(primitive_count: usize, mesh_len: usize, texture_len: usize) -> Vec<Value> {
+    let vertex_count = primitive_count * 4;
+    let position_len = vertex_count * 3 * 4;
+    let normal_len = vertex_count * 3 * 4;
+    let uv_len = vertex_count * 2 * 4;
+    let index_len = 6 * 2;
+    let mut offset = 0;
+    let mut views = Vec::new();
+    for (byte_length, target) in [(position_len, 34962), (normal_len, 34962), (uv_len, 34962)] {
+        views.push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": byte_length,
+            "target": target
+        }));
+        offset += byte_length;
+    }
+    for _ in 0..primitive_count {
+        views.push(json!({
+            "buffer": 0,
+            "byteOffset": offset,
+            "byteLength": index_len,
+            "target": 34963
+        }));
+        offset += index_len;
+    }
+    debug_assert_eq!(offset, mesh_len);
+    views.push(json!({
+        "buffer": 0,
+        "byteOffset": mesh_len,
+        "byteLength": texture_len
+    }));
+    views
+}
+
+fn accessors(primitive_count: usize) -> Vec<Value> {
+    let vertex_count = primitive_count * 4;
+    let mut accessors = vec![
+        json!({
+            "bufferView": 0,
+            "componentType": 5126,
+            "count": vertex_count,
+            "type": "VEC3",
+            "min": [-0.78, 0.25, 0.0],
+            "max": [0.78, 1.75, 0.0]
+        }),
+        json!({
+            "bufferView": 1,
+            "componentType": 5126,
+            "count": vertex_count,
+            "type": "VEC3",
+            "min": [-0.8164966, -0.4082483, 0.0],
+            "max": [0.8164966, 0.0, 1.0]
+        }),
+        json!({
+            "bufferView": 2,
+            "componentType": 5126,
+            "count": vertex_count,
+            "type": "VEC2",
+            "min": [0.0, 0.0],
+            "max": [1.0, 1.0]
+        }),
+    ];
+    accessors.extend((0..primitive_count).map(|index| index_accessor(3 + index)));
+    accessors
 }
 
 fn index_accessor(buffer_view: usize) -> Value {
@@ -196,11 +219,25 @@ fn human_bones() -> Map<String, Value> {
     .collect()
 }
 
+fn mtoon_materials() -> Vec<Value> {
+    vec![
+        mtoon_material("direct-base", [0.92, 0.18, 0.10, 1.0], [0.06, 0.02, 0.02], 1.5, 0.9, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+        mtoon_material("forced-shade", [0.12, 0.62, 1.0, 1.0], [0.02, 0.08, 0.28], -1.5, 0.9, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+        mtoon_material("ambient-ao-ignored", [0.75, 0.75, 0.75, 1.0], [0.02, 0.02, 0.02], -1.5, 0.9, 0.0, 0.0, [0.0, 0.0, 0.0], None, true),
+        mtoon_material("parametric-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 0.9, 1.0, 1.0, [1.0, 0.48, 0.12], None, false),
+        mtoon_material("matcap-rim", [0.02, 0.02, 0.02, 1.0], [0.02, 0.02, 0.02], -1.5, 0.9, 0.0, 1.0, [0.0, 0.0, 0.0], Some([0.65, 0.35, 1.0]), false),
+        mtoon_material("mixed-rim", [0.25, 0.18, 0.50, 1.0], [0.04, 0.03, 0.10], 0.0, 0.9, 0.5, 1.0, [0.4, 0.8, 1.0], Some([0.35, 0.55, 1.0]), false),
+        mtoon_material("toon-ramp-lit-normal", [0.94, 0.58, 0.08, 1.0], [0.08, 0.04, 0.01], 0.0, 0.0, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+        mtoon_material("toon-ramp-shade-normal", [0.58, 1.0, 0.18, 1.0], [0.02, 0.16, 0.02], 0.0, 0.0, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
+    ]
+}
+
 fn mtoon_material(
     name: &str,
     base_color: [f32; 4],
     shade_color: [f32; 3],
     shading_shift: f32,
+    shading_toony: f32,
     rim_lighting_mix: f32,
     gi_equalization: f32,
     rim_color: [f32; 3],
@@ -211,7 +248,7 @@ fn mtoon_material(
         "specVersion": "1.0",
         "shadeColorFactor": shade_color,
         "shadingShiftFactor": shading_shift,
-        "shadingToonyFactor": 0.9,
+        "shadingToonyFactor": shading_toony,
         "giEqualizationFactor": gi_equalization,
         "parametricRimColorFactor": rim_color,
         "rimLightingMixFactor": rim_lighting_mix,
@@ -245,12 +282,24 @@ fn mtoon_material(
 
 fn mesh_buffer() -> Vec<u8> {
     let quads = [
-        (-1.85f32, -0.65f32, 0.15f32, 0.95f32),
-        (-0.55, 0.65, 0.15, 0.95),
-        (0.75, 1.85, 0.15, 0.95),
-        (-1.85, -0.65, 1.05, 1.85),
-        (-0.55, 0.65, 1.05, 1.85),
-        (0.75, 1.85, 1.05, 1.85),
+        (-0.78f32, -0.43f32, 0.25f32, 0.95f32),
+        (-0.38, -0.03, 0.25, 0.95),
+        (0.03, 0.38, 0.25, 0.95),
+        (0.43, 0.78, 0.25, 0.95),
+        (-0.78, -0.43, 1.05, 1.75),
+        (-0.38, -0.03, 1.05, 1.75),
+        (0.03, 0.38, 1.05, 1.75),
+        (0.43, 0.78, 1.05, 1.75),
+    ];
+    let normal_vectors = [
+        [0.0f32, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [-0.8164966, -0.4082483, 0.4082483],
+        [0.8164966, 0.0, 0.57735026],
     ];
     let positions = quads
         .iter()
@@ -260,8 +309,11 @@ fn mesh_buffer() -> Vec<u8> {
             ]
         })
         .collect::<Vec<_>>();
-    let normals = (0..24).flat_map(|_| [0.0f32, 0.0, 1.0]).collect::<Vec<_>>();
-    let uvs = (0..6)
+    let normals = normal_vectors
+        .iter()
+        .flat_map(|normal| normal.repeat(4))
+        .collect::<Vec<_>>();
+    let uvs = (0..quads.len())
         .flat_map(|_| [0.0f32, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0])
         .collect::<Vec<_>>();
 
@@ -269,7 +321,7 @@ fn mesh_buffer() -> Vec<u8> {
     bytes.extend(positions.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(normals.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(uvs.into_iter().flat_map(f32::to_le_bytes));
-    for primitive in 0..6u16 {
+    for primitive in 0..quads.len() as u16 {
         let base = primitive * 4;
         let indices = [base, base + 1, base + 2, base, base + 2, base + 3];
         bytes.extend(indices.into_iter().flat_map(u16::to_le_bytes));

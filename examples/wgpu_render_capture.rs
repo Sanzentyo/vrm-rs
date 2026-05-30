@@ -1879,7 +1879,7 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
         0.1,
         20.0,
     );
-    let light_dir = Vec3::new(-1.0, -1.0, -1.0).normalize();
+    let light_dir = Vec3::new(-1.0, 1.0, -1.0).normalize();
     Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         light_dir: Vec4::new(light_dir.x, light_dir.y, light_dir.z, 0.0).to_array(),
