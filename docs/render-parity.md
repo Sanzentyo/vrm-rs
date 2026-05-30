@@ -39,10 +39,13 @@ delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
 selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, and `--metric rgb-interior1px`; pass/fail thresholds
-use the selected metric. The local render-parity runner defaults to
-`rgb-visible`; with the canonical opaque-black review background this is the
-visible RGB surface metric, and it also remains useful for explicit transparent
-alpha-mask audits.
+use the selected metric. It also accepts
+`--max-selected-channel-delta` and `--max-alpha-delta` for fixture-specific
+worst-case guards, and the Rust local runner forwards them as
+`--render-max-selected-channel-delta` and `--render-max-alpha-delta`. The local
+render-parity runner defaults to `rgb-visible`; with the canonical opaque-black
+review background this is the visible RGB surface metric, and it also remains
+useful for explicit transparent alpha-mask audits.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
@@ -331,7 +334,9 @@ fixture contains two overlapping VRM1 MToon `BLEND` primitives, one with
 `transparentWithZWrite`, and one layer carries an embedded bufferView PNG
 base-color texture, so the run checks partial-alpha accumulation, texture color
 sampling, and depth-write policy without committing binary sample assets. The
-alpha mismatch tolerance is intentionally zero for this generated fixture.
+alpha mismatch tolerance is intentionally zero for this generated fixture, and
+the recipe now fails if selected `rgb-visible` falls below `49 dB`, selected RGB
+channel delta exceeds `2`, or alpha delta is non-zero.
 For a stronger transparent layer-ordering audit, use the high-contrast palette:
 
 ```powershell
@@ -346,10 +351,11 @@ diff PNGs at `diff/`, PSNR JSON reports at `reports/`, and the review page
 `.external-fixtures/render-parity-transparent-high-contrast/visual-review.html`.
 The current high-contrast transparent result is alpha mismatches `0`, selected
 `rgb-visible` wgpu `53.1994 dB` with max channel delta `1`, and Bevy
-`51.9341 dB` with max channel delta `2`. Bevy reaches this by injecting a tiny
-MToon transparent-order tie-break into `Transparent3d` before Bevy's phase sort,
-so equal-depth transparent primitives no longer depend on incidental ECS/spawn
-ordering.
+`51.9341 dB` with max channel delta `2`; the recipe now enforces selected
+`rgb-visible >= 51 dB`, selected RGB channel delta `<= 2`, and exact alpha.
+Bevy reaches this by injecting a tiny MToon transparent-order tie-break into
+`Transparent3d` before Bevy's phase sort, so equal-depth transparent primitives
+no longer depend on incidental ECS/spawn ordering.
 
 For broader transparent material coverage with texture-driven alpha and more
 render-queue variation, use:
@@ -365,12 +371,13 @@ contains four overlapping MToon `BLEND` primitives with mixed
 embedded base-color PNG whose alpha channel varies per texel, and high-contrast
 colors to make layer-order mistakes visible. The recipe keeps
 `--render-alpha-mismatch-tolerance 0` while allowing only a 1-LSB
-`--render-alpha-channel-tolerance` for browser/GPU rounding. The current run
-has identical alpha buckets (`transparent=512`, `opaque=0`, `partial=65024`)
-for three-vrm, wgpu, and Bevy; all alpha differences are within 1 LSB
-(`mismatchesBeyondOne = 0`). Selected `rgb-visible` PSNR is wgpu
-`48.5282 dB` with max selected channel delta `3`, and Bevy `48.5944 dB` with
-max selected channel delta `4`.
+`--render-alpha-channel-tolerance` for browser/GPU rounding. It now also fails
+if selected `rgb-visible` falls below `48 dB`, selected RGB channel delta
+exceeds `4`, or alpha delta exceeds `1`. The current run has identical alpha
+buckets (`transparent=512`, `opaque=0`, `partial=65024`) for three-vrm, wgpu,
+and Bevy; all alpha differences are within 1 LSB (`mismatchesBeyondOne = 0`).
+Selected `rgb-visible` PSNR is wgpu `48.5282 dB` with max selected channel
+delta `3`, and Bevy `48.5944 dB` with max selected channel delta `4`.
 
 For same-render-order transparent layers at different depths, use:
 
@@ -384,11 +391,13 @@ into `.external-fixtures/render-parity-transparent-depth-stack/`. The fixture
 contains three MToon `BLEND` primitives with the same `renderQueueOffsetNumber`
 but different depths, and one middle layer uses an embedded base-color PNG with
 texture alpha. The recipe keeps `--render-alpha-mismatch-tolerance 0` and
-allows only 1-LSB alpha channel rounding. The current run has identical alpha
-buckets for all three renderers (`transparent=31672`, `opaque=0`,
-`partial=33864`) and no alpha deltas beyond 1. Selected `rgb-visible` PSNR is
-wgpu `49.9331 dB` with max selected channel delta `2`, and Bevy
-`51.8518 dB` with max selected channel delta `2`.
+allows only 1-LSB alpha channel rounding. It now also fails if selected
+`rgb-visible` falls below `49 dB`, selected RGB channel delta exceeds `2`, or
+alpha delta exceeds `1`. The current run has identical alpha buckets for all
+three renderers (`transparent=31672`, `opaque=0`, `partial=33864`) and no alpha
+deltas beyond 1. Selected `rgb-visible` PSNR is wgpu `49.9331 dB` with max
+selected channel delta `2`, and Bevy `51.8518 dB` with max selected channel
+delta `2`.
 
 For alpha-mode and cutoff coverage across OPAQUE, MASK, and BLEND MToon
 materials, use:
@@ -407,7 +416,9 @@ forced to `1.0`, a MASK material that passes only because it uses a custom
 The current run has identical alpha buckets for all three renderers
 (`transparent=37904`, `opaque=19184`, `partial=8448`) and zero alpha
 mismatches. Selected `rgb-visible` PSNR is wgpu `47.4970 dB` and Bevy
-`48.0126 dB`, both with max selected channel delta `2`.
+`48.0126 dB`, both with max selected channel delta `2`. The recipe now enforces
+selected `rgb-visible >= 47 dB`, selected RGB channel delta `<= 2`, and exact
+alpha.
 
 For a generated screen-coordinate outline audit, run:
 

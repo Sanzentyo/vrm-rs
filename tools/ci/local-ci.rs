@@ -95,6 +95,10 @@ struct Options {
     render_expressions: Vec<String>,
     #[arg(long)]
     render_fail_under: Option<f32>,
+    #[arg(long)]
+    render_max_selected_channel_delta: Option<u8>,
+    #[arg(long)]
+    render_max_alpha_delta: Option<u8>,
     #[arg(long, value_enum, default_value_t = RenderPsnrMetric::RgbVisible)]
     render_psnr_metric: RenderPsnrMetric,
     #[arg(long, default_value_t = 128)]
@@ -770,6 +774,15 @@ fn compare_render_pair(
     ]);
     if let Some(fail_under) = options.render_fail_under {
         command.args(["--fail-under", fail_under.to_string().as_str()]);
+    }
+    if let Some(max_delta) = options.render_max_selected_channel_delta {
+        command.args([
+            "--max-selected-channel-delta",
+            max_delta.to_string().as_str(),
+        ]);
+    }
+    if let Some(max_delta) = options.render_max_alpha_delta {
+        command.args(["--max-alpha-delta", max_delta.to_string().as_str()]);
     }
     run_command(command)
 }

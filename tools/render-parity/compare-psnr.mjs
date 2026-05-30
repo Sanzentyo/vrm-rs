@@ -22,15 +22,25 @@ const expectedPath = args.get('expected');
 const actualPath = args.get('actual');
 const outPath = args.get('out');
 const failUnder = args.has('fail-under') ? Number(args.get('fail-under')) : null;
+const maxSelectedChannelDelta = args.has('max-selected-channel-delta') ? Number(args.get('max-selected-channel-delta')) : null;
+const maxAlphaDelta = args.has('max-alpha-delta') ? Number(args.get('max-alpha-delta')) : null;
 const metricName = args.get('metric') ?? 'rgba';
 const metricNames = new Set(['rgba', 'rgb-all', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px']);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
   console.error(`invalid --fail-under: ${args.get('fail-under')}`);
+  process.exit(2);
+}
+if (maxSelectedChannelDelta != null && (!Number.isInteger(maxSelectedChannelDelta) || maxSelectedChannelDelta < 0 || maxSelectedChannelDelta > 255)) {
+  console.error(`invalid --max-selected-channel-delta: ${args.get('max-selected-channel-delta')}`);
+  process.exit(2);
+}
+if (maxAlphaDelta != null && (!Number.isInteger(maxAlphaDelta) || maxAlphaDelta < 0 || maxAlphaDelta > 255)) {
+  console.error(`invalid --max-alpha-delta: ${args.get('max-alpha-delta')}`);
   process.exit(2);
 }
 if (!metricNames.has(metricName)) {
@@ -83,7 +93,12 @@ const report = {
     name: metricName,
     ...metricReport(selectedMetric),
   },
-  pass: failUnder == null || selectedMetric.psnr >= failUnder,
+  pass: passStatus(selectedMetric, alpha),
+  thresholds: {
+    failUnder,
+    maxSelectedChannelDelta,
+    maxAlphaDelta,
+  },
   failUnder,
 };
 
@@ -96,8 +111,22 @@ if (outPath) {
 }
 
 if (!report.pass) {
-  console.error(`PSNR ${selectedMetric.psnr.toFixed(4)} dB for ${metricName} is below threshold ${failUnder} dB`);
+  if (failUnder != null && selectedMetric.psnr < failUnder) {
+    console.error(`PSNR ${selectedMetric.psnr.toFixed(4)} dB for ${metricName} is below threshold ${failUnder} dB`);
+  }
+  if (maxSelectedChannelDelta != null && selectedMetric.maxChannelDelta > maxSelectedChannelDelta) {
+    console.error(`max selected channel delta ${selectedMetric.maxChannelDelta} for ${metricName} exceeds threshold ${maxSelectedChannelDelta}`);
+  }
+  if (maxAlphaDelta != null && alpha.maxDelta > maxAlphaDelta) {
+    console.error(`max alpha delta ${alpha.maxDelta} exceeds threshold ${maxAlphaDelta}`);
+  }
   process.exit(4);
+}
+
+function passStatus(selectedMetric, alpha) {
+  return (failUnder == null || selectedMetric.psnr >= failUnder)
+    && (maxSelectedChannelDelta == null || selectedMetric.maxChannelDelta <= maxSelectedChannelDelta)
+    && (maxAlphaDelta == null || alpha.maxDelta <= maxAlphaDelta);
 }
 
 function readRgbaJson(file) {
