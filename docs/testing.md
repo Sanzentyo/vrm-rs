@@ -64,7 +64,7 @@ Run the local render parity pass with:
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
-This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, writes `.external-fixtures/render-parity/summary.md`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, the official
@@ -112,6 +112,9 @@ alpha. It also checks that the wgpu and Bevy alpha masks stay within
 `--render-alpha-mismatch-tolerance` pixels of the three-vrm reference. The
 render-parity run recreates its managed output directories first, so stale
 direct-capture smoke PNGs are not mixed into the canonical review set. The
+summary table lives at `.external-fixtures/render-parity/summary.md` and is also
+embedded at the top of `visual-review.html`; use it as the first stop for
+selected PSNR, max channel delta, alpha mismatch, and pass/fail status. The
 compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and

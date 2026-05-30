@@ -80,8 +80,15 @@ set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 - `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png}`
 - `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png}`
 - `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json`
-- `.external-fixtures/render-parity/visual-review.html`
 - `.external-fixtures/render-parity/diff/<fixture>.{wgpu,bevy}-vs-three-vrm.diff.png`
+- `.external-fixtures/render-parity/summary.md`
+- `.external-fixtures/render-parity/visual-review.html`
+
+`summary.md` is the compact audit artifact for PSNR and alpha review. It lists
+the selected metric, background, MToon light accumulation mode, per-fixture
+wgpu/Bevy selected PSNR, max selected-channel delta, alpha mismatch count,
+alpha max delta, and pass/fail status. `visual-review.html` embeds the same
+summary before the side-by-side PNGs and diff heatmaps.
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
