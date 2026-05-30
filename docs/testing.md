@@ -13,7 +13,7 @@ Current generated coverage:
 - Per-material archived `VRMC_materials_hdr_emissiveMultiplier` extension.
 - Per-material `KHR_materials_emissive_strength` extension, including invalid shape handling, present-but-empty defaulting, and precedence over archived HDR multiplier.
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
-- First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, VRMA warning/error policy, MToon descriptor generation, Bevy adapter skeleton compile tests, and Bevy ECS hierarchy readback.
+- First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, generated VRMA warning/error/application policy, MToon descriptor generation, Bevy adapter skeleton compile tests, and Bevy ECS hierarchy readback.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -195,17 +195,17 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.09% | 82.26% |
+| Workspace total | 79.42% | 82.70% |
 | `vrm-adapter-bevy` | 92.73% | 94.47% |
-| `vrm-adapter` | 61.38% | 71.19% |
+| `vrm-adapter` | 62.58% | 72.75% |
 | `vrm-core` | 69.52% | 75.92% |
 | `vrm-io` | 81.02% | 78.17% |
 | `vrm-protocol` | 92.41% | 90.93% |
-| `vrm-runtime` | 87.27% | 88.10% |
+| `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, and stable errors for invalid expression/lookAt animation paths. Renderer-facing generated glTF coverage now also includes primitive `COLOR_0`, morph target deltas, and mesh/node default morph weights.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, stable errors for invalid expression/lookAt animation paths, and normal-gate application of humanoid, preset/custom expression, and lookAt tracks through the adapter writeback path. Renderer-facing generated glTF coverage now also includes primitive `COLOR_0`, morph target deltas, and mesh/node default morph weights.
 
 ## Ordered Parity Milestones
 

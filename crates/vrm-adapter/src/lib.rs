@@ -3286,6 +3286,182 @@ mod tests {
     }
 
     #[test]
+    fn vrma_animation_frame_applies_humanoid_expressions_and_look_at_together() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [
+                    (
+                        HumanBoneName::Hips,
+                        HumanBone {
+                            node: NodeRef(0),
+                            rest: Transform::default(),
+                        },
+                    ),
+                    (
+                        HumanBoneName::Head,
+                        HumanBone {
+                            node: NodeRef(1),
+                            rest: Transform::default(),
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            },
+            expressions: Feature::Present(ExpressionSet {
+                preset: [(
+                    ExpressionName::Blink,
+                    Expression {
+                        binds: vec![ExpressionBind::MorphTarget {
+                            node: NodeRef(2),
+                            index: 0,
+                            weight: 100.0,
+                        }],
+                        ..Expression::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                custom: [(
+                    "joy".to_owned(),
+                    Expression {
+                        binds: vec![ExpressionBind::MorphTarget {
+                            node: NodeRef(3),
+                            index: 1,
+                            weight: 80.0,
+                        }],
+                        ..Expression::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }),
+            ..VrmDocument::default()
+        };
+        let animation = VrmAnimation {
+            duration: 1.0,
+            rest_hips_position: Vec3::Y,
+            humanoid_rotation_tracks: [(
+                HumanBoneName::Head,
+                RotationTrack {
+                    times: vec![0.0, 1.0],
+                    values: vec![Quat::IDENTITY, Quat::from_rotation_y(0.5)],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            hips_translation: Some(vrm_core::TranslationTrack {
+                times: vec![0.0, 1.0],
+                values: vec![Vec3::ZERO, Vec3::new(0.0, 0.4, 0.0)],
+            }),
+            preset_expression_tracks: [(
+                ExpressionName::Blink,
+                vrm_core::ScalarTrack {
+                    times: vec![0.0, 1.0],
+                    values: vec![0.0, 0.5],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            custom_expression_tracks: [(
+                "joy".to_owned(),
+                vrm_core::ScalarTrack {
+                    times: vec![0.0, 1.0],
+                    values: vec![0.25, 0.75],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            look_at_track: Some(RotationTrack {
+                times: vec![0.0, 1.0],
+                values: vec![Quat::IDENTITY, Quat::from_rotation_x(0.25)],
+            }),
+        };
+        let mut mock = Mock {
+            local_transforms: [
+                (
+                    NodeRef(0),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(1),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            world_transforms: [
+                (
+                    NodeRef(0),
+                    Transform {
+                        translation: Vec3::Y,
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+                (
+                    NodeRef(1),
+                    Transform {
+                        translation: Vec3::new(0.0, 2.0, 0.0),
+                        rotation: Quat::IDENTITY,
+                        scale: Vec3::ONE,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            parents: [(NodeRef(1), NodeRef(0))].into_iter().collect(),
+            ..Mock::default()
+        };
+        let mut rig = HumanoidPoseRig::capture(&mock, &document).unwrap();
+        let frame = sample_vrm_animation(&animation, 0.5);
+
+        apply_vrma_animation_frame_with_look_at(&mut mock, &mut rig, &document, &frame).unwrap();
+
+        let hips = mock
+            .local_sets
+            .iter()
+            .find(|(node, _)| *node == NodeRef(0))
+            .expect("hips writeback");
+        let head = mock
+            .local_sets
+            .iter()
+            .find(|(node, _)| *node == NodeRef(1))
+            .expect("head writeback");
+        assert!(
+            hips.1
+                .translation
+                .abs_diff_eq(Vec3::new(0.0, 0.2, 0.0), 0.0001)
+        );
+        assert!(
+            head.1
+                .rotation
+                .abs_diff_eq(Quat::from_rotation_y(0.25), 0.0001)
+                || head
+                    .1
+                    .rotation
+                    .abs_diff_eq(-Quat::from_rotation_y(0.25), 0.0001)
+        );
+        assert_eq!(
+            mock.morphs,
+            vec![(NodeRef(2), 0, 25.0), (NodeRef(3), 1, 40.0)]
+        );
+        assert_eq!(mock.look_at_rotations.len(), 1);
+        assert!(
+            mock.look_at_rotations[0].abs_diff_eq(Quat::from_rotation_x(0.125), 0.0001)
+                || mock.look_at_rotations[0].abs_diff_eq(-Quat::from_rotation_x(0.125), 0.0001)
+        );
+    }
+
+    #[test]
     fn humanoid_frame_sets_hips_translation_without_accumulation() {
         let document = VrmDocument {
             humanoid: Humanoid {

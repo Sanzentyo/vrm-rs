@@ -52,6 +52,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - Done when complete VRM scenes compare constraint ordering/writeback against three-vrm golden output, beyond standalone quaternion solver cases.
 - [x] Broaden VRMA parity.
   - Done when additional `.vrma` samples cover multiple clips and mixed humanoid rotation, hips translation, expression, and lookAt tracks.
+  - Normal-gate generated coverage now also applies one sampled frame through humanoid writeback, hips translation, preset/custom expression morphs, and lookAt delivery without external binaries.
 - [x] Tighten VRMA diagnostics.
   - Done when unsupported channel/path warnings and errors have stable tests and messages.
 
