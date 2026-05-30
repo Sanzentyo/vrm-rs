@@ -178,6 +178,26 @@ MToon transparent-order tie-break into `Transparent3d` before Bevy's phase sort,
 so equal-depth transparent primitives no longer depend on incidental ECS/spawn
 ordering.
 
+For a generated screen-coordinate outline audit, run:
+
+```powershell
+just render-parity-screen-outline-generated
+```
+
+This writes `.external-fixtures/generated/screen-outline.vrm.gltf` and renders
+it into `.external-fixtures/render-parity-screen-outline-generated/`. The
+fixture contains a simple VRM1/MToon prism using
+`outlineWidthMode = screenCoordinates`, with a visible outline pass and no
+committed binary assets. The recipe uses transparent background plus selected
+metric `rgb-opaque`: pixels where both renderers drew the body or outline are
+compared for color, while the expected one-pixel fill-rule/silhouette alpha
+delta is counted separately. The current result reports alpha mismatches `188`
+with tolerance `256`, selected PSNR wgpu `Infinity` with max selected channel
+delta `0`, and Bevy `53.2689 dB` with max selected channel delta `1`. Review
+`.external-fixtures/render-parity-screen-outline-generated/visual-review.html`
+when changing outline expansion, front-face culling, or screen-coordinate width
+logic.
+
 ## three-vrm Capture
 
 The first reference capture path is a browser script that renders a VRM through
