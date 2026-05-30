@@ -84,6 +84,11 @@ render-parity-transparent-alpha-modes three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-alpha-modes-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-alpha-modes --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 45 --render-fixture .external-fixtures/generated/transparent-alpha-modes.vrm.gltf
 
+# Regenerate transparent depth-sort artifacts for same-render-order BLEND layers.
+render-parity-transparent-depth-stack three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-depth-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-depth-stack --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 1 --render-psnr-metric rgb-visible --render-fail-under 45 --render-fixture .external-fixtures/generated/transparent-depth-stack.vrm.gltf
+
 # Prepare external inputs and regenerate the default render parity artifact set from scratch.
 render-parity-full:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity

@@ -284,6 +284,24 @@ for three-vrm, wgpu, and Bevy; all alpha differences are within 1 LSB
 `48.5282 dB` with max selected channel delta `3`, and Bevy `48.5944 dB` with
 max selected channel delta `4`.
 
+For same-render-order transparent layers at different depths, use:
+
+```powershell
+just render-parity-transparent-depth-stack
+```
+
+This writes
+`.external-fixtures/generated/transparent-depth-stack.vrm.gltf` and renders it
+into `.external-fixtures/render-parity-transparent-depth-stack/`. The fixture
+contains three MToon `BLEND` primitives with the same `renderQueueOffsetNumber`
+but different depths, and one middle layer uses an embedded base-color PNG with
+texture alpha. The recipe keeps `--render-alpha-mismatch-tolerance 0` and
+allows only 1-LSB alpha channel rounding. The current run has identical alpha
+buckets for all three renderers (`transparent=31672`, `opaque=0`,
+`partial=33864`) and no alpha deltas beyond 1. Selected `rgb-visible` PSNR is
+wgpu `49.9331 dB` with max selected channel delta `2`, and Bevy
+`51.8518 dB` with max selected channel delta `2`.
+
 For alpha-mode and cutoff coverage across OPAQUE, MASK, and BLEND MToon
 materials, use:
 

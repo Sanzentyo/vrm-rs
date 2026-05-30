@@ -82,7 +82,11 @@ audits. Generated transparent-material guards currently include
 `just render-parity-transparent-generated`,
 `just render-parity-transparent-high-contrast`,
 `just render-parity-transparent-broad`, and
-`just render-parity-transparent-alpha-modes`; the last one specifically covers
+`just render-parity-transparent-alpha-modes`. Use
+`just render-parity-transparent-depth-stack` for same-render-order BLEND layers
+at different depths, including one texture-alpha layer; it keeps alpha buckets
+exact while allowing only 1-LSB alpha channel rounding. The alpha-modes guard
+specifically covers
 OPAQUE alpha forcing, MASK `alphaCutoff` pass/fail behavior, and BLEND
 `alphaCutoff` ignore behavior across three-vrm, wgpu, and Bevy. Generated
 MToon material guards also include `just render-parity-mtoon-textures-generated`
