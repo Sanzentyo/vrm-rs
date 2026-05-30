@@ -166,7 +166,7 @@ fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>)
     let sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * material.pipeline.z,
-        (sampled.y * 2.0 - 1.0) * material.pipeline.z,
+        (1.0 - sampled.y * 2.0) * material.pipeline.z,
         sampled.z * 2.0 - 1.0,
     );
     return normalize(

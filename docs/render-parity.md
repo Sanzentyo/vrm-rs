@@ -187,12 +187,27 @@ The fixture exercises `shadingShiftTexture`, `rimMultiplyTexture`,
 `uvAnimationMaskTexture` at `mtoon-time=1.0`, and
 `outlineWidthMultiplyTexture` while keeping all source data generated in the
 repository. The current run has exact alpha buckets and mismatches `0`.
-Selected `rgb-interior1px` PSNR is wgpu `53.3872 dB` and Bevy `50.9296 dB`,
+Selected `rgb-interior1px` PSNR is wgpu `53.5556 dB` and Bevy `50.9425 dB`,
 with max selected channel delta `8`; the recipe enforces a `50 dB` floor.
-Generated MToon normal-map coverage is intentionally not part of this fixture:
-the three-vrm WebGL reference rejected the synthetic normal-map material with a
-`vTangent` shader varying validation error. Normal-map breadth is therefore
-tracked through the official fixture inventory and real-fixture sweeps.
+
+For a generated MToon normal-map audit, run:
+
+```powershell
+just render-parity-mtoon-normal-generated
+```
+
+This writes `.external-fixtures/generated/mtoon-normal-texture.vrm.gltf` and
+renders it into `.external-fixtures/render-parity-mtoon-normal-generated/`.
+The fixture uses the texture-slot guard plus an additional normal-textured
+MToon swatch. That swatch intentionally omits glTF `TANGENT`: adding a
+synthetic tangent attribute triggered a three-vrm WebGL `vTangent` varying
+validation failure, while the tangentless path exercises three-vrm's normal-map
+fallback behavior. The current run has exact alpha buckets and mismatches `0`;
+selected `rgb-interior1px` PSNR is wgpu `47.1013 dB` with max selected channel
+delta `12`, and Bevy `38.4018 dB` with max selected channel delta `41`. Treat
+this as the current normal-map regression guard, not final visual parity; the
+remaining work is to close Bevy's generated-normal delta and confirm real
+tangentless official primitives with higher thresholds.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
@@ -303,15 +318,16 @@ screen-coordinate outline materials, `4` transparent-ZWrite materials, `3`
 UV-animation materials, `13` normal-textured materials, `11` matcap-textured
 materials, and `21` normal-mapped primitives without tangents. The generated
 fixture inventory adds the missing screen-coordinate outline guard, three
-source-like transparent-ZWrite cases, and a texture-slot guard for shading
-shift, rim, UV animation mask, and outline width textures. This is why
-screen-coordinate outline is currently measured by the generated fixture above,
-while real-model normal-map and material breadth work should focus on Seed-san,
-the constraint sample, the UV-animation sample, and Alicia VRM0. A naive
-derivative normal-map fallback was measured and rejected because it dropped
-Seed-san to `20.3102 dB`; keep the current CPU-generated tangent path until a
-closer three-vrm derivative formulation is implemented and passes the real
-fixture sweep.
+source-like transparent-ZWrite cases, texture-slot guards for shading shift,
+rim, UV animation mask, outline width textures, and an opt-in tangentless
+normal-map guard. This is why screen-coordinate outline and normal-map
+tangentless behavior now have generated parity gates, while real-model
+material breadth work should focus on Seed-san, the constraint sample, the
+UV-animation sample, and Alicia VRM0. A naive derivative normal-map fallback
+was measured and rejected because it dropped Seed-san to `20.3102 dB`; the
+current path uses CPU-generated tangents with the measured normal-Y convention
+until a closer three-vrm derivative formulation improves both the generated
+normal guard and real fixture sweep.
 
 ## three-vrm Capture
 
@@ -676,14 +692,17 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 ## Next Renderer Work
 
 - Deepen real-model runtime/material breadth now that isolated MToon
-  light/color, angled-normal ramp, MToon occlusion-ignore, and VRM0 compat shade
-  guards are covered by generated or official parity runs.
+  light/color, angled-normal ramp, tangentless normal-map, MToon
+  occlusion-ignore, and VRM0 compat shade guards are covered by generated or
+  official parity runs.
 - Add or discover an external screen-coordinate outline fixture so the newly
   implemented screen-width path is measured against three-vrm instead of only
   being compile/render-path covered.
 - Add or discover broader transparent-material fixtures with real textures and
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
+- Close Bevy's generated normal-map gap and then raise the opt-in normal-map
+  fixture threshold beyond the current `38 dB` floor.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize remaining outline, material breadth,

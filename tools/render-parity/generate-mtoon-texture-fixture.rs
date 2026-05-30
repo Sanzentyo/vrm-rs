@@ -27,6 +27,9 @@ struct Options {
         default_value = ".external-fixtures/generated/mtoon-texture-slots.vrm.gltf"
     )]
     out: PathBuf,
+
+    #[arg(long)]
+    include_normal: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,20 +37,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&options.out, format!("{}\n", fixture_json()))?;
+    fs::write(
+        &options.out,
+        format!("{}\n", fixture_json(options.include_normal)),
+    )?;
     println!("{}", options.out.display());
     Ok(())
 }
 
-fn fixture_json() -> String {
-    let mesh = mesh_buffer();
+fn fixture_json(include_normal: bool) -> String {
+    let materials = materials(include_normal);
+    let primitive_count = materials.len();
+    let mesh = mesh_buffer(primitive_count);
     let slot_texture = slot_texture_png();
     let mesh_len = mesh.len();
     let slot_texture_len = slot_texture.len();
     let mut buffer = mesh;
     buffer.extend(slot_texture);
-    let primitive_count = materials().len();
-    let buffer_views = buffer_views(primitive_count, mesh_len, slot_texture_len);
+    let normal_texture_len = if include_normal {
+        let normal_texture = normal_texture_png();
+        let len = normal_texture.len();
+        buffer.extend(normal_texture);
+        Some(len)
+    } else {
+        None
+    };
+    let buffer_views = buffer_views(primitive_count, mesh_len, slot_texture_len, normal_texture_len);
+    let images = images(primitive_count, include_normal);
+    let textures = textures(include_normal);
 
     serde_json::to_string_pretty(&json!({
         "asset": {
@@ -71,28 +88,29 @@ fn fixture_json() -> String {
             "wrapS": 10497,
             "wrapT": 10497
         }],
-        "images": [
-            { "mimeType": "image/png", "bufferView": 4 + primitive_count }
-        ],
-        "textures": [
-            { "sampler": 0, "source": 0 }
-        ],
+        "images": images,
+        "textures": textures,
         "bufferViews": buffer_views,
         "accessors": accessors(primitive_count),
-        "materials": materials(),
+        "materials": materials,
         "meshes": [{
             "name": "mtoon-texture-slot-grid",
             "primitives": (0..primitive_count)
-                .map(|index| json!({
-                    "attributes": {
+                .map(|index| {
+                    let mut attributes = json!({
                         "POSITION": 0,
                         "NORMAL": 1,
-                        "TANGENT": 2,
                         "TEXCOORD_0": 3
-                    },
-                    "indices": 4 + index,
-                    "material": index
-                }))
+                    });
+                    if !(include_normal && index + 1 == primitive_count) {
+                        attributes["TANGENT"] = json!(2);
+                    }
+                    json!({
+                        "attributes": attributes,
+                        "indices": 4 + index,
+                        "material": index
+                    })
+                })
                 .collect::<Vec<_>>()
         }],
         "extensions": {
@@ -115,6 +133,7 @@ fn buffer_views(
     primitive_count: usize,
     mesh_len: usize,
     slot_texture_len: usize,
+    normal_texture_len: Option<usize>,
 ) -> Vec<Value> {
     let vertex_count = primitive_count * 4;
     let position_len = vertex_count * 3 * 4;
@@ -153,7 +172,30 @@ fn buffer_views(
         "byteOffset": mesh_len,
         "byteLength": slot_texture_len
     }));
+    if let Some(normal_texture_len) = normal_texture_len {
+        views.push(json!({
+            "buffer": 0,
+            "byteOffset": mesh_len + slot_texture_len,
+            "byteLength": normal_texture_len
+        }));
+    }
     views
+}
+
+fn images(primitive_count: usize, include_normal: bool) -> Vec<Value> {
+    let mut images = vec![json!({ "mimeType": "image/png", "bufferView": 4 + primitive_count })];
+    if include_normal {
+        images.push(json!({ "mimeType": "image/png", "bufferView": 5 + primitive_count }));
+    }
+    images
+}
+
+fn textures(include_normal: bool) -> Vec<Value> {
+    let mut textures = vec![json!({ "sampler": 0, "source": 0 })];
+    if include_normal {
+        textures.push(json!({ "sampler": 0, "source": 1 }));
+    }
+    textures
 }
 
 fn accessors(primitive_count: usize) -> Vec<Value> {
@@ -203,8 +245,8 @@ fn accessors(primitive_count: usize) -> Vec<Value> {
     accessors
 }
 
-fn materials() -> Vec<Value> {
-    vec![
+fn materials(include_normal: bool) -> Vec<Value> {
+    let mut materials = vec![
         material(
             "shading-shift-texture",
             [0.95, 0.55, 0.12, 1.0],
@@ -260,7 +302,26 @@ fn materials() -> Vec<Value> {
             }),
             None,
         ),
-    ]
+    ];
+    if include_normal {
+        materials.push(
+            material(
+                "normal-texture",
+                [0.82, 0.84, 0.96, 1.0],
+                json!({
+                    "shadeColorFactor": [0.08, 0.10, 0.22],
+                    "shadingShiftFactor": -0.15,
+                    "shadingToonyFactor": 0.55,
+                    "parametricRimColorFactor": [0.16, 0.28, 0.72],
+                    "rimLightingMixFactor": 0.4,
+                    "parametricRimFresnelPowerFactor": 1.5,
+                    "parametricRimLiftFactor": 0.05
+                }),
+                Some(json!({ "index": 1, "scale": 0.6 })),
+            ),
+        );
+    }
+    materials
 }
 
 fn material(name: &str, base_color: [f32; 4], mut extension: Value, normal: Option<Value>) -> Value {
@@ -322,28 +383,30 @@ fn human_bones() -> Map<String, Value> {
     .collect()
 }
 
-fn mesh_buffer() -> Vec<u8> {
+fn mesh_buffer(primitive_count: usize) -> Vec<u8> {
     let quads = [
-        (-0.82f32, -0.08f32, 0.25f32, 0.95f32),
-        (0.08, 0.82, 0.25, 0.95),
-        (-0.82, -0.08, 1.05, 1.75),
-        (0.08, 0.82, 1.05, 1.75),
+        (-0.82f32, -0.32f32, 0.25f32, 0.95f32),
+        (-0.25, 0.25, 0.25, 0.95),
+        (0.32, 0.82, 0.25, 0.95),
+        (-0.54, -0.04, 1.05, 1.75),
+        (0.04, 0.54, 1.05, 1.75),
     ];
     let positions = quads
         .iter()
+        .take(primitive_count)
         .flat_map(|(left, right, bottom, top)| {
             [
                 *left, *bottom, 0.0, *right, *bottom, 0.0, *right, *top, 0.0, *left, *top, 0.0,
             ]
         })
         .collect::<Vec<_>>();
-    let normals = (0..quads.len() * 4)
+    let normals = (0..primitive_count * 4)
         .flat_map(|_| [0.0f32, 0.0, 1.0])
         .collect::<Vec<_>>();
-    let tangents = (0..quads.len() * 4)
+    let tangents = (0..primitive_count * 4)
         .flat_map(|_| [1.0f32, 0.0, 0.0, 1.0])
         .collect::<Vec<_>>();
-    let uvs = (0..quads.len())
+    let uvs = (0..primitive_count)
         .flat_map(|_| [0.0f32, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0])
         .collect::<Vec<_>>();
 
@@ -352,7 +415,7 @@ fn mesh_buffer() -> Vec<u8> {
     bytes.extend(normals.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(tangents.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(uvs.into_iter().flat_map(f32::to_le_bytes));
-    for primitive in 0..quads.len() as u16 {
+    for primitive in 0..primitive_count as u16 {
         let base = primitive * 4;
         let indices = [base, base + 1, base + 2, base, base + 2, base + 3];
         bytes.extend(indices.into_iter().flat_map(u16::to_le_bytes));
@@ -366,6 +429,16 @@ fn slot_texture_png() -> Vec<u8> {
         255, 220, 160, 40, 255, 80, 220, 120, 255, 40, 140, 255, 255, 255, 80, 40, 255, 220,
         160, 40, 255, 80, 220, 120, 255, 40, 140, 255, 255, 255, 80, 40, 255, 220, 160, 40,
         255, 80, 220, 120, 255, 40, 140, 255, 255,
+    ];
+    png_rgba(4, 4, &rgba)
+}
+
+fn normal_texture_png() -> Vec<u8> {
+    let rgba = [
+        128, 128, 255, 255, 176, 128, 222, 255, 128, 176, 222, 255, 80, 128, 222, 255, 128,
+        80, 222, 255, 176, 176, 192, 255, 80, 176, 192, 255, 176, 80, 192, 255, 128, 128, 255,
+        255, 176, 128, 222, 255, 128, 176, 222, 255, 80, 128, 222, 255, 128, 80, 222, 255, 176,
+        176, 192, 255, 80, 176, 192, 255, 176, 80, 192, 255,
     ];
     png_rgba(4, 4, &rgba)
 }
