@@ -296,12 +296,15 @@ just render-parity-morph-expression-generated
 
 This writes `.external-fixtures/generated/morph-expression.vrm.gltf` and
 renders it into `.external-fixtures/render-parity-morph-expression-generated/`.
-The fixture exposes a VRM1 `happy` expression with a morph target bind, then the
-render harness passes `--render-expression happy=1.0` through three-vrm, wgpu,
-and Bevy. The current run has the expected tiny fill-rule alpha mismatch
-(`3`, tolerance `8`), while selected `rgb-interior1px` PSNR is `Infinity` for
-both wgpu and Bevy with max selected channel delta `0`. This guards expression
-morph writeback in the concrete render paths without committing binary assets.
+The fixture exposes a VRM1 `happy` expression with a morph target bind, a
+material `color` bind, and a material texture-transform bind over an embedded
+bufferView PNG. The render harness passes `--render-expression happy=1.0`
+through three-vrm, wgpu, and Bevy. The current run has the expected tiny
+fill-rule alpha mismatch (`3`, tolerance `8`), while selected
+`rgb-interior1px` PSNR is wgpu `58.2703 dB` with max selected channel delta
+`1`, and Bevy `50.8123 dB` with max selected channel delta `2`. This guards
+expression morph, material-color, texture-transform, and binary-weight
+semantics in the concrete render paths without committing binary assets.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:

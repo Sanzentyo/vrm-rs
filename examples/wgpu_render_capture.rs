@@ -362,7 +362,7 @@ fn mesh_draw_data(
 ) -> Result<MeshDrawData, Box<dyn Error>> {
     let mut primitives = Vec::new();
     let world_matrices = render_capture_scene::runtime_world_matrices(loaded)?;
-    let expression_weights = expression_morph_weights(loaded, &options.expressions)?;
+    let expression_effects = expression_render_effects(loaded, &options.expressions)?;
 
     for (node_index, node) in loaded.scene.nodes.iter().enumerate() {
         let Some(mesh_index) = node.mesh else {
@@ -381,27 +381,19 @@ fn mesh_draw_data(
             .skin
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
-        let morph_weights = active_morph_weights(node_index, node, mesh, &expression_weights);
+        let morph_weights = active_morph_weights(node_index, node, mesh, &expression_effects);
+        let draw_context = PrimitiveDrawContext {
+            expression_effects: &expression_effects,
+            world,
+            skin_matrices: skin_matrices.as_deref(),
+            options,
+        };
         for primitive in &mesh.primitives {
-            let surface = draw_primitive(
-                loaded,
-                primitive,
-                &morph_weights,
-                world,
-                skin_matrices.as_deref(),
-                options,
-            )?;
+            let surface = draw_primitive(loaded, primitive, &morph_weights, &draw_context)?;
             primitives.push(surface.clone());
             if !options.disable_outlines
-                && let Some(outline) = outline_primitive(
-                    loaded,
-                    primitive,
-                    &morph_weights,
-                    &surface,
-                    world,
-                    skin_matrices.as_deref(),
-                    options,
-                )
+                && let Some(outline) =
+                    outline_primitive(loaded, primitive, &morph_weights, &surface, &draw_context)
             {
                 primitives.push(outline);
             }
@@ -415,14 +407,20 @@ fn mesh_draw_data(
     Ok(MeshDrawData { primitives })
 }
 
+#[derive(Clone, Copy)]
+struct PrimitiveDrawContext<'a> {
+    expression_effects: &'a ExpressionRenderEffects,
+    world: Mat4,
+    skin_matrices: Option<&'a [Mat4]>,
+    options: &'a CaptureOptions,
+}
+
 fn outline_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     morph_weights: &[f32],
     surface: &DrawPrimitive,
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    options: &CaptureOptions,
+    context: &PrimitiveDrawContext<'_>,
 ) -> Option<DrawPrimitive> {
     let material = primitive
         .material
@@ -431,19 +429,24 @@ fn outline_primitive(
     if !mtoon.outline_enabled() {
         return None;
     }
-    let outline_color = [
-        mtoon.outline_color_factor[0],
-        mtoon.outline_color_factor[1],
-        mtoon.outline_color_factor[2],
-        mtoon.outline_lighting_mix_factor,
-    ];
+    let outline_color = apply_color_effect4(
+        [
+            mtoon.outline_color_factor[0],
+            mtoon.outline_color_factor[1],
+            mtoon.outline_color_factor[2],
+            mtoon.outline_lighting_mix_factor,
+        ],
+        primitive.material,
+        "outlineColor",
+        context.expression_effects,
+    );
     let width_texture = mtoon
         .textures
         .outline_width_multiply_texture
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
     let uv_transforms = surface.uv_transforms;
     let width = mtoon.outline_width_factor;
-    let outline_scale = OutlineScale::new(mtoon.outline_width_mode, options);
+    let outline_scale = OutlineScale::new(mtoon.outline_width_mode, context.options);
     let vertices = surface
         .vertices
         .iter()
@@ -462,8 +465,8 @@ fn outline_primitive(
                 morph_weights,
                 width,
                 outline_scale,
-                world,
-                skin_matrices,
+                context.world,
+                context.skin_matrices,
             )
             .unwrap_or_else(|| Vec3::from_array(vertex.position))
             .to_array();
@@ -588,12 +591,15 @@ fn draw_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     morph_weights: &[f32],
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    options: &CaptureOptions,
+    context: &PrimitiveDrawContext<'_>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
-    let shading = material_shading(loaded, primitive.material);
-    let uv_transforms = material_uv_transforms(loaded, primitive.material, options.mtoon_time);
+    let shading = material_shading(loaded, primitive.material, context.expression_effects);
+    let uv_transforms = material_uv_transforms(
+        loaded,
+        primitive.material,
+        context.options.mtoon_time,
+        context.expression_effects,
+    );
     let policy = material_policy(loaded, primitive.material);
     let mut vertices = primitive
         .positions
@@ -620,15 +626,15 @@ fn draw_primitive(
             let (position, normal) = transform_vertex(
                 position,
                 normal,
-                world,
-                skin_matrices,
+                context.world,
+                context.skin_matrices,
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             );
             let tangent = transform_direction(
                 tangent.truncate(),
-                world,
-                skin_matrices,
+                context.world,
+                context.skin_matrices,
                 primitive.joints_0.get(index).copied(),
                 primitive.weights_0.get(index).copied(),
             )
@@ -694,22 +700,40 @@ fn draw_primitive(
         indices: primitive.indices.clone(),
         images: material_images(loaded, primitive.material),
         uv_transforms,
-        material_extra: material_extra_uniform(shading, options),
+        material_extra: material_extra_uniform(shading, context.options),
         policy,
     })
 }
 
 #[derive(Clone, Debug, Default)]
-struct ExpressionMorphWeights {
+struct ExpressionRenderEffects {
     cleared: HashMap<usize, HashSet<usize>>,
     weights: HashMap<(usize, usize), f32>,
+    material_colors: Vec<MaterialColorEffect>,
+    texture_transforms: Vec<TextureTransformEffect>,
+}
+
+#[derive(Clone, Debug)]
+struct MaterialColorEffect {
+    material: usize,
+    kind: String,
+    target_value: Vec<f32>,
+    weight: f32,
+}
+
+#[derive(Clone, Debug)]
+struct TextureTransformEffect {
+    material: usize,
+    scale: Option<[f32; 2]>,
+    offset: Option<[f32; 2]>,
+    weight: f32,
 }
 
 fn active_morph_weights(
     node_index: usize,
     node: &GltfNodeRest,
     mesh: &GltfMeshData,
-    expressions: &ExpressionMorphWeights,
+    expressions: &ExpressionRenderEffects,
 ) -> Vec<f32> {
     let mut weights = if node.weights.is_empty() {
         mesh.weights.clone()
@@ -737,11 +761,11 @@ fn active_morph_weights(
     weights
 }
 
-fn expression_morph_weights(
+fn expression_render_effects(
     loaded: &LoadedVrm,
     expression_args: &[String],
-) -> Result<ExpressionMorphWeights, Box<dyn Error>> {
-    let mut result = ExpressionMorphWeights::default();
+) -> Result<ExpressionRenderEffects, Box<dyn Error>> {
+    let mut result = ExpressionRenderEffects::default();
     let Feature::Present(expressions) = &loaded.model().document().expressions else {
         if expression_args.is_empty() {
             return Ok(result);
@@ -755,8 +779,11 @@ fn expression_morph_weights(
         .chain(expressions.custom.values())
     {
         for bind in &expression.binds {
-            if let ExpressionBind::MorphTarget { node, index, .. } = bind {
-                result.cleared.entry(node.0).or_default().insert(*index);
+            match bind {
+                ExpressionBind::MorphTarget { node, index, .. } => {
+                    result.cleared.entry(node.0).or_default().insert(*index);
+                }
+                ExpressionBind::MaterialColor { .. } | ExpressionBind::TextureTransform { .. } => {}
             }
         }
     }
@@ -772,18 +799,44 @@ fn expression_morph_weights(
             return Err(format!("unknown render expression: {name}").into());
         };
         let effective_weight = if binary {
-            if weight > 0.5 { 1.0 } else { 0.0 }
+            if weight >= 1.0 { 1.0 } else { 0.0 }
         } else {
             weight.clamp(0.0, 1.0)
         };
         for bind in &expression.binds {
-            if let ExpressionBind::MorphTarget {
-                node,
-                index,
-                weight,
-            } = bind
-            {
-                *result.weights.entry((node.0, *index)).or_default() += effective_weight * *weight;
+            match bind {
+                ExpressionBind::MorphTarget {
+                    node,
+                    index,
+                    weight,
+                } => {
+                    *result.weights.entry((node.0, *index)).or_default() +=
+                        effective_weight * *weight;
+                }
+                ExpressionBind::MaterialColor {
+                    material,
+                    kind,
+                    target_value,
+                } => {
+                    result.material_colors.push(MaterialColorEffect {
+                        material: material.0,
+                        kind: kind.clone(),
+                        target_value: target_value.clone(),
+                        weight: effective_weight,
+                    });
+                }
+                ExpressionBind::TextureTransform {
+                    material,
+                    scale,
+                    offset,
+                } => {
+                    result.texture_transforms.push(TextureTransformEffect {
+                        material: material.0,
+                        scale: *scale,
+                        offset: *offset,
+                        weight: effective_weight,
+                    });
+                }
             }
         }
     }
@@ -802,6 +855,59 @@ fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn 
             Ok((name.to_owned(), weight))
         })
         .collect()
+}
+
+fn apply_color_effect4(
+    initial: [f32; 4],
+    material: Option<usize>,
+    kind: &str,
+    effects: &ExpressionRenderEffects,
+) -> [f32; 4] {
+    let Some(material) = material else {
+        return initial;
+    };
+    effects
+        .material_colors
+        .iter()
+        .filter(|effect| effect.material == material && effect.kind == kind)
+        .fold(initial, |mut color, effect| {
+            let target = [
+                effect.target_value.first().copied().unwrap_or(initial[0]),
+                effect.target_value.get(1).copied().unwrap_or(initial[1]),
+                effect.target_value.get(2).copied().unwrap_or(initial[2]),
+                effect.target_value.get(3).copied().unwrap_or(1.0),
+            ];
+            for index in 0..4 {
+                color[index] += (target[index] - initial[index]) * effect.weight;
+            }
+            color
+        })
+}
+
+fn apply_color_effect3(
+    initial: [f32; 3],
+    material: Option<usize>,
+    kind: &str,
+    effects: &ExpressionRenderEffects,
+) -> [f32; 3] {
+    let Some(material) = material else {
+        return initial;
+    };
+    effects
+        .material_colors
+        .iter()
+        .filter(|effect| effect.material == material && effect.kind == kind)
+        .fold(initial, |mut color, effect| {
+            let target = [
+                effect.target_value.first().copied().unwrap_or(initial[0]),
+                effect.target_value.get(1).copied().unwrap_or(initial[1]),
+                effect.target_value.get(2).copied().unwrap_or(initial[2]),
+            ];
+            for index in 0..3 {
+                color[index] += (target[index] - initial[index]) * effect.weight;
+            }
+            color
+        })
 }
 
 fn morphed_vertex(
@@ -1126,32 +1232,64 @@ struct MaterialShading {
     v0_compat_shade: bool,
 }
 
-fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
+fn material_shading(
+    loaded: &LoadedVrm,
+    material: Option<usize>,
+    expression_effects: &ExpressionRenderEffects,
+) -> MaterialShading {
     if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|core_material| {
             let mtoon = core_material.mtoon.as_ref()?;
             let (emissive_strength, _) = core_material.effective_emissive_strength();
             let v0_compat_shade = loaded.model().document().kind == VrmKind::Vrm0Compat;
-            Some(MaterialShading {
-                base_color: mtoon.base_color_factor,
-                shade_color: [
+            let base_color = apply_color_effect4(
+                mtoon.base_color_factor,
+                material,
+                "color",
+                expression_effects,
+            );
+            let shade_color = apply_color_effect4(
+                [
                     mtoon.shade_color_factor[0],
                     mtoon.shade_color_factor[1],
                     mtoon.shade_color_factor[2],
                     1.0,
                 ],
-                shading_shift: mtoon.shading_shift_factor,
-                shading_toony: mtoon.shading_toony_factor,
-                shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
-                gi_equalization: mtoon.gi_equalization_factor,
-                emissive: [
+                material,
+                "shadeColor",
+                expression_effects,
+            );
+            let emissive = apply_color_effect3(
+                [
                     mtoon.emissive_factor[0] * emissive_strength.0,
                     mtoon.emissive_factor[1] * emissive_strength.0,
                     mtoon.emissive_factor[2] * emissive_strength.0,
                 ],
-                matcap_factor: mtoon.matcap_factor,
-                parametric_rim_color: mtoon.parametric_rim_color_factor,
+                material,
+                "emissionColor",
+                expression_effects,
+            );
+            Some(MaterialShading {
+                base_color,
+                shade_color,
+                shading_shift: mtoon.shading_shift_factor,
+                shading_toony: mtoon.shading_toony_factor,
+                shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
+                gi_equalization: mtoon.gi_equalization_factor,
+                emissive,
+                matcap_factor: apply_color_effect3(
+                    mtoon.matcap_factor,
+                    material,
+                    "matcapColor",
+                    expression_effects,
+                ),
+                parametric_rim_color: apply_color_effect3(
+                    mtoon.parametric_rim_color_factor,
+                    material,
+                    "rimColor",
+                    expression_effects,
+                ),
                 rim_lighting_mix: mtoon.rim_lighting_mix_factor,
                 parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
                 parametric_rim_lift: mtoon.parametric_rim_lift_factor,
@@ -1182,13 +1320,13 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         })
         .unwrap_or([0.0, 0.0, 0.0]);
     MaterialShading {
-        base_color,
+        base_color: apply_color_effect4(base_color, material, "color", expression_effects),
         shade_color: base_color,
         shading_shift: 0.0,
         shading_toony: 0.0,
         shading_shift_texture_scale: 1.0,
         gi_equalization: 0.0,
-        emissive,
+        emissive: apply_color_effect3(emissive, material, "emissionColor", expression_effects),
         matcap_factor: [0.0, 0.0, 0.0],
         parametric_rim_color: [0.0, 0.0, 0.0],
         rim_lighting_mix: 1.0,
@@ -1221,6 +1359,7 @@ fn material_uv_transforms(
     loaded: &LoadedVrm,
     material: Option<usize>,
     mtoon_time: f32,
+    expression_effects: &ExpressionRenderEffects,
 ) -> MaterialUvTransforms {
     let mtoon = material
         .and_then(|index| loaded.model().document().materials.get(index))
@@ -1232,7 +1371,7 @@ fn material_uv_transforms(
     let shade = mtoon
         .and_then(|mtoon| mtoon.texture_transforms.shade_multiply_texture)
         .or(base);
-    MaterialUvTransforms {
+    let transforms = MaterialUvTransforms {
         base,
         shade,
         shading_shift: mtoon.and_then(|mtoon| mtoon.texture_transforms.shading_shift_texture),
@@ -1255,6 +1394,64 @@ fn material_uv_transforms(
         }),
         uv_animation_rotation: mtoon
             .map_or(0.0, |mtoon| mtoon.uv_animation.rotation_speed * mtoon_time),
+    };
+    apply_texture_transform_effects(transforms, material, expression_effects)
+}
+
+fn apply_texture_transform_effects(
+    mut transforms: MaterialUvTransforms,
+    material: Option<usize>,
+    effects: &ExpressionRenderEffects,
+) -> MaterialUvTransforms {
+    let Some(material) = material else {
+        return transforms;
+    };
+    for effect in effects
+        .texture_transforms
+        .iter()
+        .filter(|effect| effect.material == material)
+    {
+        transforms.base = Some(apply_texture_transform_slot(transforms.base, effect));
+        transforms.shade = Some(apply_texture_transform_slot(transforms.shade, effect));
+        transforms.shading_shift = Some(apply_texture_transform_slot(
+            transforms.shading_shift,
+            effect,
+        ));
+        transforms.normal = Some(apply_texture_transform_slot(transforms.normal, effect));
+        transforms.matcap = Some(apply_texture_transform_slot(transforms.matcap, effect));
+        transforms.rim = Some(apply_texture_transform_slot(transforms.rim, effect));
+        transforms.outline_width = Some(apply_texture_transform_slot(
+            transforms.outline_width,
+            effect,
+        ));
+        transforms.emissive = Some(apply_texture_transform_slot(transforms.emissive, effect));
+        transforms.occlusion = Some(apply_texture_transform_slot(transforms.occlusion, effect));
+        transforms.uv_animation_mask = Some(apply_texture_transform_slot(
+            transforms.uv_animation_mask,
+            effect,
+        ));
+    }
+    transforms
+}
+
+fn apply_texture_transform_slot(
+    initial: Option<TextureTransform2d>,
+    effect: &TextureTransformEffect,
+) -> TextureTransform2d {
+    let initial = initial.unwrap_or_default();
+    let target_scale = effect.scale.unwrap_or(initial.scale);
+    let target_offset = effect.offset.unwrap_or(initial.offset);
+    TextureTransform2d {
+        offset: [
+            initial.offset[0] + (target_offset[0] - initial.offset[0]) * effect.weight,
+            initial.offset[1] + (target_offset[1] - initial.offset[1]) * effect.weight,
+        ],
+        scale: [
+            initial.scale[0] + (target_scale[0] - initial.scale[0]) * effect.weight,
+            initial.scale[1] + (target_scale[1] - initial.scale[1]) * effect.weight,
+        ],
+        rotation: initial.rotation,
+        tex_coord: initial.tex_coord,
     }
 }
 

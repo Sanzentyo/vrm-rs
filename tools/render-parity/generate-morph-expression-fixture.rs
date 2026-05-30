@@ -5,12 +5,15 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
+png = "0.18.0"
 serde_json = "1.0.150"
 ---
 
 use clap::Parser;
+use png::{BitDepth, ColorType, Encoder};
 use serde_json::{json, Map, Value};
 use std::fs;
+use std::io::Cursor;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Parser)]
@@ -38,6 +41,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn fixture_json() -> String {
     let mesh = mesh_buffer();
+    let texture = checker_texture_png();
+    let texture_offset = mesh.len();
+    let mut buffer = mesh;
+    buffer.extend_from_slice(&texture);
     serde_json::to_string_pretty(&json!({
         "asset": {
             "version": "2.0",
@@ -51,15 +58,16 @@ fn fixture_json() -> String {
         "scenes": [{ "nodes": [0] }],
         "nodes": nodes(),
         "buffers": [{
-            "uri": format!("data:application/octet-stream;base64,{}", base64(&mesh)),
-            "byteLength": mesh.len()
+            "uri": format!("data:application/octet-stream;base64,{}", base64(&buffer)),
+            "byteLength": buffer.len()
         }],
         "bufferViews": [
             { "buffer": 0, "byteOffset": 0, "byteLength": 48, "target": 34962 },
             { "buffer": 0, "byteOffset": 48, "byteLength": 48, "target": 34962 },
             { "buffer": 0, "byteOffset": 96, "byteLength": 32, "target": 34962 },
             { "buffer": 0, "byteOffset": 128, "byteLength": 48, "target": 34962 },
-            { "buffer": 0, "byteOffset": 176, "byteLength": 12, "target": 34963 }
+            { "buffer": 0, "byteOffset": 176, "byteLength": 12, "target": 34963 },
+            { "buffer": 0, "byteOffset": texture_offset, "byteLength": texture.len() }
         ],
         "accessors": [
             {
@@ -102,6 +110,11 @@ fn fixture_json() -> String {
             }
         ],
         "materials": [mtoon_material()],
+        "images": [{
+            "mimeType": "image/png",
+            "bufferView": 5
+        }],
+        "textures": [{ "source": 0 }],
         "meshes": [{
             "name": "expression-morph-quad",
             "weights": [0.0],
@@ -131,6 +144,20 @@ fn fixture_json() -> String {
                         "happy": {
                             "morphTargetBinds": [
                                 { "node": 0, "index": 0, "weight": 1.0 }
+                            ],
+                            "materialColorBinds": [
+                                {
+                                    "material": 0,
+                                    "type": "color",
+                                    "targetValue": [1.0, 0.55, 0.30, 1.0]
+                                }
+                            ],
+                            "textureTransformBinds": [
+                                {
+                                    "material": 0,
+                                    "scale": [0.5, 1.0],
+                                    "offset": [0.25, 0.0]
+                                }
                             ]
                         }
                     }
@@ -179,6 +206,7 @@ fn mtoon_material() -> Value {
         "alphaMode": "OPAQUE",
         "doubleSided": false,
         "pbrMetallicRoughness": {
+            "baseColorTexture": { "index": 0 },
             "baseColorFactor": [0.55, 0.82, 1.0, 1.0],
             "metallicFactor": 0.0,
             "roughnessFactor": 1.0
@@ -186,6 +214,7 @@ fn mtoon_material() -> Value {
         "extensions": {
             "VRMC_materials_mtoon": {
                 "specVersion": "1.0",
+                "mainTexture": { "index": 0 },
                 "shadeColorFactor": [0.18, 0.25, 0.36],
                 "shadingShiftFactor": 0.0,
                 "shadingToonyFactor": 0.9,
@@ -225,6 +254,29 @@ fn mesh_buffer() -> Vec<u8> {
     bytes.extend(uvs.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(morph_positions.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(indices.into_iter().flat_map(u16::to_le_bytes));
+    bytes
+}
+
+fn checker_texture_png() -> Vec<u8> {
+    let rgba = [
+        200, 236, 255, 255, 255, 210, 150, 255, 200, 236, 255, 255, 255, 210, 150, 255, 255,
+        210, 150, 255, 200, 236, 255, 255, 255, 210, 150, 255, 200, 236, 255, 255, 200, 236,
+        255, 255, 255, 210, 150, 255, 200, 236, 255, 255, 255, 210, 150, 255, 255, 210, 150,
+        255, 200, 236, 255, 255, 255, 210, 150, 255, 200, 236, 255, 255,
+    ];
+    let mut bytes = Vec::new();
+    {
+        let mut cursor = Cursor::new(&mut bytes);
+        let mut encoder = Encoder::new(&mut cursor, 4, 4);
+        encoder.set_color(ColorType::Rgba);
+        encoder.set_depth(BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .expect("generated PNG header should be valid");
+        writer
+            .write_image_data(&rgba)
+            .expect("generated PNG payload should be valid");
+    }
     bytes
 }
 
