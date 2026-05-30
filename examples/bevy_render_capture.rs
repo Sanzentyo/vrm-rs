@@ -10,7 +10,7 @@ mod render_capture_scene;
 use bevy::app::{AppExit, ScheduleRunnerPlugin};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::{core_3d::Transparent3d, tonemapping::Tonemapping};
 use bevy::ecs::system::SystemParam;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Vec4 as BVec4;
@@ -21,10 +21,12 @@ use bevy::render::Extract;
 use bevy::render::Render;
 use bevy::render::RenderApp;
 use bevy::render::RenderSystems;
+use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_graph::{
     self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
 };
+use bevy::render::render_phase::ViewSortedRenderPhases;
 use bevy::render::render_resource::{
     AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face,
     MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
@@ -76,6 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .disable::<WinitPlugin>(),
         )
         .add_plugins((ImageCopyPlugin, CaptureFramePlugin))
+        .add_plugins(ExtractComponentPlugin::<BevyMtoonPhaseOrder>::default())
         .add_plugins(MaterialPlugin::<BevyMtoonMaterial>::default())
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
@@ -350,6 +353,7 @@ fn spawn_vrm_meshes(
                     &image_handles,
                 )),
                 render_order,
+                phase_order: material_phase_order(loaded, primitive.material),
             };
             primitives.push(surface);
             if let Some(outline) = bevy_outline_primitive(
@@ -373,6 +377,7 @@ fn spawn_vrm_meshes(
                 commands.spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mtoon_materials.add(material)),
+                    BevyMtoonPhaseOrder(primitive.phase_order),
                     Transform::IDENTITY,
                 ));
             }
@@ -433,6 +438,7 @@ fn bevy_outline_primitive(
         mesh,
         material: BevyPrimitiveMaterial::Mtoon(material),
         render_order: material_render_order(loaded, primitive.material).saturating_add(1),
+        phase_order: material_phase_order(loaded, primitive.material).saturating_add(1),
     })
 }
 
@@ -566,11 +572,15 @@ struct BevyPrimitive {
     mesh: Mesh,
     material: BevyPrimitiveMaterial,
     render_order: i32,
+    phase_order: i32,
 }
 
 enum BevyPrimitiveMaterial {
     Mtoon(BevyMtoonMaterial),
 }
+
+#[derive(Clone, Copy, Component, Debug, ExtractComponent)]
+struct BevyMtoonPhaseOrder(i32);
 
 struct BevyImageHandles {
     color_images: Vec<Option<Handle<Image>>>,
@@ -1290,6 +1300,13 @@ fn bevy_transparent_spawn_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
     1000 - mtoon_transparent_order_offset(mtoon)
 }
 
+fn material_phase_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
+    material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .map_or(2000, mtoon_transparent_order_offset)
+}
+
 fn mtoon_transparent_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
     let queue_offset = if mtoon.transparent_with_z_write {
         0
@@ -1713,8 +1730,26 @@ impl Plugin for ImageCopyPlugin {
             .add_systems(ExtractSchedule, image_copy_extract)
             .add_systems(
                 Render,
-                receive_image_from_buffer.after(RenderSystems::Render),
+                (
+                    apply_mtoon_phase_order
+                        .after(RenderSystems::Queue)
+                        .before(RenderSystems::PhaseSort),
+                    receive_image_from_buffer.after(RenderSystems::Render),
+                ),
             );
+    }
+}
+
+fn apply_mtoon_phase_order(
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    orders: Query<&BevyMtoonPhaseOrder>,
+) {
+    for phase in phases.values_mut() {
+        for item in &mut phase.items {
+            if let Ok(order) = orders.get(item.entity.0) {
+                item.distance += order.0 as f32 * 0.000001;
+            }
+        }
     }
 }
 

@@ -32,6 +32,11 @@ render-parity-transparent-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-fixture .external-fixtures/generated/transparent-blend.vrm.gltf
 
+# Regenerate high-contrast transparent material ordering artifacts for Bevy/wgpu parity debugging.
+render-parity-transparent-high-contrast three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --palette high-contrast --out .external-fixtures/generated/transparent-high-contrast.vrm.gltf
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-high-contrast --render-background transparent --render-alpha-mismatch-tolerance 0 --render-fixture .external-fixtures/generated/transparent-high-contrast.vrm.gltf
+
 # Prepare external inputs and regenerate the default render parity artifact set from scratch.
 render-parity-full:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity

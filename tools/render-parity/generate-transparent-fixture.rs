@@ -9,7 +9,7 @@ png = "0.18.1"
 serde_json = "1.0.150"
 ---
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use png::{BitDepth, ColorType, Encoder};
 use serde_json::{Map, Value, json};
 use std::fs;
@@ -24,6 +24,15 @@ use std::path::PathBuf;
 struct Options {
     #[arg(long, default_value = ".external-fixtures/generated/transparent-blend.vrm.gltf")]
     out: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = TransparentPalette::Subtle)]
+    palette: TransparentPalette,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TransparentPalette {
+    Subtle,
+    HighContrast,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,18 +40,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&options.out, format!("{}\n", fixture_json()))?;
+    fs::write(&options.out, format!("{}\n", fixture_json(options.palette)))?;
     println!("{}", options.out.display());
     Ok(())
 }
 
-fn fixture_json() -> String {
+fn fixture_json(palette: TransparentPalette) -> String {
     let mesh = mesh_buffer();
     let texture = checker_texture_png();
     let mesh_len = mesh.len();
     let texture_len = texture.len();
     let mut buffer = mesh;
     buffer.extend(texture);
+    let (front_color, zwrite_color) = transparent_colors(palette);
     serde_json::to_string_pretty(&json!({
         "asset": {
             "version": "2.0",
@@ -122,8 +132,8 @@ fn fixture_json() -> String {
             }
         ],
         "materials": [
-            mtoon_material("transparent-textured-cyan", [0.0, 0.85, 1.0, 0.45], 0, false, true),
-            mtoon_material("transparent-blue-zwrite", [0.05, 0.75, 1.0, 0.45], 1, true, false)
+            mtoon_material("transparent-textured-front", front_color, 0, false, true),
+            mtoon_material("transparent-zwrite", zwrite_color, 1, true, false)
         ],
         "meshes": [{
             "name": "transparent-overlap-quads",
@@ -154,6 +164,13 @@ fn fixture_json() -> String {
         }
     }))
     .expect("fixture JSON should serialize")
+}
+
+fn transparent_colors(palette: TransparentPalette) -> ([f32; 4], [f32; 4]) {
+    match palette {
+        TransparentPalette::Subtle => ([0.0, 0.85, 1.0, 0.45], [0.05, 0.75, 1.0, 0.45]),
+        TransparentPalette::HighContrast => ([0.0, 0.85, 1.0, 0.45], [1.0, 0.0, 0.85, 0.45]),
+    }
 }
 
 fn nodes() -> Vec<Value> {

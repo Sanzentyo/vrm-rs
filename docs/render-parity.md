@@ -128,6 +128,24 @@ fixture contains two overlapping VRM1 MToon `BLEND` primitives, one with
 base-color texture, so the run checks partial-alpha accumulation, texture color
 sampling, and depth-write policy without committing binary sample assets. The
 alpha mismatch tolerance is intentionally zero for this generated fixture.
+For a stronger transparent layer-ordering audit, use the high-contrast palette:
+
+```powershell
+just render-parity-transparent-high-contrast
+```
+
+This writes `.external-fixtures/generated/transparent-high-contrast.vrm.gltf`
+and renders into
+`.external-fixtures/render-parity-transparent-high-contrast/`. The output
+includes side-by-side PNGs at `three-vrm/`, `wgpu/`, and `bevy/`, amplified
+diff PNGs at `diff/`, PSNR JSON reports at `reports/`, and the review page
+`.external-fixtures/render-parity-transparent-high-contrast/visual-review.html`.
+The current high-contrast transparent result is alpha mismatches `0`, selected
+`rgb-visible` wgpu `53.1994 dB` with max channel delta `1`, and Bevy
+`51.9341 dB` with max channel delta `2`. Bevy reaches this by injecting a tiny
+MToon transparent-order tie-break into `Transparent3d` before Bevy's phase sort,
+so equal-depth transparent primitives no longer depend on incidental ECS/spawn
+ordering.
 
 ## three-vrm Capture
 
