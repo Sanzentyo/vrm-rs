@@ -130,14 +130,20 @@ just render-parity-mtoon-light-generated
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
 contains six opaque MToon quads for forced base lighting, forced shade lighting,
-ambient-only behavior, parametric rim, matcap rim, and mixed rim/matcap. The
-current run uses `--mtoon-light-accumulation three-vrm` and reports selected
-`rgb-visible` PSNR wgpu `28.6300 dB` and Bevy `28.6100 dB`; full-RGBA PSNR is
-wgpu `29.8794 dB` and Bevy `29.8594 dB`. Review
+ambient-only behavior, parametric rim, matcap rim, and mixed rim/matcap. It
+uses `--mtoon-light-accumulation three-vrm`,
+`--render-background transparent`, and selected metric `rgb-interior1px` so a
+one-pixel silhouette/rasterization disagreement does not dominate the shader
+color score. The current run reports selected PSNR wgpu `54.4445 dB` with max
+selected channel delta `1`, and Bevy `51.0870 dB` with max selected channel
+delta `2`. The expected edge-only alpha mismatch is `240` pixels and the recipe
+allows up to `512`; use the strict transparent generated fixture below for
+alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
-when changing MToon accumulation code. The remaining high max-channel deltas on
-that fixture are a focused signal for exact reflected-light loop, color-space
-post-correction, rim, and matcap differences.
+when changing MToon accumulation code. The remaining broad-fixture PSNR gap is
+therefore more likely to come from real model runtime/material breadth,
+post-correction, outline edges, and fixture coverage than from this isolated
+base/shade/rim/matcap color formula.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
