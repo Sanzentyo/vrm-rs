@@ -213,13 +213,13 @@ uses `--mtoon-light-accumulation three-vrm`,
 one-pixel silhouette/rasterization disagreement does not dominate the shader
 color score. The current run reports selected PSNR wgpu `58.9968 dB` with max
 selected channel delta `1`, and Bevy `51.8032 dB` with max selected channel
-delta `2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
+delta `2`; the aggregate recipe now fails if selected channel delta exceeds
+`2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
 disabled for parity while still extracting and applying glTF occlusion to
 non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is
-`330` pixels and the recipe
-allows up to `512`; use the strict transparent generated fixture below for
-alpha/blend correctness. Review
+`330` pixels and the recipe allows up to `512`; use the strict transparent
+generated fixture below for alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
 when changing MToon accumulation code. The remaining broad-fixture PSNR gap is
 therefore more likely to come from real model runtime/material breadth,
@@ -236,7 +236,9 @@ The current swatch guard requires wgpu max channel delta `<= 1` with every
 swatch at least `50 dB`; Bevy is allowed max channel delta `<= 2` with every
 swatch at least `47 dB`. This prevents a high aggregate score from hiding a
 broken individual MToon term such as forced shade, rim, matcap, or emissive
-strength.
+strength. The same swatch guard is also run for the direct-only and
+ambient-only recipes below, so default, direct, and indirect accumulation drift
+are separated in their own report directories.
 
 For the same generated fixture with ambient disabled on both sides, run:
 
@@ -249,8 +251,11 @@ It sets the three-vrm reference ambient intensity to `0` and Rust
 `pbrAmbient` to `0`, leaving only the `DirectionalLight(Math.PI)` path plus
 rim/emission behavior. The current selected `rgb-interior1px` PSNR is wgpu
 `58.9803 dB` and Bevy `51.7674 dB`, with max selected channel deltas `1` and
-`2`. This keeps direct-light color parity measured separately from the default
-reference run that includes ambient `0.1`.
+`2`. The recipe also writes direct-only swatch reports under
+`.external-fixtures/render-parity-mtoon-light-direct-generated/reports/` and
+enforces the same wgpu `<= 1` / Bevy `<= 2` per-swatch max channel deltas. This
+keeps direct-light color parity measured separately from the default reference
+run that includes ambient `0.1`.
 
 For the same generated fixture with directional light disabled on both sides,
 run:
@@ -263,9 +268,12 @@ This writes `.external-fixtures/render-parity-mtoon-light-ambient-generated/`.
 It sets the three-vrm reference `DirectionalLight` intensity to `0` and Rust
 `--render-direct-light-scale` to `0`, leaving the ambient `0.1` path plus
 emission. The current selected `rgb-interior1px` PSNR is wgpu `60.9964 dB` and
-Bevy `53.7214 dB`, with max selected channel deltas `1` and `2`. This keeps
-ambient/indirect MToon accumulation measurable separately from the direct-only
-and default light setups.
+Bevy `53.7214 dB`, with max selected channel deltas `1` and `2`. The recipe
+also writes ambient-only swatch reports under
+`.external-fixtures/render-parity-mtoon-light-ambient-generated/reports/` and
+enforces the same per-swatch color bounds. This keeps ambient/indirect MToon
+accumulation measurable separately from the direct-only and default light
+setups.
 
 For a generated MToon texture-slot audit, run:
 
