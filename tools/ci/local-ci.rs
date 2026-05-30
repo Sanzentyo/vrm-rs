@@ -117,6 +117,8 @@ struct Options {
     render_background: RenderBackground,
     #[arg(long)]
     render_disable_outlines: bool,
+    #[arg(long)]
+    render_disable_normal_maps: bool,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
@@ -681,6 +683,9 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    if options.render_disable_normal_maps {
+        command.arg("--disable-normal-maps");
+    }
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);
     }
@@ -730,6 +735,9 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    if options.render_disable_normal_maps {
+        command.arg("--disable-normal-maps");
+    }
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);
     }
@@ -778,6 +786,9 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_background.as_cli_value());
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
+    }
+    if options.render_disable_normal_maps {
+        command.arg("--disable-normal-maps");
     }
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);

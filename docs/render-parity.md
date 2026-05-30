@@ -150,6 +150,23 @@ Bevy `32.5273 dB`, and constraint sample wgpu `35.9456 dB` / Bevy
 diff heatmaps when changing tangent generation, normal sampling, back-face TBN
 handling, or MToon light/color accumulation.
 
+For a normal-map-off diagnostic over the same real fixtures, run:
+
+```powershell
+just render-parity-normal-maps-off
+```
+
+This writes `.external-fixtures/render-parity-normal-maps-off/` and disables
+normal maps in the three-vrm reference, wgpu capture, and Bevy capture. It is a
+diagnostic for separating tangentless normal-map residuals from material,
+skinning, pose, and outline deltas. The current run uses selected
+`rgb-visible`, exact alpha parity, and `--render-fail-under 33`. Seed-san
+improves from the normal-map-enabled sweep to wgpu `33.5967 dB` / Bevy
+`33.1992 dB`, while the constraint sample remains roughly flat at wgpu
+`35.9609 dB` / Bevy `35.9543 dB`. That makes Seed-san's remaining residual
+partly normal-map/tangentless-related, while the constraint sample continues to
+point more toward outline, geometry, or rasterization differences.
+
 The Rust capture paths also accept
 `--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
 current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).

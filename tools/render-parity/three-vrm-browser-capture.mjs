@@ -42,10 +42,11 @@ const directionalB = Number(args.get('directional-b') ?? '1.0');
 const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
+const disableNormalMaps = args.has('disable-normal-maps');
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -178,6 +179,8 @@ try {
     width,
     height,
     camera: { y: cameraY, z: cameraZ, targetY },
+    disableOutlines,
+    disableNormalMaps,
     reference: capture.reference,
     mtoonTime,
     expressions: expressionWeights,
@@ -263,6 +266,21 @@ function capturePage(options) {
           }
         }
       }
+      if (${disableNormalMaps} && object.material) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          if (!material) continue;
+          if ('normalMap' in material) material.normalMap = null;
+          if (material.normalScale && typeof material.normalScale.set === 'function') {
+            material.normalScale.set(0.0, 0.0);
+          }
+          if (material.uniforms?.normalMap) material.uniforms.normalMap.value = null;
+          if (material.uniforms?.normalScale?.value?.set) {
+            material.uniforms.normalScale.value.set(0.0, 0.0);
+          }
+          material.needsUpdate = true;
+        }
+      }
     });
     scene.add(vrm.scene);
     const expressions = ${JSON.stringify(options.expressions)};
@@ -297,6 +315,7 @@ function capturePage(options) {
         antialias: false,
         premultipliedAlpha: false,
         disableOutlines: ${disableOutlines},
+        disableNormalMaps: ${disableNormalMaps},
       },
       expressions,
       lighting: {

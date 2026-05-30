@@ -136,6 +136,8 @@ struct CaptureOptions {
     background: CaptureBackground,
     #[arg(long)]
     disable_outlines: bool,
+    #[arg(long)]
+    disable_normal_maps: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -356,7 +358,10 @@ fn spawn_vrm_meshes(
             image_handles: &image_handles,
         };
         for primitive in &mesh.primitives {
-            let shading = material_shading(loaded, primitive.material, &expression_effects);
+            let mut shading = material_shading(loaded, primitive.material, &expression_effects);
+            if options.disable_normal_maps {
+                shading.normal_scale = 0.0;
+            }
             let render_order = material_render_order(loaded, primitive.material);
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
@@ -2510,6 +2515,7 @@ fn write_capture(
         "width": options.width,
         "height": options.height,
         "disableOutlines": options.disable_outlines,
+        "disableNormalMaps": options.disable_normal_maps,
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {

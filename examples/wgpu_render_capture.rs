@@ -112,6 +112,8 @@ struct CaptureOptions {
     background: CaptureBackground,
     #[arg(long)]
     disable_outlines: bool,
+    #[arg(long)]
+    disable_normal_maps: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -628,7 +630,10 @@ fn draw_primitive(
     morph_weights: &[f32],
     context: &PrimitiveDrawContext<'_>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
-    let shading = material_shading(loaded, primitive.material, context.expression_effects);
+    let mut shading = material_shading(loaded, primitive.material, context.expression_effects);
+    if context.options.disable_normal_maps {
+        shading.normal_scale = 0.0;
+    }
     let uv_transforms = material_uv_transforms(
         loaded,
         primitive.material,
@@ -2437,6 +2442,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "width": options.width,
         "height": options.height,
         "disableOutlines": options.disable_outlines,
+        "disableNormalMaps": options.disable_normal_maps,
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
