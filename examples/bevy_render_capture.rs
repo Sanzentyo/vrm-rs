@@ -682,12 +682,16 @@ fn generated_tangents(
 ) -> Option<Vec<[f32; 4]>> {
     let mut tangents = vec![GVec3::ZERO; positions.len()];
     let mut bitangents = vec![GVec3::ZERO; positions.len()];
+    let mut referenced = vec![false; positions.len()];
     for triangle in indices.chunks_exact(3) {
         let [i0, i1, i2] = [
             usize::try_from(triangle[0]).ok()?,
             usize::try_from(triangle[1]).ok()?,
             usize::try_from(triangle[2]).ok()?,
         ];
+        for index in [i0, i1, i2] {
+            *referenced.get_mut(index)? = true;
+        }
         let [p0, p1, p2] = [
             GVec3::from_array(*positions.get(i0)?),
             GVec3::from_array(*positions.get(i1)?),
@@ -717,12 +721,13 @@ fn generated_tangents(
     tangents
         .into_iter()
         .zip(bitangents)
+        .zip(referenced)
         .zip(normals)
-        .map(|((tangent, bitangent), normal)| {
+        .map(|(((tangent, bitangent), referenced), normal)| {
             let normal = GVec3::from_array(*normal).normalize_or_zero();
             let tangent = tangent - normal * normal.dot(tangent);
             if tangent.length_squared() <= f32::EPSILON {
-                return None;
+                return (!referenced).then(|| fallback_tangent(normal));
             }
             let tangent = tangent.normalize();
             let handedness = if normal.cross(tangent).dot(bitangent) < 0.0 {
@@ -733,6 +738,16 @@ fn generated_tangents(
             Some([tangent.x, tangent.y, tangent.z, handedness])
         })
         .collect()
+}
+
+fn fallback_tangent(normal: GVec3) -> [f32; 4] {
+    let seed = if normal.x.abs() < 0.9 {
+        GVec3::X
+    } else {
+        GVec3::Y
+    };
+    let tangent = (seed - normal * normal.dot(seed)).normalize_or_zero();
+    [tangent.x, tangent.y, tangent.z, 1.0]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -990,10 +1005,16 @@ impl Material for BevyMtoonMaterial {
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        layout: &bevy::mesh::MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
+        if layout.0.contains(Mesh::ATTRIBUTE_TANGENT) {
+            descriptor.vertex.shader_defs.push("VERTEX_TANGENTS".into());
+            if let Some(fragment) = &mut descriptor.fragment {
+                fragment.shader_defs.push("VERTEX_TANGENTS".into());
+            }
+        }
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
         }

@@ -240,10 +240,12 @@ synthetic tangent attribute triggered a three-vrm WebGL `vTangent` varying
 validation failure, while the tangentless path exercises three-vrm's normal-map
 fallback behavior. The current run has exact alpha buckets and mismatches `0`;
 selected `rgb-interior1px` PSNR is wgpu `47.1013 dB` with max selected channel
-delta `12`, and Bevy `38.4018 dB` with max selected channel delta `41`. Treat
-this as the current normal-map regression guard, not final visual parity; the
-remaining work is to close Bevy's generated-normal delta and confirm real
-tangentless official primitives with higher thresholds.
+delta `12`, and Bevy `46.0637 dB` with max selected channel delta `13`. The
+Bevy path now keeps generated tangent frames when a primitive accessor includes
+unreferenced vertices and enables `VERTEX_TANGENTS` for the custom material
+shader. Treat this as the current normal-map regression guard, not final visual
+parity; the remaining work is to confirm real tangentless official primitives
+with higher thresholds.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
@@ -761,8 +763,8 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 - Add or discover broader transparent-material fixtures with real textures and
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
-- Close Bevy's generated normal-map gap and then raise the opt-in normal-map
-  fixture threshold beyond the current `38 dB` floor.
+- Raise the opt-in normal-map fixture threshold after real tangentless official
+  primitives are reviewed.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize remaining outline, material breadth,

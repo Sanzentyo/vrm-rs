@@ -162,7 +162,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, and direct/ambient isolated MToon light-color guards; broader real-model PSNR, Bevy normal-map parity, and higher final thresholds are still pending.
+- Render parity is not yet satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, and direct/ambient isolated MToon light-color guards; broader real-model PSNR, real tangentless normal-map fixture review, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 
