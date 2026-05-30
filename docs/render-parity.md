@@ -124,9 +124,10 @@ just render-parity-transparent-generated
 This writes `.external-fixtures/generated/transparent-blend.vrm.gltf` and
 renders it into `.external-fixtures/render-parity-transparent-generated/`. The
 fixture contains two overlapping VRM1 MToon `BLEND` primitives, one with
-`transparentWithZWrite`, so the run checks both partial-alpha accumulation and
-depth-write policy without committing binary sample assets. The alpha mismatch
-tolerance is intentionally zero for this generated fixture.
+`transparentWithZWrite`, and one layer carries an embedded bufferView PNG
+base-color texture, so the run checks partial-alpha accumulation, texture color
+sampling, and depth-write policy without committing binary sample assets. The
+alpha mismatch tolerance is intentionally zero for this generated fixture.
 
 ## three-vrm Capture
 
@@ -450,12 +451,15 @@ missing mode in wgpu/Bevy captures.
 Generated transparent MToon blend coverage now includes RGB accumulation as
 well as alpha buckets. The capture shaders manually sRGB-encode fragment output
 into `Rgba8Unorm` targets so blending happens after the same color correction
-stage as three-vrm's reference path. The 2026-05-30
+stage as three-vrm's reference path. The fixture now also embeds a tiny PNG
+base-color texture through a glTF bufferView, broadening the transparent path
+without committing binary assets. The 2026-05-30
 `just render-parity-transparent-generated` run reports `transparent=512`,
 `opaque=0`, `partial=65024`, alpha mismatches `0`, wgpu `rgb-visible =
-Infinity` with max channel delta `0`, and Bevy `rgb-visible = 52.9020 dB` with
-max channel delta `1`. This closes the generated transparent-material blocker;
-the remaining transparent work is broader real-fixture coverage.
+53.0238 dB` with max channel delta `1`, and Bevy `rgb-visible = 49.7151 dB`
+with max channel delta `2`. This closes the generated source-like transparent
+texture/material blocker; the remaining transparent work is broader real-fixture
+coverage and high-contrast transparent layer ordering in Bevy.
 That generated fixture now also carries a `COLOR_0` gradient. This intentionally
 does not change the MToon reference image: three-vrm ignores vertex colors for
 MToon materials, and the Rust capture paths must do the same. `vrm-io` still
