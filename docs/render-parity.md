@@ -248,6 +248,25 @@ for three-vrm, wgpu, and Bevy; all alpha differences are within 1 LSB
 `48.5282 dB` with max selected channel delta `3`, and Bevy `48.5944 dB` with
 max selected channel delta `4`.
 
+For alpha-mode and cutoff coverage across OPAQUE, MASK, and BLEND MToon
+materials, use:
+
+```powershell
+just render-parity-transparent-alpha-modes
+```
+
+This writes
+`.external-fixtures/generated/transparent-alpha-modes.vrm.gltf` and renders it
+into `.external-fixtures/render-parity-transparent-alpha-modes/`. The fixture
+contains four separated swatches: an OPAQUE material whose base alpha must be
+forced to `1.0`, a MASK material that passes only because it uses a custom
+`alphaCutoff = 0.25`, a MASK material that fails because it uses
+`alphaCutoff = 0.70`, and a BLEND material whose `alphaCutoff` must be ignored.
+The current run has identical alpha buckets for all three renderers
+(`transparent=37904`, `opaque=19184`, `partial=8448`) and zero alpha
+mismatches. Selected `rgb-visible` PSNR is wgpu `47.4970 dB` and Bevy
+`48.0126 dB`, both with max selected channel delta `2`.
+
 For a generated screen-coordinate outline audit, run:
 
 ```powershell

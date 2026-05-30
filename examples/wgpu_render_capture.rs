@@ -123,13 +123,14 @@ struct GpuPrimitive {
     pipeline_index: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct MaterialPolicy {
     render_order: i32,
     cull_mode: CaptureCullMode,
     alpha_mode: CaptureAlphaMode,
     depth_write: bool,
     blend: bool,
+    alpha_cutoff: f32,
 }
 
 impl Default for MaterialPolicy {
@@ -140,6 +141,7 @@ impl Default for MaterialPolicy {
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
             blend: false,
+            alpha_cutoff: 0.5,
         }
     }
 }
@@ -444,6 +446,7 @@ fn outline_primitive(
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
             blend: false,
+            alpha_cutoff: 0.5,
         },
     })
 }
@@ -572,7 +575,7 @@ fn draw_primitive(
                     shading.rim_lighting_mix,
                     shading.parametric_rim_fresnel_power,
                     shading.parametric_rim_lift,
-                    0.0,
+                    policy.alpha_cutoff,
                 ],
                 outline_color: [1.0, 1.0, 1.0, -1.0],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
@@ -629,6 +632,7 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
                 alpha_mode: capture_alpha_mode(hints.alpha_mode),
                 depth_write: hints.depth_write,
                 blend: hints.blend,
+                alpha_cutoff: mtoon.cutoff_factor,
             }
         })
         .unwrap_or_default();
@@ -639,6 +643,7 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
                 policy.alpha_mode = CaptureAlphaMode::Mask;
                 policy.depth_write = true;
                 policy.blend = false;
+                policy.alpha_cutoff = gltf.alpha_cutoff.unwrap_or(0.5);
             }
             GltfAlphaMode::Blend => {
                 policy.alpha_mode = CaptureAlphaMode::Blend;
@@ -2209,7 +2214,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let texel = textureSample(base_texture, base_sampler, base_uv);
     let emissive_texel = textureSample(emissive_texture, base_sampler, emissive_uv).rgb;
     let alpha = input.color.a * texel.a;
-    if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < 0.5 {
+    if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < input.rim_params.w {
         discard;
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);

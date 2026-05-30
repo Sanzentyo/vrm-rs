@@ -78,7 +78,13 @@ the canonical static sweep. The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use
 `--render-background transparent` only for explicit alpha-mask and silhouette
-audits.
+audits. Generated transparent-material guards currently include
+`just render-parity-transparent-generated`,
+`just render-parity-transparent-high-contrast`,
+`just render-parity-transparent-broad`, and
+`just render-parity-transparent-alpha-modes`; the last one specifically covers
+OPAQUE alpha forcing, MASK `alphaCutoff` pass/fail behavior, and BLEND
+`alphaCutoff` ignore behavior across three-vrm, wgpu, and Bevy.
 The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
