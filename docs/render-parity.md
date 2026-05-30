@@ -177,7 +177,12 @@ diagnostic keeps exact alpha parity. Seed-san stays essentially flat at wgpu
 outline alone. The constraint sample improves from the normal sweep's
 wgpu `35.9456 dB` / Bevy `35.9394 dB` to wgpu `36.8185 dB` / Bevy
 `36.8061 dB`, which marks outline expansion as a real contributor for that
-fixture.
+fixture. The capture outline geometry now follows three-vrm's local/object
+normal expansion with normal-matrix length compensation, and wgpu also applies
+the three-vrm outline clip-depth nudge. Re-running the focused guards did not
+move the measured PSNR, so remaining constraint outline residuals are more
+likely in rasterization/fill, material color, or Bevy's lack of a custom
+outline vertex stage than in transform-scale handling.
 
 For isolated experiments, the local runner can also override the three-vrm
 reference light setup with `--render-three-vrm-directional-intensity`,

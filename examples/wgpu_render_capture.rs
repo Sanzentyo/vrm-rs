@@ -380,7 +380,14 @@ fn mesh_draw_data(
                 draw_primitive(loaded, primitive, world, skin_matrices.as_deref(), options)?;
             primitives.push(surface.clone());
             if !options.disable_outlines
-                && let Some(outline) = outline_primitive(loaded, primitive, &surface, options)
+                && let Some(outline) = outline_primitive(
+                    loaded,
+                    primitive,
+                    &surface,
+                    world,
+                    skin_matrices.as_deref(),
+                    options,
+                )
             {
                 primitives.push(outline);
             }
@@ -398,6 +405,8 @@ fn outline_primitive(
     loaded: &LoadedVrm,
     primitive: &GltfPrimitiveData,
     surface: &DrawPrimitive,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
     options: &CaptureOptions,
 ) -> Option<DrawPrimitive> {
     let material = primitive
@@ -423,8 +432,8 @@ fn outline_primitive(
     let vertices = surface
         .vertices
         .iter()
-        .map(|vertex| {
-            let normal = Vec3::from_array(vertex.normal).normalize_or_zero();
+        .enumerate()
+        .map(|(index, vertex)| {
             let outline_coord = transform_uv(vertex.tex_coord, uv_transforms.outline_width);
             let width = width
                 * width_texture
@@ -432,8 +441,10 @@ fn outline_primitive(
                     .map(|image| image.sample_green(outline_coord))
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
-            let position = Vec3::from_array(vertex.position);
-            vertex.position = (position + normal * width * outline_scale.at(position)).to_array();
+            vertex.position =
+                outline_position(primitive, index, width, outline_scale, world, skin_matrices)
+                    .unwrap_or_else(|| Vec3::from_array(vertex.position))
+                    .to_array();
             vertex.outline_color = outline_color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;
@@ -483,6 +494,76 @@ impl OutlineScale {
             | OutlineWidthMode::WorldCoordinates
             | OutlineWidthMode::Unknown => 1.0,
         }
+    }
+}
+
+fn outline_position(
+    primitive: &GltfPrimitiveData,
+    index: usize,
+    width: f32,
+    outline_scale: OutlineScale,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+) -> Option<Vec3> {
+    let position = Vec3::from_array(*primitive.positions.get(index)?);
+    let normal = primitive
+        .normals
+        .get(index)
+        .copied()
+        .map(Vec3::from_array)
+        .unwrap_or(Vec3::Z)
+        .normalize_or_zero();
+    let transform = blended_vertex_transform(
+        world,
+        skin_matrices,
+        primitive.joints_0.get(index).copied(),
+        primitive.weights_0.get(index).copied(),
+    );
+    let world_position = transform.transform_point3(position);
+    let normal_scale = normal_matrix_length(transform, normal);
+    let offset = normal * width * normal_scale * outline_scale.at(world_position);
+    Some(transform.transform_point3(position + offset))
+}
+
+fn blended_vertex_transform(
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> Mat4 {
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return world;
+    };
+
+    let mut transform = Mat4::ZERO;
+    let mut total_weight = 0.0;
+    for (joint, weight) in joints.into_iter().zip(weights) {
+        if weight <= 0.0 {
+            continue;
+        }
+        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
+            continue;
+        };
+        transform += *matrix * weight;
+        total_weight += weight;
+    }
+    if total_weight > 0.0 { transform } else { world }
+}
+
+fn normal_matrix_length(transform: Mat4, normal: Vec3) -> f32 {
+    if normal.length_squared() <= f32::EPSILON || transform.determinant().abs() <= 0.000001 {
+        return 1.0;
+    }
+    let length = transform
+        .inverse()
+        .transpose()
+        .transform_vector3(normal)
+        .length();
+    if length.is_finite() && length > 0.0 {
+        length
+    } else {
+        1.0
     }
 }
 
@@ -2105,6 +2186,9 @@ struct VertexOut {
 fn vs_main(input: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.position = uniforms.view_projection * vec4<f32>(input.position, 1.0);
+    if input.outline_color.a >= 0.0 {
+        out.position.z += 0.000001 * out.position.w;
+    }
     out.normal = normalize(input.normal);
     out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
     out.world_position = input.position;
