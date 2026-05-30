@@ -667,35 +667,8 @@ fn outline_position(
     let world_position = transform.transform_point3(position);
     let normal_scale = normal_matrix_length(transform, normal);
     let offset_scale = width * normal_scale * outline_scale.at(world_position);
-    if uses_weighted_skinning(
-        skin_matrices,
-        primitive.joints_0.get(index).copied(),
-        primitive.weights_0.get(index).copied(),
-    ) {
-        let skinned_normal = transform.transform_vector3(normal).normalize_or_zero();
-        if skinned_normal.length_squared() > f32::EPSILON {
-            return Some(world_position + skinned_normal * offset_scale);
-        }
-    }
-
     let offset = normal * offset_scale;
     Some(transform.transform_point3(position + offset))
-}
-
-fn uses_weighted_skinning(
-    skin_matrices: Option<&[Mat4]>,
-    joints: Option<[u16; 4]>,
-    weights: Option<[f32; 4]>,
-) -> bool {
-    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
-    else {
-        return false;
-    };
-
-    joints
-        .into_iter()
-        .zip(weights)
-        .any(|(joint, weight)| weight > 0.0 && skin_matrices.get(usize::from(joint)).is_some())
 }
 
 fn blended_vertex_transform(

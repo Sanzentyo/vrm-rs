@@ -221,12 +221,12 @@ outline alone. The constraint sample improves from the normal sweep's
 wgpu `36.2028 dB` / Bevy `36.1877 dB` to wgpu `37.1221 dB` / Bevy
 `37.0988 dB`, which marks outline expansion as a real contributor for that
 fixture. The capture outline geometry now follows three-vrm's local/object
-normal expansion with normal-matrix length compensation, uses post-skin normal
-directions for skinned outline vertices, and wgpu also applies the three-vrm
-outline clip-depth nudge. Re-running the focused guards did not move the
-measured PSNR, so remaining constraint outline residuals are more likely in
-rasterization/fill, material color, or Bevy's lack of a custom outline vertex
-stage than in transform-scale or pre/post-skin offset ordering.
+normal expansion with normal-matrix length compensation after morph/skin
+position deformation, and wgpu also applies the three-vrm outline clip-depth
+nudge. Re-running the focused guards did not move the measured PSNR, so
+remaining constraint outline residuals are more likely in rasterization/fill,
+material color, or Bevy's lack of a custom outline vertex stage than in
+transform-scale or pre/post-skin offset ordering.
 The concrete wgpu and Bevy captures also accept `--outline-width-scale`, and
 the local runner forwards it through `--render-outline-width-scale` for
 diagnostic sweeps. The default scale `1.0` remains the measured best setting on

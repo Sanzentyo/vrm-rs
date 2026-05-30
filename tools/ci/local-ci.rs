@@ -1296,12 +1296,14 @@ fn render_report_summary(
 }
 
 fn json_f64_string(value: &serde_json::Value, field: &str, path: &Path) -> Result<String, String> {
-    if value.get(field).is_some_and(serde_json::Value::is_null) {
-        return Ok("Infinity".to_string());
+    let Some(value) = value.get(field) else {
+        return Err(format!("{}: {field} must be a number", self::path(path)));
+    };
+    if value.is_null() || value.as_str() == Some("Infinity") {
+        return Ok("Infinity".to_owned());
     }
     let value = value
-        .get(field)
-        .and_then(serde_json::Value::as_f64)
+        .as_f64()
         .ok_or_else(|| format!("{}: {field} must be a number", self::path(path)))?;
     Ok(format!("{value:.4}"))
 }
