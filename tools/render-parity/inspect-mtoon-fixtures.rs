@@ -53,6 +53,9 @@ struct FixtureSummary {
     shading_shift_textures: usize,
     uv_animation: usize,
     uv_animation_mask_textures: usize,
+    normal_mapped_primitives: usize,
+    normal_mapped_primitives_with_tangents: usize,
+    normal_mapped_primitives_without_tangents: usize,
     load_error: Option<String>,
 }
 
@@ -115,6 +118,7 @@ fn inspect_fixture(path: PathBuf) -> FixtureSummary {
     if let Some(vrm0) = root_extension_value(&document, "VRM") {
         summarize_vrm0_materials(&mut summary, &vrm0);
     }
+    summarize_normal_mapped_primitives(&mut summary, &document);
 
     summary
 }
@@ -226,6 +230,63 @@ fn summarize_vrm0_materials(summary: &mut FixtureSummary, vrm0: &Value) {
     }
 }
 
+fn summarize_normal_mapped_primitives(summary: &mut FixtureSummary, document: &gltf::Document) {
+    let normal_materials = normal_mapped_materials(document);
+    for mesh in document.meshes() {
+        for primitive in mesh.primitives() {
+            let Some(material_index) = primitive.material().index() else {
+                continue;
+            };
+            if !normal_materials
+                .get(material_index)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            summary.normal_mapped_primitives += 1;
+            if primitive.get(&gltf::Semantic::Tangents).is_some() {
+                summary.normal_mapped_primitives_with_tangents += 1;
+            } else {
+                summary.normal_mapped_primitives_without_tangents += 1;
+            }
+        }
+    }
+}
+
+fn normal_mapped_materials(document: &gltf::Document) -> Vec<bool> {
+    let mut result = document
+        .materials()
+        .map(|material| {
+            material.normal_texture().is_some()
+                || material
+                    .extension_value("VRMC_materials_mtoon")
+                    .is_some_and(|mtoon| has_texture(mtoon, "normalTexture"))
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(vrm0) = root_extension_value(document, "VRM") {
+        if let Some(materials) = vrm0.get("materialProperties").and_then(Value::as_array) {
+            for (index, material) in materials.iter().enumerate() {
+                if index >= result.len() {
+                    break;
+                }
+                let shader = material
+                    .get("shader")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if shader.contains("MToon")
+                    && texture_map_field(material.get("textureProperties"), "_BumpMap")
+                {
+                    result[index] = true;
+                }
+            }
+        }
+    }
+
+    result
+}
+
 fn root_extension_value(document: &gltf::Document, name: &str) -> Option<Value> {
     let extensions = document.as_json().extensions.as_ref()?;
     serde_json::to_value(extensions).ok()?.get(name).cloned()
@@ -277,11 +338,11 @@ fn print_markdown(root: &Path, summaries: &[FixtureSummary]) {
     println!();
     println!("Root: `{}`", root.display());
     println!();
-    println!("| Fixture | MToon | outline none/world/screen | alpha blend/mask/zwrite | texture slots | UV anim | Notes |");
-    println!("| --- | ---: | ---: | ---: | --- | ---: | --- |");
+    println!("| Fixture | MToon | outline none/world/screen | alpha blend/mask/zwrite | texture slots | UV anim | normal primitives all/with/without tangent | Notes |");
+    println!("| --- | ---: | ---: | ---: | --- | ---: | ---: | --- |");
     for summary in summaries {
         println!(
-            "| `{}` | {} | {}/{}/{} | {}/{}/{} | shade={} normal={} matcap={} rim={} shift={} outlineWidth={} uvMask={} | {} | {} |",
+            "| `{}` | {} | {}/{}/{} | {}/{}/{} | shade={} normal={} matcap={} rim={} shift={} outlineWidth={} uvMask={} | {} | {}/{}/{} | {} |",
             summary.path.display(),
             summary.mtoon_total(),
             summary.outline_none,
@@ -298,6 +359,9 @@ fn print_markdown(root: &Path, summaries: &[FixtureSummary]) {
             summary.outline_width_textures,
             summary.uv_animation_mask_textures,
             summary.uv_animation,
+            summary.normal_mapped_primitives,
+            summary.normal_mapped_primitives_with_tangents,
+            summary.normal_mapped_primitives_without_tangents,
             summary
                 .load_error
                 .as_deref()
@@ -307,12 +371,13 @@ fn print_markdown(root: &Path, summaries: &[FixtureSummary]) {
     let totals = totals(summaries);
     println!();
     println!(
-        "Totals: MToon={} outline screen={} transparent z-write={} uv-animation={} normal textures={} matcap textures={}",
+        "Totals: MToon={} outline screen={} transparent z-write={} uv-animation={} normal textures={} normal primitives without tangents={} matcap textures={}",
         totals.mtoon_total(),
         totals.outline_screen,
         totals.transparent_z_write,
         totals.uv_animation,
         totals.normal_textures,
+        totals.normal_mapped_primitives_without_tangents,
         totals.matcap_textures
     );
 }
@@ -346,6 +411,11 @@ fn print_json(root: &Path, summaries: &[FixtureSummary]) -> Result<(), String> {
                     "uvAnimationMask": summary.uv_animation_mask_textures
                 },
                 "uvAnimation": summary.uv_animation,
+                "normalMappedPrimitives": {
+                    "total": summary.normal_mapped_primitives,
+                    "withTangents": summary.normal_mapped_primitives_with_tangents,
+                    "withoutTangents": summary.normal_mapped_primitives_without_tangents
+                },
                 "loadError": summary.load_error,
             })
         })
@@ -369,6 +439,7 @@ fn summary_json(summary: &FixtureSummary) -> Value {
         "transparentZWrite": summary.transparent_z_write,
         "uvAnimation": summary.uv_animation,
         "normalTextures": summary.normal_textures,
+        "normalMappedPrimitivesWithoutTangents": summary.normal_mapped_primitives_without_tangents,
         "matcapTextures": summary.matcap_textures,
     })
 }
@@ -391,6 +462,11 @@ fn totals(summaries: &[FixtureSummary]) -> FixtureSummary {
         total.shading_shift_textures += summary.shading_shift_textures;
         total.uv_animation += summary.uv_animation;
         total.uv_animation_mask_textures += summary.uv_animation_mask_textures;
+        total.normal_mapped_primitives += summary.normal_mapped_primitives;
+        total.normal_mapped_primitives_with_tangents +=
+            summary.normal_mapped_primitives_with_tangents;
+        total.normal_mapped_primitives_without_tangents +=
+            summary.normal_mapped_primitives_without_tangents;
         total
     })
 }

@@ -278,16 +278,21 @@ just inspect-mtoon-fixtures .external-fixtures/generated
 
 The scanner reads local `.vrm`, `.glb`, and `.gltf` files without committing
 them and reports MToon alpha mode, transparent-ZWrite, outline mode, texture
-slot, and UV-animation coverage. The current official fixture inventory has
-`74` MToon materials, `0` screen-coordinate outline materials, `4`
-transparent-ZWrite materials, `3` UV-animation materials, `13` normal-textured
-materials, and `11` matcap-textured materials. The generated fixture inventory
-adds the missing screen-coordinate outline guard, three source-like
-transparent-ZWrite cases, and a texture-slot guard for shading shift, rim, UV
-animation mask, and outline width textures. This is why screen-coordinate
-outline is currently measured by the generated fixture above, while real-model
-normal-map and material breadth work should focus on Seed-san, the constraint
-sample, the UV-animation sample, and Alicia VRM0.
+slot, UV-animation coverage, and whether normal-mapped primitives provide glTF
+`TANGENT`. The current official fixture inventory has `74` MToon materials, `0`
+screen-coordinate outline materials, `4` transparent-ZWrite materials, `3`
+UV-animation materials, `13` normal-textured materials, `11` matcap-textured
+materials, and `21` normal-mapped primitives without tangents. The generated
+fixture inventory adds the missing screen-coordinate outline guard, three
+source-like transparent-ZWrite cases, and a texture-slot guard for shading
+shift, rim, UV animation mask, and outline width textures. This is why
+screen-coordinate outline is currently measured by the generated fixture above,
+while real-model normal-map and material breadth work should focus on Seed-san,
+the constraint sample, the UV-animation sample, and Alicia VRM0. A naive
+derivative normal-map fallback was measured and rejected because it dropped
+Seed-san to `20.3102 dB`; keep the current CPU-generated tangent path until a
+closer three-vrm derivative formulation is implemented and passes the real
+fixture sweep.
 
 ## three-vrm Capture
 
