@@ -41,6 +41,7 @@ use clap::{Parser, ValueEnum};
 use crossbeam_channel::{Receiver, Sender};
 use glam::{Mat4, Vec3 as GVec3, Vec4 as GVec4};
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,7 +50,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d, VrmKind};
+use vrm_core::{
+    ExpressionBind, ExpressionName, Feature, MtoonAlphaMode, MtoonCullMode, OutlineWidthMode,
+    TextureTransform2d, VrmKind,
+};
 use vrm_io::{
     GltfAlphaMode, GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat,
     LoadedVrm, load_vrm_from_path,
@@ -126,6 +130,8 @@ struct CaptureOptions {
     background: CaptureBackground,
     #[arg(long)]
     disable_outlines: bool,
+    #[arg(long = "expression")]
+    expressions: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -317,6 +323,7 @@ fn spawn_vrm_meshes(
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
     let mut primitives = Vec::new();
     let world_matrices = render_capture_scene::runtime_world_matrices(loaded)?;
+    let expression_weights = expression_morph_weights(loaded, &options.expressions)?;
 
     for (node_index, node) in loaded.scene.nodes.iter().enumerate() {
         let Some(mesh_index) = node.mesh else {
@@ -334,13 +341,13 @@ fn spawn_vrm_meshes(
             .skin
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
-        let morph_weights = active_morph_weights(node, mesh);
+        let morph_weights = active_morph_weights(node_index, node, mesh, &expression_weights);
         for primitive in &mesh.primitives {
             let shading = material_shading(loaded, primitive.material);
             let render_order = material_render_order(loaded, primitive.material);
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
-                morph_weights,
+                &morph_weights,
                 world,
                 skin_matrices.as_deref(),
                 shading.normal_scale > 0.0,
@@ -368,7 +375,7 @@ fn spawn_vrm_meshes(
                 && let Some(outline) = bevy_outline_primitive(
                     loaded,
                     primitive,
-                    morph_weights,
+                    &morph_weights,
                     world,
                     skin_matrices.as_deref(),
                     options,
@@ -686,12 +693,109 @@ struct BevyImageHandles {
     neutral_normal: Handle<Image>,
 }
 
-fn active_morph_weights<'a>(node: &'a GltfNodeRest, mesh: &'a GltfMeshData) -> &'a [f32] {
-    if node.weights.is_empty() {
-        &mesh.weights
+#[derive(Clone, Debug, Default)]
+struct ExpressionMorphWeights {
+    cleared: HashMap<usize, HashSet<usize>>,
+    weights: HashMap<(usize, usize), f32>,
+}
+
+fn active_morph_weights(
+    node_index: usize,
+    node: &GltfNodeRest,
+    mesh: &GltfMeshData,
+    expressions: &ExpressionMorphWeights,
+) -> Vec<f32> {
+    let mut weights = if node.weights.is_empty() {
+        mesh.weights.clone()
     } else {
-        &node.weights
+        node.weights.clone()
+    };
+
+    if let Some(cleared) = expressions.cleared.get(&node_index) {
+        for index in cleared {
+            if weights.len() <= *index {
+                weights.resize(index + 1, 0.0);
+            }
+            weights[*index] = 0.0;
+        }
     }
+    for ((node, index), weight) in &expressions.weights {
+        if *node != node_index {
+            continue;
+        }
+        if weights.len() <= *index {
+            weights.resize(index + 1, 0.0);
+        }
+        weights[*index] += *weight;
+    }
+    weights
+}
+
+fn expression_morph_weights(
+    loaded: &LoadedVrm,
+    expression_args: &[String],
+) -> Result<ExpressionMorphWeights, Box<dyn Error>> {
+    let mut result = ExpressionMorphWeights::default();
+    let Feature::Present(expressions) = &loaded.model().document().expressions else {
+        if expression_args.is_empty() {
+            return Ok(result);
+        }
+        return Err("render expression was requested, but the VRM has no expressions".into());
+    };
+
+    for expression in expressions
+        .preset
+        .values()
+        .chain(expressions.custom.values())
+    {
+        for bind in &expression.binds {
+            if let ExpressionBind::MorphTarget { node, index, .. } = bind {
+                result.cleared.entry(node.0).or_default().insert(*index);
+            }
+        }
+    }
+
+    for (name, weight) in parse_expression_args(expression_args)? {
+        let (expression, binary) = if let Some(expression) =
+            expressions.preset.get(&ExpressionName::from(name.as_str()))
+        {
+            (expression, expression.is_binary)
+        } else if let Some(expression) = expressions.custom.get(&name) {
+            (expression, expression.is_binary)
+        } else {
+            return Err(format!("unknown render expression: {name}").into());
+        };
+        let effective_weight = if binary {
+            if weight > 0.5 { 1.0 } else { 0.0 }
+        } else {
+            weight.clamp(0.0, 1.0)
+        };
+        for bind in &expression.binds {
+            if let ExpressionBind::MorphTarget {
+                node,
+                index,
+                weight,
+            } = bind
+            {
+                *result.weights.entry((node.0, *index)).or_default() += effective_weight * *weight;
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn Error>> {
+    args.iter()
+        .map(|arg| {
+            let Some((name, value)) = arg.split_once('=') else {
+                return Err(format!("invalid expression '{arg}', expected name=weight").into());
+            };
+            let weight = value
+                .parse::<f32>()
+                .map_err(|err| format!("invalid expression weight in '{arg}': {err}"))?;
+            Ok((name.to_owned(), weight))
+        })
+        .collect()
 }
 
 fn morphed_vertex(
@@ -2153,6 +2257,7 @@ fn write_capture(
         "width": options.width,
         "height": options.height,
         "disableOutlines": options.disable_outlines,
+        "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
             "exposure": options.mtoon_exposure,

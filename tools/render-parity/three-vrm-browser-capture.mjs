@@ -7,6 +7,7 @@ import process from 'node:process';
 import zlib from 'node:zlib';
 
 const args = new Map();
+const expressions = [];
 for (let index = 2; index < process.argv.length; index += 1) {
   const arg = process.argv[index];
   if (!arg.startsWith('--')) continue;
@@ -16,6 +17,7 @@ for (let index = 2; index < process.argv.length; index += 1) {
     args.set(key, 'true');
   } else {
     args.set(key, next);
+    if (key === 'expression') expressions.push(next);
     index += 1;
   }
 }
@@ -37,9 +39,10 @@ const directionalZ = Number(args.get('directional-z') ?? '1.0');
 const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
+const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--disable-outlines]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--expression happy=1.0] [--disable-outlines]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -105,8 +108,9 @@ const server = http.createServer((request, response) => {
       cameraY,
       cameraZ,
       targetY,
-      mtoonTime,
-      background,
+    mtoonTime,
+    expressions: expressionWeights,
+    background,
       directionalIntensity,
       directionalX,
       directionalY,
@@ -167,6 +171,7 @@ try {
     camera: { y: cameraY, z: cameraZ, targetY },
     reference: capture.reference,
     mtoonTime,
+    expressions: expressionWeights,
     format: 'rgba8',
     rgba: capture.rgba,
   }, null, 2)}\n`;
@@ -248,6 +253,13 @@ function capturePage(options) {
       }
     });
     scene.add(vrm.scene);
+    const expressions = ${JSON.stringify(options.expressions)};
+    if (expressions.length > 0 && !vrm.expressionManager) {
+      throw new Error('render expressions were requested, but the VRM has no expressionManager');
+    }
+    for (const [name, weight] of expressions) {
+      vrm.expressionManager.setValue(name, weight);
+    }
     vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
@@ -274,6 +286,7 @@ function capturePage(options) {
         premultipliedAlpha: false,
         disableOutlines: ${disableOutlines},
       },
+      expressions,
       lighting: {
         directional: {
           color: '#ffffff',
@@ -298,6 +311,23 @@ function capturePage(options) {
     return { rgba: Array.from(rgba), reference };
   };
 </script>`;
+}
+
+function parseExpressionWeights(values) {
+  return values.map((value) => {
+    const separator = value.indexOf('=');
+    if (separator <= 0 || separator === value.length - 1) {
+      console.error(`invalid expression '${value}', expected name=weight`);
+      process.exit(2);
+    }
+    const name = value.slice(0, separator);
+    const weight = Number(value.slice(separator + 1));
+    if (!Number.isFinite(weight)) {
+      console.error(`invalid expression weight in '${value}'`);
+      process.exit(2);
+    }
+    return [name, weight];
+  });
 }
 
 function encodePngRgba(width, height, rgba) {

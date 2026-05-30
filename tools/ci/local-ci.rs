@@ -91,6 +91,8 @@ struct Options {
     render_mtoon_light_accumulation: RenderMtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
     render_mtoon_time: f32,
+    #[arg(long = "render-expression")]
+    render_expressions: Vec<String>,
     #[arg(long)]
     render_fail_under: Option<f32>,
     #[arg(long, value_enum, default_value_t = RenderPsnrMetric::RgbVisible)]
@@ -659,6 +661,9 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    for expression in &options.render_expressions {
+        command.arg("--expression").arg(expression);
+    }
     run_command(command)
 }
 
@@ -698,6 +703,9 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    for expression in &options.render_expressions {
+        command.arg("--expression").arg(expression);
+    }
     run_command(command)
 }
 
@@ -736,6 +744,9 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_background.as_cli_value());
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
+    }
+    for expression in &options.render_expressions {
+        command.arg("--expression").arg(expression);
     }
     run_command(command)
 }

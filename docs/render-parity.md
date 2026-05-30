@@ -288,6 +288,21 @@ shader. The recipe now enforces `rgb-interior1px >= 45 dB`. Treat this as the
 current normal-map regression guard, not final visual parity; the remaining work
 is to confirm real tangentless official primitives with higher thresholds.
 
+For a generated expression morph audit, run:
+
+```powershell
+just render-parity-morph-expression-generated
+```
+
+This writes `.external-fixtures/generated/morph-expression.vrm.gltf` and
+renders it into `.external-fixtures/render-parity-morph-expression-generated/`.
+The fixture exposes a VRM1 `happy` expression with a morph target bind, then the
+render harness passes `--render-expression happy=1.0` through three-vrm, wgpu,
+and Bevy. The current run has the expected tiny fill-rule alpha mismatch
+(`3`, tolerance `8`), while selected `rgb-interior1px` PSNR is `Infinity` for
+both wgpu and Bevy with max selected channel delta `0`. This guards expression
+morph writeback in the concrete render paths without committing binary assets.
+
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
 
@@ -764,11 +779,15 @@ missing mode in wgpu/Bevy captures.
 Renderer-facing morph target data is also available to the concrete capture
 paths. `vrm-io` retains mesh default weights, node weights, and per-target
 position/normal/tangent deltas; the wgpu and Bevy captures apply active node
-weights before CPU skinning and outline expansion. The 2026-05-30 real
-tangentless normal/outline sweep stayed at Seed-san wgpu `32.8751 dB`, Seed-san
-Bevy `32.5273 dB`, constraint wgpu `35.9456 dB`, and constraint Bevy
-`35.9394 dB`, so the current real-model residual is not explained by omitted
-default morph targets in the static frame.
+weights before CPU skinning and outline expansion. The render harness also
+accepts expression weights and maps resolved VRM expression morph binds into
+those active weights, matching three-vrm's `expressionManager.setValue()`
+reference path. The 2026-05-30 real tangentless normal/outline sweep stayed at
+Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint wgpu
+`35.9456 dB`, and constraint Bevy `35.9394 dB`, so the current real-model
+residual is not explained by omitted default morph targets in the static frame.
+The generated morph-expression guard closes the previously unmeasured non-zero
+target-weight render path.
 Generated transparent MToon blend coverage now includes RGB accumulation as
 well as alpha buckets. The capture shaders manually sRGB-encode fragment output
 into `Rgba8Unorm` targets so blending happens after the same color correction
@@ -814,9 +833,6 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 - Add or discover broader transparent-material fixtures with real textures and
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
-- Add a source-generated or redistributable morph-expression render fixture
-  with non-zero target weights so morph writeback can be measured visually, not
-  only covered by IO/capture plumbing.
 - Review real tangentless official normal-map primitives and raise the normal
   fixture floor beyond the current `45 dB` when stable.
 - For Bevy specifically, deepen the new custom MToon material/shader path
