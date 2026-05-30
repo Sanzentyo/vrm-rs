@@ -25,10 +25,10 @@ const failUnder = args.has('fail-under') ? Number(args.get('fail-under')) : null
 const maxSelectedChannelDelta = args.has('max-selected-channel-delta') ? Number(args.get('max-selected-channel-delta')) : null;
 const maxAlphaDelta = args.has('max-alpha-delta') ? Number(args.get('max-alpha-delta')) : null;
 const metricName = args.get('metric') ?? 'rgba';
-const metricNames = new Set(['rgba', 'rgb-all', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px']);
+const metricNames = new Set(['rgba', 'rgb-all', 'rgb-opaque', 'rgb-visible', 'rgb-interior1px', 'rgb-visible-interior1px']);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-interior1px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-interior1px|rgb-visible-interior1px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
@@ -64,6 +64,7 @@ const allRgb = compareChannels(() => true, [0, 1, 2]);
 const opaqueRgb = compareChannels((pixel) => expected.rgba[pixel + 3] === 255 && actual.rgba[pixel + 3] === 255, [0, 1, 2]);
 const visibleRgb = compareChannels((pixel) => expected.rgba[pixel + 3] > 0 || actual.rgba[pixel + 3] > 0, [0, 1, 2]);
 const interiorRgb = compareChannels((pixel) => isInteriorOpaque(pixel), [0, 1, 2]);
+const visibleInteriorRgb = compareChannels((pixel) => isInteriorVisible(pixel), [0, 1, 2]);
 const alpha = alphaStats();
 const selectedMetric = selectMetric(metricName, {
   rgba: fullImage,
@@ -71,6 +72,7 @@ const selectedMetric = selectMetric(metricName, {
   'rgb-opaque': opaqueRgb,
   'rgb-visible': visibleRgb,
   'rgb-interior1px': interiorRgb,
+  'rgb-visible-interior1px': visibleInteriorRgb,
 });
 const mse = fullImage.mse;
 const psnr = fullImage.psnr;
@@ -89,6 +91,7 @@ const report = {
   rgbOpaque: metricReport(opaqueRgb),
   rgbVisible: metricReport(visibleRgb),
   rgbInterior1px: metricReport(interiorRgb),
+  rgbVisibleInterior1px: metricReport(visibleInteriorRgb),
   selectedMetric: {
     name: metricName,
     ...metricReport(selectedMetric),
@@ -262,6 +265,24 @@ function isInteriorOpaque(pixel) {
     for (let dx = -1; dx <= 1; dx += 1) {
       const neighbor = ((y + dy) * expected.width + (x + dx)) * 4 + 3;
       if (expected.rgba[neighbor] !== 255 || actual.rgba[neighbor] !== 255) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function isInteriorVisible(pixel) {
+  const pixelIndex = pixel / 4;
+  const x = pixelIndex % expected.width;
+  const y = Math.floor(pixelIndex / expected.width);
+  if (x === 0 || y === 0 || x === expected.width - 1 || y === expected.height - 1) {
+    return false;
+  }
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const neighbor = ((y + dy) * expected.width + (x + dx)) * 4 + 3;
+      if (expected.rgba[neighbor] === 0 || actual.rgba[neighbor] === 0) {
         return false;
       }
     }

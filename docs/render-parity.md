@@ -38,14 +38,17 @@ The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
 delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
 selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
-`--metric rgb-visible`, and `--metric rgb-interior1px`; pass/fail thresholds
-use the selected metric. It also accepts
+`--metric rgb-visible`, `--metric rgb-interior1px`, and
+`--metric rgb-visible-interior1px`; pass/fail thresholds use the selected
+metric. It also accepts
 `--max-selected-channel-delta` and `--max-alpha-delta` for fixture-specific
 worst-case guards, and the Rust local runner forwards them as
 `--render-max-selected-channel-delta` and `--render-max-alpha-delta`. The local
 render-parity runner defaults to `rgb-visible`; with the canonical opaque-black
 review background this is the visible RGB surface metric, and it also remains
-useful for explicit transparent alpha-mask audits.
+useful for explicit transparent alpha-mask audits. Use
+`rgb-visible-interior1px` when transparent interiors must be measured while
+still dropping one-pixel silhouette edges.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
@@ -293,6 +296,25 @@ also writes ambient-only swatch reports under
 enforces the same per-swatch color bounds. This keeps ambient/indirect MToon
 accumulation measurable separately from the direct-only and default light
 setups.
+
+For a generated MToon post-correction audit, run:
+
+```powershell
+just render-parity-mtoon-post-correction-generated
+```
+
+This writes `.external-fixtures/generated/mtoon-post-correction.vrm.gltf` and
+renders it into
+`.external-fixtures/render-parity-mtoon-post-correction-generated/`. The
+fixture disables direct and ambient light and uses four emissive MToon
+swatches: a mid-tone linear-to-sRGB case, two overbright emissive clamp cases,
+and a transparent overbright case. The recipe selects
+`rgb-visible-interior1px`, so opaque and partial-alpha interiors are measured
+while the known one-pixel raster edge is excluded. Current selected PSNR is
+wgpu `52.8818 dB` and Bevy `54.1650 dB`, both with max selected channel delta
+`1`. Alpha buckets match in the partial region; after allowing one LSB for
+partial alpha, only `144` edge pixels differ, under the recipe tolerance
+`256`.
 
 For a generated MToon texture-slot audit, run:
 

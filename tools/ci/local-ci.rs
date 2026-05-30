@@ -140,6 +140,7 @@ enum RenderPsnrMetric {
     RgbOpaque,
     RgbVisible,
     RgbInterior1px,
+    RgbVisibleInterior1px,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -165,6 +166,7 @@ impl RenderPsnrMetric {
             Self::RgbOpaque => "rgb-opaque",
             Self::RgbVisible => "rgb-visible",
             Self::RgbInterior1px => "rgb-interior1px",
+            Self::RgbVisibleInterior1px => "rgb-visible-interior1px",
         }
     }
 }

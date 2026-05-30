@@ -58,6 +58,11 @@ render-parity-mtoon-light-colored-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-colored-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-colored-generated/wgpu/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 50 --max-channel-delta 1 --json-out .external-fixtures/render-parity-mtoon-light-colored-generated/reports/mtoon-light_vrm.wgpu.swatches.json
     cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-colored-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-colored-generated/bevy/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 47 --max-channel-delta 2 --json-out .external-fixtures/render-parity-mtoon-light-colored-generated/reports/mtoon-light_vrm.bevy.swatches.json
 
+# Generate and render a source-like MToon post-correction fixture.
+render-parity-mtoon-post-correction-generated three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-post-correction-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-post-correction-generated --render-background transparent --render-alpha-mismatch-tolerance 256 --render-alpha-channel-tolerance 1 --render-psnr-metric rgb-visible-interior1px --render-fail-under 50 --render-max-selected-channel-delta 2 --render-mtoon-light-accumulation three-vrm --render-pbr-ambient 0 --render-direct-light-scale 0 --render-three-vrm-directional-intensity 0 --render-three-vrm-ambient-intensity 0 --render-fixture .external-fixtures/generated/mtoon-post-correction.vrm.gltf
+
 # Generate and render the MToon light/color fixture with directional light disabled on both sides.
 render-parity-mtoon-light-ambient-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs

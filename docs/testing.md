@@ -132,6 +132,9 @@ metric. Use `--render-psnr-metric rgba` for old full-buffer checks, or
 `rgb-all` when alpha is validated separately but full-canvas RGB should still
 be compared. Use `rgb-opaque`/`rgb-interior1px` when edge alpha disagreement
 should be kept out of the threshold.
+Use `rgb-visible-interior1px` for transparent-background audits that need
+partial-alpha interiors included while still dropping one-pixel silhouette
+edges.
 
 ## Coverage
 
