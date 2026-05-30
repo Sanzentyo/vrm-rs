@@ -111,6 +111,7 @@ struct DrawPrimitive {
     indices: Vec<u32>,
     images: MaterialImages,
     uv_transforms: MaterialUvTransforms,
+    material_extra: MaterialExtraUniform,
     policy: MaterialPolicy,
 }
 
@@ -250,6 +251,7 @@ fn uv_rotation_uniform(transform: Option<TextureTransform2d>) -> f32 {
 struct TextureBindGroup {
     bind_group: wgpu::BindGroup,
     _uv_uniform_buffer: wgpu::Buffer,
+    _material_extra_buffer: wgpu::Buffer,
 }
 
 #[repr(C)]
@@ -266,6 +268,13 @@ struct MaterialUvUniform {
     rotation_a: [f32; 4],
     rotation_b: [f32; 4],
     uv_animation: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct MaterialExtraUniform {
+    flags: [f32; 4],
+    pbr_params: [f32; 4],
 }
 
 struct TextureResource {
@@ -424,6 +433,7 @@ fn outline_primitive(
         indices: surface.indices.clone(),
         images: surface.images,
         uv_transforms: surface.uv_transforms,
+        material_extra: surface.material_extra,
         policy: MaterialPolicy {
             render_order: surface.policy.render_order.saturating_add(1),
             cull_mode: CaptureCullMode::Front,
@@ -540,25 +550,25 @@ fn draw_primitive(
                     shading.emissive[0],
                     shading.emissive[1],
                     shading.emissive[2],
-                    if shading.v0_compat_shade { 1.0 } else { 0.0 },
+                    0.0,
                 ],
                 matcap_factor: [
                     shading.matcap_factor[0],
                     shading.matcap_factor[1],
                     shading.matcap_factor[2],
-                    shading.metallic,
+                    0.0,
                 ],
                 rim_color: [
                     shading.parametric_rim_color[0],
                     shading.parametric_rim_color[1],
                     shading.parametric_rim_color[2],
-                    shading.roughness,
+                    0.0,
                 ],
                 rim_params: [
                     shading.rim_lighting_mix,
                     shading.parametric_rim_fresnel_power,
                     shading.parametric_rim_lift,
-                    if shading.pbr_fallback { 1.0 } else { 0.0 },
+                    0.0,
                 ],
                 outline_color: [1.0, 1.0, 1.0, -1.0],
                 alpha_mode: alpha_mode_code(policy.alpha_mode),
@@ -580,8 +590,21 @@ fn draw_primitive(
         indices: primitive.indices.clone(),
         images: material_images(loaded, primitive.material),
         uv_transforms,
+        material_extra: material_extra_uniform(shading),
         policy,
     })
+}
+
+fn material_extra_uniform(shading: MaterialShading) -> MaterialExtraUniform {
+    MaterialExtraUniform {
+        flags: [
+            if shading.v0_compat_shade { 1.0 } else { 0.0 },
+            if shading.pbr_fallback { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        ],
+        pbr_params: [shading.metallic, shading.roughness, 0.0, 0.0],
+    }
 }
 
 fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicy {
@@ -1237,6 +1260,7 @@ fn material_texture_bind_group(
     resources: TextureResourceTables<'_>,
     images: MaterialImages,
     uv_transforms: MaterialUvTransforms,
+    material_extra: MaterialExtraUniform,
 ) -> TextureBindGroup {
     let base = texture_view(resources.color, resources.indices, images.base, 0);
     let shade = texture_view(resources.color, resources.indices, images.shade, 0);
@@ -1254,6 +1278,11 @@ fn material_texture_bind_group(
     let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render parity material uv transform uniform"),
         contents: bytemuck::bytes_of(&MaterialUvUniform::from(uv_transforms)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let material_extra_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("render parity material extra uniform"),
+        contents: bytemuck::bytes_of(&material_extra),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1300,11 +1329,16 @@ fn material_texture_bind_group(
                 binding: 9,
                 resource: wgpu::BindingResource::TextureView(uv_animation_mask),
             },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: material_extra_buffer.as_entire_binding(),
+            },
         ],
     });
     TextureBindGroup {
         bind_group,
         _uv_uniform_buffer: uv_uniform_buffer,
+        _material_extra_buffer: material_extra_buffer,
     }
 }
 
@@ -1623,6 +1657,16 @@ async fn render_capture(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1673,6 +1717,7 @@ async fn render_capture(
                 },
                 primitive.images,
                 primitive.uv_transforms,
+                primitive.material_extra,
             )
         })
         .collect::<Vec<_>>();
@@ -1947,6 +1992,14 @@ var<uniform> material_uv: MaterialUvUniform;
 @group(1) @binding(9)
 var uv_animation_mask_texture: texture_2d<f32>;
 
+struct MaterialExtraUniform {
+    flags: vec4<f32>,
+    pbr_params: vec4<f32>,
+};
+
+@group(1) @binding(10)
+var<uniform> material_extra: MaterialExtraUniform;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -2123,16 +2176,16 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     let diffuse = input.color.rgb * texel.rgb;
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
-    if input.rim_params.w > 0.5 {
+    if material_extra.flags.y > 0.5 {
         let direct = pbr_direct(
             diffuse,
             normal,
             view_dir,
             normalize(uniforms.light_dir.xyz),
-            input.matcap_factor.w,
-            input.rim_color.w,
+            material_extra.pbr_params.x,
+            material_extra.pbr_params.y,
         );
-        let ambient = diffuse * (1.0 - input.matcap_factor.w) * uniforms.mtoon_lighting.w;
+        let ambient = diffuse * (1.0 - material_extra.pbr_params.x) * uniforms.mtoon_lighting.w;
         var pbr_color = direct + ambient + input.emissive.rgb * emissive_texel;
         if input.outline_color.a >= 0.0 {
             pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
@@ -2147,7 +2200,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let gi = input.shading.z;
     let toon = linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
     var direct = mix(shade, diffuse, toon);
-    if input.emissive.w > 0.5 {
+    if material_extra.flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi);

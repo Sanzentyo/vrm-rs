@@ -87,7 +87,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - VRM0 MToon compatibility now follows more of three-vrm's v0 compat conversion for gamma-corrected colors, shade shift/toony normalization, GI equalization, centimeter outline width, outline lighting mode, alpha keywords, transparent Z-write, UV animation Y scroll, transparent/transparent-Z-write render queue remapping, and the `V0_COMPAT_SHADE` direct-light clamp.
   - wgpu/Bevy MToon shader policy now avoids the incorrect main-texture fallback for missing `shadeMultiplyTexture` and applies matcap texture transforms to sphere UVs like three-vrm.
   - `--mtoon-light-accumulation three-vrm` now uses the reference-shaped exposure `1.0`, ambient irradiance `pbrAmbient`, no GI ambient proxy, and direct-plus-indirect rim accumulator; `tuned` remains the default for the broader PSNR sweep.
-  - Remaining parity blockers: exact MToon light/color accumulation beyond the covered reference-shaped accumulator and v0 shade clamp, a wgpu material-uniform refactor to remove packed `.w` vertex lanes without exceeding inter-stage limits, broader real-fixture transparent material coverage beyond the generated fixtures, screen-coordinate outline fixture discovery/measurement, and higher PSNR thresholds.
+  - Remaining parity blockers: exact MToon light/color accumulation beyond the covered reference-shaped accumulator and v0 shade clamp, broader real-fixture transparent material coverage beyond the generated fixtures, screen-coordinate outline fixture discovery/measurement, and higher PSNR thresholds.
 
 ## Ongoing Maintenance
 
