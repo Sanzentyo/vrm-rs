@@ -75,6 +75,16 @@ struct Options {
     render_mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     render_pbr_ambient: f32,
+    #[arg(long, default_value_t = std::f32::consts::PI)]
+    render_three_vrm_directional_intensity: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_three_vrm_directional_x: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_three_vrm_directional_y: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_three_vrm_directional_z: f32,
+    #[arg(long, default_value_t = 0.1)]
+    render_three_vrm_ambient_intensity: f32,
     #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::Tuned)]
     render_mtoon_light_accumulation: RenderMtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
@@ -631,6 +641,22 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
             options.render_background.as_cli_value(),
             "--camera-z",
             options.render_camera_z.to_string().as_str(),
+            "--directional-intensity",
+            options
+                .render_three_vrm_directional_intensity
+                .to_string()
+                .as_str(),
+            "--directional-x",
+            options.render_three_vrm_directional_x.to_string().as_str(),
+            "--directional-y",
+            options.render_three_vrm_directional_y.to_string().as_str(),
+            "--directional-z",
+            options.render_three_vrm_directional_z.to_string().as_str(),
+            "--ambient-intensity",
+            options
+                .render_three_vrm_ambient_intensity
+                .to_string()
+                .as_str(),
             "--mtoon-time",
             options.render_mtoon_time.to_string().as_str(),
         ],

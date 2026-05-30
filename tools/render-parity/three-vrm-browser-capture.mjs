@@ -30,18 +30,39 @@ const cameraY = Number(args.get('camera-y') ?? '1.0');
 const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
 const mtoonTime = Number(args.get('mtoon-time') ?? '0.0');
+const directionalIntensity = Number(args.get('directional-intensity') ?? Math.PI.toString());
+const directionalX = Number(args.get('directional-x') ?? '1.0');
+const directionalY = Number(args.get('directional-y') ?? '1.0');
+const directionalZ = Number(args.get('directional-z') ?? '1.0');
+const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
   console.error(`invalid dimensions: ${width}x${height}`);
   process.exit(2);
 }
-if (![cameraY, cameraZ, targetY, mtoonTime].every(Number.isFinite)) {
-  console.error('camera-y, camera-z, target-y, and mtoon-time must be finite numbers');
+if (
+  ![
+    cameraY,
+    cameraZ,
+    targetY,
+    mtoonTime,
+    directionalIntensity,
+    directionalX,
+    directionalY,
+    directionalZ,
+    ambientIntensity,
+  ].every(Number.isFinite)
+) {
+  console.error('camera, mtoon-time, and light parameters must be finite numbers');
+  process.exit(2);
+}
+if (directionalX === 0 && directionalY === 0 && directionalZ === 0) {
+  console.error('directional light vector must not be zero');
   process.exit(2);
 }
 if (!['opaque-black', 'transparent'].includes(background)) {
@@ -77,7 +98,20 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (url.pathname === '/') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(capturePage({ width, height, cameraY, cameraZ, targetY, mtoonTime, background }));
+    response.end(capturePage({
+      width,
+      height,
+      cameraY,
+      cameraZ,
+      targetY,
+      mtoonTime,
+      background,
+      directionalIntensity,
+      directionalX,
+      directionalY,
+      directionalZ,
+      ambientIntensity,
+    }));
     return;
   }
 
@@ -188,10 +222,10 @@ function capturePage(options) {
     camera.lookAt(0.0, ${options.targetY}, 0.0);
 
     const scene = new THREE.Scene();
-    const light = new THREE.DirectionalLight(0xffffff, Math.PI);
-    light.position.set(1.0, 1.0, 1.0).normalize();
+    const light = new THREE.DirectionalLight(0xffffff, ${options.directionalIntensity});
+    light.position.set(${options.directionalX}, ${options.directionalY}, ${options.directionalZ}).normalize();
     scene.add(light);
-    const ambient = new THREE.AmbientLight(0xffffff, 0.1);
+    const ambient = new THREE.AmbientLight(0xffffff, ${options.ambientIntensity});
     scene.add(ambient);
 
     const loader = new GLTFLoader();

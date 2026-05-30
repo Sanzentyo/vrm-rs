@@ -143,6 +143,12 @@ just render-parity-light-three-vrm
 The current focused exact-accumulator run reports Seed-san wgpu `33.7678 dB` /
 Bevy `33.3385 dB` and constraint sample wgpu `36.1974 dB` / Bevy
 `36.1825 dB` on selected `rgb-visible`.
+For isolated experiments, the local runner can also override the three-vrm
+reference light setup with `--render-three-vrm-directional-intensity`,
+`--render-three-vrm-directional-{x,y,z}`, and
+`--render-three-vrm-ambient-intensity`. The Rust capture examples still use
+their own `--render-pbr-ambient` / MToon accumulation flags, so direct-only or
+ambient-only experiments must set both sides explicitly.
 
 For a generated MToon light/color accumulation audit that isolates shader
 terms without relying on redistributable binary model assets, run:
@@ -175,6 +181,20 @@ when changing MToon accumulation code. The remaining broad-fixture PSNR gap is
 therefore more likely to come from real model runtime/material breadth,
 post-correction, outline edges, and fixture coverage than from this isolated
 base/shade/rim/matcap/emission color formula.
+
+For the same generated fixture with ambient disabled on both sides, run:
+
+```powershell
+just render-parity-mtoon-light-direct-generated
+```
+
+This writes `.external-fixtures/render-parity-mtoon-light-direct-generated/`.
+It sets the three-vrm reference ambient intensity to `0` and Rust
+`pbrAmbient` to `0`, leaving only the `DirectionalLight(Math.PI)` path plus
+rim/emission behavior. The current selected `rgb-interior1px` PSNR is wgpu
+`58.9803 dB` and Bevy `51.7674 dB`, with max selected channel deltas `1` and
+`2`. This keeps direct-light color parity measured separately from the default
+reference run that includes ambient `0.1`.
 
 For a generated MToon texture-slot audit, run:
 
