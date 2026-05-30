@@ -55,7 +55,8 @@ fn fixture_json() -> String {
             { "buffer": 0, "byteOffset": 0, "byteLength": 48, "target": 34962 },
             { "buffer": 0, "byteOffset": 48, "byteLength": 48, "target": 34962 },
             { "buffer": 0, "byteOffset": 96, "byteLength": 32, "target": 34962 },
-            { "buffer": 0, "byteOffset": 128, "byteLength": 12, "target": 34963 }
+            { "buffer": 0, "byteOffset": 128, "byteLength": 64, "target": 34962 },
+            { "buffer": 0, "byteOffset": 192, "byteLength": 12, "target": 34963 }
         ],
         "accessors": [
             {
@@ -84,6 +85,14 @@ fn fixture_json() -> String {
             },
             {
                 "bufferView": 3,
+                "componentType": 5126,
+                "count": 4,
+                "type": "VEC4",
+                "min": [0.65, 0.75, 0.8, 1.0],
+                "max": [1.0, 1.0, 1.0, 1.0]
+            },
+            {
+                "bufferView": 4,
                 "componentType": 5123,
                 "count": 6,
                 "type": "SCALAR"
@@ -97,13 +106,13 @@ fn fixture_json() -> String {
             "name": "transparent-overlap-quads",
             "primitives": [
                 {
-                    "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
-                    "indices": 3,
+                    "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "COLOR_0": 3 },
+                    "indices": 4,
                     "material": 0
                 },
                 {
-                    "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
-                    "indices": 3,
+                    "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "COLOR_0": 3 },
+                    "indices": 4,
                     "material": 1
                 }
             ]
@@ -190,12 +199,17 @@ fn mesh_buffer() -> Vec<u8> {
     ];
     let normals = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
     let uvs = [0.0f32, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
+    let colors = [
+        1.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.65, 0.75, 0.8, 1.0, 0.65, 0.75,
+        0.8, 1.0,
+    ];
     let indices = [0u16, 1, 2, 0, 2, 3];
 
     let mut bytes = Vec::new();
     bytes.extend(positions.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(normals.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(uvs.into_iter().flat_map(f32::to_le_bytes));
+    bytes.extend(colors.into_iter().flat_map(f32::to_le_bytes));
     bytes.extend(indices.into_iter().flat_map(u16::to_le_bytes));
     bytes
 }

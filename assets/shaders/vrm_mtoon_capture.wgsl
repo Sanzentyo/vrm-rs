@@ -193,6 +193,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
 
     let texel = textureSample(base_texture, base_sampler, base_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
+    let is_pbr_fallback = material.rim_params.w > 0.5;
     let alpha = material.base_color.a * texel.a;
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
@@ -201,7 +202,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let diffuse = material.base_color.rgb * texel.rgb;
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
 
-    if material.rim_params.w > 0.5 {
+    if is_pbr_fallback {
         let direct = pbr_direct(
             diffuse,
             normal,

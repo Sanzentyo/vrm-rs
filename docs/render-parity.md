@@ -456,6 +456,12 @@ stage as three-vrm's reference path. The 2026-05-30
 Infinity` with max channel delta `0`, and Bevy `rgb-visible = 52.9020 dB` with
 max channel delta `1`. This closes the generated transparent-material blocker;
 the remaining transparent work is broader real-fixture coverage.
+That generated fixture now also carries a `COLOR_0` gradient. This intentionally
+does not change the MToon reference image: three-vrm ignores vertex colors for
+MToon materials, and the Rust capture paths must do the same. `vrm-io` still
+extracts `COLOR_0` for renderer-facing consumers and the wgpu capture applies
+it to non-MToon/PBR fallback materials, but MToon color accumulation keeps
+vertex colors out of base and shade color.
 
 ## Next Renderer Work
 

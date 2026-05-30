@@ -488,6 +488,11 @@ fn draw_primitive(
                 .get(index)
                 .copied()
                 .unwrap_or([0.0, 0.0]);
+            let vertex_color = primitive
+                .colors_0
+                .get(index)
+                .copied()
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
             let tangent = primitive
                 .tangents
                 .get(index)
@@ -519,7 +524,11 @@ fn draw_primitive(
                 normal: normal.to_array(),
                 tangent: tangent.to_array(),
                 tex_coord,
-                color: shading.base_color,
+                color: if shading.pbr_fallback {
+                    multiply_rgba(shading.base_color, vertex_color)
+                } else {
+                    shading.base_color
+                },
                 shade_color: shading.shade_color,
                 shading: [
                     shading.shading_shift,
@@ -711,6 +720,10 @@ fn transform_vertex(
             world.transform_vector3(normal).normalize_or_zero(),
         )
     }
+}
+
+fn multiply_rgba(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]]
 }
 
 fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_scale: f32) {

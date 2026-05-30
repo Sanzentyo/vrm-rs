@@ -166,6 +166,7 @@ pub struct GltfPrimitiveData {
     pub normals: Vec<[f32; 3]>,
     pub tangents: Vec<[f32; 4]>,
     pub tex_coords_0: Vec<[f32; 2]>,
+    pub colors_0: Vec<[f32; 4]>,
     pub joints_0: Vec<[u16; 4]>,
     pub weights_0: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
@@ -204,6 +205,10 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         .read_tex_coords(0)
                         .map(|coords| coords.into_f32().collect())
                         .unwrap_or_default();
+                    let colors_0: Vec<[f32; 4]> = reader
+                        .read_colors(0)
+                        .map(|colors| colors.into_rgba_f32().collect())
+                        .unwrap_or_default();
                     let joints_0: Vec<[u16; 4]> = reader
                         .read_joints(0)
                         .map(|joints| joints.into_u16().collect())
@@ -222,6 +227,7 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
                         normals,
                         tangents,
                         tex_coords_0,
+                        colors_0,
                         joints_0,
                         weights_0,
                         indices,
@@ -1552,6 +1558,7 @@ mod tests {
                     "POSITION": 0,
                     "NORMAL": 1,
                     "TEXCOORD_0": 2,
+                    "COLOR_0": 4,
                     "JOINTS_0": 3,
                     "WEIGHTS_0": 4,
                     "TANGENT": 5
@@ -1588,6 +1595,7 @@ mod tests {
             primitive.tex_coords_0,
             vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
         );
+        assert_eq!(primitive.colors_0, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
         assert_eq!(
             primitive.joints_0,
             vec![[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
