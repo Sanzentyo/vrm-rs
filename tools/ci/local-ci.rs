@@ -85,6 +85,8 @@ struct Options {
     render_psnr_metric: RenderPsnrMetric,
     #[arg(long, default_value_t = 128)]
     render_alpha_mismatch_tolerance: usize,
+    #[arg(long, default_value_t = 0)]
+    render_alpha_channel_tolerance: u8,
     #[arg(long, value_enum, default_value_t = RenderBackground::OpaqueBlack)]
     render_background: RenderBackground,
     #[arg(long = "render-fixture")]
@@ -927,17 +929,25 @@ fn verify_render_alpha_consistency(
             _ => {}
         }
 
-        let mismatches = alpha_mismatch_count(&reference, &actual);
+        let mismatches =
+            alpha_mismatch_count(&reference, &actual, options.render_alpha_channel_tolerance);
         if mismatches > options.render_alpha_mismatch_tolerance {
             return Err(format!(
-                "{} {renderer} alpha mask differs from three-vrm by {mismatches} pixels (tolerance {})",
-                fixture.name, options.render_alpha_mismatch_tolerance
+                "{} {renderer} alpha mask differs from three-vrm by {mismatches} pixels (pixel tolerance {}, channel tolerance {})",
+                fixture.name,
+                options.render_alpha_mismatch_tolerance,
+                options.render_alpha_channel_tolerance
             ));
         }
 
         println!(
-            "alpha {} {renderer}: transparent={} opaque={} partial={} mismatches={mismatches}",
-            fixture.name, stats.transparent, stats.opaque, stats.partial
+            "alpha {} {renderer}: transparent={} opaque={} partial={} mismatches={} channel_tolerance={}",
+            fixture.name,
+            stats.transparent,
+            stats.opaque,
+            stats.partial,
+            mismatches,
+            options.render_alpha_channel_tolerance
         );
     }
 
@@ -973,12 +983,16 @@ fn alpha_stats(artifact: &RgbaArtifact) -> AlphaStats {
     )
 }
 
-fn alpha_mismatch_count(expected: &RgbaArtifact, actual: &RgbaArtifact) -> usize {
+fn alpha_mismatch_count(
+    expected: &RgbaArtifact,
+    actual: &RgbaArtifact,
+    channel_tolerance: u8,
+) -> usize {
     expected
         .rgba
         .chunks_exact(4)
         .zip(actual.rgba.chunks_exact(4))
-        .filter(|(expected, actual)| expected[3] != actual[3])
+        .filter(|(expected, actual)| expected[3].abs_diff(actual[3]) > channel_tolerance)
         .count()
 }
 

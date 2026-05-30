@@ -189,17 +189,26 @@ function alphaStats() {
   const expectedCounts = { transparent: 0, opaque: 0, partial: 0 };
   const actualCounts = { transparent: 0, opaque: 0, partial: 0 };
   let mismatches = 0;
+  let maxDelta = 0;
+  let mismatchesBeyondOne = 0;
   for (let offset = 0; offset < expected.rgba.length; offset += 4) {
     countAlpha(expectedCounts, expected.rgba[offset + 3]);
     countAlpha(actualCounts, actual.rgba[offset + 3]);
-    if (expected.rgba[offset + 3] !== actual.rgba[offset + 3]) {
+    const delta = Math.abs(expected.rgba[offset + 3] - actual.rgba[offset + 3]);
+    maxDelta = Math.max(maxDelta, delta);
+    if (delta !== 0) {
       mismatches += 1;
+    }
+    if (delta > 1) {
+      mismatchesBeyondOne += 1;
     }
   }
   return {
     expected: expectedCounts,
     actual: actualCounts,
     mismatches,
+    maxDelta,
+    mismatchesBeyondOne,
   };
 }
 

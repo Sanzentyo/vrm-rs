@@ -205,6 +205,27 @@ MToon transparent-order tie-break into `Transparent3d` before Bevy's phase sort,
 so equal-depth transparent primitives no longer depend on incidental ECS/spawn
 ordering.
 
+For broader transparent material coverage with texture-driven alpha and more
+render-queue variation, use:
+
+```powershell
+just render-parity-transparent-broad
+```
+
+This writes `.external-fixtures/generated/transparent-broad.vrm.gltf` and
+renders into `.external-fixtures/render-parity-transparent-broad/`. The fixture
+contains four overlapping MToon `BLEND` primitives with mixed
+`renderQueueOffsetNumber` values, one `transparentWithZWrite` material, an
+embedded base-color PNG whose alpha channel varies per texel, and high-contrast
+colors to make layer-order mistakes visible. The recipe keeps
+`--render-alpha-mismatch-tolerance 0` while allowing only a 1-LSB
+`--render-alpha-channel-tolerance` for browser/GPU rounding. The current run
+has identical alpha buckets (`transparent=512`, `opaque=0`, `partial=65024`)
+for three-vrm, wgpu, and Bevy; all alpha differences are within 1 LSB
+(`mismatchesBeyondOne = 0`). Selected `rgb-visible` PSNR is wgpu
+`48.5282 dB` with max selected channel delta `3`, and Bevy `48.5944 dB` with
+max selected channel delta `4`.
+
 For a generated screen-coordinate outline audit, run:
 
 ```powershell
@@ -564,8 +585,12 @@ without committing binary assets. The 2026-05-30
 `opaque=0`, `partial=65024`, alpha mismatches `0`, wgpu `rgb-visible =
 53.0238 dB` with max channel delta `1`, and Bevy `rgb-visible = 49.7151 dB`
 with max channel delta `2`. This closes the generated source-like transparent
-texture/material blocker; the remaining transparent work is broader real-fixture
-coverage and high-contrast transparent layer ordering in Bevy.
+texture/material blocker. The broader generated transparent run extends this
+with texture alpha, four mixed-queue layers, and `transparentWithZWrite`; it
+passes with exact alpha buckets, no alpha deltas beyond 1 LSB, and selected
+`rgb-visible` PSNR wgpu `48.5282 dB` / Bevy `48.5944 dB`. The remaining
+transparent work is broader real-fixture coverage and raising the current
+real transparent sweep beyond its low `rgb-all` regression floor.
 That generated fixture now also carries a `COLOR_0` gradient. This intentionally
 does not change the MToon reference image: three-vrm ignores vertex colors for
 MToon materials, and the Rust capture paths must do the same. `vrm-io` still
