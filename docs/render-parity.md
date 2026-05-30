@@ -462,11 +462,18 @@ MToon materials, and the Rust capture paths must do the same. `vrm-io` still
 extracts `COLOR_0` for renderer-facing consumers and the wgpu capture applies
 it to non-MToon/PBR fallback materials, but MToon color accumulation keeps
 vertex colors out of base and shade color.
+VRM0 compatibility shading now includes the three-vrm `V0_COMPAT_SHADE` branch:
+wgpu and Bevy capture materials flag VRM0 MToon primitives through the spare
+`emissive.w` lane, and the shader clamps the direct toon contribution with
+`min(direct, diffuse)`. The current six-fixture sweep is stable after this
+exactness fix, so the remaining PSNR gap is not this branch; the heatmaps still
+point at broader MToon light/color accumulation, outline edges, and fixture
+coverage.
 
 ## Next Renderer Work
 
 - Deepen the wgpu and Bevy capture paths with fuller MToon lighting/color
-  accumulation and material/shader parity
+  accumulation beyond the now-covered VRM0 compat shade clamp
   before raising PSNR thresholds.
 - Add or discover an external screen-coordinate outline fixture so the newly
   implemented screen-width path is measured against three-vrm instead of only

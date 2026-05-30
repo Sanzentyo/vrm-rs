@@ -228,7 +228,10 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         1.0 - material.shading.y,
         ndotl + shift,
     );
-    let direct = mix(shade, diffuse, toon);
+    var direct = mix(shade, diffuse, toon);
+    if material.emissive.w > 0.5 {
+        direct = min(direct, diffuse);
+    }
     let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z);
 
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));

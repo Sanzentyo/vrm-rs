@@ -47,7 +47,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d};
+use vrm_core::{MtoonAlphaMode, MtoonCullMode, OutlineWidthMode, TextureTransform2d, VrmKind};
 use vrm_io::{
     GltfAlphaMode, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
@@ -740,6 +740,7 @@ struct MaterialShading {
     metallic: f32,
     roughness: f32,
     pbr_fallback: bool,
+    v0_compat_shade: bool,
 }
 
 fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShading {
@@ -748,6 +749,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         .and_then(|core_material| {
             let mtoon = core_material.mtoon.as_ref()?;
             let (emissive_strength, _) = core_material.effective_emissive_strength();
+            let v0_compat_shade = loaded.model().document().kind == VrmKind::Vrm0Compat;
             Some(MaterialShading {
                 base_color: mtoon.base_color_factor,
                 shade_color: [
@@ -778,6 +780,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
                 metallic: 0.0,
                 roughness: 1.0,
                 pbr_fallback: false,
+                v0_compat_shade,
             })
         })
     {
@@ -812,6 +815,7 @@ fn material_shading(loaded: &LoadedVrm, material: Option<usize>) -> MaterialShad
         metallic: gltf.map_or(0.0, |material| material.metallic_factor),
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
         pbr_fallback: true,
+        v0_compat_shade: false,
     }
 }
 
@@ -995,7 +999,7 @@ fn bevy_mtoon_material(
             shading.emissive[0],
             shading.emissive[1],
             shading.emissive[2],
-            0.0,
+            if shading.v0_compat_shade { 1.0 } else { 0.0 },
         ),
         matcap_factor: BVec4::new(
             shading.matcap_factor[0],
