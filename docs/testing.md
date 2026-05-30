@@ -48,7 +48,7 @@ just render-parity
 just render-parity-samples
 ```
 
-The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, and the conservative `cargo-llvm-cov` line threshold.
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons` and `bevy_mtoon_materialization`, so wgpu/ash-style and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
 
 Run the external fixture parity pass locally with:
 

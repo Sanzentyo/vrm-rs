@@ -221,6 +221,7 @@ fn run(options: Options) -> Result<(), String> {
                 "warnings",
             ],
         )?;
+        run_example_smokes()?;
     }
 
     if !options.skip_coverage {
@@ -244,6 +245,13 @@ fn run(options: Options) -> Result<(), String> {
         run_render_parity_ci(&options)?;
     }
 
+    Ok(())
+}
+
+fn run_example_smokes() -> Result<(), String> {
+    for example in ["mtoon_renderer_skeletons", "bevy_mtoon_materialization"] {
+        run_cmd("cargo", ["run", "--example", example])?;
+    }
     Ok(())
 }
 
