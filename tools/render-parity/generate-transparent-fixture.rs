@@ -22,7 +22,10 @@ use std::path::PathBuf;
     about = "Generate a small source-like VRM1 glTF fixture for transparent MToon render parity"
 )]
 struct Options {
-    #[arg(long, default_value = ".external-fixtures/generated/transparent-blend.vrm.gltf")]
+    #[arg(
+        long,
+        default_value = ".external-fixtures/generated/transparent-blend.vrm.gltf"
+    )]
     out: PathBuf,
 
     #[arg(long, value_enum, default_value_t = TransparentPalette::Subtle)]
@@ -42,6 +45,7 @@ enum TransparentPalette {
 enum TransparentCase {
     Overlap,
     Broad,
+    TextureTransform,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,7 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> String {
     let mesh = mesh_buffer();
-    let texture = checker_texture_png(matches!(fixture_case, TransparentCase::Broad));
+    let texture = checker_texture_png(matches!(
+        fixture_case,
+        TransparentCase::Broad | TransparentCase::TextureTransform
+    ));
     let mesh_len = mesh.len();
     let texture_len = texture.len();
     let mut buffer = mesh;
@@ -68,17 +75,22 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
     let primitives = transparent_primitives(materials.len());
     let min_filter = match fixture_case {
         TransparentCase::Overlap => 9729,
-        TransparentCase::Broad => 9985,
+        TransparentCase::Broad | TransparentCase::TextureTransform => 9985,
+    };
+    let extensions_used = match fixture_case {
+        TransparentCase::Overlap | TransparentCase::Broad => {
+            vec!["VRMC_vrm", "VRMC_materials_mtoon"]
+        }
+        TransparentCase::TextureTransform => {
+            vec!["VRMC_vrm", "VRMC_materials_mtoon", "KHR_texture_transform"]
+        }
     };
     serde_json::to_string_pretty(&json!({
         "asset": {
             "version": "2.0",
             "generator": "vrm-rs transparent render parity generator"
         },
-        "extensionsUsed": [
-            "VRMC_vrm",
-            "VRMC_materials_mtoon"
-        ],
+        "extensionsUsed": extensions_used,
         "scene": 0,
         "scenes": [{ "nodes": [0] }],
         "nodes": nodes(),
@@ -180,8 +192,15 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
     let (front_color, zwrite_color) = transparent_colors(palette);
     match fixture_case {
         TransparentCase::Overlap => vec![
-            mtoon_material("transparent-textured-front", front_color, 0, false, true),
-            mtoon_material("transparent-zwrite", zwrite_color, 1, true, false),
+            mtoon_material(
+                "transparent-textured-front",
+                front_color,
+                0,
+                false,
+                true,
+                None,
+            ),
+            mtoon_material("transparent-zwrite", zwrite_color, 1, true, false, None),
         ],
         TransparentCase::Broad => vec![
             mtoon_material(
@@ -190,6 +209,7 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 -2,
                 false,
                 true,
+                None,
             ),
             mtoon_material(
                 "transparent-middle-queue",
@@ -197,6 +217,7 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 0,
                 false,
                 false,
+                None,
             ),
             mtoon_material(
                 "transparent-zwrite-late",
@@ -204,6 +225,7 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 2,
                 true,
                 false,
+                None,
             ),
             mtoon_material(
                 "transparent-final-low-alpha",
@@ -211,6 +233,50 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 3,
                 false,
                 false,
+                None,
+            ),
+        ],
+        TransparentCase::TextureTransform => vec![
+            mtoon_material(
+                "transparent-transform-scale-offset",
+                [0.0, 0.95, 1.0, 0.64],
+                -2,
+                false,
+                true,
+                Some(json!({
+                    "offset": [0.25, 0.0],
+                    "scale": [0.5, 1.0]
+                })),
+            ),
+            mtoon_material(
+                "transparent-transform-repeat-zwrite",
+                [1.0, 0.0, 0.82, 0.42],
+                0,
+                true,
+                true,
+                Some(json!({
+                    "offset": [0.0, 0.25],
+                    "scale": [1.0, 0.5]
+                })),
+            ),
+            mtoon_material(
+                "transparent-transform-shifted",
+                [1.0, 0.92, 0.0, 0.34],
+                1,
+                false,
+                true,
+                Some(json!({
+                    "offset": [0.5, 0.5],
+                    "scale": [0.5, 0.5]
+                })),
+            ),
+            mtoon_material(
+                "transparent-transform-solid-tail",
+                [0.02, 0.25, 1.0, 0.28],
+                3,
+                false,
+                false,
+                None,
             ),
         ],
     }
@@ -266,6 +332,7 @@ fn mtoon_material(
     offset: i32,
     zwrite: bool,
     textured: bool,
+    texture_transform: Option<Value>,
 ) -> Value {
     let mut pbr = json!({
         "baseColorFactor": base_color,
@@ -273,7 +340,13 @@ fn mtoon_material(
         "roughnessFactor": 1.0
     });
     if textured {
-        pbr["baseColorTexture"] = json!({ "index": 0 });
+        let mut texture_info = json!({ "index": 0 });
+        if let Some(transform) = texture_transform {
+            texture_info["extensions"] = json!({
+                "KHR_texture_transform": transform
+            });
+        }
+        pbr["baseColorTexture"] = texture_info;
     }
 
     json!({
@@ -303,11 +376,12 @@ fn mesh_buffer() -> Vec<u8> {
     let positions = [
         -1.0f32, 0.2, 0.0, 1.0, 0.2, 0.0, 1.0, 1.8, 0.0, -1.0, 1.8, 0.0,
     ];
-    let normals = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+    let normals = [
+        0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+    ];
     let uvs = [0.0f32, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
     let colors = [
-        1.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.65, 0.75, 0.8, 1.0, 0.65, 0.75,
-        0.8, 1.0,
+        1.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.65, 0.75, 0.8, 1.0, 0.65, 0.75, 0.8, 1.0,
     ];
     let indices = [0u16, 1, 2, 0, 2, 3];
 
@@ -322,10 +396,10 @@ fn mesh_buffer() -> Vec<u8> {
 
 fn checker_texture_png(alpha_pattern: bool) -> Vec<u8> {
     let mut rgba = [
-        255, 255, 255, 255, 248, 252, 255, 255, 255, 248, 252, 255, 252, 255, 248, 255, 248,
-        252, 255, 255, 255, 255, 255, 255, 252, 255, 248, 255, 255, 248, 252, 255, 255, 248,
-        252, 255, 252, 255, 248, 255, 255, 255, 255, 255, 248, 252, 255, 255, 252, 255, 248,
-        255, 255, 248, 252, 255, 255, 255, 255, 255, 248, 252, 255, 255,
+        255, 255, 255, 255, 248, 252, 255, 255, 255, 248, 252, 255, 252, 255, 248, 255, 248, 252,
+        255, 255, 255, 255, 255, 255, 252, 255, 248, 255, 255, 248, 252, 255, 255, 248, 252, 255,
+        252, 255, 248, 255, 255, 255, 255, 255, 248, 252, 255, 255, 252, 255, 248, 255, 255, 248,
+        252, 255, 255, 255, 255, 255, 248, 252, 255, 255,
     ];
     if alpha_pattern {
         for (pixel, alpha) in [255, 192, 128, 64].into_iter().cycle().enumerate().take(16) {

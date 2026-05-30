@@ -117,6 +117,8 @@ struct Options {
     render_background: RenderBackground,
     #[arg(long)]
     render_disable_outlines: bool,
+    #[arg(long, default_value_t = 1.0)]
+    render_outline_width_scale: f32,
     #[arg(long)]
     render_disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = RenderNormalMapMode::GeneratedTangents)]
@@ -752,6 +754,9 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    command
+        .arg("--outline-width-scale")
+        .arg(options.render_outline_width_scale.to_string());
     if options.render_disable_normal_maps {
         command.arg("--disable-normal-maps");
     }
@@ -807,6 +812,9 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }
+    command
+        .arg("--outline-width-scale")
+        .arg(options.render_outline_width_scale.to_string());
     if options.render_disable_normal_maps {
         command.arg("--disable-normal-maps");
     }

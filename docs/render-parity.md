@@ -222,6 +222,12 @@ outline clip-depth nudge. Re-running the focused guards did not move the
 measured PSNR, so remaining constraint outline residuals are more likely in
 rasterization/fill, material color, or Bevy's lack of a custom outline vertex
 stage than in transform-scale or pre/post-skin offset ordering.
+The concrete wgpu and Bevy captures also accept `--outline-width-scale`, and
+the local runner forwards it through `--render-outline-width-scale` for
+diagnostic sweeps. The default scale `1.0` remains the measured best setting on
+the constraint sample; a corrected `0.9` run dropped to wgpu `35.4088 dB` and
+Bevy `35.3977 dB`, while `1.0` stayed at wgpu `35.9456 dB` and Bevy
+`35.9394 dB`.
 
 For isolated experiments, the local runner can also override the three-vrm
 reference light setup with `--render-three-vrm-directional-intensity`,
@@ -480,6 +486,28 @@ buckets (`transparent=512`, `opaque=0`, `partial=65024`) for three-vrm, wgpu,
 and Bevy; all alpha differences are within 1 LSB (`mismatchesBeyondOne = 0`).
 Selected `rgb-visible` PSNR is wgpu `48.5282 dB` with max selected channel
 delta `3`, and Bevy `48.5944 dB` with max selected channel delta `4`.
+
+For transparent texture-alpha coverage with non-identity glTF
+`KHR_texture_transform`, use:
+
+```powershell
+just render-parity-transparent-texture-transform
+```
+
+This writes
+`.external-fixtures/generated/transparent-texture-transform.vrm.gltf` and
+renders into
+`.external-fixtures/render-parity-transparent-texture-transform/`. The fixture
+contains overlapping MToon `BLEND` primitives with mixed render queues,
+`transparentWithZWrite`, texture-driven alpha, and base-color texture infos that
+apply offset/scale `KHR_texture_transform` values before blending. The recipe
+keeps exact alpha-bucket parity, allows only a 2-LSB alpha-channel tolerance for
+linear texture-sampling roundoff at transformed texel boundaries, and fails if
+selected `rgb-visible` falls below `47 dB`, selected RGB channel delta exceeds
+`4`, or alpha delta exceeds `2`. The current run has identical alpha buckets
+for all three renderers (`transparent=512`, `opaque=0`, `partial=65024`).
+Selected `rgb-visible` PSNR is wgpu `49.1446 dB` with max selected channel
+delta `3`, and Bevy `47.2056 dB` with max selected channel delta `4`.
 
 For same-render-order transparent layers at different depths, use:
 

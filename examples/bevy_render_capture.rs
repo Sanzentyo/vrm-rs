@@ -136,6 +136,8 @@ struct CaptureOptions {
     background: CaptureBackground,
     #[arg(long)]
     disable_outlines: bool,
+    #[arg(long, default_value_t = 1.0)]
+    outline_width_scale: f32,
     #[arg(long)]
     disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
@@ -481,7 +483,7 @@ fn bevy_outline_primitive(
         context.world,
         context.skin_matrices,
         BevyOutlineMeshSettings {
-            width: mtoon.outline_width_factor,
+            width: mtoon.outline_width_factor * context.options.outline_width_scale,
             width_mode: mtoon.outline_width_mode,
             capture: context.options,
             width_texture: width_texture.as_ref(),
@@ -2538,6 +2540,7 @@ fn write_capture(
         "width": options.width,
         "height": options.height,
         "disableOutlines": options.disable_outlines,
+        "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
         "normalMapMode": options.normal_map_mode.as_str(),
         "expressions": options.expressions,
