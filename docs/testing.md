@@ -122,7 +122,10 @@ not from a browser canvas screenshot/data URL.
 The three-vrm RGBA JSON additionally records `reference` metadata for the
 Three.js revision, output color space, tone mapping, directional/ambient light
 setup, alpha mode, and camera frustum so light/color parity reports can be
-audited against the actual reference scene conditions. For direct-light
+audited against the actual reference scene conditions. The generated MToon
+light/color fixture now contains 12 swatches, including mid-ramp interpolation
+cases, and the swatch comparator is run after aggregate PSNR to catch per-term
+drift. For direct-light
 isolation, `just render-parity-mtoon-light-direct-generated` disables ambient
 on both the three-vrm and Rust capture sides while reusing the same generated
 MToon light/color fixture. For ambient-light isolation,

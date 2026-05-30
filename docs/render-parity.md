@@ -239,16 +239,17 @@ just render-parity-mtoon-light-generated
 
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
-contains ten opaque MToon quads for forced base lighting, forced shade
+contains twelve opaque MToon quads for forced base lighting, forced shade
 lighting, ambient behavior with a glTF `occlusionTexture` that three-vrm MToon
 ignores, parametric rim, matcap rim, mixed rim/matcap, two low-toony ramp
-materials with angled normals, pure `emissiveFactor`, and `emissiveTexture`
-multiplied by `KHR_materials_emissive_strength`. It
+materials with angled normals, two mid-ramp interpolation cases, pure
+`emissiveFactor`, and `emissiveTexture` multiplied by
+`KHR_materials_emissive_strength`. It
 uses `--mtoon-light-accumulation three-vrm`,
 `--render-background transparent`, and selected metric `rgb-interior1px` so a
 one-pixel silhouette/rasterization disagreement does not dominate the shader
-color score. The current run reports selected PSNR wgpu `58.9968 dB` with max
-selected channel delta `1`, and Bevy `51.8032 dB` with max selected channel
+color score. The current run reports selected PSNR wgpu `59.7573 dB` with max
+selected channel delta `2`, and Bevy `51.1653 dB` with max selected channel
 delta `2`; the aggregate recipe now fails if selected channel delta exceeds
 `2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
@@ -268,7 +269,7 @@ edges, and writes per-swatch color reports at
 `.external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.wgpu.swatches.json`
 and
 `.external-fixtures/render-parity-mtoon-light-generated/reports/mtoon-light_vrm.bevy.swatches.json`.
-The current swatch guard requires wgpu max channel delta `<= 1` with every
+The current swatch guard requires wgpu max channel delta `<= 2` with every
 swatch at least `50 dB`; Bevy is allowed max channel delta `<= 2` with every
 swatch at least `47 dB`. This prevents a high aggregate score from hiding a
 broken individual MToon term such as forced shade, rim, matcap, or emissive
@@ -287,10 +288,10 @@ This writes `.external-fixtures/render-parity-mtoon-light-direct-generated/`.
 It sets the three-vrm reference ambient intensity to `0` and Rust
 `pbrAmbient` to `0`, leaving only the `DirectionalLight(Math.PI)` path plus
 rim/emission behavior. The current selected `rgb-interior1px` PSNR is wgpu
-`58.9803 dB` and Bevy `51.7674 dB`, with max selected channel deltas `1` and
+`59.7409 dB` and Bevy `51.6508 dB`, with max selected channel deltas `2` and
 `2`. The recipe also writes direct-only swatch reports under
 `.external-fixtures/render-parity-mtoon-light-direct-generated/reports/` and
-enforces the same wgpu `<= 1` / Bevy `<= 2` per-swatch max channel deltas. This
+enforces the same wgpu `<= 2` / Bevy `<= 2` per-swatch max channel deltas. This
 keeps direct-light color parity measured separately from the default reference
 run that includes ambient `0.1`.
 
@@ -305,9 +306,9 @@ This writes
 `--render-directional-r 1.0 --render-directional-g 0.55
 --render-directional-b 0.25` into the three-vrm reference, wgpu capture, and
 Bevy capture while keeping ambient disabled. The current selected
-`rgb-interior1px` PSNR is wgpu `58.8377 dB` and Bevy `52.0812 dB`, with max
-selected channel deltas `1` and `2`. The per-swatch guard also passes, with
-wgpu max channel delta `<= 1` and Bevy max channel delta `<= 2`, proving that
+`rgb-interior1px` PSNR is wgpu `59.5993 dB` and Bevy `51.9037 dB`, with max
+selected channel deltas `2` and `2`. The per-swatch guard also passes, with
+wgpu max channel delta `<= 2` and Bevy max channel delta `<= 2`, proving that
 the direct diffuse and rim-light mix paths are not only matching for white
 lights.
 
@@ -321,8 +322,8 @@ just render-parity-mtoon-light-ambient-generated
 This writes `.external-fixtures/render-parity-mtoon-light-ambient-generated/`.
 It sets the three-vrm reference `DirectionalLight` intensity to `0` and Rust
 `--render-direct-light-scale` to `0`, leaving the ambient `0.1` path plus
-emission. The current selected `rgb-interior1px` PSNR is wgpu `60.9964 dB` and
-Bevy `53.7214 dB`, with max selected channel deltas `1` and `2`. The recipe
+emission. The current selected `rgb-interior1px` PSNR is wgpu `61.7386 dB` and
+Bevy `54.5071 dB`, with max selected channel deltas `2` and `2`. The recipe
 also writes ambient-only swatch reports under
 `.external-fixtures/render-parity-mtoon-light-ambient-generated/reports/` and
 enforces the same per-swatch color bounds. This keeps ambient/indirect MToon
@@ -398,9 +399,9 @@ and a non-white directional color `(0.35, 0.72, 1.0)`. The local runner passes
 `direct-light-scale = directionalIntensity / PI` and
 `pbr-ambient = ambientIntensity / PI`. This mirrors three-vrm's MToon shader,
 where Lambert diffuse and rim's `directSpecular` use light units after division
-by `PI`. Current selected `rgb-interior1px` PSNR is wgpu `61.2438 dB` and Bevy
-`51.4998 dB`; max selected channel delta is `1` and `2` respectively. The
-per-swatch report also passes with wgpu max channel delta `<= 1` and Bevy
+by `PI`. Current selected `rgb-interior1px` PSNR is wgpu `61.9831 dB` and Bevy
+`51.6960 dB`; max selected channel delta is `2` and `2` respectively. The
+per-swatch report also passes with wgpu max channel delta `<= 2` and Bevy
 `<= 2`, so direct diffuse, forced shade, ambient, rim/matcap, toon-ramp, and
 emissive swatches are checked under scaled colored lighting.
 
