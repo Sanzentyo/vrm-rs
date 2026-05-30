@@ -95,6 +95,8 @@ struct Options {
     render_three_vrm_ambient_intensity: f32,
     #[arg(long, value_enum, default_value_t = RenderMtoonLightAccumulation::Tuned)]
     render_mtoon_light_accumulation: RenderMtoonLightAccumulation,
+    #[arg(long)]
+    render_sync_three_vrm_light_units: bool,
     #[arg(long, default_value_t = 0.0)]
     render_mtoon_time: f32,
     #[arg(long = "render-expression")]
@@ -686,6 +688,7 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
 }
 
 fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
+    let light_units = render_light_units(options);
     let mut command = Command::new("cargo");
     command
         .arg("run")
@@ -709,9 +712,9 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg("--mtoon-ambient-gi-scale")
         .arg(options.render_mtoon_ambient_gi_scale.to_string())
         .arg("--pbr-ambient")
-        .arg(options.render_pbr_ambient.to_string())
+        .arg(light_units.pbr_ambient.to_string())
         .arg("--direct-light-scale")
-        .arg(options.render_direct_light_scale.to_string())
+        .arg(light_units.direct_light_scale.to_string())
         .arg("--directional-r")
         .arg(options.render_directional_r.to_string())
         .arg("--directional-g")
@@ -734,6 +737,7 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
 }
 
 fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
+    let light_units = render_light_units(options);
     let mut command = Command::new("cargo");
     command
         .arg("run")
@@ -757,9 +761,9 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg("--mtoon-ambient-gi-scale")
         .arg(options.render_mtoon_ambient_gi_scale.to_string())
         .arg("--pbr-ambient")
-        .arg(options.render_pbr_ambient.to_string())
+        .arg(light_units.pbr_ambient.to_string())
         .arg("--direct-light-scale")
-        .arg(options.render_direct_light_scale.to_string())
+        .arg(light_units.direct_light_scale.to_string())
         .arg("--directional-r")
         .arg(options.render_directional_r.to_string())
         .arg("--directional-g")
@@ -779,6 +783,27 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         command.arg("--expression").arg(expression);
     }
     run_command(command)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RenderLightUnits {
+    direct_light_scale: f32,
+    pbr_ambient: f32,
+}
+
+fn render_light_units(options: &Options) -> RenderLightUnits {
+    if options.render_sync_three_vrm_light_units {
+        RenderLightUnits {
+            direct_light_scale: options.render_three_vrm_directional_intensity
+                / std::f32::consts::PI,
+            pbr_ambient: options.render_three_vrm_ambient_intensity / std::f32::consts::PI,
+        }
+    } else {
+        RenderLightUnits {
+            direct_light_scale: options.render_direct_light_scale,
+            pbr_ambient: options.render_pbr_ambient,
+        }
+    }
 }
 
 fn compare_render_pair(

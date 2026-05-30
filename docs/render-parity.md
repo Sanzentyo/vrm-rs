@@ -352,6 +352,26 @@ shader. The recipe now enforces `rgb-interior1px >= 45 dB`. Treat this as the
 current normal-map regression guard, not final visual parity; the remaining work
 is to confirm real tangentless official primitives with higher thresholds.
 
+For a stricter MToon light/color accumulation audit with non-default three-vrm
+light units, run:
+
+```powershell
+just render-parity-mtoon-light-scaled-colored-generated
+```
+
+This reuses `.external-fixtures/generated/mtoon-light.vrm.gltf`, but captures it
+with `DirectionalLight.intensity = 2.3561945`, `AmbientLight.intensity = 0.25`,
+and a non-white directional color `(0.35, 0.72, 1.0)`. The local runner passes
+`--render-sync-three-vrm-light-units`, so wgpu and Bevy receive
+`direct-light-scale = directionalIntensity / PI` and
+`pbr-ambient = ambientIntensity / PI`. This mirrors three-vrm's MToon shader,
+where Lambert diffuse and rim's `directSpecular` use light units after division
+by `PI`. Current selected `rgb-interior1px` PSNR is wgpu `61.2438 dB` and Bevy
+`51.4998 dB`; max selected channel delta is `1` and `2` respectively. The
+per-swatch report also passes with wgpu max channel delta `<= 1` and Bevy
+`<= 2`, so direct diffuse, forced shade, ambient, rim/matcap, toon-ramp, and
+emissive swatches are checked under scaled colored lighting.
+
 For a generated expression morph audit, run:
 
 ```powershell
