@@ -196,6 +196,21 @@ rim/emission behavior. The current selected `rgb-interior1px` PSNR is wgpu
 `2`. This keeps direct-light color parity measured separately from the default
 reference run that includes ambient `0.1`.
 
+For the same generated fixture with directional light disabled on both sides,
+run:
+
+```powershell
+just render-parity-mtoon-light-ambient-generated
+```
+
+This writes `.external-fixtures/render-parity-mtoon-light-ambient-generated/`.
+It sets the three-vrm reference `DirectionalLight` intensity to `0` and Rust
+`--render-direct-light-scale` to `0`, leaving the ambient `0.1` path plus
+emission. The current selected `rgb-interior1px` PSNR is wgpu `60.9964 dB` and
+Bevy `53.7214 dB`, with max selected channel deltas `1` and `2`. This keeps
+ambient/indirect MToon accumulation measurable separately from the direct-only
+and default light setups.
+
 For a generated MToon texture-slot audit, run:
 
 ```powershell

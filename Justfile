@@ -37,6 +37,11 @@ render-parity-mtoon-light-direct-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-light-direct-generated --render-background transparent --render-alpha-mismatch-tolerance 512 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-pbr-ambient 0 --render-three-vrm-ambient-intensity 0 --render-fixture .external-fixtures/generated/mtoon-light.vrm.gltf
 
+# Generate and render the MToon light/color fixture with directional light disabled on both sides.
+render-parity-mtoon-light-ambient-generated three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-light-ambient-generated --render-background transparent --render-alpha-mismatch-tolerance 512 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-direct-light-scale 0 --render-three-vrm-directional-intensity 0 --render-fixture .external-fixtures/generated/mtoon-light.vrm.gltf
+
 # Inspect local fixtures for MToon material features that should be covered by render parity.
 inspect-mtoon-fixtures root=".external-fixtures/official":
     cargo +nightly -Zscript tools/render-parity/inspect-mtoon-fixtures.rs -- --root "{{ root }}"

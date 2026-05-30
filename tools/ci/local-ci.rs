@@ -75,6 +75,8 @@ struct Options {
     render_mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     render_pbr_ambient: f32,
+    #[arg(long, default_value_t = 1.0)]
+    render_direct_light_scale: f32,
     #[arg(long, default_value_t = std::f32::consts::PI)]
     render_three_vrm_directional_intensity: f32,
     #[arg(long, default_value_t = 1.0)]
@@ -689,6 +691,8 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--direct-light-scale",
+            options.render_direct_light_scale.to_string().as_str(),
             "--mtoon-light-accumulation",
             options.render_mtoon_light_accumulation.as_cli_value(),
             "--mtoon-time",
@@ -725,6 +729,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
             options.render_mtoon_ambient_gi_scale.to_string().as_str(),
             "--pbr-ambient",
             options.render_pbr_ambient.to_string().as_str(),
+            "--direct-light-scale",
+            options.render_direct_light_scale.to_string().as_str(),
             "--mtoon-light-accumulation",
             options.render_mtoon_light_accumulation.as_cli_value(),
             "--mtoon-time",

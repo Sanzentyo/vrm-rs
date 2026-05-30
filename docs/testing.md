@@ -113,7 +113,10 @@ setup, alpha mode, and camera frustum so light/color parity reports can be
 audited against the actual reference scene conditions. For direct-light
 isolation, `just render-parity-mtoon-light-direct-generated` disables ambient
 on both the three-vrm and Rust capture sides while reusing the same generated
-MToon light/color fixture.
+MToon light/color fixture. For ambient-light isolation,
+`just render-parity-mtoon-light-ambient-generated` disables directional light
+on both sides using the three-vrm directional intensity and Rust
+`--render-direct-light-scale` controls.
 The PSNR report additionally includes alpha counts/mismatches plus RGB-only
 full-canvas, opaque, visible, and 1px-interior metrics to identify whether
 remaining deltas come from silhouettes/alpha or from opaque-surface shading. When
@@ -159,7 +162,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, and mask-material fixture coverage; exact MToon lighting/color, transparent-material breadth, and outline parity are still pending.
+- Render parity is not yet satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, and direct/ambient isolated MToon light-color guards; broader real-model PSNR, Bevy normal-map parity, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

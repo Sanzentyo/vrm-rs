@@ -115,6 +115,8 @@ struct CaptureOptions {
     mtoon_ambient_gi_scale: f32,
     #[arg(long, default_value_t = 0.03183099)]
     pbr_ambient: f32,
+    #[arg(long, default_value_t = 1.0)]
+    direct_light_scale: f32,
     #[arg(long, value_enum, default_value_t = MtoonLightAccumulation::Tuned)]
     mtoon_light_accumulation: MtoonLightAccumulation,
     #[arg(long, default_value_t = 0.0)]
@@ -1055,7 +1057,7 @@ fn bevy_mtoon_material(
             shading.metallic,
             shading.roughness,
             shading.occlusion_strength,
-            0.0,
+            options.direct_light_scale,
         ),
         outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
@@ -1989,6 +1991,7 @@ fn write_capture(
             "ambientBase": options.mtoon_ambient_base,
             "ambientGiScale": options.mtoon_ambient_gi_scale,
             "pbrAmbient": options.pbr_ambient,
+            "directLightScale": options.direct_light_scale,
             "lightAccumulation": options.mtoon_light_accumulation.as_str(),
             "effective": {
                 "exposure": effective_lighting[0],
