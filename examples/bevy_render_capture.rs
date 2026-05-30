@@ -1117,12 +1117,7 @@ fn mtoon_lighting_values(options: &CaptureOptions) -> [f32; 4] {
             options.mtoon_ambient_gi_scale,
             options.pbr_ambient,
         ],
-        MtoonLightAccumulation::ThreeVrm => [
-            options.mtoon_exposure,
-            options.pbr_ambient,
-            0.0,
-            options.pbr_ambient,
-        ],
+        MtoonLightAccumulation::ThreeVrm => [1.0, options.pbr_ambient, 0.0, options.pbr_ambient],
     }
 }
 

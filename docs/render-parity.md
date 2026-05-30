@@ -110,9 +110,15 @@ The Rust capture paths also accept
 current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
 `three-vrm` mode uses the closer WebGL MToon accumulator shape for light/color
 audits: direct diffuse is normalized by the `DirectionalLight(Math.PI)` setup,
-indirect diffuse uses `pbrAmbient`, and rim lighting uses the same
+indirect diffuse uses `pbrAmbient`, rim lighting uses the same
 direct-plus-indirect accumulator (`1.0 + pbrAmbient`) as the three-vrm
-non-physical-light path.
+non-physical-light path, and the final exposure multiplier is fixed at `1.0`
+instead of inheriting the tuned `0.78` capture coefficient. Re-run that focused
+path with:
+
+```powershell
+just render-parity-light-three-vrm
+```
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
