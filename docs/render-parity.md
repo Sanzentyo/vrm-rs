@@ -105,6 +105,28 @@ the external UniVRM Alicia VRM0 fixture, kept outside git, to keep legacy
 transparent and transparent-Z-write materials in the same rendered-output
 parity loop.
 
+For a transparent-background sweep over the real external sample set, run:
+
+```powershell
+just render-parity-real-transparent
+```
+
+This writes `.external-fixtures/render-parity-real-transparent/` and uses
+`rgb-visible` with a low `--render-fail-under 20` regression floor. That floor
+does not mean final visual compatibility is complete; it keeps the current
+real-fixture transparent path from regressing while generated transparent
+fixtures continue to enforce stricter alpha/blend behavior. The current run
+keeps alpha mismatches under `64` for all six fixtures: Seed-san wgpu/Bevy
+`25/32`, constraint `11/11`, UV animation `0/0`, expression mask samples
+`12/12`, and Alicia VRM0 `32/32`. Selected `rgb-visible` PSNR is Seed-san wgpu
+`20.4130 dB`, Seed-san Bevy `20.3065 dB`, constraint wgpu `25.6531 dB`,
+constraint Bevy `25.6476 dB`, UV animation wgpu `27.4437 dB`, UV animation
+Bevy `27.4271 dB`, expression mask samples around `29.84 dB`, Alicia wgpu
+`20.3469 dB`, and Alicia Bevy `20.3434 dB`. Review
+`.external-fixtures/render-parity-real-transparent/visual-review.html` when
+working on broader transparent silhouettes, VRM0 material ordering, or runtime
+pose/material breadth.
+
 The Rust capture paths also accept
 `--mtoon-light-accumulation three-vrm`. The default `tuned` mode keeps the
 current PSNR-oriented ambient proxy (`ambientBase + ambientGiScale * gi`).
