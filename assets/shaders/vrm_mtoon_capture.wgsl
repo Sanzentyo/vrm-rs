@@ -242,7 +242,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     if material.material_flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
-    let occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material.pbr_params.z + 1.0;
+    let sampled_occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material.pbr_params.z + 1.0;
+    let occlusion = select(sampled_occlusion, 1.0, material.material_flags.z > 0.5);
     let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z) * occlusion;
 
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));

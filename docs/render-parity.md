@@ -159,9 +159,9 @@ path with:
 just render-parity-light-three-vrm
 ```
 
-The current focused exact-accumulator run reports Seed-san wgpu `33.7678 dB` /
-Bevy `33.3385 dB` and constraint sample wgpu `36.1974 dB` / Bevy
-`36.1825 dB` on selected `rgb-visible`.
+The current focused exact-accumulator run reports Seed-san wgpu `34.5645 dB` /
+Bevy `34.0434 dB` and constraint sample wgpu `36.2028 dB` / Bevy
+`36.1877 dB` on selected `rgb-visible`, with exact alpha parity.
 
 For an outline-off diagnostic that disables MToon outline expansion in the
 three-vrm reference and both Rust captures, run:

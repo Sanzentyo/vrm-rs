@@ -1075,7 +1075,11 @@ fn bevy_mtoon_material(
         material_flags: BVec4::new(
             if shading.v0_compat_shade { 1.0 } else { 0.0 },
             if shading.pbr_fallback { 1.0 } else { 0.0 },
-            0.0,
+            if options.mtoon_light_accumulation == MtoonLightAccumulation::ThreeVrm {
+                1.0
+            } else {
+                0.0
+            },
             0.0,
         ),
         pbr_params: BVec4::new(

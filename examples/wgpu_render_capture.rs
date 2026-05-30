@@ -603,17 +603,24 @@ fn draw_primitive(
         indices: primitive.indices.clone(),
         images: material_images(loaded, primitive.material),
         uv_transforms,
-        material_extra: material_extra_uniform(shading),
+        material_extra: material_extra_uniform(shading, options),
         policy,
     })
 }
 
-fn material_extra_uniform(shading: MaterialShading) -> MaterialExtraUniform {
+fn material_extra_uniform(
+    shading: MaterialShading,
+    options: &CaptureOptions,
+) -> MaterialExtraUniform {
     MaterialExtraUniform {
         flags: [
             if shading.v0_compat_shade { 1.0 } else { 0.0 },
             if shading.pbr_fallback { 1.0 } else { 0.0 },
-            0.0,
+            if options.mtoon_light_accumulation == MtoonLightAccumulation::ThreeVrm {
+                1.0
+            } else {
+                0.0
+            },
             0.0,
         ],
         pbr_params: [
@@ -2262,7 +2269,8 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if material_extra.flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
-    let occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    let sampled_occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    let occlusion = select(sampled_occlusion, 1.0, material_extra.flags.z > 0.5);
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi) * occlusion;
     let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
     let matcap_y = cross(view_dir, matcap_x);
