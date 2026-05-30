@@ -123,6 +123,8 @@ struct CaptureOptions {
     mtoon_time: f32,
     #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
     background: CaptureBackground,
+    #[arg(long)]
+    disable_outlines: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -359,14 +361,16 @@ fn spawn_vrm_meshes(
                 phase_order: material_phase_order(loaded, primitive.material),
             };
             primitives.push(surface);
-            if let Some(outline) = bevy_outline_primitive(
-                loaded,
-                primitive,
-                world,
-                skin_matrices.as_deref(),
-                options,
-                &image_handles,
-            ) {
+            if !options.disable_outlines
+                && let Some(outline) = bevy_outline_primitive(
+                    loaded,
+                    primitive,
+                    world,
+                    skin_matrices.as_deref(),
+                    options,
+                    &image_handles,
+                )
+            {
                 primitives.push(outline);
             }
         }
@@ -2006,6 +2010,7 @@ fn write_capture(
         "fixture": options.fixture.to_string_lossy(),
         "width": options.width,
         "height": options.height,
+        "disableOutlines": options.disable_outlines,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
             "exposure": options.mtoon_exposure,

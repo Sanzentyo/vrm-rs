@@ -101,6 +101,8 @@ struct Options {
     render_alpha_channel_tolerance: u8,
     #[arg(long, value_enum, default_value_t = RenderBackground::OpaqueBlack)]
     render_background: RenderBackground,
+    #[arg(long)]
+    render_disable_outlines: bool,
     #[arg(long = "render-fixture")]
     render_fixtures: Vec<String>,
     #[arg(long, default_value = ".external-fixtures/official")]
@@ -625,120 +627,117 @@ fn sanitize_artifact_stem(stem: &str) -> String {
 }
 
 fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
-    run_cmd(
-        "node",
-        [
-            "tools/render-parity/three-vrm-browser-capture.mjs",
-            "--fixture",
-            path(&fixture.path).as_str(),
-            "--three-vrm-root",
-            path(&options.three_vrm_root).as_str(),
-            "--out",
-            path(&render_artifact(options, fixture, "three-vrm")).as_str(),
-            "--width",
-            options.render_width.to_string().as_str(),
-            "--height",
-            options.render_height.to_string().as_str(),
-            "--background",
-            options.render_background.as_cli_value(),
-            "--camera-z",
-            options.render_camera_z.to_string().as_str(),
-            "--directional-intensity",
-            options
-                .render_three_vrm_directional_intensity
-                .to_string()
-                .as_str(),
-            "--directional-x",
-            options.render_three_vrm_directional_x.to_string().as_str(),
-            "--directional-y",
-            options.render_three_vrm_directional_y.to_string().as_str(),
-            "--directional-z",
-            options.render_three_vrm_directional_z.to_string().as_str(),
-            "--ambient-intensity",
-            options
-                .render_three_vrm_ambient_intensity
-                .to_string()
-                .as_str(),
-            "--mtoon-time",
-            options.render_mtoon_time.to_string().as_str(),
-        ],
-    )
+    let mut command = Command::new("node");
+    command
+        .arg("tools/render-parity/three-vrm-browser-capture.mjs")
+        .arg("--fixture")
+        .arg(path(&fixture.path))
+        .arg("--three-vrm-root")
+        .arg(path(&options.three_vrm_root))
+        .arg("--out")
+        .arg(path(&render_artifact(options, fixture, "three-vrm")))
+        .arg("--width")
+        .arg(options.render_width.to_string())
+        .arg("--height")
+        .arg(options.render_height.to_string())
+        .arg("--background")
+        .arg(options.render_background.as_cli_value())
+        .arg("--camera-z")
+        .arg(options.render_camera_z.to_string())
+        .arg("--directional-intensity")
+        .arg(options.render_three_vrm_directional_intensity.to_string())
+        .arg("--directional-x")
+        .arg(options.render_three_vrm_directional_x.to_string())
+        .arg("--directional-y")
+        .arg(options.render_three_vrm_directional_y.to_string())
+        .arg("--directional-z")
+        .arg(options.render_three_vrm_directional_z.to_string())
+        .arg("--ambient-intensity")
+        .arg(options.render_three_vrm_ambient_intensity.to_string())
+        .arg("--mtoon-time")
+        .arg(options.render_mtoon_time.to_string());
+    if options.render_disable_outlines {
+        command.arg("--disable-outlines");
+    }
+    run_command(command)
 }
 
 fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
-    run_cmd(
-        "cargo",
-        [
-            "run",
-            "--example",
-            "wgpu_render_capture",
-            "--",
-            "--fixture",
-            path(&fixture.path).as_str(),
-            "--out",
-            path(&render_artifact(options, fixture, "wgpu")).as_str(),
-            "--width",
-            options.render_width.to_string().as_str(),
-            "--height",
-            options.render_height.to_string().as_str(),
-            "--camera-z",
-            options.render_camera_z.to_string().as_str(),
-            "--mtoon-exposure",
-            options.render_mtoon_exposure.to_string().as_str(),
-            "--mtoon-ambient-base",
-            options.render_mtoon_ambient_base.to_string().as_str(),
-            "--mtoon-ambient-gi-scale",
-            options.render_mtoon_ambient_gi_scale.to_string().as_str(),
-            "--pbr-ambient",
-            options.render_pbr_ambient.to_string().as_str(),
-            "--direct-light-scale",
-            options.render_direct_light_scale.to_string().as_str(),
-            "--mtoon-light-accumulation",
-            options.render_mtoon_light_accumulation.as_cli_value(),
-            "--mtoon-time",
-            options.render_mtoon_time.to_string().as_str(),
-            "--background",
-            options.render_background.as_cli_value(),
-        ],
-    )
+    let mut command = Command::new("cargo");
+    command
+        .arg("run")
+        .arg("--example")
+        .arg("wgpu_render_capture")
+        .arg("--")
+        .arg("--fixture")
+        .arg(path(&fixture.path))
+        .arg("--out")
+        .arg(path(&render_artifact(options, fixture, "wgpu")))
+        .arg("--width")
+        .arg(options.render_width.to_string())
+        .arg("--height")
+        .arg(options.render_height.to_string())
+        .arg("--camera-z")
+        .arg(options.render_camera_z.to_string())
+        .arg("--mtoon-exposure")
+        .arg(options.render_mtoon_exposure.to_string())
+        .arg("--mtoon-ambient-base")
+        .arg(options.render_mtoon_ambient_base.to_string())
+        .arg("--mtoon-ambient-gi-scale")
+        .arg(options.render_mtoon_ambient_gi_scale.to_string())
+        .arg("--pbr-ambient")
+        .arg(options.render_pbr_ambient.to_string())
+        .arg("--direct-light-scale")
+        .arg(options.render_direct_light_scale.to_string())
+        .arg("--mtoon-light-accumulation")
+        .arg(options.render_mtoon_light_accumulation.as_cli_value())
+        .arg("--mtoon-time")
+        .arg(options.render_mtoon_time.to_string())
+        .arg("--background")
+        .arg(options.render_background.as_cli_value());
+    if options.render_disable_outlines {
+        command.arg("--disable-outlines");
+    }
+    run_command(command)
 }
 
 fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
-    run_cmd(
-        "cargo",
-        [
-            "run",
-            "--example",
-            "bevy_render_capture",
-            "--",
-            "--fixture",
-            path(&fixture.path).as_str(),
-            "--out",
-            path(&render_artifact(options, fixture, "bevy")).as_str(),
-            "--width",
-            options.render_width.to_string().as_str(),
-            "--height",
-            options.render_height.to_string().as_str(),
-            "--camera-z",
-            options.render_camera_z.to_string().as_str(),
-            "--mtoon-exposure",
-            options.render_mtoon_exposure.to_string().as_str(),
-            "--mtoon-ambient-base",
-            options.render_mtoon_ambient_base.to_string().as_str(),
-            "--mtoon-ambient-gi-scale",
-            options.render_mtoon_ambient_gi_scale.to_string().as_str(),
-            "--pbr-ambient",
-            options.render_pbr_ambient.to_string().as_str(),
-            "--direct-light-scale",
-            options.render_direct_light_scale.to_string().as_str(),
-            "--mtoon-light-accumulation",
-            options.render_mtoon_light_accumulation.as_cli_value(),
-            "--mtoon-time",
-            options.render_mtoon_time.to_string().as_str(),
-            "--background",
-            options.render_background.as_cli_value(),
-        ],
-    )
+    let mut command = Command::new("cargo");
+    command
+        .arg("run")
+        .arg("--example")
+        .arg("bevy_render_capture")
+        .arg("--")
+        .arg("--fixture")
+        .arg(path(&fixture.path))
+        .arg("--out")
+        .arg(path(&render_artifact(options, fixture, "bevy")))
+        .arg("--width")
+        .arg(options.render_width.to_string())
+        .arg("--height")
+        .arg(options.render_height.to_string())
+        .arg("--camera-z")
+        .arg(options.render_camera_z.to_string())
+        .arg("--mtoon-exposure")
+        .arg(options.render_mtoon_exposure.to_string())
+        .arg("--mtoon-ambient-base")
+        .arg(options.render_mtoon_ambient_base.to_string())
+        .arg("--mtoon-ambient-gi-scale")
+        .arg(options.render_mtoon_ambient_gi_scale.to_string())
+        .arg("--pbr-ambient")
+        .arg(options.render_pbr_ambient.to_string())
+        .arg("--direct-light-scale")
+        .arg(options.render_direct_light_scale.to_string())
+        .arg("--mtoon-light-accumulation")
+        .arg(options.render_mtoon_light_accumulation.as_cli_value())
+        .arg("--mtoon-time")
+        .arg(options.render_mtoon_time.to_string())
+        .arg("--background")
+        .arg(options.render_background.as_cli_value());
+    if options.render_disable_outlines {
+        command.arg("--disable-outlines");
+    }
+    run_command(command)
 }
 
 fn compare_render_pair(

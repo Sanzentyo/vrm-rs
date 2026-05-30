@@ -100,6 +100,8 @@ struct CaptureOptions {
     mtoon_time: f32,
     #[arg(long, value_enum, default_value_t = CaptureBackground::OpaqueBlack)]
     background: CaptureBackground,
+    #[arg(long)]
+    disable_outlines: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -377,7 +379,9 @@ fn mesh_draw_data(
             let surface =
                 draw_primitive(loaded, primitive, world, skin_matrices.as_deref(), options)?;
             primitives.push(surface.clone());
-            if let Some(outline) = outline_primitive(loaded, primitive, &surface, options) {
+            if !options.disable_outlines
+                && let Some(outline) = outline_primitive(loaded, primitive, &surface, options)
+            {
                 primitives.push(outline);
             }
         }
@@ -1951,6 +1955,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "fixture": options.fixture.to_string_lossy(),
         "width": options.width,
         "height": options.height,
+        "disableOutlines": options.disable_outlines,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
             "exposure": options.mtoon_exposure,

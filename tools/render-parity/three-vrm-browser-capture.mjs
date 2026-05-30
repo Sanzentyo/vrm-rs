@@ -36,9 +36,10 @@ const directionalY = Number(args.get('directional-y') ?? '1.0');
 const directionalZ = Number(args.get('directional-z') ?? '1.0');
 const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
+const disableOutlines = args.has('disable-outlines');
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--disable-outlines]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -236,6 +237,15 @@ function capturePage(options) {
     if (!vrm) throw new Error('fixture did not load as VRM');
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
+      if (${disableOutlines} && object.material) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          if (material && 'outlineWidthFactor' in material) {
+            material.outlineWidthFactor = 0.0;
+            material.needsUpdate = true;
+          }
+        }
+      }
     });
     scene.add(vrm.scene);
     vrm.update?.(${options.mtoonTime});
@@ -262,6 +272,7 @@ function capturePage(options) {
         clearAlpha: ${clearAlpha},
         antialias: false,
         premultipliedAlpha: false,
+        disableOutlines: ${disableOutlines},
       },
       lighting: {
         directional: {

@@ -77,6 +77,8 @@ under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
 the canonical static sweep. Use `just render-parity-real-normal-maps` for the
 focused real-fixture review of the known official tangentless normal-map
 fixtures; it writes `.external-fixtures/render-parity-real-normal-maps/`.
+Use `just render-parity-outline-off` as a diagnostic for separating MToon
+outline expansion deltas from material, skinning, and pose deltas.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

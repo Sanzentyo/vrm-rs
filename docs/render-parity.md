@@ -162,6 +162,23 @@ just render-parity-light-three-vrm
 The current focused exact-accumulator run reports Seed-san wgpu `33.7678 dB` /
 Bevy `33.3385 dB` and constraint sample wgpu `36.1974 dB` / Bevy
 `36.1825 dB` on selected `rgb-visible`.
+
+For an outline-off diagnostic that disables MToon outline expansion in the
+three-vrm reference and both Rust captures, run:
+
+```powershell
+just render-parity-outline-off
+```
+
+This writes `.external-fixtures/render-parity-outline-off/` and is meant to
+separate outline expansion from material, skinning, and pose deltas. The current
+diagnostic keeps exact alpha parity. Seed-san stays essentially flat at wgpu
+`32.5179 dB` / Bevy `32.5257 dB`, so its remaining error is not explained by
+outline alone. The constraint sample improves from the normal sweep's
+wgpu `35.9456 dB` / Bevy `35.9394 dB` to wgpu `36.8185 dB` / Bevy
+`36.8061 dB`, which marks outline expansion as a real contributor for that
+fixture.
+
 For isolated experiments, the local runner can also override the three-vrm
 reference light setup with `--render-three-vrm-directional-intensity`,
 `--render-three-vrm-directional-{x,y,z}`, and
