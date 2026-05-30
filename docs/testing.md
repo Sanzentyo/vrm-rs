@@ -92,7 +92,9 @@ and Bevy capture are all reviewed with the same opaque-background contract. Use
 audits. Generated transparent-material guards currently include
 `just render-parity-transparent-generated`,
 `just render-parity-transparent-high-contrast`,
-`just render-parity-transparent-broad`, and
+`just render-parity-transparent-broad`,
+`just render-parity-transparent-texture-transform`,
+`just render-parity-transparent-queue-matrix`, and
 `just render-parity-transparent-alpha-modes`. Use
 `just render-parity-transparent-lighted` for overlapping transparent layers
 that also exercise MToon direct/shade/rim/emissive accumulation, and use

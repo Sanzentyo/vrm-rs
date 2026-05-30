@@ -515,6 +515,27 @@ for all three renderers (`transparent=512`, `opaque=0`, `partial=65024`).
 Selected `rgb-visible` PSNR is wgpu `49.1446 dB` with max selected channel
 delta `3`, and Bevy `47.2056 dB` with max selected channel delta `4`.
 
+For a broader queue/lighting matrix that combines texture transforms,
+`transparentWithZWrite`, forced shade, rim, and emissive strength in one
+overlapping stack, use:
+
+```powershell
+just render-parity-transparent-queue-matrix
+```
+
+This writes `.external-fixtures/generated/transparent-queue-matrix.vrm.gltf`
+and renders into `.external-fixtures/render-parity-transparent-queue-matrix/`.
+The fixture uses source-generated glTF plus an embedded PNG only; it is intended
+to catch ordering or alpha-rounding regressions that pass the narrower
+texture-transform and lighted guards in isolation. The recipe uses transparent
+background, exact `three-vrm` MToon light accumulation, selected `rgb-visible`,
+and a `48 dB` floor while bounding selected RGB channel delta to `<= 4` and
+alpha max delta to `<= 2`. The current run has identical alpha buckets
+(`transparent=512`, `opaque=0`, `partial=65024`) for all three renderers and
+only 1-LSB alpha rounding. Selected `rgb-visible` PSNR is wgpu `53.0342 dB`
+with max selected channel delta `2`, and Bevy `48.4839 dB` with max selected
+channel delta `3`.
+
 For transparent layers that also exercise MToon lighting, rim color, texture
 alpha, `transparentWithZWrite`, and `KHR_materials_emissive_strength`, use:
 

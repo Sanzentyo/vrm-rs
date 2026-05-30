@@ -47,6 +47,7 @@ enum TransparentCase {
     Broad,
     TextureTransform,
     Lighted,
+    QueueMatrix,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,7 +67,10 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
     let mesh = mesh_buffer();
     let texture = checker_texture_png(matches!(
         fixture_case,
-        TransparentCase::Broad | TransparentCase::TextureTransform | TransparentCase::Lighted
+        TransparentCase::Broad
+            | TransparentCase::TextureTransform
+            | TransparentCase::Lighted
+            | TransparentCase::QueueMatrix
     ));
     let mesh_len = mesh.len();
     let texture_len = texture.len();
@@ -76,7 +80,10 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
     let primitives = transparent_primitives(materials.len());
     let min_filter = match fixture_case {
         TransparentCase::Overlap => 9729,
-        TransparentCase::Broad | TransparentCase::TextureTransform | TransparentCase::Lighted => 9985,
+        TransparentCase::Broad
+        | TransparentCase::TextureTransform
+        | TransparentCase::Lighted
+        | TransparentCase::QueueMatrix => 9985,
     };
     let extensions_used = match fixture_case {
         TransparentCase::Overlap | TransparentCase::Broad => {
@@ -89,6 +96,14 @@ fn fixture_json(palette: TransparentPalette, fixture_case: TransparentCase) -> S
             vec![
                 "VRMC_vrm",
                 "VRMC_materials_mtoon",
+                "KHR_materials_emissive_strength",
+            ]
+        }
+        TransparentCase::QueueMatrix => {
+            vec![
+                "VRMC_vrm",
+                "VRMC_materials_mtoon",
+                "KHR_texture_transform",
                 "KHR_materials_emissive_strength",
             ]
         }
@@ -339,6 +354,77 @@ fn transparent_materials(palette: TransparentPalette, fixture_case: TransparentC
                 [0.0, 0.0, 0.0],
                 Some([0.16, 0.26, 0.48]),
                 Some(1.75),
+            ),
+        ],
+        TransparentCase::QueueMatrix => vec![
+            mtoon_material(
+                "transparent-matrix-texture-alpha-early",
+                [front_color[0], front_color[1], front_color[2], 0.56],
+                -4,
+                false,
+                true,
+                Some(json!({
+                    "offset": [0.125, 0.0],
+                    "scale": [0.75, 1.0]
+                })),
+            ),
+            mtoon_material(
+                "transparent-matrix-zwrite-under",
+                [zwrite_color[0], zwrite_color[1], zwrite_color[2], 0.34],
+                -2,
+                true,
+                false,
+                None,
+            ),
+            lighted_mtoon_material(
+                "transparent-matrix-forced-shade",
+                [0.05, 0.48, 1.0, 0.38],
+                [0.0, 0.04, 0.24],
+                -1,
+                false,
+                false,
+                -1.5,
+                0.0,
+                [0.0, 0.0, 0.0],
+                None,
+                None,
+            ),
+            mtoon_material(
+                "transparent-matrix-texture-transform-mid",
+                [1.0, 0.82, 0.04, 0.42],
+                1,
+                false,
+                true,
+                Some(json!({
+                    "offset": [0.5, 0.25],
+                    "scale": [0.5, 0.5]
+                })),
+            ),
+            lighted_mtoon_material(
+                "transparent-matrix-emissive-zwrite",
+                [0.0, 0.0, 0.0, 0.30],
+                [0.0, 0.0, 0.0],
+                2,
+                true,
+                true,
+                -1.5,
+                0.0,
+                [0.0, 0.0, 0.0],
+                Some([0.10, 0.20, 0.42]),
+                Some(2.0),
+            ),
+            lighted_mtoon_material(
+                "transparent-matrix-rim-tail",
+                [0.02, 0.02, 0.03, 0.28],
+                [0.01, 0.01, 0.02],
+                4,
+                false,
+                false,
+                -1.5,
+                1.0,
+                [1.0, 0.28, 0.12],
+                None,
+                None,
             ),
         ],
     }

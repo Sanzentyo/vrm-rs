@@ -142,6 +142,11 @@ render-parity-transparent-lighted three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --case lighted --palette high-contrast --out .external-fixtures/generated/transparent-lighted.vrm.gltf
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-lighted --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 2 --render-psnr-metric rgb-visible --render-fail-under 50 --render-max-selected-channel-delta 3 --render-max-alpha-delta 2 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/transparent-lighted.vrm.gltf
 
+# Regenerate a broad transparent material queue matrix with texture transforms, z-write, rim, and emissive layers.
+render-parity-transparent-queue-matrix three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --case queue-matrix --palette high-contrast --out .external-fixtures/generated/transparent-queue-matrix.vrm.gltf
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-queue-matrix --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 2 --render-psnr-metric rgb-visible --render-fail-under 48 --render-max-selected-channel-delta 4 --render-max-alpha-delta 2 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/transparent-queue-matrix.vrm.gltf
+
 # Regenerate alpha-mode transparent material artifacts for OPAQUE/MASK/BLEND cutoff parity.
 render-parity-transparent-alpha-modes three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-alpha-modes-fixture.rs
