@@ -11,6 +11,8 @@ struct BevyMtoonUniform {
     matcap_factor: vec4<f32>,
     rim_color: vec4<f32>,
     rim_params: vec4<f32>,
+    material_flags: vec4<f32>,
+    pbr_params: vec4<f32>,
     outline_color: vec4<f32>,
     pipeline: vec4<f32>,
     lighting: vec4<f32>,
@@ -193,7 +195,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
 
     let texel = textureSample(base_texture, base_sampler, base_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
-    let is_pbr_fallback = material.rim_params.w > 0.5;
+    let is_pbr_fallback = material.material_flags.y > 0.5;
     let alpha = material.base_color.a * texel.a;
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
@@ -208,10 +210,10 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             normal,
             view_dir,
             light_dir,
-            material.matcap_factor.w,
-            material.rim_color.w,
+            material.pbr_params.x,
+            material.pbr_params.y,
         );
-        let ambient = diffuse * (1.0 - material.matcap_factor.w) * material.lighting.w;
+        let ambient = diffuse * (1.0 - material.pbr_params.x) * material.lighting.w;
         var pbr_color = direct + ambient + material.emissive.rgb * emissive_texel;
         if material.outline_color.a >= 0.0 {
             pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
@@ -229,7 +231,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         ndotl + shift,
     );
     var direct = mix(shade, diffuse, toon);
-    if material.emissive.w > 0.5 {
+    if material.material_flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
     let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z);
