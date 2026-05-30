@@ -116,8 +116,8 @@ This writes `.external-fixtures/render-parity-real-transparent/` and uses
 separately. The current run keeps alpha mismatches under `64` for all six
 fixtures: Seed-san wgpu/Bevy `25/32`, constraint `11/11`, UV animation `0/0`,
 expression mask samples `12/12`, and Alicia VRM0 `32/32`. Selected `rgb-all`
-PSNR is Seed-san wgpu `32.3546 dB`, Seed-san Bevy `32.0485 dB`, constraint
-wgpu `35.9421 dB`, constraint Bevy `35.9362 dB`, UV animation wgpu
+PSNR is Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint
+wgpu `35.9456 dB`, constraint Bevy `35.9394 dB`, UV animation wgpu
 `34.8985 dB`, UV animation Bevy `34.8819 dB`, expression mask samples around
 `39.29-39.30 dB`, Alicia wgpu `32.3424 dB`, and Alicia Bevy `32.3410 dB`.
 Review
@@ -243,9 +243,9 @@ selected `rgb-interior1px` PSNR is wgpu `47.1013 dB` with max selected channel
 delta `12`, and Bevy `46.0637 dB` with max selected channel delta `13`. The
 Bevy path now keeps generated tangent frames when a primitive accessor includes
 unreferenced vertices and enables `VERTEX_TANGENTS` for the custom material
-shader. Treat this as the current normal-map regression guard, not final visual
-parity; the remaining work is to confirm real tangentless official primitives
-with higher thresholds.
+shader. The recipe now enforces `rgb-interior1px >= 45 dB`. Treat this as the
+current normal-map regression guard, not final visual parity; the remaining work
+is to confirm real tangentless official primitives with higher thresholds.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
@@ -675,8 +675,8 @@ while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
 opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
 0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
 mismatches `0`. The selected `rgb-visible` metric for the same sweep is
-Seed-san wgpu `32.3546 dB`, Seed-san Bevy `32.0485 dB`, constraint sample wgpu
-`35.9421 dB`, constraint sample Bevy `35.9362 dB`, UV animation sample wgpu
+Seed-san wgpu `32.8751 dB`, Seed-san Bevy `32.5273 dB`, constraint sample wgpu
+`35.9456 dB`, constraint sample Bevy `35.9394 dB`, UV animation sample wgpu
 `34.8985 dB`, UV animation sample Bevy `34.8819 dB`, mask samples wgpu/Bevy
 `39.3000/39.2891 dB` and `39.3004/39.2896 dB`, and Alicia VRM0 wgpu
 `32.3424 dB` / Bevy `32.3410 dB`. Use explicit `transparent` only when the review
@@ -687,8 +687,8 @@ For the broader real transparent-material audit, run
 `just render-parity-real-transparent`. This keeps the transparent background
 and uses `rgb-all` with fail-under `32`, while alpha-mask drift is enforced
 separately with tolerance `64`. The current six-fixture run passes with
-selected PSNR Seed-san wgpu `32.3546 dB`/Bevy `32.0485 dB`, constraint wgpu
-`35.9421 dB`/Bevy `35.9362 dB`, UV animation wgpu `34.8985 dB`/Bevy
+selected PSNR Seed-san wgpu `32.8751 dB`/Bevy `32.5273 dB`, constraint wgpu
+`35.9456 dB`/Bevy `35.9394 dB`, UV animation wgpu `34.8985 dB`/Bevy
 `34.8819 dB`, expression mask samples around `39.29-39.30 dB`, and Alicia
 VRM0 wgpu `32.3424 dB`/Bevy `32.3410 dB`. Alpha mismatches remain below the
 tolerance: Seed-san `25/32`, constraint `11/11`, UV animation `0/0`,
@@ -763,8 +763,8 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 - Add or discover broader transparent-material fixtures with real textures and
   mixed render queues so the generated blend fixture and current six-fixture
   `rgb-all` transparent sweep are not the only transparent RGB parity guards.
-- Raise the opt-in normal-map fixture threshold after real tangentless official
-  primitives are reviewed.
+- Review real tangentless official normal-map primitives and raise the normal
+  fixture floor beyond the current `45 dB` when stable.
 - For Bevy specifically, deepen the new custom MToon material/shader path
   instead of returning to `StandardMaterial` vertex-color baking.
 - Use the generated heatmaps to prioritize remaining outline, material breadth,

@@ -91,7 +91,8 @@ OPAQUE alpha forcing, MASK `alphaCutoff` pass/fail behavior, and BLEND
 `alphaCutoff` ignore behavior across three-vrm, wgpu, and Bevy. Generated
 MToon material guards also include `just render-parity-mtoon-textures-generated`
 for texture-slot parity and `just render-parity-mtoon-normal-generated` for the
-current tangentless normal-map regression guard.
+current tangentless normal-map regression guard, which now enforces
+`rgb-interior1px >= 45 dB`.
 The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
