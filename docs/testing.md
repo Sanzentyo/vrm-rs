@@ -168,6 +168,10 @@ Material UV transform selection is shared through
 `LoadedVrm::material_uv_transforms`, including MToon transforms, glTF
 base/normal/emissive/occlusion fallbacks, shade fallback-to-base behavior, and
 MToon UV animation scroll/rotation at a requested time.
+Shader-facing UV uniform packing is shared through
+`GltfMaterialUvTransforms::uniform_plan`, covering offset/scale defaults,
+rotation slots, UV animation scroll/rotation, and the current texCoord0-only
+policy before concrete captures convert the plan into backend uniform types.
 Material shading input selection is shared through
 `LoadedVrm::material_shading_plan`, covering MToon versus glTF/PBR fallback
 values, effective emissive strength, normal scale, rim/matcap parameters,
@@ -274,11 +278,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.46% | 83.50% |
+| Workspace total | 80.56% | 83.57% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.22% | 73.91% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 84.35% | 82.60% |
+| `vrm-io` | 84.68% | 82.99% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -304,9 +308,10 @@ sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
 `KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
 RGBA8 image normalization, renderer-neutral RGBA channel sampling,
 renderer-neutral material texture slot and UV transform resolution,
-renderer-neutral material shading input selection, renderer-neutral texCoord0
-transform application, renderer-neutral MToon lighting accumulator resolution,
-and renderer-neutral RGBA mip-chain generation.
+renderer-neutral UV uniform packing, renderer-neutral material shading input
+selection, renderer-neutral texCoord0 transform application, renderer-neutral
+MToon lighting accumulator resolution, and renderer-neutral RGBA mip-chain
+generation.
 
 ## Ordered Parity Milestones
 

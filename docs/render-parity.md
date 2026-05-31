@@ -727,6 +727,9 @@ The matching `LoadedVrm::material_uv_transforms` helper now centralizes MToon
 texture transforms, glTF texture-transform fallbacks, shade fallback-to-base
 behavior, and time-based UV animation scroll/rotation before the concrete
 captures apply expression-driven transform overrides.
+`GltfMaterialUvTransforms::uniform_plan` then packs those transforms into the
+shared shader-facing offset/scale and rotation arrays, keeping texCoord0 policy
+and UV animation uniform layout identical for wgpu, Bevy, and future adapters.
 `LoadedVrm::material_shading_plan` similarly centralizes the renderer-facing
 MToon/PBR fallback shading inputs, including effective emissive strength,
 normal scale, rim/matcap parameters, and VRM0 compatibility flags, while

@@ -247,56 +247,22 @@ impl CaptureBackground {
 
 impl From<MaterialUvTransforms> for MaterialUvUniform {
     fn from(transforms: MaterialUvTransforms) -> Self {
+        let plan = transforms.uniform_plan();
         Self {
-            base_transform: uv_transform_uniform(transforms.base),
-            shade_transform: uv_transform_uniform(transforms.shade),
-            shading_shift_transform: uv_transform_uniform(transforms.shading_shift),
-            normal_transform: uv_transform_uniform(transforms.normal),
-            matcap_transform: uv_transform_uniform(transforms.matcap),
-            rim_transform: uv_transform_uniform(transforms.rim),
-            emissive_transform: uv_transform_uniform(transforms.emissive),
-            occlusion_transform: uv_transform_uniform(transforms.occlusion),
-            uv_animation_mask_transform: uv_transform_uniform(transforms.uv_animation_mask),
-            rotation_a: [
-                uv_rotation_uniform(transforms.base),
-                uv_rotation_uniform(transforms.shade),
-                uv_rotation_uniform(transforms.shading_shift),
-                uv_rotation_uniform(transforms.normal),
-            ],
-            rotation_b: [
-                uv_rotation_uniform(transforms.rim),
-                uv_rotation_uniform(transforms.emissive),
-                uv_rotation_uniform(transforms.uv_animation_mask),
-                uv_rotation_uniform(transforms.matcap),
-            ],
-            uv_animation: [
-                transforms.uv_animation_scroll[0],
-                transforms.uv_animation_scroll[1],
-                transforms.uv_animation_rotation,
-                uv_rotation_uniform(transforms.occlusion),
-            ],
+            base_transform: plan.base_transform,
+            shade_transform: plan.shade_transform,
+            shading_shift_transform: plan.shading_shift_transform,
+            normal_transform: plan.normal_transform,
+            matcap_transform: plan.matcap_transform,
+            rim_transform: plan.rim_transform,
+            emissive_transform: plan.emissive_transform,
+            occlusion_transform: plan.occlusion_transform,
+            uv_animation_mask_transform: plan.uv_animation_mask_transform,
+            rotation_a: plan.rotation_a,
+            rotation_b: plan.rotation_b,
+            uv_animation: plan.uv_animation,
         }
     }
-}
-
-fn uv_transform_uniform(transform: Option<TextureTransform2d>) -> [f32; 4] {
-    let Some(transform) =
-        transform.filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
-    else {
-        return [0.0, 0.0, 1.0, 1.0];
-    };
-    [
-        transform.offset[0],
-        transform.offset[1],
-        transform.scale[0],
-        transform.scale[1],
-    ]
-}
-
-fn uv_rotation_uniform(transform: Option<TextureTransform2d>) -> f32 {
-    transform
-        .filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
-        .map_or(0.0, |transform| transform.rotation)
 }
 
 struct TextureBindGroup {

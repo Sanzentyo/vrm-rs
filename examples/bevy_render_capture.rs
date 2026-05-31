@@ -1391,6 +1391,7 @@ fn bevy_mtoon_material(
         context.options.mtoon_time,
         context.expression_effects,
     );
+    let uv_plan = uv_transforms.uniform_plan();
     let image_handles = context.image_handles;
     let texture_slots = loaded.material_texture_slots(primitive.material);
     BevyMtoonMaterial {
@@ -1459,33 +1460,18 @@ fn bevy_mtoon_material(
             context.options.directional_b,
             0.0,
         ),
-        base_uv_transform: bevy_uv_transform(uv_transforms.base),
-        shade_uv_transform: bevy_uv_transform(uv_transforms.shade),
-        shading_shift_uv_transform: bevy_uv_transform(uv_transforms.shading_shift),
-        normal_uv_transform: bevy_uv_transform(uv_transforms.normal),
-        matcap_uv_transform: bevy_uv_transform(uv_transforms.matcap),
-        rim_uv_transform: bevy_uv_transform(uv_transforms.rim),
-        emissive_uv_transform: bevy_uv_transform(uv_transforms.emissive),
-        occlusion_uv_transform: bevy_uv_transform(uv_transforms.occlusion),
-        uv_animation_mask_uv_transform: bevy_uv_transform(uv_transforms.uv_animation_mask),
-        uv_rotation_a: BVec4::new(
-            bevy_uv_rotation(uv_transforms.base),
-            bevy_uv_rotation(uv_transforms.shade),
-            bevy_uv_rotation(uv_transforms.shading_shift),
-            bevy_uv_rotation(uv_transforms.normal),
-        ),
-        uv_rotation_b: BVec4::new(
-            bevy_uv_rotation(uv_transforms.rim),
-            bevy_uv_rotation(uv_transforms.emissive),
-            bevy_uv_rotation(uv_transforms.uv_animation_mask),
-            bevy_uv_rotation(uv_transforms.matcap),
-        ),
-        uv_animation: BVec4::new(
-            uv_transforms.uv_animation_scroll[0],
-            uv_transforms.uv_animation_scroll[1],
-            uv_transforms.uv_animation_rotation,
-            bevy_uv_rotation(uv_transforms.occlusion),
-        ),
+        base_uv_transform: BVec4::from_array(uv_plan.base_transform),
+        shade_uv_transform: BVec4::from_array(uv_plan.shade_transform),
+        shading_shift_uv_transform: BVec4::from_array(uv_plan.shading_shift_transform),
+        normal_uv_transform: BVec4::from_array(uv_plan.normal_transform),
+        matcap_uv_transform: BVec4::from_array(uv_plan.matcap_transform),
+        rim_uv_transform: BVec4::from_array(uv_plan.rim_transform),
+        emissive_uv_transform: BVec4::from_array(uv_plan.emissive_transform),
+        occlusion_uv_transform: BVec4::from_array(uv_plan.occlusion_transform),
+        uv_animation_mask_uv_transform: BVec4::from_array(uv_plan.uv_animation_mask_transform),
+        uv_rotation_a: BVec4::from_array(uv_plan.rotation_a),
+        uv_rotation_b: BVec4::from_array(uv_plan.rotation_b),
+        uv_animation: BVec4::from_array(uv_plan.uv_animation),
         base_texture: texture_slots
             .base
             .and_then(|texture| image_handles.color_images.get(texture))
@@ -1810,26 +1796,6 @@ fn apply_texture_transform_slot(
         rotation: initial.rotation,
         tex_coord: initial.tex_coord,
     }
-}
-
-fn bevy_uv_transform(transform: Option<TextureTransform2d>) -> BVec4 {
-    let Some(transform) =
-        transform.filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
-    else {
-        return BVec4::new(0.0, 0.0, 1.0, 1.0);
-    };
-    BVec4::new(
-        transform.offset[0],
-        transform.offset[1],
-        transform.scale[0],
-        transform.scale[1],
-    )
-}
-
-fn bevy_uv_rotation(transform: Option<TextureTransform2d>) -> f32 {
-    transform
-        .filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
-        .map_or(0.0, |transform| transform.rotation)
 }
 
 fn material_outline_width_image(

@@ -544,6 +544,76 @@ pub struct GltfMaterialUvTransforms {
     pub uv_animation_rotation: f32,
 }
 
+impl GltfMaterialUvTransforms {
+    pub fn uniform_plan(self) -> GltfMaterialUvUniformPlan {
+        GltfMaterialUvUniformPlan {
+            base_transform: texture_transform_uniform(self.base),
+            shade_transform: texture_transform_uniform(self.shade),
+            shading_shift_transform: texture_transform_uniform(self.shading_shift),
+            normal_transform: texture_transform_uniform(self.normal),
+            matcap_transform: texture_transform_uniform(self.matcap),
+            rim_transform: texture_transform_uniform(self.rim),
+            emissive_transform: texture_transform_uniform(self.emissive),
+            occlusion_transform: texture_transform_uniform(self.occlusion),
+            uv_animation_mask_transform: texture_transform_uniform(self.uv_animation_mask),
+            rotation_a: [
+                texture_transform_rotation(self.base),
+                texture_transform_rotation(self.shade),
+                texture_transform_rotation(self.shading_shift),
+                texture_transform_rotation(self.normal),
+            ],
+            rotation_b: [
+                texture_transform_rotation(self.rim),
+                texture_transform_rotation(self.emissive),
+                texture_transform_rotation(self.uv_animation_mask),
+                texture_transform_rotation(self.matcap),
+            ],
+            uv_animation: [
+                self.uv_animation_scroll[0],
+                self.uv_animation_scroll[1],
+                self.uv_animation_rotation,
+                texture_transform_rotation(self.occlusion),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialUvUniformPlan {
+    pub base_transform: [f32; 4],
+    pub shade_transform: [f32; 4],
+    pub shading_shift_transform: [f32; 4],
+    pub normal_transform: [f32; 4],
+    pub matcap_transform: [f32; 4],
+    pub rim_transform: [f32; 4],
+    pub emissive_transform: [f32; 4],
+    pub occlusion_transform: [f32; 4],
+    pub uv_animation_mask_transform: [f32; 4],
+    pub rotation_a: [f32; 4],
+    pub rotation_b: [f32; 4],
+    pub uv_animation: [f32; 4],
+}
+
+fn texture_transform_uniform(transform: Option<TextureTransform2d>) -> [f32; 4] {
+    let Some(transform) =
+        transform.filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
+    else {
+        return [0.0, 0.0, 1.0, 1.0];
+    };
+    [
+        transform.offset[0],
+        transform.offset[1],
+        transform.scale[0],
+        transform.scale[1],
+    ]
+}
+
+fn texture_transform_rotation(transform: Option<TextureTransform2d>) -> f32 {
+    transform
+        .filter(|transform| transform.tex_coord.is_none_or(|tex_coord| tex_coord == 0))
+        .map_or(0.0, |transform| transform.rotation)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GltfMaterialShadingOptions {
     pub v0_compat_shade: bool,
@@ -2356,6 +2426,14 @@ mod tests {
                 ..Default::default()
             }
         );
+        let uv_plan = loaded.material_uv_transforms(Some(0), 1.0).uniform_plan();
+        assert_vec4_close(uv_plan.base_transform, [0.0, 0.0, 1.0, 1.0]);
+        assert_vec4_close(uv_plan.shade_transform, [0.0, 0.0, 1.0, 1.0]);
+        assert_vec4_close(uv_plan.normal_transform, [0.1, 0.2, 0.5, 0.75]);
+        assert_vec4_close(uv_plan.occlusion_transform, [0.3, 0.4, 0.6, 0.7]);
+        assert_vec4_close(uv_plan.rotation_a, [0.0, 0.0, 0.0, 0.0]);
+        assert_vec4_close(uv_plan.uv_animation, [0.0, 0.0, 0.0, 0.0]);
+
         let shading = loaded.material_shading_plan(
             Some(0),
             GltfMaterialShadingOptions {
