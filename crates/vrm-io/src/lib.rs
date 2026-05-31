@@ -97,6 +97,53 @@ impl From<gltf::image::Format> for ImageFormat {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GltfTextureData {
     pub image: usize,
+    pub sampler: GltfSamplerData,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GltfSamplerData {
+    pub mag_filter: GltfMagFilter,
+    pub min_filter: GltfMinFilter,
+    pub wrap_s: GltfWrapMode,
+    pub wrap_t: GltfWrapMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfMagFilter {
+    Nearest,
+    #[default]
+    Linear,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfMinFilter {
+    Nearest,
+    Linear,
+    NearestMipmapNearest,
+    LinearMipmapNearest,
+    NearestMipmapLinear,
+    #[default]
+    LinearMipmapLinear,
+}
+
+impl GltfMinFilter {
+    pub fn uses_mipmaps(self) -> bool {
+        matches!(
+            self,
+            Self::NearestMipmapNearest
+                | Self::LinearMipmapNearest
+                | Self::NearestMipmapLinear
+                | Self::LinearMipmapLinear
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfWrapMode {
+    ClampToEdge,
+    MirroredRepeat,
+    #[default]
+    Repeat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -286,10 +333,51 @@ fn extract_skins(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> V
 fn extract_textures(document: &gltf::Document) -> Vec<GltfTextureData> {
     document
         .textures()
-        .map(|texture| GltfTextureData {
-            image: texture.source().index(),
+        .map(|texture| {
+            let sampler = texture.sampler();
+            GltfTextureData {
+                image: texture.source().index(),
+                sampler: GltfSamplerData {
+                    mag_filter: sampler.mag_filter().map(Into::into).unwrap_or_default(),
+                    min_filter: sampler.min_filter().map(Into::into).unwrap_or_default(),
+                    wrap_s: sampler.wrap_s().into(),
+                    wrap_t: sampler.wrap_t().into(),
+                },
+            }
         })
         .collect()
+}
+
+impl From<gltf::texture::MagFilter> for GltfMagFilter {
+    fn from(value: gltf::texture::MagFilter) -> Self {
+        match value {
+            gltf::texture::MagFilter::Nearest => Self::Nearest,
+            gltf::texture::MagFilter::Linear => Self::Linear,
+        }
+    }
+}
+
+impl From<gltf::texture::MinFilter> for GltfMinFilter {
+    fn from(value: gltf::texture::MinFilter) -> Self {
+        match value {
+            gltf::texture::MinFilter::Nearest => Self::Nearest,
+            gltf::texture::MinFilter::Linear => Self::Linear,
+            gltf::texture::MinFilter::NearestMipmapNearest => Self::NearestMipmapNearest,
+            gltf::texture::MinFilter::LinearMipmapNearest => Self::LinearMipmapNearest,
+            gltf::texture::MinFilter::NearestMipmapLinear => Self::NearestMipmapLinear,
+            gltf::texture::MinFilter::LinearMipmapLinear => Self::LinearMipmapLinear,
+        }
+    }
+}
+
+impl From<gltf::texture::WrappingMode> for GltfWrapMode {
+    fn from(value: gltf::texture::WrappingMode) -> Self {
+        match value {
+            gltf::texture::WrappingMode::ClampToEdge => Self::ClampToEdge,
+            gltf::texture::WrappingMode::MirroredRepeat => Self::MirroredRepeat,
+            gltf::texture::WrappingMode::Repeat => Self::Repeat,
+        }
+    }
 }
 
 fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
@@ -1432,7 +1520,13 @@ mod tests {
             "mimeType": "image/png",
             "bufferView": 0
         }]);
-        sample["textures"] = json!([{ "source": 0 }]);
+        sample["samplers"] = json!([{
+            "magFilter": 9728,
+            "minFilter": 9729,
+            "wrapS": 33071,
+            "wrapT": 33648
+        }]);
+        sample["textures"] = json!([{ "source": 0, "sampler": 0 }]);
         sample["materials"][0]["pbrMetallicRoughness"] = json!({
             "baseColorTexture": {
                 "index": 0,
@@ -1476,7 +1570,18 @@ mod tests {
         assert_eq!(loaded.images[0].height, 1);
         assert_eq!(loaded.images[0].format, ImageFormat::R8G8B8A8);
         assert!(!loaded.images[0].bytes.is_empty());
-        assert_eq!(loaded.textures, vec![GltfTextureData { image: 0 }]);
+        assert_eq!(
+            loaded.textures,
+            vec![GltfTextureData {
+                image: 0,
+                sampler: GltfSamplerData {
+                    mag_filter: GltfMagFilter::Nearest,
+                    min_filter: GltfMinFilter::Linear,
+                    wrap_s: GltfWrapMode::ClampToEdge,
+                    wrap_t: GltfWrapMode::MirroredRepeat,
+                },
+            }]
+        );
         assert_eq!(
             loaded.gltf_materials[0],
             GltfMaterialData {

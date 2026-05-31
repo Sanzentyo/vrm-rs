@@ -698,6 +698,10 @@ directional and ambient light setup, and the fixed camera frustum. This makes
 MToon light/color comparisons traceable even though the three-vrm shader uses
 Three.js scene-light accumulation rather than vrm-rs' aggregate capture
 uniform.
+The Rust capture paths also honor glTF sampler min/mag/wrap policy per texture
+using structured sampler data extracted by `vrm-io`; this keeps non-mipmapped
+VRM0 textures, mipmapped VRM1 textures, and generated fixtures on the same
+sampling contract as GLTFLoader/three-vrm.
 
 The canonical comparison images for the current local sample sweep are:
 

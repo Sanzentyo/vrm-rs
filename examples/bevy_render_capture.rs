@@ -52,8 +52,8 @@ use std::sync::{
 use std::time::Duration;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm,
-    load_vrm_from_path,
+    GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
+    GltfWrapMode, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -321,15 +321,26 @@ fn spawn_vrm_meshes(
 ) -> Result<(), Box<dyn Error>> {
     let image_handles = BevyImageHandles {
         color_images: loaded
-            .images
+            .textures
             .iter()
-            .map(|image| bevy_image(image).map(|image| images.add(image)))
+            .map(|texture| {
+                loaded
+                    .images
+                    .get(texture.image)
+                    .and_then(|image| bevy_image(image, texture.sampler))
+                    .map(|image| images.add(image))
+            })
             .collect::<Vec<_>>(),
         linear_images: loaded
-            .images
+            .textures
             .iter()
-            .map(|image| {
-                bevy_image_with_format(image, TextureFormat::Rgba8Unorm)
+            .map(|texture| {
+                loaded
+                    .images
+                    .get(texture.image)
+                    .and_then(|image| {
+                        bevy_image_with_format(image, TextureFormat::Rgba8Unorm, texture.sampler)
+                    })
                     .map(|image| images.add(image))
             })
             .collect::<Vec<_>>(),
@@ -1567,42 +1578,40 @@ fn bevy_mtoon_material(
             uv_transforms.uv_animation_rotation,
             bevy_uv_rotation(uv_transforms.occlusion),
         ),
-        base_texture: material_main_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        base_texture: material_main_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        shade_texture: material_shade_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        shade_texture: material_shade_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        shading_shift_texture: material_shading_shift_image_index(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        shading_shift_texture: material_shading_shift_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.black.clone()),
-        matcap_texture: material_matcap_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        matcap_texture: material_matcap_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.black.clone()),
-        rim_texture: material_rim_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        rim_texture: material_rim_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
         normal_texture: material_normal_texture(loaded, primitive.material)
-            .and_then(|texture| loaded.textures.get(texture))
-            .map(|texture| texture.image)
-            .and_then(|image| image_handles.linear_images.get(image))
+            .and_then(|texture| image_handles.linear_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.neutral_normal.clone()),
-        emissive_texture: material_emissive_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        emissive_texture: material_emissive_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        uv_animation_mask_texture: material_uv_animation_mask_image(loaded, primitive.material)
-            .and_then(|image| image_handles.color_images.get(image))
+        uv_animation_mask_texture: material_uv_animation_mask_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        occlusion_texture: material_occlusion_image(loaded, primitive.material)
-            .and_then(|image| image_handles.linear_images.get(image))
+        occlusion_texture: material_occlusion_texture(loaded, primitive.material)
+            .and_then(|texture| image_handles.linear_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
         alpha_mode,
@@ -1967,7 +1976,7 @@ fn bevy_uv_rotation(transform: Option<TextureTransform2d>) -> f32 {
         .map_or(0.0, |transform| transform.rotation)
 }
 
-fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+fn material_main_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
     let mtoon_texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
@@ -1977,64 +1986,64 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
             .and_then(|index| loaded.gltf_materials.get(index))
             .and_then(|material| material.base_color_texture)
     })?;
-    loaded.textures.get(texture).map(|texture| texture.image)
+    loaded.textures.get(texture).map(|_| texture)
 }
 
-fn material_shade_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+fn material_shade_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
     let texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
         .and_then(|mtoon| mtoon.textures.shade_multiply_texture)?;
-    loaded.textures.get(texture.0).map(|texture| texture.image)
+    loaded.textures.get(texture.0).map(|_| texture.0)
 }
 
-fn material_shading_shift_image_index(
+fn material_shading_shift_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.shading_shift_texture)?;
+    loaded.textures.get(texture.0).map(|_| texture.0)
+}
+
+fn material_matcap_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.matcap_texture)?;
+    loaded.textures.get(texture.0).map(|_| texture.0)
+}
+
+fn material_rim_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.model().document().materials.get(index))
+        .and_then(|material| material.mtoon.as_ref())
+        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)?;
+    loaded.textures.get(texture.0).map(|_| texture.0)
+}
+
+fn material_emissive_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.emissive_texture)?;
+    loaded.textures.get(texture).map(|_| texture)
+}
+
+fn material_occlusion_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+    let texture = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .and_then(|material| material.occlusion_texture)?;
+    loaded.textures.get(texture).map(|_| texture)
+}
+
+fn material_uv_animation_mask_texture(
     loaded: &LoadedVrm,
     material: Option<usize>,
 ) -> Option<usize> {
     let texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.shading_shift_texture)?;
-    loaded.textures.get(texture.0).map(|texture| texture.image)
-}
-
-fn material_matcap_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.matcap_texture)?;
-    loaded.textures.get(texture.0).map(|texture| texture.image)
-}
-
-fn material_rim_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)?;
-    loaded.textures.get(texture.0).map(|texture| texture.image)
-}
-
-fn material_emissive_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.emissive_texture)?;
-    loaded.textures.get(texture).map(|texture| texture.image)
-}
-
-fn material_occlusion_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.occlusion_texture)?;
-    loaded.textures.get(texture).map(|texture| texture.image)
-}
-
-fn material_uv_animation_mask_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
         .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)?;
-    loaded.textures.get(texture.0).map(|texture| texture.image)
+    loaded.textures.get(texture.0).map(|_| texture.0)
 }
 
 fn material_outline_width_image(
@@ -2101,20 +2110,31 @@ fn lerp(left: f32, right: f32, t: f32) -> f32 {
     left + (right - left) * t
 }
 
-fn bevy_image(image: &ImageData) -> Option<Image> {
-    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb)
+fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {
+    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb, sampler)
 }
 
-fn bevy_image_with_format(image: &ImageData, format: TextureFormat) -> Option<Image> {
+fn bevy_image_with_format(
+    image: &ImageData,
+    format: TextureFormat,
+    sampler: GltfSamplerData,
+) -> Option<Image> {
     Some(bevy_image_from_rgba(
         image.width,
         image.height,
         image_rgba8(image)?,
         format,
+        sampler,
     ))
 }
 
-fn bevy_image_from_rgba(width: u32, height: u32, rgba: Vec<u8>, format: TextureFormat) -> Image {
+fn bevy_image_from_rgba(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    format: TextureFormat,
+    sampler: GltfSamplerData,
+) -> Image {
     let levels = mip_chain(width, height, &rgba);
     let mip_level_count = u32::try_from(levels.len()).unwrap_or(1);
     let data = levels
@@ -2134,20 +2154,67 @@ fn bevy_image_from_rgba(width: u32, height: u32, rgba: Vec<u8>, format: TextureF
     image.texture_descriptor.mip_level_count = mip_level_count;
     image.data_order = TextureDataOrder::MipMajor;
     image.data = Some(data);
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        address_mode_w: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: ImageFilterMode::Nearest,
-        ..Default::default()
-    });
+    image.sampler = ImageSampler::Descriptor(bevy_sampler_descriptor(sampler));
     image
 }
 
 fn single_pixel_image(rgba: [u8; 4], format: TextureFormat) -> Image {
-    bevy_image_from_rgba(1, 1, rgba.to_vec(), format)
+    bevy_image_from_rgba(1, 1, rgba.to_vec(), format, GltfSamplerData::default())
+}
+
+fn bevy_sampler_descriptor(sampler: GltfSamplerData) -> ImageSamplerDescriptor {
+    ImageSamplerDescriptor {
+        address_mode_u: bevy_address_mode(sampler.wrap_s),
+        address_mode_v: bevy_address_mode(sampler.wrap_t),
+        address_mode_w: ImageAddressMode::Repeat,
+        mag_filter: bevy_mag_filter(sampler.mag_filter),
+        min_filter: bevy_min_filter(sampler.min_filter),
+        mipmap_filter: bevy_mipmap_filter(sampler.min_filter),
+        lod_max_clamp: if sampler.min_filter.uses_mipmaps() {
+            32.0
+        } else {
+            0.0
+        },
+        ..Default::default()
+    }
+}
+
+fn bevy_address_mode(mode: GltfWrapMode) -> ImageAddressMode {
+    match mode {
+        GltfWrapMode::ClampToEdge => ImageAddressMode::ClampToEdge,
+        GltfWrapMode::MirroredRepeat => ImageAddressMode::MirrorRepeat,
+        GltfWrapMode::Repeat => ImageAddressMode::Repeat,
+    }
+}
+
+fn bevy_mag_filter(filter: GltfMagFilter) -> ImageFilterMode {
+    match filter {
+        GltfMagFilter::Nearest => ImageFilterMode::Nearest,
+        GltfMagFilter::Linear => ImageFilterMode::Linear,
+    }
+}
+
+fn bevy_min_filter(filter: GltfMinFilter) -> ImageFilterMode {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::NearestMipmapLinear => ImageFilterMode::Nearest,
+        GltfMinFilter::Linear
+        | GltfMinFilter::LinearMipmapNearest
+        | GltfMinFilter::LinearMipmapLinear => ImageFilterMode::Linear,
+    }
+}
+
+fn bevy_mipmap_filter(filter: GltfMinFilter) -> ImageFilterMode {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::Linear
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::LinearMipmapNearest => ImageFilterMode::Nearest,
+        GltfMinFilter::NearestMipmapLinear | GltfMinFilter::LinearMipmapLinear => {
+            ImageFilterMode::Linear
+        }
+    }
 }
 
 struct TextureMipLevel {

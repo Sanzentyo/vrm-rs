@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    GltfMeshData, GltfNodeRest, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
-    load_vrm_from_path,
+    GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
+    GltfSkinData, GltfWrapMode, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -319,8 +319,9 @@ struct MaterialExtraUniform {
 }
 
 struct TextureResource {
-    image: Option<usize>,
+    texture: Option<usize>,
     view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
 }
 
 struct TextureResourceTables<'a> {
@@ -343,7 +344,7 @@ struct MaterialImages {
 }
 
 struct TextureUpload<'a> {
-    image: Option<usize>,
+    texture: Option<usize>,
     width: u32,
     height: u32,
     rgba: &'a [u8],
@@ -1477,7 +1478,7 @@ fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2]
     ]
 }
 
-fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
+fn material_main_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
     let mtoon_texture = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
@@ -1487,47 +1488,39 @@ fn material_main_image(loaded: &LoadedVrm, material: Option<usize>) -> Option<us
             .and_then(|index| loaded.gltf_materials.get(index))
             .and_then(|material| material.base_color_texture)
     })?;
-    loaded.textures.get(texture).map(|texture| texture.image)
+    loaded.textures.get(texture).map(|_| texture)
 }
 
 fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImages {
     let mtoon = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref());
-    let base = material_main_image(loaded, material);
+    let base = material_main_texture(loaded, material);
     let shade = mtoon
         .and_then(|mtoon| mtoon.textures.shade_multiply_texture)
-        .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image);
+        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
     let shading_shift = mtoon
         .and_then(|mtoon| mtoon.textures.shading_shift_texture)
-        .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image);
+        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
     let normal = material_normal_texture(loaded, material)
-        .and_then(|texture| loaded.textures.get(texture))
-        .map(|texture| texture.image);
+        .filter(|texture| loaded.textures.get(*texture).is_some());
     let matcap = mtoon
         .and_then(|mtoon| mtoon.textures.matcap_texture)
-        .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image);
+        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
     let rim = mtoon
         .and_then(|mtoon| mtoon.textures.rim_multiply_texture)
-        .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image);
+        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
     let emissive = material
         .and_then(|index| loaded.gltf_materials.get(index))
         .and_then(|material| material.emissive_texture)
-        .and_then(|texture| loaded.textures.get(texture))
-        .map(|texture| texture.image);
+        .filter(|texture| loaded.textures.get(*texture).is_some());
     let occlusion = material
         .and_then(|index| loaded.gltf_materials.get(index))
         .and_then(|material| material.occlusion_texture)
-        .and_then(|texture| loaded.textures.get(texture))
-        .map(|texture| texture.image);
+        .filter(|texture| loaded.textures.get(*texture).is_some());
     let uv_animation_mask = mtoon
         .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)
-        .and_then(|texture| loaded.textures.get(texture.0))
-        .map(|texture| texture.image);
+        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
     MaterialImages {
         base,
         shade,
@@ -1593,8 +1586,9 @@ fn texture_resources(
             device,
             queue,
             format,
+            GltfSamplerData::default(),
             TextureUpload {
-                image: None,
+                texture: None,
                 width: 1,
                 height: 1,
                 rgba: &[255, 255, 255, 255],
@@ -1604,8 +1598,9 @@ fn texture_resources(
             device,
             queue,
             format,
+            GltfSamplerData::default(),
             TextureUpload {
-                image: None,
+                texture: None,
                 width: 1,
                 height: 1,
                 rgba: &[0, 0, 0, 255],
@@ -1615,22 +1610,27 @@ fn texture_resources(
             device,
             queue,
             format,
+            GltfSamplerData::default(),
             TextureUpload {
-                image: None,
+                texture: None,
                 width: 1,
                 height: 1,
                 rgba: &[128, 128, 255, 255],
             },
         ),
     ];
-    for (index, image) in loaded.images.iter().enumerate() {
+    for (index, texture) in loaded.textures.iter().enumerate() {
+        let Some(image) = loaded.images.get(texture.image) else {
+            continue;
+        };
         let rgba = image_rgba8(image)?;
         resources.push(texture_resource(
             device,
             queue,
             format,
+            texture.sampler,
             TextureUpload {
-                image: Some(index),
+                texture: Some(index),
                 width: image.width,
                 height: image.height,
                 rgba: &rgba,
@@ -1644,6 +1644,7 @@ fn texture_resource(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
+    sampler_data: GltfSamplerData,
     upload: TextureUpload<'_>,
 ) -> TextureResource {
     let mip_levels = mip_chain(upload.width, upload.height, upload.rgba);
@@ -1683,9 +1684,66 @@ fn texture_resource(
         );
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&sampler_descriptor(sampler_data));
     TextureResource {
-        image: upload.image,
+        texture: upload.texture,
         view,
+        sampler,
+    }
+}
+
+fn sampler_descriptor(sampler: GltfSamplerData) -> wgpu::SamplerDescriptor<'static> {
+    wgpu::SamplerDescriptor {
+        label: Some("render parity texture sampler"),
+        address_mode_u: address_mode(sampler.wrap_s),
+        address_mode_v: address_mode(sampler.wrap_t),
+        mag_filter: mag_filter(sampler.mag_filter),
+        min_filter: min_filter(sampler.min_filter),
+        mipmap_filter: mipmap_filter(sampler.min_filter),
+        lod_max_clamp: if sampler.min_filter.uses_mipmaps() {
+            32.0
+        } else {
+            0.0
+        },
+        ..Default::default()
+    }
+}
+
+fn address_mode(mode: GltfWrapMode) -> wgpu::AddressMode {
+    match mode {
+        GltfWrapMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+        GltfWrapMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+        GltfWrapMode::Repeat => wgpu::AddressMode::Repeat,
+    }
+}
+
+fn mag_filter(filter: GltfMagFilter) -> wgpu::FilterMode {
+    match filter {
+        GltfMagFilter::Nearest => wgpu::FilterMode::Nearest,
+        GltfMagFilter::Linear => wgpu::FilterMode::Linear,
+    }
+}
+
+fn min_filter(filter: GltfMinFilter) -> wgpu::FilterMode {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::NearestMipmapLinear => wgpu::FilterMode::Nearest,
+        GltfMinFilter::Linear
+        | GltfMinFilter::LinearMipmapNearest
+        | GltfMinFilter::LinearMipmapLinear => wgpu::FilterMode::Linear,
+    }
+}
+
+fn mipmap_filter(filter: GltfMinFilter) -> wgpu::MipmapFilterMode {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::Linear
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::LinearMipmapNearest => wgpu::MipmapFilterMode::Nearest,
+        GltfMinFilter::NearestMipmapLinear | GltfMinFilter::LinearMipmapLinear => {
+            wgpu::MipmapFilterMode::Linear
+        }
     }
 }
 
@@ -1732,7 +1790,6 @@ fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
 fn material_texture_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
     resources: TextureResourceTables<'_>,
     images: MaterialImages,
     uv_transforms: MaterialUvTransforms,
@@ -1752,6 +1809,7 @@ fn material_texture_bind_group(
         0,
     );
     let normal = texture_view(resources.normal, resources.indices, images.normal, 2);
+    let sampler = texture_sampler(resources.color, resources.indices, images.base, 0);
     let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render parity material uv transform uniform"),
         contents: bytemuck::bytes_of(&MaterialUvUniform::from(uv_transforms)),
@@ -1826,22 +1884,36 @@ fn material_texture_bind_group(
 fn texture_view<'a>(
     resources: &'a [TextureResource],
     indices: &HashMap<usize, usize>,
-    image: Option<usize>,
+    texture: Option<usize>,
     fallback_index: usize,
 ) -> &'a wgpu::TextureView {
-    image
-        .and_then(|image| indices.get(&image).copied())
+    texture
+        .and_then(|texture| indices.get(&texture).copied())
         .and_then(|index| resources.get(index))
         .or_else(|| resources.get(fallback_index))
         .map(|resource| &resource.view)
         .expect("texture resource table must contain a white fallback")
 }
 
+fn texture_sampler<'a>(
+    resources: &'a [TextureResource],
+    indices: &HashMap<usize, usize>,
+    texture: Option<usize>,
+    fallback_index: usize,
+) -> &'a wgpu::Sampler {
+    texture
+        .and_then(|texture| indices.get(&texture).copied())
+        .and_then(|index| resources.get(index))
+        .or_else(|| resources.get(fallback_index))
+        .map(|resource| &resource.sampler)
+        .expect("texture resource table must contain a sampler fallback")
+}
+
 fn texture_resource_indices(resources: &[TextureResource]) -> HashMap<usize, usize> {
     resources
         .iter()
         .enumerate()
-        .filter_map(|(index, resource)| resource.image.map(|image| (image, index)))
+        .filter_map(|(index, resource)| resource.texture.map(|texture| (texture, index)))
         .collect()
 }
 
@@ -2160,15 +2232,6 @@ async fn render_capture(
                 },
             ],
         });
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("render parity sampler"),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-        ..Default::default()
-    });
     let color_texture_resources =
         texture_resources(loaded, &device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let normal_texture_resources =
@@ -2200,7 +2263,6 @@ async fn render_capture(
             material_texture_bind_group(
                 &device,
                 &texture_bind_group_layout,
-                &sampler,
                 TextureResourceTables {
                     color: &color_texture_resources,
                     normal: &normal_texture_resources,
