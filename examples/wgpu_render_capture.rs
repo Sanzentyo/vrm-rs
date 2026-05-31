@@ -19,13 +19,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
 use vrm_io::{
-    GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
-    GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
-    GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfNormalMapMode,
-    GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode,
-    LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents,
-    image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
+    GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
+    GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfMaterialTextureBinding,
+    GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
+    GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter,
+    GltfMtoonLightAccumulation as GltfLightAccumulation, GltfNormalMapMode, GltfOutlineScale,
+    GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
+    Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents, image_data_to_rgba8,
+    load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -188,6 +189,15 @@ impl MtoonLightAccumulation {
 }
 
 impl From<MtoonLightAccumulation> for AdapterMtoonLightAccumulation {
+    fn from(value: MtoonLightAccumulation) -> Self {
+        match value {
+            MtoonLightAccumulation::Tuned => Self::Tuned,
+            MtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
+        }
+    }
+}
+
+impl From<MtoonLightAccumulation> for GltfLightAccumulation {
     fn from(value: MtoonLightAccumulation) -> Self {
         match value {
             MtoonLightAccumulation::Tuned => Self::Tuned,
@@ -595,25 +605,17 @@ fn material_extra_uniform(
     shading: GltfMaterialShadingPlan,
     options: &CaptureOptions,
 ) -> MaterialExtraUniform {
+    let plan = shading
+        .render_extra_plan(GltfMaterialRenderExtraOptions {
+            light_accumulation: options.mtoon_light_accumulation.into(),
+            derivative_normals: false,
+            direct_light_scale: options.direct_light_scale,
+        })
+        .uniform_plan();
     MaterialExtraUniform {
-        flags: [
-            if shading.v0_compat_shade { 1.0 } else { 0.0 },
-            if shading.pbr_fallback { 1.0 } else { 0.0 },
-            if AdapterMtoonLightAccumulation::from(options.mtoon_light_accumulation).is_three_vrm()
-            {
-                1.0
-            } else {
-                0.0
-            },
-            0.0,
-        ],
-        pbr_params: [
-            shading.metallic,
-            shading.roughness,
-            shading.occlusion_strength,
-            0.0,
-        ],
-        flags2: [if shading.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+        flags: plan.flags,
+        pbr_params: plan.pbr_params,
+        flags2: plan.flags2,
     }
 }
 

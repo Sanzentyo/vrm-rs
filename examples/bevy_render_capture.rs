@@ -52,13 +52,14 @@ use std::time::Duration;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
-    GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
-    GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMinFilter, GltfNormalMapMode, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
+    GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfMaterialTextureBinding,
+    GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
+    GltfMaterialTextureSlot, GltfMinFilter, GltfMtoonLightAccumulation as GltfLightAccumulation,
+    GltfNormalMapMode, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData,
+    GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
+    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
+    transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -163,6 +164,15 @@ impl MtoonLightAccumulation {
 }
 
 impl From<MtoonLightAccumulation> for AdapterMtoonLightAccumulation {
+    fn from(value: MtoonLightAccumulation) -> Self {
+        match value {
+            MtoonLightAccumulation::Tuned => Self::Tuned,
+            MtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
+        }
+    }
+}
+
+impl From<MtoonLightAccumulation> for GltfLightAccumulation {
     fn from(value: MtoonLightAccumulation) -> Self {
         match value {
             MtoonLightAccumulation::Tuned => Self::Tuned,
@@ -920,6 +930,13 @@ fn bevy_mtoon_material(
     let texture_plan = loaded
         .material_texture_slots(primitive.material)
         .binding_plan();
+    let render_extra = shading
+        .render_extra_plan(GltfMaterialRenderExtraOptions {
+            light_accumulation: context.options.mtoon_light_accumulation.into(),
+            derivative_normals: use_derivative_normals,
+            direct_light_scale: context.options.direct_light_scale,
+        })
+        .uniform_plan();
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -953,25 +970,9 @@ fn bevy_mtoon_material(
             shading.parametric_rim_lift,
             0.0,
         ),
-        material_flags: BVec4::new(
-            if shading.v0_compat_shade { 1.0 } else { 0.0 },
-            if shading.pbr_fallback { 1.0 } else { 0.0 },
-            if AdapterMtoonLightAccumulation::from(context.options.mtoon_light_accumulation)
-                .is_three_vrm()
-            {
-                1.0
-            } else {
-                0.0
-            },
-            if use_derivative_normals { 1.0 } else { 0.0 },
-        ),
-        material_flags2: BVec4::new(if shading.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
-        pbr_params: BVec4::new(
-            shading.metallic,
-            shading.roughness,
-            shading.occlusion_strength,
-            context.options.direct_light_scale,
-        ),
+        material_flags: BVec4::from_array(render_extra.flags),
+        material_flags2: BVec4::from_array(render_extra.flags2),
+        pbr_params: BVec4::from_array(render_extra.pbr_params),
         outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
             alpha_mode_code(alpha_mode),

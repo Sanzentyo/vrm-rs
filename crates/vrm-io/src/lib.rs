@@ -1092,6 +1092,102 @@ pub struct GltfMaterialShadingPlan {
     pub v0_compat_shade: bool,
 }
 
+impl GltfMaterialShadingPlan {
+    pub fn render_extra_plan(
+        self,
+        options: GltfMaterialRenderExtraOptions,
+    ) -> GltfMaterialRenderExtraPlan {
+        GltfMaterialRenderExtraPlan {
+            flags: GltfMaterialRenderFlags {
+                v0_compat_shade: self.v0_compat_shade,
+                pbr_fallback: self.pbr_fallback,
+                three_vrm_light_accumulation: options.light_accumulation.is_three_vrm(),
+                derivative_normals: options.derivative_normals,
+                unlit: self.unlit,
+            },
+            metallic: self.metallic,
+            roughness: self.roughness,
+            occlusion_strength: self.occlusion_strength,
+            direct_light_scale: options.direct_light_scale,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfMtoonLightAccumulation {
+    Tuned,
+    #[default]
+    ThreeVrm,
+}
+
+impl GltfMtoonLightAccumulation {
+    pub fn is_three_vrm(self) -> bool {
+        self == Self::ThreeVrm
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialRenderExtraOptions {
+    pub light_accumulation: GltfMtoonLightAccumulation,
+    pub derivative_normals: bool,
+    pub direct_light_scale: f32,
+}
+
+impl Default for GltfMaterialRenderExtraOptions {
+    fn default() -> Self {
+        Self {
+            light_accumulation: GltfMtoonLightAccumulation::ThreeVrm,
+            derivative_normals: false,
+            direct_light_scale: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GltfMaterialRenderFlags {
+    pub v0_compat_shade: bool,
+    pub pbr_fallback: bool,
+    pub three_vrm_light_accumulation: bool,
+    pub derivative_normals: bool,
+    pub unlit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialRenderExtraPlan {
+    pub flags: GltfMaterialRenderFlags,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub occlusion_strength: f32,
+    pub direct_light_scale: f32,
+}
+
+impl GltfMaterialRenderExtraPlan {
+    pub fn uniform_plan(self) -> GltfMaterialRenderExtraUniformPlan {
+        GltfMaterialRenderExtraUniformPlan {
+            flags: [
+                self.flags.v0_compat_shade as u8 as f32,
+                self.flags.pbr_fallback as u8 as f32,
+                self.flags.three_vrm_light_accumulation as u8 as f32,
+                self.flags.derivative_normals as u8 as f32,
+            ],
+            pbr_params: [
+                self.metallic,
+                self.roughness,
+                self.occlusion_strength,
+                self.direct_light_scale,
+            ],
+            flags2: [self.flags.unlit as u8 as f32, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialRenderExtraUniformPlan {
+    pub flags: [f32; 4],
+    pub pbr_params: [f32; 4],
+    pub flags2: [f32; 4],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GltfMtoonOutlinePlan {
     pub width_factor: f32,
@@ -3541,6 +3637,16 @@ mod tests {
         assert!(!shading.pbr_fallback);
         assert!(!shading.unlit);
         assert!(shading.v0_compat_shade);
+        let extra = shading
+            .render_extra_plan(GltfMaterialRenderExtraOptions {
+                light_accumulation: GltfMtoonLightAccumulation::ThreeVrm,
+                derivative_normals: true,
+                direct_light_scale: 0.75,
+            })
+            .uniform_plan();
+        assert_vec4_close(extra.flags, [1.0, 0.0, 1.0, 1.0]);
+        assert_vec4_close(extra.pbr_params, [0.0, 1.0, 0.0, 0.75]);
+        assert_vec4_close(extra.flags2, [0.0, 0.0, 0.0, 0.0]);
 
         let fallback = loaded.material_shading_plan(None, GltfMaterialShadingOptions::default());
         assert_vec4_close(fallback.base_color, [0.78, 0.78, 0.78, 1.0]);
@@ -3548,6 +3654,14 @@ mod tests {
         assert_vec3_close(fallback.emissive, [0.0, 0.0, 0.0]);
         assert!(fallback.pbr_fallback);
         assert!(!fallback.v0_compat_shade);
+        let fallback_extra = fallback
+            .render_extra_plan(GltfMaterialRenderExtraOptions {
+                light_accumulation: GltfMtoonLightAccumulation::Tuned,
+                derivative_normals: false,
+                direct_light_scale: 1.0,
+            })
+            .uniform_plan();
+        assert_vec4_close(fallback_extra.flags, [0.0, 1.0, 0.0, 0.0]);
     }
 
     #[test]
