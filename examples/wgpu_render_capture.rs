@@ -10,7 +10,7 @@ mod render_capture_scene;
 
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
@@ -25,7 +25,8 @@ use vrm_io::{
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
     GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData,
     GltfSamplerData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
-    image_data_to_rgba8, load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
+    generate_tangents, image_data_to_rgba8, load_vrm_from_path, skin_direction, skin_vertex,
+    transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -805,62 +806,29 @@ fn multiply_rgba(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 }
 
 fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_scale: f32) {
-    let mut tangents = vec![Vec3::ZERO; vertices.len()];
-    let mut bitangents = vec![Vec3::ZERO; vertices.len()];
+    let positions = vertices
+        .iter()
+        .map(|vertex| vertex.position)
+        .collect::<Vec<_>>();
+    let normals = vertices
+        .iter()
+        .map(|vertex| vertex.normal)
+        .collect::<Vec<_>>();
+    let tex_coords = vertices
+        .iter()
+        .map(|vertex| vertex.tex_coord)
+        .collect::<Vec<_>>();
+    let Some(generated) = generate_tangents(&positions, &normals, &tex_coords, indices) else {
+        return;
+    };
 
-    for triangle in indices.chunks_exact(3) {
-        let [Some(i0), Some(i1), Some(i2)] = [
-            usize::try_from(triangle[0])
-                .ok()
-                .filter(|index| *index < vertices.len()),
-            usize::try_from(triangle[1])
-                .ok()
-                .filter(|index| *index < vertices.len()),
-            usize::try_from(triangle[2])
-                .ok()
-                .filter(|index| *index < vertices.len()),
-        ] else {
-            continue;
-        };
-
-        let p0 = Vec3::from_array(vertices[i0].position);
-        let p1 = Vec3::from_array(vertices[i1].position);
-        let p2 = Vec3::from_array(vertices[i2].position);
-        let uv0 = Vec2::from_array(vertices[i0].tex_coord);
-        let uv1 = Vec2::from_array(vertices[i1].tex_coord);
-        let uv2 = Vec2::from_array(vertices[i2].tex_coord);
-        let edge1 = p1 - p0;
-        let edge2 = p2 - p0;
-        let delta_uv1 = uv1 - uv0;
-        let delta_uv2 = uv2 - uv0;
-        let determinant = delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x;
-        if determinant.abs() < 0.000001 {
-            continue;
-        }
-        let scale = determinant.recip();
-        let tangent = (edge1 * delta_uv2.y - edge2 * delta_uv1.y) * scale;
-        let bitangent = (edge2 * delta_uv1.x - edge1 * delta_uv2.x) * scale;
-        for index in [i0, i1, i2] {
-            tangents[index] += tangent;
-            bitangents[index] += bitangent;
-        }
-    }
-
-    for (index, vertex) in vertices.iter_mut().enumerate() {
-        let normal = Vec3::from_array(vertex.normal).normalize_or_zero();
-        let tangent = tangents[index] - normal * normal.dot(tangents[index]);
-        if tangent.length_squared() < 0.000001 || bitangents[index].length_squared() < 0.000001 {
-            vertex.normal_scale = 0.0;
-            continue;
-        }
-        let tangent = tangent.normalize();
-        let handedness = if normal.cross(tangent).dot(bitangents[index]) < 0.0 {
-            -1.0
+    for (vertex, tangent) in vertices.iter_mut().zip(generated.tangents) {
+        if let Some(tangent) = tangent {
+            vertex.tangent = tangent;
+            vertex.normal_scale = normal_scale;
         } else {
-            1.0
-        };
-        vertex.tangent = tangent.extend(handedness).to_array();
-        vertex.normal_scale = normal_scale;
+            vertex.normal_scale = 0.0;
+        }
     }
 }
 

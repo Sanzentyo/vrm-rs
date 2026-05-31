@@ -375,7 +375,10 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after moving renderer-neutral skinning helpers (`GltfSkinData::joint_matrices`, `vrm-io::skin_vertex`, and `vrm-io::skin_direction`) into `vrm-io` on 2026-05-31: workspace line coverage is 84.32%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after moving tangentless normal-map tangent generation into
+  `vrm-io::generate_tangents` and refreshing workspace coverage on 2026-05-31:
+  workspace line coverage is 84.41%, and `vrm-adapter-bevy` line coverage is
+  94.42%.
 - Attempted to delegate the latest coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and restored the surrounding testing documentation after reviewing the generated diff.
 - Attempted to delegate the 2026-05-30 coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and reviewed the resulting docs diff.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.

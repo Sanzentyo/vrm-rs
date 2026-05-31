@@ -393,14 +393,16 @@ The fixture uses the texture-slot guard plus an additional normal-textured
 MToon swatch. That swatch intentionally omits glTF `TANGENT`: adding a
 synthetic tangent attribute triggered a three-vrm WebGL `vTangent` varying
 validation failure, while the tangentless path exercises three-vrm's normal-map
-fallback behavior. The current run has exact alpha buckets and mismatches `0`;
-selected `rgb-interior1px` PSNR is wgpu `47.1013 dB` with max selected channel
-delta `12`, and Bevy `46.0637 dB` with max selected channel delta `13`. The
-Bevy path now keeps generated tangent frames when a primitive accessor includes
-unreferenced vertices and enables `VERTEX_TANGENTS` for the custom material
-shader. The recipe now enforces `rgb-interior1px >= 45 dB`. Treat this as the
-current normal-map regression guard, not final visual parity; the remaining work
-is to confirm real tangentless official primitives with higher thresholds.
+fallback behavior. Tangent generation now goes through the shared
+`vrm-io::generate_tangents` helper used by both wgpu and Bevy. The current run
+has exact alpha buckets and mismatches `0`; selected `rgb-interior1px` PSNR is
+wgpu `47.8977 dB` with max selected channel delta `11`, and Bevy `46.7852 dB`
+with max selected channel delta `11`. The Bevy path keeps generated tangent
+frames when a primitive accessor includes unreferenced vertices and enables
+`VERTEX_TANGENTS` for the custom material shader. The recipe now enforces
+`rgb-interior1px >= 46.5 dB`. Treat this as the current normal-map regression
+guard, not final visual parity; the remaining work is to confirm real
+tangentless official primitives with higher thresholds.
 
 For a stricter MToon light/color accumulation audit with non-default three-vrm
 light units, run:
@@ -752,6 +754,10 @@ tangents, and backend mesh construction.
 position/normal/tangent-direction skinning, removing another duplicate
 renderer-edge path before wgpu, Bevy, ash-style examples, or custom engines map
 the data into backend meshes.
+`vrm-io::generate_tangents` likewise centralizes tangentless normal-map tangent
+generation, including unreferenced-vertex fallback behavior and per-vertex
+failure reporting, before concrete backends decide how to expose tangent frames
+to their shaders.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.

@@ -56,8 +56,9 @@ use vrm_io::{
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
     GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData, GltfSamplerData, GltfWrapMode,
-    ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
+    ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
+    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
+    skin_direction, skin_vertex, transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -838,12 +839,13 @@ fn bevy_mesh(
                 .collect::<Vec<_>>(),
         )
     } else if generate_tangents {
-        generated_tangents(
+        generate_gltf_tangents(
             &positions,
             &normals,
             &tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
             &primitive.indices,
         )
+        .and_then(|tangents| tangents.all_tangents())
     } else {
         None
     };
@@ -863,82 +865,6 @@ fn bevy_mesh(
     );
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     (mesh, has_tangents)
-}
-
-fn generated_tangents(
-    positions: &[[f32; 3]],
-    normals: &[[f32; 3]],
-    tex_coords: &[[f32; 2]],
-    indices: &[u32],
-) -> Option<Vec<[f32; 4]>> {
-    let mut tangents = vec![GVec3::ZERO; positions.len()];
-    let mut bitangents = vec![GVec3::ZERO; positions.len()];
-    let mut referenced = vec![false; positions.len()];
-    for triangle in indices.chunks_exact(3) {
-        let [i0, i1, i2] = [
-            usize::try_from(triangle[0]).ok()?,
-            usize::try_from(triangle[1]).ok()?,
-            usize::try_from(triangle[2]).ok()?,
-        ];
-        for index in [i0, i1, i2] {
-            *referenced.get_mut(index)? = true;
-        }
-        let [p0, p1, p2] = [
-            GVec3::from_array(*positions.get(i0)?),
-            GVec3::from_array(*positions.get(i1)?),
-            GVec3::from_array(*positions.get(i2)?),
-        ];
-        let [uv0, uv1, uv2] = [
-            *tex_coords.get(i0)?,
-            *tex_coords.get(i1)?,
-            *tex_coords.get(i2)?,
-        ];
-        let delta_pos1 = p1 - p0;
-        let delta_pos2 = p2 - p0;
-        let delta_uv1 = GVec3::new(uv1[0] - uv0[0], uv1[1] - uv0[1], 0.0);
-        let delta_uv2 = GVec3::new(uv2[0] - uv0[0], uv2[1] - uv0[1], 0.0);
-        let determinant = delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x;
-        if determinant.abs() <= f32::EPSILON {
-            continue;
-        }
-        let scale = determinant.recip();
-        let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * scale;
-        let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * scale;
-        for index in [i0, i1, i2] {
-            tangents[index] += tangent;
-            bitangents[index] += bitangent;
-        }
-    }
-    tangents
-        .into_iter()
-        .zip(bitangents)
-        .zip(referenced)
-        .zip(normals)
-        .map(|(((tangent, bitangent), referenced), normal)| {
-            let normal = GVec3::from_array(*normal).normalize_or_zero();
-            let tangent = tangent - normal * normal.dot(tangent);
-            if tangent.length_squared() <= f32::EPSILON {
-                return (!referenced).then(|| fallback_tangent(normal));
-            }
-            let tangent = tangent.normalize();
-            let handedness = if normal.cross(tangent).dot(bitangent) < 0.0 {
-                -1.0
-            } else {
-                1.0
-            };
-            Some([tangent.x, tangent.y, tangent.z, handedness])
-        })
-        .collect()
-}
-
-fn fallback_tangent(normal: GVec3) -> [f32; 4] {
-    let seed = if normal.x.abs() < 0.9 {
-        GVec3::X
-    } else {
-        GVec3::Y
-    };
-    let tangent = (seed - normal * normal.dot(seed)).normalize_or_zero();
-    [tangent.x, tangent.y, tangent.z, 1.0]
 }
 
 fn material_shading(

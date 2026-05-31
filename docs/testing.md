@@ -129,7 +129,7 @@ OPAQUE alpha forcing, MASK `alphaCutoff` pass/fail behavior, and BLEND
 MToon material guards also include `just render-parity-mtoon-textures-generated`
 for texture-slot parity and `just render-parity-mtoon-normal-generated` for the
 current tangentless normal-map regression guard, which now enforces
-`rgb-interior1px >= 45 dB`.
+`rgb-interior1px >= 46.5 dB`.
 The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
 the exact buffers compared by PSNR. It decodes each PNG after writing and
@@ -291,11 +291,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.15% | 84.32% |
+| Workspace total | 81.31% | 84.41% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.83% | 74.68% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 85.60% | 84.88% |
+| `vrm-io` | 86.00% | 85.25% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.07% | 96.13% |

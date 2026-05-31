@@ -1336,6 +1336,103 @@ pub fn skin_direction(
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct GltfGeneratedTangents {
+    pub tangents: Vec<Option<[f32; 4]>>,
+}
+
+impl GltfGeneratedTangents {
+    pub fn all_tangents(&self) -> Option<Vec<[f32; 4]>> {
+        self.tangents.iter().copied().collect()
+    }
+}
+
+pub fn generate_tangents(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    tex_coords: &[[f32; 2]],
+    indices: &[u32],
+) -> Option<GltfGeneratedTangents> {
+    if normals.len() != positions.len() || tex_coords.len() != positions.len() {
+        return None;
+    }
+
+    let mut tangents = vec![Vec3::ZERO; positions.len()];
+    let mut bitangents = vec![Vec3::ZERO; positions.len()];
+    let mut referenced = vec![false; positions.len()];
+
+    for triangle in indices.chunks_exact(3) {
+        let [i0, i1, i2] = [
+            usize::try_from(triangle[0]).ok()?,
+            usize::try_from(triangle[1]).ok()?,
+            usize::try_from(triangle[2]).ok()?,
+        ];
+        for index in [i0, i1, i2] {
+            *referenced.get_mut(index)? = true;
+        }
+
+        let [p0, p1, p2] = [
+            Vec3::from_array(*positions.get(i0)?),
+            Vec3::from_array(*positions.get(i1)?),
+            Vec3::from_array(*positions.get(i2)?),
+        ];
+        let [uv0, uv1, uv2] = [
+            *tex_coords.get(i0)?,
+            *tex_coords.get(i1)?,
+            *tex_coords.get(i2)?,
+        ];
+        let edge1 = p1 - p0;
+        let edge2 = p2 - p0;
+        let delta_uv1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+        let delta_uv2 = [uv2[0] - uv0[0], uv2[1] - uv0[1]];
+        let determinant = delta_uv1[0] * delta_uv2[1] - delta_uv1[1] * delta_uv2[0];
+        if determinant.abs() < 0.000001 {
+            continue;
+        }
+
+        let scale = determinant.recip();
+        let tangent = (edge1 * delta_uv2[1] - edge2 * delta_uv1[1]) * scale;
+        let bitangent = (edge2 * delta_uv1[0] - edge1 * delta_uv2[0]) * scale;
+        for index in [i0, i1, i2] {
+            tangents[index] += tangent;
+            bitangents[index] += bitangent;
+        }
+    }
+
+    let tangents = tangents
+        .into_iter()
+        .zip(bitangents)
+        .zip(referenced)
+        .zip(normals)
+        .map(|(((tangent, bitangent), referenced), normal)| {
+            let normal = Vec3::from_array(*normal).normalize_or_zero();
+            let tangent = tangent - normal * normal.dot(tangent);
+            if tangent.length_squared() < 0.000001 || bitangent.length_squared() < 0.000001 {
+                return (!referenced).then(|| fallback_tangent(normal));
+            }
+            let tangent = tangent.normalize();
+            let handedness = if normal.cross(tangent).dot(bitangent) < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            Some([tangent.x, tangent.y, tangent.z, handedness])
+        })
+        .collect();
+
+    Some(GltfGeneratedTangents { tangents })
+}
+
+pub fn fallback_tangent(normal: Vec3) -> [f32; 4] {
+    let seed = if normal.x.abs() < 0.9 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let tangent = (seed - normal * normal.dot(seed)).normalize_or_zero();
+    [tangent.x, tangent.y, tangent.z, 1.0]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VrmIoWarning {
     MissingSpecVersion { extension: String, assumed: String },
@@ -3245,6 +3342,36 @@ mod tests {
             .to_array(),
             [1.0, 0.0, 0.0],
         );
+        let generated_tangents = generate_tangents(
+            &primitive.positions,
+            &primitive.normals,
+            &primitive.tex_coords_0,
+            &primitive.indices,
+        )
+        .unwrap();
+        assert_eq!(
+            generated_tangents.all_tangents().unwrap(),
+            vec![[1.0, 0.0, 0.0, 1.0]; 3]
+        );
+    }
+
+    #[test]
+    fn generated_tangents_preserve_unreferenced_fallbacks_and_degenerate_failures() {
+        let positions = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let normals = vec![[0.0, 0.0, 1.0]; 4];
+        let tex_coords = vec![[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.5, 0.5]];
+        let tangents = generate_tangents(&positions, &normals, &tex_coords, &[0, 1, 2]).unwrap();
+
+        assert_eq!(tangents.tangents[0], None);
+        assert_eq!(tangents.tangents[1], None);
+        assert_eq!(tangents.tangents[2], None);
+        assert_eq!(tangents.tangents[3], Some([1.0, 0.0, 0.0, 1.0]));
+        assert_eq!(tangents.all_tangents(), None);
     }
 
     #[test]

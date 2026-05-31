@@ -105,7 +105,7 @@ render-parity-mtoon-textures-generated three_vrm_root="D:/git/three-vrm":
 # Generate and render an opt-in MToon normal-map fixture that exercises three-vrm's tangentless fallback.
 render-parity-mtoon-normal-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-mtoon-texture-fixture.rs --include-normal --out .external-fixtures/generated/mtoon-normal-texture.vrm.gltf
-    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-normal-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-interior1px --render-fail-under 45 --render-mtoon-light-accumulation three-vrm --render-mtoon-time 1.0 --render-fixture .external-fixtures/generated/mtoon-normal-texture.vrm.gltf
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-normal-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-interior1px --render-fail-under 46.5 --render-mtoon-light-accumulation three-vrm --render-mtoon-time 1.0 --render-fixture .external-fixtures/generated/mtoon-normal-texture.vrm.gltf
 
 # Generate and render a source-like MToon screen-coordinate outline fixture.
 render-parity-screen-outline-generated three_vrm_root="D:/git/three-vrm":
