@@ -12,6 +12,7 @@ struct BevyMtoonUniform {
     rim_color: vec4<f32>,
     rim_params: vec4<f32>,
     material_flags: vec4<f32>,
+    material_flags2: vec4<f32>,
     pbr_params: vec4<f32>,
     outline_color: vec4<f32>,
     pipeline: vec4<f32>,
@@ -233,6 +234,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 1.5);
     let diffuse = material.base_color.rgb * texel.rgb;
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
+    if material.material_flags2.x > 0.5 {
+        return output_color(diffuse + material.emissive.rgb * emissive_texel, opaque_alpha);
+    }
 
     if is_pbr_fallback {
         let direct = pbr_direct(

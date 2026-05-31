@@ -316,6 +316,7 @@ struct MaterialUvUniform {
 struct MaterialExtraUniform {
     flags: [f32; 4],
     pbr_params: [f32; 4],
+    flags2: [f32; 4],
 }
 
 struct TextureResource {
@@ -1017,6 +1018,7 @@ fn material_extra_uniform(
             shading.occlusion_strength,
             0.0,
         ],
+        flags2: [if shading.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
     }
 }
 
@@ -1237,6 +1239,7 @@ struct MaterialShading {
     roughness: f32,
     occlusion_strength: f32,
     pbr_fallback: bool,
+    unlit: bool,
     v0_compat_shade: bool,
 }
 
@@ -1310,6 +1313,7 @@ fn material_shading(
                 roughness: 1.0,
                 occlusion_strength: 0.0,
                 pbr_fallback: false,
+                unlit: false,
                 v0_compat_shade: options.mtoon_v0_compat_shade,
             })
         })
@@ -1346,6 +1350,7 @@ fn material_shading(
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
         occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
         pbr_fallback: true,
+        unlit: gltf.is_some_and(|material| material.unlit),
         v0_compat_shade: false,
     }
 }
@@ -1773,7 +1778,7 @@ fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
             &image,
             next_width,
             next_height,
-            image::imageops::FilterType::Triangle,
+            image::imageops::FilterType::CatmullRom,
         );
         current_width = next_width;
         current_height = next_height;
@@ -2671,6 +2676,7 @@ var uv_animation_mask_texture: texture_2d<f32>;
 struct MaterialExtraUniform {
     flags: vec4<f32>,
     pbr_params: vec4<f32>,
+    flags2: vec4<f32>,
 };
 
 @group(1) @binding(10)
@@ -2906,6 +2912,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     let diffuse = input.color.rgb * texel.rgb;
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
+    if material_extra.flags2.x > 0.5 {
+        return output_color(diffuse + input.emissive.rgb * emissive_texel, opaque_alpha);
+    }
     if material_extra.flags.y > 0.5 {
         let direct = pbr_direct(
             diffuse,

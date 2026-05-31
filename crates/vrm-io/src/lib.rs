@@ -163,6 +163,7 @@ pub struct GltfMaterialData {
     pub emissive_texture: Option<usize>,
     pub emissive_texture_transform: Option<TextureTransform2d>,
     pub emissive_strength: f32,
+    pub unlit: bool,
     pub alpha_mode: GltfAlphaMode,
     pub alpha_cutoff: Option<f32>,
     pub double_sided: bool,
@@ -431,6 +432,7 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
                 emissive_strength: khr_emissive_strength(
                     material.extension_value("KHR_materials_emissive_strength"),
                 ),
+                unlit: material.unlit(),
                 alpha_mode: match material.alpha_mode() {
                     gltf::material::AlphaMode::Opaque => GltfAlphaMode::Opaque,
                     gltf::material::AlphaMode::Mask => GltfAlphaMode::Mask,
@@ -1569,6 +1571,7 @@ mod tests {
         sample["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
         sample["materials"][0]["extensions"]["KHR_materials_emissive_strength"] =
             json!({ "emissiveStrength": 2.0 });
+        sample["materials"][0]["extensions"]["KHR_materials_unlit"] = json!({});
 
         let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
 
@@ -1634,6 +1637,7 @@ mod tests {
                 emissive_texture: Some(0),
                 emissive_texture_transform: None,
                 emissive_strength: 2.0,
+                unlit: true,
                 alpha_mode: GltfAlphaMode::Opaque,
                 alpha_cutoff: None,
                 double_sided: false,

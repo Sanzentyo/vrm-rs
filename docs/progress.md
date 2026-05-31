@@ -2,6 +2,20 @@
 
 ## 2026-05-31
 
+- Added renderer-facing `KHR_materials_unlit` extraction for glTF materials and
+  wired it into the concrete wgpu/Bevy PBR fallback paths. The MToon branch
+  intentionally keeps ignoring glTF unlit when `VRMC_materials_mtoon` is
+  present, matching the measured three-vrm behavior on the official UV
+  animation sample where the VRMC MToon material path wins over the glTF unlit
+  extension. The capture texture mip-chain generator now uses CatmullRom
+  downsampling, which better matches the WebGL/three-vrm generated-mipmap
+  reference for the current fixture set. The six-fixture `rgb-visible` sweep is
+  now Seed-san wgpu `34.6181 dB` / Bevy `34.0835 dB`, constraint wgpu
+  `36.2443 dB` / Bevy `36.2352 dB`, UV animation wgpu `35.5223 dB` / Bevy
+  `35.5023 dB`, expression masks around `55.2-55.7 dB`, and Alicia VRM0 wgpu
+  `35.6238 dB` / Bevy `35.6088 dB`. The object-body `rgb-nonblack` floor rose
+  to UV animation Bevy `26.9834 dB`, so `just render-parity-samples-nonblack`
+  now enforces `26.9 dB`.
 - Replaced the wgpu capture's material-wide sampler approximation with
   per-texture-slot sampler bindings for base, shade, shading shift, matcap,
   rim, normal, emissive, UV animation mask, and occlusion textures. The shader
@@ -13,15 +27,15 @@
 - Added object-body PSNR diagnostics for opaque-black render parity sweeps.
   `compare-psnr.mjs` and `tools/ci/local-ci.rs` now accept `rgb-nonblack` and
   `rgb-nonblack-interior1px`, and `just render-parity-samples-nonblack` runs
-  the same six real fixtures with selected `rgb-nonblack >= 26.5 dB`. That
+  the same six real fixtures with selected `rgb-nonblack >= 26.9 dB`. That
   sweep passes with exact alpha parity after the capture paths started honoring
   glTF sampler min/mag/wrap policy per texture; current selected PSNR is
-  Seed-san wgpu `27.4846 dB` / Bevy `26.9636 dB`, constraint wgpu
-  `28.2416 dB` / Bevy `28.2261 dB`, UV animation wgpu `26.7904 dB` / Bevy
-  `26.7455 dB`, expression masks around `45.7-46.2 dB`, and Alicia VRM0 wgpu
+  Seed-san wgpu `27.5383 dB` / Bevy `27.0036 dB`, constraint wgpu
+  `28.2818 dB` / Bevy `28.2728 dB`, UV animation wgpu `27.0034 dB` / Bevy
+  `26.9834 dB`, expression masks around `45.7-46.2 dB`, and Alicia VRM0 wgpu
   `28.1749 dB` / Bevy `28.1599 dB`. The current object-body floor is now the
   UV animation sample rather than Alicia, and remaining work should raise
-  actual model-body color parity beyond the current `26.5 dB` regression floor.
+  actual model-body color parity beyond the current `26.9 dB` regression floor.
 - Added structured glTF sampler extraction to `vrm-io` (`GltfSamplerData`,
   min/mag filters, and wrap modes) and made the concrete wgpu/Bevy capture
   examples consume it at the renderer edge. This fixes the previous global
@@ -261,7 +275,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 82.86%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 82.87%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Attempted to delegate the 2026-05-30 coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and reviewed the resulting docs diff.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture local automation, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.

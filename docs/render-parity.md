@@ -701,8 +701,16 @@ uniform.
 The Rust capture paths also honor glTF sampler min/mag/wrap policy per texture
 using structured sampler data extracted by `vrm-io`; wgpu binds a sampler for
 each material texture slot, while Bevy carries the sampler through each image
-asset. This keeps non-mipmapped VRM0 textures, mipmapped VRM1 textures, and
-generated fixtures on the same sampling contract as GLTFLoader/three-vrm.
+asset. CPU-generated mip chains use CatmullRom downsampling for the current
+capture path, which tracks the WebGL generated-mipmap reference better than the
+previous triangle filter on the official UV-animation and Seed/constraint
+fixtures. Renderer-facing glTF material data also exposes `KHR_materials_unlit`
+for non-MToon/PBR fallback materials; when a material has
+`VRMC_materials_mtoon`, the concrete captures keep the MToon shader branch even
+if glTF unlit is also present, matching the measured three-vrm behavior. This
+keeps non-mipmapped VRM0 textures, mipmapped VRM1 textures, generated fixtures,
+and mixed glTF/VRMC material extensions on the same sampling/material contract
+as GLTFLoader/three-vrm.
 
 The canonical comparison images for the current local sample sweep are:
 
@@ -945,15 +953,17 @@ materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
 while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
 opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
 0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
-mismatches `0`. The selected `rgb-visible` metric for the same sweep is
-Seed-san wgpu `34.5647 dB`, Seed-san Bevy `34.0434 dB`, constraint sample wgpu
-`36.2028 dB`, constraint sample Bevy `36.1877 dB`, UV animation sample wgpu
-`35.2517 dB`, UV animation sample Bevy `35.2073 dB`, mask samples wgpu/Bevy
-`39.3000/39.2891 dB` and `39.3004/39.2896 dB`, and Alicia VRM0 wgpu
-`32.6863 dB` / Bevy `32.6757 dB`. Use explicit `transparent` only when the review
-needs transparent alpha. The last transparent time `1.0` UV-animation audit
-reported full-RGBA wgpu/Bevy `35.9209 dB` and selected `rgb-visible`
-wgpu/Bevy `27.2167 dB`.
+mismatches `0`. The capture paths now use CatmullRom mip-chain downsampling for
+the generated mip levels, and extract `KHR_materials_unlit` for glTF PBR
+fallback materials while keeping VRMC MToon materials on the MToon branch when
+both extensions are present. The selected `rgb-visible` metric for the same
+sweep is Seed-san wgpu `34.6181 dB`, Seed-san Bevy `34.0835 dB`, constraint
+sample wgpu `36.2443 dB`, constraint sample Bevy `36.2352 dB`, UV animation
+sample wgpu `35.5223 dB`, UV animation sample Bevy `35.5023 dB`, mask samples
+around `55.2-55.7 dB`, and Alicia VRM0 wgpu `35.6238 dB` / Bevy
+`35.6088 dB`. Use explicit `transparent` only when the review needs transparent
+alpha. The time `1.0` UV-animation audit reports selected `rgb-visible` wgpu
+`35.5223 dB` and Bevy `35.5023 dB`.
 For the broader real transparent-material audit, run
 `just render-parity-real-transparent`. This keeps the transparent background
 and uses `rgb-all` with fail-under `32`, while alpha-mask drift is enforced

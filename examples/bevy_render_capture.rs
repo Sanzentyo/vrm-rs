@@ -1181,6 +1181,7 @@ struct MaterialShading {
     roughness: f32,
     occlusion_strength: f32,
     pbr_fallback: bool,
+    unlit: bool,
     v0_compat_shade: bool,
 }
 
@@ -1254,6 +1255,7 @@ fn material_shading(
                 roughness: 1.0,
                 occlusion_strength: 0.0,
                 pbr_fallback: false,
+                unlit: false,
                 v0_compat_shade: options.mtoon_v0_compat_shade,
             })
         })
@@ -1290,6 +1292,7 @@ fn material_shading(
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
         occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
         pbr_fallback: true,
+        unlit: gltf.is_some_and(|material| material.unlit),
         v0_compat_shade: false,
     }
 }
@@ -1306,6 +1309,7 @@ struct BevyMtoonMaterial {
     rim_color: BVec4,
     rim_params: BVec4,
     material_flags: BVec4,
+    material_flags2: BVec4,
     pbr_params: BVec4,
     outline_color: BVec4,
     pipeline: BVec4,
@@ -1372,6 +1376,7 @@ struct BevyMtoonUniform {
     rim_color: BVec4,
     rim_params: BVec4,
     material_flags: BVec4,
+    material_flags2: BVec4,
     pbr_params: BVec4,
     outline_color: BVec4,
     pipeline: BVec4,
@@ -1402,6 +1407,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             rim_color: material.rim_color,
             rim_params: material.rim_params,
             material_flags: material.material_flags,
+            material_flags2: material.material_flags2,
             pbr_params: material.pbr_params,
             outline_color: material.outline_color,
             pipeline: material.pipeline,
@@ -1531,6 +1537,7 @@ fn bevy_mtoon_material(
             },
             if use_derivative_normals { 1.0 } else { 0.0 },
         ),
+        material_flags2: BVec4::new(if shading.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
         pbr_params: BVec4::new(
             shading.metallic,
             shading.roughness,
@@ -2239,7 +2246,7 @@ fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
             &image,
             next_width,
             next_height,
-            image::imageops::FilterType::Triangle,
+            image::imageops::FilterType::CatmullRom,
         );
         current_width = next_width;
         current_height = next_height;

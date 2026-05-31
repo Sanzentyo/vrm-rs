@@ -74,8 +74,9 @@ keeping binaries external. `just render-parity-samples` currently renders
 `VRMC_vrm_expressions_isBinary_*` mask fixtures, and the external
 `UniVRM/AliciaSolid_vrm-0.51.vrm` VRM0 transparent-material fixture, and
 enforces selected `rgb-visible >= 34 dB`. Seed-san Bevy is currently the lower
-bound of that compatibility sweep at `34.0434 dB`, while Alicia VRM0 now
-reports wgpu `35.6238 dB` / Bevy `35.6088 dB` after sampler-policy parity.
+bound of that compatibility sweep at `34.0835 dB`, while Alicia VRM0 now
+reports wgpu `35.6238 dB` / Bevy `35.6088 dB` after sampler-policy and
+CatmullRom mip-chain parity.
 `just render-parity-vrm1-samples` keeps a separate `34 dB` floor for the same
 set without the VRM0 compatibility sample under
 `.external-fixtures/render-parity-vrm1-samples/`. Because the canonical
@@ -83,9 +84,9 @@ opaque-black background makes every pixel visible, `rgb-visible` is the stable
 full-review regression metric but can hide object-body color error behind black
 background pixels. Use `just render-parity-samples-nonblack` for the same
 six-fixture sweep under `.external-fixtures/render-parity-samples-nonblack/`;
-it selects `rgb-nonblack >= 26.5 dB`, comparing only pixels where either render
+it selects `rgb-nonblack >= 26.9 dB`, comparing only pixels where either render
 has non-zero RGB. The current model-body floor is the UV animation sample at
-wgpu `26.7904 dB` / Bevy `26.7455 dB`, while Alicia VRM0 now reports wgpu
+wgpu `27.0034 dB` / Bevy `26.9834 dB`, while Alicia VRM0 now reports wgpu
 `28.1749 dB` / Bevy `28.1599 dB`.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
@@ -159,8 +160,14 @@ audited against the actual reference scene conditions. The Rust capture paths
 consume the glTF sampler min/mag/wrap policy extracted by `vrm-io`, including
 whether a texture should use mip levels at all, and the wgpu capture binds
 samplers per material texture slot rather than reusing the base texture sampler
-for every slot. This keeps model-specific sampler policy from being flattened
-into one renderer-global or material-global sampler. The generated MToon
+for every slot. Mip chains are CPU-generated with CatmullRom downsampling for
+the current capture parity path, and renderer-facing glTF material extraction
+also exposes `KHR_materials_unlit` for non-MToon/PBR fallback materials. VRMC
+MToon materials intentionally stay on the MToon shader branch even when the
+glTF unlit extension is present, matching the measured three-vrm behavior of
+the official UV-animation fixture. This keeps model-specific sampler and
+material policy from being flattened into one renderer-global or
+material-global rule. The generated MToon
 light/color fixture now contains 12 swatches, including mid-ramp interpolation
 cases, and the swatch comparator is run after aggregate PSNR to catch per-term
 drift. For direct-light
@@ -220,7 +227,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB`, a matching object-body `rgb-nonblack >= 26.5 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB`, a matching object-body `rgb-nonblack >= 26.9 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 
@@ -232,17 +239,34 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.62% | 82.86% |
+| Workspace total | 79.62% | 82.87% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 81.13% | 78.46% |
+| `vrm-io` | 81.15% | 78.48% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, stable errors for invalid expression/lookAt animation paths, and normal-gate application of humanoid, preset/custom expression, and lookAt tracks through the adapter writeback path. Renderer-facing generated glTF coverage now also includes primitive `COLOR_0`, morph target deltas, mesh/node default morph weights, public MToon renderer material plans, public primitive pipeline plans, glTF sampler min/mag/wrap extraction, and same-image multi-texture sampler preservation.
+The current external fixture tests cover recursive fixture discovery, semantic
+IO loading including the Alicia VRM0 compatibility sample, adapter spring rest
+capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0
+spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison,
+collider-heavy spring directory comparison, fixture-driven node constraint
+manager ordering/writeback comparison, Seed-san raw/normalized humanoid
+rest-state and posed writeback comparison, baseline plus dense Seed-san
+`test.vrma` application comparison, and branch-only `idle_loop.vrma`
+application comparison on real VRM/VRMA files without committing those binaries.
+Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid
+translation tracks, hips translation rest-height scaling, stable errors for
+invalid expression/lookAt animation paths, and normal-gate application of
+humanoid, preset/custom expression, and lookAt tracks through the adapter
+writeback path. Renderer-facing generated glTF coverage now also includes
+primitive `COLOR_0`, morph target deltas, mesh/node default morph weights,
+public MToon renderer material plans, public primitive pipeline plans, glTF
+sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
+and `KHR_materials_unlit` extraction for PBR fallback material data.
 
 ## Ordered Parity Milestones
 
