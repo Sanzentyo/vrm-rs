@@ -8,11 +8,12 @@ use std::collections::HashMap;
 
 use vrm_adapter::{
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureBindingPlan, MtoonTextureSlot, mtoon_renderer_material_plans,
+    MtoonTextureBindingPlan, MtoonTextureSlot, RendererMaterialAlphaMode, RendererMaterialCullMode,
+    RendererMaterialPipelinePlan, mtoon_renderer_material_plans,
 };
 use vrm_core::{
-    EmissiveStrength, Feature, Material, MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonMaterial,
-    MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, TextureRef, VrmDocument,
+    EmissiveStrength, Feature, Material, MaterialRef, MtoonMaterial, MtoonRenderQueue,
+    MtoonTextureSet, OutlineWidthMode, TextureRef, VrmDocument,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -187,20 +188,21 @@ fn renderer_material(plan: &MtoonRendererMaterialPlan) -> RendererMaterial {
 }
 
 fn wgpu_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> WgpuPipelineDescriptor {
+    let primitive = RendererMaterialPipelinePlan::from_mtoon_plan(plan);
     let key = match plan.pass {
         MtoonRendererPass::Base => WgpuPipelineKey {
             pass: RendererPass::Base,
-            blend: blend_state(plan.pipeline.alpha_mode),
-            cull: cull_state(plan.pipeline.cull_mode),
-            depth: depth_state(plan.pipeline.depth_test, plan.pipeline.depth_write),
-            render_order: plan.pipeline.render_order,
+            blend: blend_state(primitive.alpha_mode),
+            cull: cull_state(primitive.cull_mode),
+            depth: depth_state(plan.pipeline.depth_test, primitive.depth_write),
+            render_order: primitive.render_order,
         },
         MtoonRendererPass::Outline => WgpuPipelineKey {
             pass: RendererPass::Outline,
             blend: BlendState::Opaque,
-            cull: cull_state(plan.pipeline.cull_mode),
+            cull: cull_state(primitive.cull_mode),
             depth: depth_state(true, true),
-            render_order: plan.pipeline.render_order,
+            render_order: primitive.render_order,
         },
     };
     WgpuPipelineDescriptor {
@@ -215,13 +217,14 @@ fn wgpu_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> WgpuPipelineDes
 }
 
 fn ash_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> AshPipelineDescriptor {
+    let primitive = RendererMaterialPipelinePlan::from_mtoon_plan(plan);
     match plan.pass {
         MtoonRendererPass::Base => AshPipelineDescriptor {
             pass: RendererPass::Base,
-            blend: blend_state(plan.pipeline.alpha_mode),
-            cull: cull_state(plan.pipeline.cull_mode),
-            depth: depth_state(plan.pipeline.depth_test, plan.pipeline.depth_write),
-            render_order: plan.pipeline.render_order,
+            blend: blend_state(primitive.alpha_mode),
+            cull: cull_state(primitive.cull_mode),
+            depth: depth_state(plan.pipeline.depth_test, primitive.depth_write),
+            render_order: primitive.render_order,
             descriptor_layout: bind_layout(&plan.texture_bindings),
             push_constant_bytes: 16,
             vertex_shader: "mtoon_base.vert.spv",
@@ -230,9 +233,9 @@ fn ash_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> AshPipelineDescr
         MtoonRendererPass::Outline => AshPipelineDescriptor {
             pass: RendererPass::Outline,
             blend: BlendState::Opaque,
-            cull: cull_state(plan.pipeline.cull_mode),
+            cull: cull_state(primitive.cull_mode),
             depth: depth_state(true, true),
-            render_order: plan.pipeline.render_order,
+            render_order: primitive.render_order,
             descriptor_layout: bind_layout(&plan.texture_bindings),
             push_constant_bytes: 16,
             vertex_shader: "mtoon_outline.vert.spv",
@@ -241,19 +244,19 @@ fn ash_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> AshPipelineDescr
     }
 }
 
-fn blend_state(alpha: MtoonAlphaMode) -> BlendState {
+fn blend_state(alpha: RendererMaterialAlphaMode) -> BlendState {
     match alpha {
-        MtoonAlphaMode::Opaque => BlendState::Opaque,
-        MtoonAlphaMode::Mask => BlendState::AlphaTest,
-        MtoonAlphaMode::Blend => BlendState::AlphaBlend,
+        RendererMaterialAlphaMode::Opaque => BlendState::Opaque,
+        RendererMaterialAlphaMode::Mask => BlendState::AlphaTest,
+        RendererMaterialAlphaMode::Blend => BlendState::AlphaBlend,
     }
 }
 
-fn cull_state(cull: MtoonCullMode) -> CullState {
+fn cull_state(cull: RendererMaterialCullMode) -> CullState {
     match cull {
-        MtoonCullMode::Off => CullState::None,
-        MtoonCullMode::Front => CullState::Front,
-        MtoonCullMode::Back => CullState::Back,
+        RendererMaterialCullMode::Off => CullState::None,
+        RendererMaterialCullMode::Front => CullState::Front,
+        RendererMaterialCullMode::Back => CullState::Back,
     }
 }
 

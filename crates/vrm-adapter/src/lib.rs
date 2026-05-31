@@ -19,9 +19,9 @@ use thiserror::Error;
 use vrm_core::{
     ColliderShape, ConstraintKind, EmissiveStrength, ExpressionBind, ExpressionName, Feature,
     FirstPersonAnnotation, HumanBoneName, MaterialRef, MtoonAlphaMode, MtoonCullMode,
-    MtoonMaterial, MtoonPipelinePass, MtoonTextureSet, NodeConstraint, NodeRef, OutlineWidthMode,
-    RawAbsolutePose, RawPose, Spring, SpringBoneSystem, TextureRef, Transform, UvAnimation,
-    VrmDocument,
+    MtoonMaterial, MtoonPipelinePass, MtoonRenderQueue, MtoonTextureSet, NodeConstraint, NodeRef,
+    OutlineWidthMode, RawAbsolutePose, RawPose, Spring, SpringBoneSystem, TextureRef, Transform,
+    UvAnimation, VrmDocument,
 };
 use vrm_runtime::{
     AimConstraintInput, AppliedExpression, CenterSpringParticleState, CenterSpringRuntimeState,
@@ -1201,6 +1201,9 @@ pub struct MtoonMaterialDescriptor {
     pub material: MaterialRef,
     pub name: Option<String>,
     pub pass: MtoonPipelinePass,
+    pub render_queue: MtoonRenderQueue,
+    pub transparent_with_z_write: bool,
+    pub render_queue_offset_number: i32,
     pub textures: MtoonTextureSet,
     pub base_color_factor: [f32; 4],
     pub emissive_factor: [f32; 3],
@@ -1247,11 +1250,13 @@ pub enum MtoonRendererPass {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MtoonRendererPipelineState {
     pub render_order: i32,
+    pub phase_order: i32,
     pub alpha_mode: MtoonAlphaMode,
     pub cull_mode: MtoonCullMode,
     pub depth_test: bool,
     pub depth_write: bool,
     pub blend: bool,
+    pub transparent_with_z_write: bool,
     pub outline_width_mode: Option<OutlineWidthMode>,
 }
 
@@ -1318,18 +1323,92 @@ pub enum MtoonSamplerHint {
     NormalMapLinearRepeat,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RendererMaterialPipelinePlan {
+    pub render_order: i32,
+    pub phase_order: i32,
+    pub cull_mode: RendererMaterialCullMode,
+    pub alpha_mode: RendererMaterialAlphaMode,
+    pub depth_write: bool,
+    pub blend: bool,
+    pub alpha_cutoff: f32,
+    pub transparent_order_offset: Option<i32>,
+    pub mtoon_transparent_with_z_write: Option<bool>,
+}
+
+impl Default for RendererMaterialPipelinePlan {
+    fn default() -> Self {
+        Self {
+            render_order: 2000,
+            phase_order: 2000,
+            cull_mode: RendererMaterialCullMode::Back,
+            alpha_mode: RendererMaterialAlphaMode::Opaque,
+            depth_write: true,
+            blend: false,
+            alpha_cutoff: 0.5,
+            transparent_order_offset: None,
+            mtoon_transparent_with_z_write: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererMaterialCullMode {
+    Off,
+    Front,
+    Back,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererMaterialAlphaMode {
+    Opaque,
+    Mask,
+    Blend,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialPipelineOverride {
+    pub alpha_mode: GltfMaterialAlphaMode,
+    pub alpha_cutoff: Option<f32>,
+    pub double_sided: bool,
+}
+
+impl Default for GltfMaterialPipelineOverride {
+    fn default() -> Self {
+        Self {
+            alpha_mode: GltfMaterialAlphaMode::Opaque,
+            alpha_cutoff: None,
+            double_sided: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfMaterialAlphaMode {
+    #[default]
+    Opaque,
+    Mask,
+    Blend,
+}
+
 impl MtoonRendererMaterialPlan {
     pub fn from_descriptor(descriptor: &MtoonMaterialDescriptor) -> Self {
+        let phase_order = mtoon_render_phase_order(
+            descriptor.transparent_with_z_write,
+            descriptor.render_queue_offset_number,
+        );
         let (pass, pipeline) = match descriptor.pass {
             MtoonPipelinePass::Base(hints) => (
                 MtoonRendererPass::Base,
                 MtoonRendererPipelineState {
                     render_order: hints.render_order,
+                    phase_order,
                     alpha_mode: hints.alpha_mode,
                     cull_mode: hints.cull_mode,
                     depth_test: hints.depth_test,
                     depth_write: hints.depth_write,
                     blend: hints.blend,
+                    transparent_with_z_write: descriptor.transparent_with_z_write,
                     outline_width_mode: None,
                 },
             ),
@@ -1337,11 +1416,13 @@ impl MtoonRendererMaterialPlan {
                 MtoonRendererPass::Outline,
                 MtoonRendererPipelineState {
                     render_order: hints.render_order,
+                    phase_order,
                     alpha_mode: MtoonAlphaMode::Opaque,
                     cull_mode: hints.cull_mode,
                     depth_test: true,
                     depth_write: true,
                     blend: false,
+                    transparent_with_z_write: descriptor.transparent_with_z_write,
                     outline_width_mode: Some(hints.width_mode),
                 },
             ),
@@ -1381,6 +1462,48 @@ impl MtoonRendererMaterialPlan {
             textures: MtoonRendererTextureRefs::from_set(&descriptor.textures),
             texture_bindings: mtoon_texture_binding_plans(&descriptor.textures),
         }
+    }
+}
+
+impl RendererMaterialPipelinePlan {
+    pub fn from_mtoon_plan(plan: &MtoonRendererMaterialPlan) -> Self {
+        Self {
+            render_order: plan.pipeline.render_order,
+            phase_order: plan.pipeline.phase_order,
+            cull_mode: renderer_material_cull_mode(plan.pipeline.cull_mode),
+            alpha_mode: renderer_material_alpha_mode(plan.pipeline.alpha_mode),
+            depth_write: plan.pipeline.depth_write,
+            blend: plan.pipeline.blend,
+            alpha_cutoff: plan.shader.cutoff_factor,
+            transparent_order_offset: Some(plan.pipeline.phase_order),
+            mtoon_transparent_with_z_write: Some(plan.pipeline.transparent_with_z_write),
+        }
+    }
+
+    pub fn with_gltf_override(mut self, override_: GltfMaterialPipelineOverride) -> Self {
+        match override_.alpha_mode {
+            GltfMaterialAlphaMode::Opaque => {}
+            GltfMaterialAlphaMode::Mask => {
+                self.alpha_mode = RendererMaterialAlphaMode::Mask;
+                self.depth_write = true;
+                self.blend = false;
+                self.alpha_cutoff = override_.alpha_cutoff.unwrap_or(0.5);
+            }
+            GltfMaterialAlphaMode::Blend => {
+                self.alpha_mode = RendererMaterialAlphaMode::Blend;
+                self.depth_write = self.mtoon_transparent_with_z_write.unwrap_or(false);
+                self.blend = true;
+                self.render_order = self
+                    .transparent_order_offset
+                    .map_or(self.render_order.max(3000), |offset| 3000 + offset);
+            }
+        }
+
+        if override_.double_sided {
+            self.cull_mode = RendererMaterialCullMode::Off;
+        }
+
+        self
     }
 }
 
@@ -1917,6 +2040,27 @@ pub fn mtoon_texture_binding_plans(textures: &MtoonTextureSet) -> Vec<MtoonTextu
     .collect()
 }
 
+pub fn mtoon_render_phase_order(transparent_with_z_write: bool, render_queue_offset: i32) -> i32 {
+    let queue_offset = if transparent_with_z_write { 0 } else { 19 };
+    queue_offset + render_queue_offset
+}
+
+fn renderer_material_cull_mode(mode: MtoonCullMode) -> RendererMaterialCullMode {
+    match mode {
+        MtoonCullMode::Off => RendererMaterialCullMode::Off,
+        MtoonCullMode::Front => RendererMaterialCullMode::Front,
+        MtoonCullMode::Back => RendererMaterialCullMode::Back,
+    }
+}
+
+fn renderer_material_alpha_mode(mode: MtoonAlphaMode) -> RendererMaterialAlphaMode {
+    match mode {
+        MtoonAlphaMode::Opaque => RendererMaterialAlphaMode::Opaque,
+        MtoonAlphaMode::Mask => RendererMaterialAlphaMode::Mask,
+        MtoonAlphaMode::Blend => RendererMaterialAlphaMode::Blend,
+    }
+}
+
 fn mtoon_material_descriptor(
     material: MaterialRef,
     name: Option<String>,
@@ -1929,6 +2073,9 @@ fn mtoon_material_descriptor(
         material,
         name,
         pass,
+        render_queue: mtoon.render_queue,
+        transparent_with_z_write: mtoon.transparent_with_z_write,
+        render_queue_offset_number: mtoon.render_queue_offset_number,
         textures: mtoon.textures.clone(),
         base_color_factor: mtoon.base_color_factor,
         emissive_factor: mtoon.emissive_factor,
@@ -4017,6 +4164,8 @@ mod tests {
                 khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
                 mtoon: Feature::Present(MtoonMaterial {
                     render_queue: MtoonRenderQueue::Transparent,
+                    transparent_with_z_write: true,
+                    render_queue_offset_number: 7,
                     outline_width_mode: OutlineWidthMode::ScreenCoordinates,
                     outline_width_factor: 0.02,
                     base_color_factor: [0.8, 0.7, 0.6, 0.5],
@@ -4044,10 +4193,12 @@ mod tests {
 
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].pass, MtoonRendererPass::Base);
-        assert_eq!(plans[0].pipeline.render_order, 3000);
+        assert_eq!(plans[0].pipeline.render_order, 3007);
+        assert_eq!(plans[0].pipeline.phase_order, 7);
         assert_eq!(plans[0].pipeline.alpha_mode, MtoonAlphaMode::Blend);
         assert!(plans[0].pipeline.blend);
-        assert!(!plans[0].pipeline.depth_write);
+        assert!(plans[0].pipeline.depth_write);
+        assert!(plans[0].pipeline.transparent_with_z_write);
         assert_eq!(plans[0].shader.emissive_color, [0.2, 0.4, 0.6]);
         assert_eq!(plans[0].shader.debug_mode, MtoonDebugMode::Normal);
         assert!(plans[0].shader.v0_compat_shade);
@@ -4073,11 +4224,24 @@ mod tests {
             ]
         );
         assert_eq!(plans[1].pass, MtoonRendererPass::Outline);
+        assert_eq!(plans[1].pipeline.render_order, 3008);
         assert_eq!(
             plans[1].pipeline.outline_width_mode,
             Some(OutlineWidthMode::ScreenCoordinates)
         );
         assert_eq!(plans[1].shader.outline_width_factor, 0.02);
+
+        let capture_plan = RendererMaterialPipelinePlan::from_mtoon_plan(&plans[0])
+            .with_gltf_override(GltfMaterialPipelineOverride {
+                alpha_mode: GltfMaterialAlphaMode::Blend,
+                alpha_cutoff: None,
+                double_sided: true,
+            });
+        assert_eq!(capture_plan.render_order, 3007);
+        assert_eq!(capture_plan.phase_order, 7);
+        assert_eq!(capture_plan.alpha_mode, RendererMaterialAlphaMode::Blend);
+        assert_eq!(capture_plan.cull_mode, RendererMaterialCullMode::Off);
+        assert!(capture_plan.depth_write);
     }
 
     #[test]

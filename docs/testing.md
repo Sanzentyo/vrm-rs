@@ -128,8 +128,9 @@ RGBA JSON parsing, alpha counting, diff heatmap pixel generation, PSNR report
 summary extraction, and summary Markdown construction work on in-memory values,
 while filesystem reads/writes remain in the surrounding runner functions.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
-`CaptureMaterialPlan` for MToon/glTF alpha, culling, depth-write, blend, and
-render-order decisions; each renderer only converts that plan into its own
+`CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
+MToon/glTF alpha, culling, depth-write, blend, render-order, phase-order, and
+transparent-order decisions; each renderer only converts that plan into its own
 pipeline or material API at the edge.
 If `tools/render-parity/three-vrm-browser-capture.mjs` is invoked directly
 with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
@@ -207,9 +208,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.60% | 82.96% |
+| Workspace total | 79.59% | 82.84% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
-| `vrm-adapter` | 63.69% | 73.89% |
+| `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
 | `vrm-io` | 81.02% | 78.17% |
 | `vrm-protocol` | 92.41% | 90.93% |
@@ -217,7 +218,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 | `vrm-sans-io` | 92.69% | 95.68% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
-The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, stable errors for invalid expression/lookAt animation paths, and normal-gate application of humanoid, preset/custom expression, and lookAt tracks through the adapter writeback path. Renderer-facing generated glTF coverage now also includes primitive `COLOR_0`, morph target deltas, mesh/node default morph weights, and public MToon renderer material plans.
+The current external fixture tests cover recursive fixture discovery, semantic IO loading including the Alicia VRM0 compatibility sample, adapter spring rest capture/stepping, Seed-san center-space spring golden comparison, Alicia VRM0 spring golden comparison, Alicia VRM0 humanoid rest/writeback golden comparison, collider-heavy spring directory comparison, fixture-driven node constraint manager ordering/writeback comparison, Seed-san raw/normalized humanoid rest-state and posed writeback comparison, baseline plus dense Seed-san `test.vrma` application comparison, and branch-only `idle_loop.vrma` application comparison on real VRM/VRMA files without committing those binaries. Generated VRMA diagnostics cover stable warnings for ignored non-hips humanoid translation tracks, hips translation rest-height scaling, stable errors for invalid expression/lookAt animation paths, and normal-gate application of humanoid, preset/custom expression, and lookAt tracks through the adapter writeback path. Renderer-facing generated glTF coverage now also includes primitive `COLOR_0`, morph target deltas, mesh/node default morph weights, public MToon renderer material plans, and public primitive pipeline plans.
 
 ## Ordered Parity Milestones
 
@@ -249,7 +250,7 @@ Latest VRM0 Alicia expansion:
 
 1. Legacy expression aliases map into canonical expression keys (`aa`, `ih`, `ou`, `ee`, `oh`, `happy`, `sad`, `relaxed`, `lookUp`, `blinkLeft`, etc.).
 2. Ignored IO fixture assertions now cover normalized humanoid aliases, first-person mesh annotations, Bone lookAt, VRM0 MToon material mapping, and VRM0 secondary animation conversion.
-3. Renderer-facing MToon descriptors and `MtoonRendererMaterialPlan` now include the main VRM0/VRM1 materialization factors needed by Bevy/wgpu/ash adapters: base color, emissive factor, cutoff, receive shadow, shading grade, light attenuation, matcap, rim, outline lighting, texture-slot bindings, and sampler hints.
+3. Renderer-facing MToon descriptors, `MtoonRendererMaterialPlan`, and `RendererMaterialPipelinePlan` now include the main VRM0/VRM1 materialization factors needed by Bevy/wgpu/ash adapters: base color, emissive factor, cutoff, receive shadow, shading grade, light attenuation, matcap, rim, outline lighting, texture-slot bindings, sampler hints, alpha/cull/depth/blend policy, and glTF alpha/double-sided overrides.
 4. The Bevy adapter now has a `BevyMtoonMaterialPlan` conversion test that checks descriptor pass state, alpha/depth/cull state, base/shade/emissive colors, cutoff, texture references, and outline width without requiring Bevy render features.
 5. The Bevy adapter now has a `BevyRuntimeSceneState` trait-implementation test that checks parent/child traversal, local/world transform synchronization, local translation writes, and visibility writes without enabling Bevy render/transform features.
 6. The Bevy adapter now drives both high-level runtime paths in tests: `tick` for expression, first-person, MToon, and emissive writeback, and `tick_with_spring_parity` for `SpringRestMap` capture, center-space spring state, joint rotation writeback, and synchronized child world transforms.
@@ -260,7 +261,7 @@ Latest VRM0 Alicia expansion:
 11. Bevy runtime tick integration is covered by a full `App::update` path: read ECS transform state, run `VrmRuntimeDriver` from Bevy resources, then write expression, MToon, and emissive outputs back into lightweight Bevy components.
 12. Bevy spring parity integration is covered by a full `App::update` path that reads ECS transforms, captures `SpringRestMap`, initializes center-space spring state, runs the runtime tick, and writes the solved joint rotation back to a Bevy `Transform`.
 13. Bevy spring parity recapture is covered by a marker-resource test that requests a rest-pose recapture and verifies the captured `SpringRestMap` is rebuilt without callers manually clearing `BevyVrmSpringParityState`.
-14. MToon renderer skeleton coverage now includes `cargo run --example mtoon_renderer_skeletons`, which maps public `MtoonRendererMaterialPlan` values into wgpu-like and ash-like pipeline/material tables without renderer dependencies.
+14. MToon renderer skeleton coverage now includes `cargo run --example mtoon_renderer_skeletons`, which maps public `MtoonRendererMaterialPlan` and `RendererMaterialPipelinePlan` values into wgpu-like and ash-like pipeline/material tables without renderer dependencies.
 15. Bevy hierarchy readback now covers real `ChildOf` ECS hierarchy components, deriving `BevyRuntimeSceneState` parent/child links before spring parity and runtime-driver ticks.
 16. Bevy MToon materialization coverage now includes `cargo run --example bevy_mtoon_materialization`, which maps MToon pass plans and runtime material state into a Bevy-facing asset without shader policy.
 
