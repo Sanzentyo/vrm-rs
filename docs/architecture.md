@@ -9,7 +9,7 @@
 - `vrm-runtime`: renderer-independent update orchestration and algorithms.
 - `vrm-adapter`: traits for scene graph, transforms, morph targets, materials, textures, and animation sinks.
 - `vrm-adapter-bevy`: Bevy 0.18.1 registry, descriptor bridge, and runtime plugin config skeleton.
-- `vrm-rs`: facade crate. It re-exports the lower layers and provides `Vrm`, `load_full`, `load_runtime`, `runtime_for`, and `driver_for` so common applications can move from bytes/path loading to resolved documents, runtime events, and adapter drivers without importing every crate directly.
+- `vrm-rs`: facade crate. It re-exports the lower layers and provides `Vrm`, `load_full`, `load_runtime`, `runtime_for`, `driver_for`, `headless_scene_from_loaded`, and `evaluated_world_matrices` so common applications can move from bytes/path loading to resolved documents, runtime events, headless scene staging, and adapter drivers without importing every crate directly.
 
 ## Type State
 
@@ -39,6 +39,8 @@ The current implementation produces deterministic runtime events and update orde
 VRMA files can contain multiple glTF animation clips. `vrm-io` classifies glTF animation channels by the `VRMC_vrm_animation` node map and stores extracted clips in `VrmDocument::animations`; `VrmDocument::animation` mirrors the first clip as a convenience value.
 
 `LoadedVrm::scene` exposes `GltfSceneRest`, a renderer-independent snapshot of glTF node parent/child relationships plus local and world rest transforms. This keeps IO useful for adapter setup, fixture-driven parity tests, and custom engines that want a starting scene map without depending on Bevy, wgpu, ash, or three.js objects.
+
+The facade-level `headless_scene_from_loaded` and `evaluated_world_matrices` helpers keep the common "load glTF rest graph, run a headless runtime tick, and read world matrices" path out of concrete renderer examples. wgpu, Bevy, ash, and full-scratch renderers can now share the same no-renderer scene evaluation before converting the final matrices or material plans into backend-owned buffers and descriptors.
 
 Current channel mapping:
 

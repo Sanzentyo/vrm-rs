@@ -24,14 +24,28 @@ pub use vrm_sans_io as sans_io;
 
 use std::path::Path;
 
-pub use vrm_adapter::VrmRuntimeDriver;
-pub use vrm_core::{Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
+pub use glam::Mat4;
+use thiserror::Error;
+pub use vrm_adapter::{HeadlessAdapterError, HeadlessSceneState, VrmRuntimeDriver};
+use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
+pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
 pub use vrm_runtime::{DeltaTime, Runtime, RuntimeEvents};
 pub use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
 /// Concrete resolved model type returned by the facade loaders.
 pub type ResolvedVrmModel = VrmModel<Resolved>;
+
+/// Errors from facade-level renderer-independent scene evaluation.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum VrmSceneEvaluationError {
+    #[error(transparent)]
+    Runtime(#[from] runtime::RuntimeError),
+    #[error(transparent)]
+    Headless(#[from] HeadlessAdapterError),
+    #[error(transparent)]
+    Adapter(#[from] adapter::AdapterError<HeadlessAdapterError>),
+}
 
 /// Loaded VRM/VRMA data plus renderer-agnostic runtime state.
 ///
@@ -111,6 +125,16 @@ impl Vrm {
     pub fn driver_with_events<'a>(&'a self, events: &'a RuntimeEvents) -> VrmRuntimeDriver<'a> {
         self.driver().with_runtime_events(events)
     }
+
+    /// Build a headless adapter scene from the loaded glTF rest graph.
+    pub fn headless_scene(&self) -> Result<HeadlessSceneState, HeadlessAdapterError> {
+        headless_scene_from_loaded(&self.loaded)
+    }
+
+    /// Evaluate renderer-independent runtime effects and return world matrices.
+    pub fn evaluated_world_matrices(&self) -> Result<Vec<Mat4>, VrmSceneEvaluationError> {
+        evaluated_world_matrices(&self.loaded)
+    }
 }
 
 /// Parse, validate, and resolve a VRM/VRMA payload from a `.gltf`, `.glb`,
@@ -147,6 +171,65 @@ pub fn runtime_for(model: &VrmModel<Resolved>) -> Runtime {
 /// Create a high-level adapter driver for a resolved model.
 pub fn driver_for(model: &VrmModel<Resolved>) -> VrmRuntimeDriver<'_> {
     VrmRuntimeDriver::new(model.document())
+}
+
+/// Build a renderer-independent headless scene from the loaded glTF rest graph.
+///
+/// This is useful for full-scratch renderers that want to reuse `vrm-rs`
+/// runtime ordering without adopting Bevy or any other engine adapter.
+pub fn headless_scene_from_loaded(
+    loaded: &LoadedVrm,
+) -> Result<HeadlessSceneState, HeadlessAdapterError> {
+    let mut scene = HeadlessSceneState::default();
+    for (index, node) in loaded.scene.nodes.iter().enumerate() {
+        scene.insert_node(NodeRef(index), node.local);
+    }
+    for (index, node) in loaded.scene.nodes.iter().enumerate() {
+        scene.set_parent(NodeRef(index), node.parent.map(NodeRef))?;
+    }
+    scene.update_world_transforms()?;
+    Ok(scene)
+}
+
+/// Evaluate a loaded VRM scene through the renderer-independent runtime driver.
+///
+/// The result includes constraint/spring/runtime writeback using the same
+/// headless adapter path as the wgpu and Bevy render-parity examples.
+pub fn evaluated_world_matrices(loaded: &LoadedVrm) -> Result<Vec<Mat4>, VrmSceneEvaluationError> {
+    let mut scene = headless_scene_from_loaded(loaded)?;
+    let document = loaded.model().document();
+    let mut runtime = Runtime::from_document(document);
+    let events = runtime.update(DeltaTime(0.0))?;
+    let root = loaded
+        .scene
+        .nodes
+        .iter()
+        .position(|node| node.parent.is_none())
+        .map(NodeRef);
+    let mut driver = VrmRuntimeDriver::new(document).with_runtime_events(&events);
+    if let Some(root) = root {
+        driver = driver.with_root(root);
+    }
+
+    match &document.spring_bone {
+        core::Feature::Present(system) => {
+            let rest = SpringRestMap::capture(&scene, system)?;
+            let mut state = rest.runtime_state(system);
+            driver.tick_with_spring_parity(&mut scene, Some((&rest, &mut state)))?;
+        }
+        core::Feature::Absent => {
+            driver.tick_with_spring_parity(&mut scene, None)?;
+        }
+    }
+    scene.update_world_transforms()?;
+
+    loaded
+        .scene
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, _)| scene.world_matrix(NodeRef(index)).map_err(Into::into))
+        .collect()
 }
 
 #[cfg(test)]
@@ -219,6 +302,20 @@ mod tests {
         let loaded_again = session.into_loaded();
         assert_eq!(loaded_again.model().document().meta.name, "Facade Fixture");
         assert_eq!(loaded_again.scene().nodes.len(), loaded.scene().nodes.len());
+    }
+
+    #[test]
+    fn facade_builds_headless_scene_and_evaluates_world_matrices() {
+        let loaded = load_full(generated_vrm1_gltf().as_bytes()).unwrap();
+        let session = Vrm::from_loaded(loaded.clone());
+
+        let scene = session.headless_scene().unwrap();
+        assert!(scene.node(NodeRef(0)).is_some());
+
+        let matrices = evaluated_world_matrices(&loaded).unwrap();
+        assert_eq!(matrices.len(), loaded.scene().nodes.len());
+        assert_eq!(matrices[0], Mat4::IDENTITY);
+        assert_eq!(session.evaluated_world_matrices().unwrap(), matrices);
     }
 
     #[test]

@@ -291,15 +291,15 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.78% | 84.76% |
+| Workspace total | 81.82% | 84.81% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
-| `vrm-adapter` | 64.83% | 74.68% |
+| `vrm-adapter` | 64.94% | 74.74% |
 | `vrm-core` | 70.18% | 77.46% |
 | `vrm-io` | 87.16% | 86.46% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
-| `facade src/lib.rs` | 98.77% | 100.00% |
+| `facade src/lib.rs` | 93.33% | 98.35% |
 
 The current external fixture tests cover recursive fixture discovery, semantic
 IO loading including the Alicia VRM0 compatibility sample, adapter spring rest
@@ -331,7 +331,9 @@ lookup/RGBA8 conversion, renderer-neutral texCoord0 fallback, and
 renderer-neutral prepared vertex generation before renderer-specific buffer
 creation, renderer-neutral outline-width texture lookup, renderer-neutral
 whole-primitive UV fallback generation, and renderer-neutral RGBA mip-chain
-generation. Expression-applied renderer material state is also shared through
+generation. Facade-level headless scene construction and zero-delta world-matrix
+evaluation are shared before renderer-specific buffer creation.
+Expression-applied renderer material state is also shared through
 `LoadedVrm::expression_material_shading_plan` and
 `LoadedVrm::expression_material_uv_transforms`, while MToon outline material
 state is shared through `LoadedVrm::expression_mtoon_outline_plan`.
