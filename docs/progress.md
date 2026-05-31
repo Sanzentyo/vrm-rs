@@ -2,6 +2,25 @@
 
 ## 2026-05-31
 
+- Added object-body PSNR diagnostics for opaque-black render parity sweeps.
+  `compare-psnr.mjs` and `tools/ci/local-ci.rs` now accept `rgb-nonblack` and
+  `rgb-nonblack-interior1px`, and `just render-parity-samples-nonblack` runs
+  the same six real fixtures with selected `rgb-nonblack >= 25 dB`. That sweep
+  passes with exact alpha parity; current selected PSNR is Seed-san wgpu
+  `27.4846 dB` / Bevy `26.9636 dB`, constraint wgpu `28.2416 dB` / Bevy
+  `28.2261 dB`, UV animation wgpu `26.7904 dB` / Bevy `26.7455 dB`,
+  expression masks around `29.83 dB`, and Alicia VRM0 wgpu `25.2374 dB` /
+  Bevy `25.2268 dB`. Alicia remains the current real-model color floor, and
+  its `rgb-nonblack-interior1px` result is about `27.88 dB`, so the next
+  compatibility work should raise actual model-body color parity rather than
+  only the background-inclusive `rgb-visible` score.
+- Aligned concrete capture defaults more closely with three-vrm source policy:
+  VRM0 compatibility shade clamping is now an explicit capture flag instead of
+  being forced for every VRM0 compat asset, matching three-vrm's default
+  `v0CompatShade = false`; MToon matcap UV calculation now uses view-space
+  direction/normal in the wgpu and Bevy capture shaders. On the fixed Alicia
+  camera these correctness changes did not materially change PSNR, which keeps
+  the remaining blocker focused on broader material/geometry color deltas.
 - Tightened the real render-parity gates with a split threshold. A trial `34 dB`
   floor for the full six-fixture `just render-parity-samples` sweep showed
   Alicia VRM0 compatibility is the current lower bound at wgpu `32.6863 dB` /

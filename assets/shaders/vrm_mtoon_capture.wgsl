@@ -269,11 +269,14 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let occlusion = select(sampled_occlusion, 1.0, material.material_flags.z > 0.5);
     let ambient = diffuse * (material.lighting.y + material.lighting.z * material.shading.z) * occlusion;
 
-    let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
-    let matcap_y = cross(view_dir, matcap_x);
+    let matcap_view_position = (view.view_from_world * vec4<f32>(input.world_position.xyz, 1.0)).xyz;
+    let matcap_view_dir = normalize(-matcap_view_position);
+    let matcap_normal = normalize((view.view_from_world * vec4<f32>(normal, 0.0)).xyz);
+    let matcap_x = normalize(vec3<f32>(matcap_view_dir.z, 0.0, -matcap_view_dir.x));
+    let matcap_y = cross(matcap_view_dir, matcap_x);
     let raw_matcap_uv = vec2<f32>(
-        0.5 + 0.5 * dot(matcap_x, normal),
-        0.5 - 0.5 * dot(matcap_y, normal),
+        0.5 + 0.5 * dot(matcap_x, matcap_normal),
+        0.5 - 0.5 * dot(matcap_y, matcap_normal),
     );
     let matcap_uv = transform_uv(raw_matcap_uv, material.matcap_uv_transform, material.uv_rotation_b.w);
     let matcap = textureSample(matcap_texture, matcap_sampler, matcap_uv).rgb * material.matcap_factor.rgb;

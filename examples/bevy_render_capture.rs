@@ -50,9 +50,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_core::{
-    ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d, VrmKind,
-};
+use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm,
     load_vrm_from_path,
@@ -141,6 +139,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
+    #[arg(long)]
+    mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -376,7 +376,8 @@ fn spawn_vrm_meshes(
             image_handles: &image_handles,
         };
         for primitive in &mesh.primitives {
-            let mut shading = material_shading(loaded, primitive.material, &expression_effects);
+            let mut shading =
+                material_shading(loaded, primitive.material, &expression_effects, options);
             if options.disable_normal_maps {
                 shading.normal_scale = 0.0;
             }
@@ -492,7 +493,12 @@ fn bevy_outline_primitive(
     let mut material = bevy_mtoon_material(
         loaded,
         primitive,
-        material_shading(loaded, primitive.material, context.expression_effects),
+        material_shading(
+            loaded,
+            primitive.material,
+            context.expression_effects,
+            context.options,
+        ),
         context,
         render_depth_bias(material_render_order(loaded, primitive.material) + 1),
         0.0,
@@ -1171,13 +1177,13 @@ fn material_shading(
     loaded: &LoadedVrm,
     material: Option<usize>,
     expression_effects: &ExpressionRenderEffects,
+    options: &CaptureOptions,
 ) -> MaterialShading {
     if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|core_material| {
             let mtoon = core_material.mtoon.as_ref()?;
             let (emissive_strength, _) = core_material.effective_emissive_strength();
-            let v0_compat_shade = loaded.model().document().kind == VrmKind::Vrm0Compat;
             let base_color = apply_color_effect4(
                 mtoon.base_color_factor,
                 material,
@@ -1237,7 +1243,7 @@ fn material_shading(
                 roughness: 1.0,
                 occlusion_strength: 0.0,
                 pbr_fallback: false,
-                v0_compat_shade,
+                v0_compat_shade: options.mtoon_v0_compat_shade,
             })
         })
     {

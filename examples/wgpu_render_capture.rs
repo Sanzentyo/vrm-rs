@@ -17,9 +17,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use vrm_core::{
-    ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d, VrmKind,
-};
+use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMeshData, GltfNodeRest, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
     load_vrm_from_path,
@@ -63,6 +61,7 @@ impl Vertex {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
     light_dir: [f32; 4],
     light_color: [f32; 4],
     camera_pos: [f32; 4],
@@ -117,6 +116,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
+    #[arg(long)]
+    mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
 }
@@ -621,7 +622,12 @@ fn draw_primitive(
     morph_weights: &[f32],
     context: &PrimitiveDrawContext<'_>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
-    let mut shading = material_shading(loaded, primitive.material, context.expression_effects);
+    let mut shading = material_shading(
+        loaded,
+        primitive.material,
+        context.expression_effects,
+        context.options,
+    );
     if context.options.disable_normal_maps {
         shading.normal_scale = 0.0;
     }
@@ -1237,13 +1243,13 @@ fn material_shading(
     loaded: &LoadedVrm,
     material: Option<usize>,
     expression_effects: &ExpressionRenderEffects,
+    options: &CaptureOptions,
 ) -> MaterialShading {
     if let Some(shading) = material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|core_material| {
             let mtoon = core_material.mtoon.as_ref()?;
             let (emissive_strength, _) = core_material.effective_emissive_strength();
-            let v0_compat_shade = loaded.model().document().kind == VrmKind::Vrm0Compat;
             let base_color = apply_color_effect4(
                 mtoon.base_color_factor,
                 material,
@@ -1303,7 +1309,7 @@ fn material_shading(
                 roughness: 1.0,
                 occlusion_strength: 0.0,
                 pbr_fallback: false,
-                v0_compat_shade,
+                v0_compat_shade: options.mtoon_v0_compat_shade,
             })
         })
     {
@@ -2333,6 +2339,7 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
     let light_dir = Vec3::new(-1.0, 1.0, -1.0).normalize();
     Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
+        view: view.to_cols_array_2d(),
         light_dir: Vec4::new(
             light_dir.x,
             light_dir.y,
@@ -2449,6 +2456,7 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), Bo
 const SHADER: &str = r#"
 struct Uniforms {
     view_projection: mat4x4<f32>,
+    view: mat4x4<f32>,
     light_dir: vec4<f32>,
     light_color: vec4<f32>,
     camera_pos: vec4<f32>,
@@ -2748,11 +2756,14 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let sampled_occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
     let occlusion = select(sampled_occlusion, 1.0, material_extra.flags.z > 0.5);
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi) * occlusion;
-    let matcap_x = normalize(vec3<f32>(view_dir.z, 0.0, -view_dir.x));
-    let matcap_y = cross(view_dir, matcap_x);
+    let matcap_view_position = (uniforms.view * vec4<f32>(input.world_position, 1.0)).xyz;
+    let matcap_view_dir = normalize(-matcap_view_position);
+    let matcap_normal = normalize((uniforms.view * vec4<f32>(normal, 0.0)).xyz);
+    let matcap_x = normalize(vec3<f32>(matcap_view_dir.z, 0.0, -matcap_view_dir.x));
+    let matcap_y = cross(matcap_view_dir, matcap_x);
     let raw_matcap_uv = vec2<f32>(
-        0.5 + 0.5 * dot(matcap_x, normal),
-        0.5 - 0.5 * dot(matcap_y, normal),
+        0.5 + 0.5 * dot(matcap_x, matcap_normal),
+        0.5 - 0.5 * dot(matcap_y, matcap_normal),
     );
     let matcap_uv = transform_uv(raw_matcap_uv, material_uv.matcap_transform, material_uv.rotation_b.w);
     let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;

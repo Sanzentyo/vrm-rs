@@ -46,6 +46,7 @@ just ci
 just ci-external
 just render-parity
 just render-parity-samples
+just render-parity-samples-nonblack
 just render-parity-vrm1-samples
 ```
 
@@ -76,7 +77,16 @@ enforces selected `rgb-visible >= 32.5 dB`. Alicia is currently the lower bound
 of that compatibility sweep at wgpu `32.6863 dB` / Bevy `32.6757 dB`, so
 `just render-parity-vrm1-samples` keeps a stricter `34 dB` floor for the same
 set without the VRM0 compatibility sample under
-`.external-fixtures/render-parity-vrm1-samples/`. Use
+`.external-fixtures/render-parity-vrm1-samples/`. Because the canonical
+opaque-black background makes every pixel visible, `rgb-visible` is the stable
+full-review regression metric but can hide object-body color error behind black
+background pixels. Use `just render-parity-samples-nonblack` for the same
+six-fixture sweep under `.external-fixtures/render-parity-samples-nonblack/`;
+it selects `rgb-nonblack >= 25 dB`, comparing only pixels where either render
+has non-zero RGB. The current model-body floor is Alicia VRM0 at wgpu
+`25.2374 dB` / Bevy `25.2268 dB`, while the same fixture reports
+`rgb-nonblack-interior1px` around `27.88 dB` after dropping one-pixel edges.
+Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
@@ -165,7 +175,9 @@ be compared. Use `rgb-opaque`/`rgb-interior1px` when edge alpha disagreement
 should be kept out of the threshold.
 Use `rgb-visible-interior1px` for transparent-background audits that need
 partial-alpha interiors included while still dropping one-pixel silhouette
-edges.
+edges. Use `rgb-nonblack` and `rgb-nonblack-interior1px` for opaque-black
+diagnostics that should ignore empty black background pixels and focus on model
+body color; these are most useful with `--render-background opaque-black`.
 
 ## Coverage
 
@@ -202,7 +214,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 32.5 dB`, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, Alicia VRM0 parity above the current floor, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 32.5 dB`, a matching object-body `rgb-nonblack >= 25 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, Alicia VRM0 model-body parity above the current floor, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

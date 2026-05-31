@@ -38,15 +38,20 @@ The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
 delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
 selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
-`--metric rgb-visible`, `--metric rgb-interior1px`, and
-`--metric rgb-visible-interior1px`; pass/fail thresholds use the selected
-metric. It also accepts
+`--metric rgb-visible`, `--metric rgb-nonblack`,
+`--metric rgb-interior1px`, `--metric rgb-visible-interior1px`, and
+`--metric rgb-nonblack-interior1px`; pass/fail thresholds use the selected
+metric. The nonblack metrics are intended for opaque-black review sweeps where
+empty background pixels should not dilute the model-body color error. It also
+accepts
 `--max-selected-channel-delta` and `--max-alpha-delta` for fixture-specific
 worst-case guards, and the Rust local runner forwards them as
 `--render-max-selected-channel-delta` and `--render-max-alpha-delta`. The local
 render-parity runner defaults to `rgb-visible`; with the canonical opaque-black
 review background this is the visible RGB surface metric, and it also remains
-useful for explicit transparent alpha-mask audits. Use
+useful for explicit transparent alpha-mask audits. Use `rgb-nonblack` for
+opaque-black whole-model diagnostics and `rgb-nonblack-interior1px` when
+one-pixel silhouette/raster edges should be dropped from that diagnostic. Use
 `rgb-visible-interior1px` when transparent interiors must be measured while
 still dropping one-pixel silhouette edges.
 
