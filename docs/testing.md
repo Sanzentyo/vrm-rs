@@ -46,6 +46,7 @@ just ci
 just ci-external
 just render-parity
 just render-parity-samples
+just render-parity-vrm1-samples
 ```
 
 The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons` and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
@@ -70,9 +71,14 @@ keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, the official
 `VRMC_materials_mtoon_UV_Animation_Test.vrm` fixture, the two official
 `VRMC_vrm_expressions_isBinary_*` mask fixtures, and the external
-`UniVRM/AliciaSolid_vrm-0.51.vrm` VRM0 transparent-material fixture. Use
-`--render-mtoon-time SECONDS` for MToon material-update parity checks such as
-UV animation; `just render-parity-uv-animation` stores its time-advanced sample
+`UniVRM/AliciaSolid_vrm-0.51.vrm` VRM0 transparent-material fixture, and
+enforces selected `rgb-visible >= 32.5 dB`. Alicia is currently the lower bound
+of that compatibility sweep at wgpu `32.6863 dB` / Bevy `32.6757 dB`, so
+`just render-parity-vrm1-samples` keeps a stricter `34 dB` floor for the same
+set without the VRM0 compatibility sample under
+`.external-fixtures/render-parity-vrm1-samples/`. Use
+`--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
+animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
 the canonical static sweep. Use `just render-parity-real-normal-maps` for the
 focused real-fixture review of the known official tangentless normal-map
@@ -196,7 +202,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, and direct/ambient isolated MToon light-color guards; broader real-model PSNR, real tangentless normal-map fixture review, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 32.5 dB`, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, Alicia VRM0 parity above the current floor, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

@@ -2,6 +2,14 @@
 
 ## 2026-05-31
 
+- Tightened the real render-parity gates with a split threshold. A trial `34 dB`
+  floor for the full six-fixture `just render-parity-samples` sweep showed
+  Alicia VRM0 compatibility is the current lower bound at wgpu `32.6863 dB` /
+  Bevy `32.6757 dB`, so the full sweep now enforces selected
+  `rgb-visible >= 32.5 dB` while still keeping Alicia in the default sample set.
+  Added `just render-parity-vrm1-samples` for the same Seed-san, constraint, UV
+  animation, and binary-expression fixtures without Alicia; that VRM1/current
+  official subset passes `rgb-visible >= 34 dB` with exact opaque alpha parity.
 - Added a public renderer primitive material policy layer in `vrm-adapter`. `RendererMaterialPipelinePlan` now derives alpha/cull/depth/blend/render-order/phase-order state from `MtoonRendererMaterialPlan`, and `GltfMaterialPipelineOverride` applies glTF alpha cutoff and double-sided overrides as a pure adapter-layer transition. The wgpu/Bevy capture examples now use this public plan via the shared `CaptureMaterialPlan` alias, and the wgpu/ash material skeleton maps the same primitive plan into concrete engine pipeline keys.
 - Promoted renderer-owned MToon material planning into `vrm-adapter`. `mtoon_renderer_material_plans` now exposes `MtoonRendererMaterialPlan`, pipeline state, shader parameters, texture refs, texture-slot bindings, and sampler hints for non-Bevy engines; `vrm-adapter-bevy` and `examples/mtoon_renderer_skeletons.rs` now consume that public plan instead of re-deriving the same state from raw `MtoonPipelinePass` values. Focused `vrm-adapter` coverage, `cargo run --example mtoon_renderer_skeletons`, and `cargo run --example bevy_mtoon_materialization` pass. The coverage snapshot refresh was delegated to `gpt-5.3-codex-spark` and reviewed; workspace line coverage is now `82.96%`.
 - Shared the concrete capture material policy through a backend-neutral `CaptureMaterialPlan` in `examples/common/render_capture_scene.rs`. The wgpu and Bevy render captures now consume the same MToon/glTF alpha, cull, depth-write, blend, render-order, and transparent queue decisions before converting to backend-specific pipeline types. `just render-parity-transparent-queue-matrix D:/git/three-vrm` still passes after the refactor with identical alpha buckets, selected `rgb-visible` PSNR wgpu `53.0342 dB` / Bevy `48.4839 dB`, and max selected channel delta `2` / `3`.
