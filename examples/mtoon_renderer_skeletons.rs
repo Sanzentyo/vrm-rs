@@ -6,11 +6,13 @@
 
 use std::collections::HashMap;
 
-use vrm_adapter::{MtoonMaterializationOptions, mtoon_material_descriptors};
+use vrm_adapter::{
+    MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
+    MtoonTextureBindingPlan, MtoonTextureSlot, mtoon_renderer_material_plans,
+};
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonAlphaMode, MtoonCullMode, MtoonMaterial,
-    MtoonPipelinePass, MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, TextureRef,
-    VrmDocument,
+    MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, TextureRef, VrmDocument,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -135,18 +137,17 @@ struct AshMaterialTable {
 impl WgpuMaterialTable {
     fn from_vrm(document: &VrmDocument) -> Self {
         let mut table = Self::default();
-        for descriptor in
-            mtoon_material_descriptors(document, MtoonMaterializationOptions::default())
+        for plan in mtoon_renderer_material_plans(document, MtoonMaterializationOptions::default())
         {
             table
                 .pipelines
-                .entry(descriptor.material)
+                .entry(plan.material)
                 .or_default()
-                .push(wgpu_pipeline_descriptor(&descriptor));
+                .push(wgpu_pipeline_descriptor(&plan));
             table
                 .materials
-                .entry(descriptor.material)
-                .or_insert_with(|| renderer_material(&descriptor));
+                .entry(plan.material)
+                .or_insert_with(|| renderer_material(&plan));
         }
         table
     }
@@ -155,61 +156,56 @@ impl WgpuMaterialTable {
 impl AshMaterialTable {
     fn from_vrm(document: &VrmDocument) -> Self {
         let mut table = Self::default();
-        for descriptor in
-            mtoon_material_descriptors(document, MtoonMaterializationOptions::default())
+        for plan in mtoon_renderer_material_plans(document, MtoonMaterializationOptions::default())
         {
             table
                 .pipelines
-                .entry(descriptor.material)
+                .entry(plan.material)
                 .or_default()
-                .push(ash_pipeline_descriptor(&descriptor));
+                .push(ash_pipeline_descriptor(&plan));
             table
                 .materials
-                .entry(descriptor.material)
-                .or_insert_with(|| renderer_material(&descriptor));
+                .entry(plan.material)
+                .or_insert_with(|| renderer_material(&plan));
         }
         table
     }
 }
 
-fn renderer_material(descriptor: &vrm_adapter::MtoonMaterialDescriptor) -> RendererMaterial {
+fn renderer_material(plan: &MtoonRendererMaterialPlan) -> RendererMaterial {
     RendererMaterial {
-        material: descriptor.material,
-        base_color: descriptor.base_color_factor,
-        emissive: descriptor
-            .emissive_factor
-            .map(|channel| channel * descriptor.emissive_strength.0),
-        cutoff: descriptor.cutoff_factor,
-        base_texture: descriptor.textures.main_texture,
-        shade_texture: descriptor.textures.shade_multiply_texture,
-        normal_texture: descriptor.textures.normal_texture,
-        texture_bindings: texture_bindings(&descriptor.textures),
+        material: plan.material,
+        base_color: plan.shader.base_color_factor,
+        emissive: plan.shader.emissive_color,
+        cutoff: plan.shader.cutoff_factor,
+        base_texture: plan.textures.main,
+        shade_texture: plan.textures.shade_multiply,
+        normal_texture: plan.textures.normal,
+        texture_bindings: texture_bindings(&plan.texture_bindings),
         uniform_bytes: mtoon_uniform_bytes(),
     }
 }
 
-fn wgpu_pipeline_descriptor(
-    descriptor: &vrm_adapter::MtoonMaterialDescriptor,
-) -> WgpuPipelineDescriptor {
-    let key = match descriptor.pass {
-        MtoonPipelinePass::Base(hints) => WgpuPipelineKey {
+fn wgpu_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> WgpuPipelineDescriptor {
+    let key = match plan.pass {
+        MtoonRendererPass::Base => WgpuPipelineKey {
             pass: RendererPass::Base,
-            blend: blend_state(hints.alpha_mode),
-            cull: cull_state(hints.cull_mode),
-            depth: depth_state(hints.depth_test, hints.depth_write),
-            render_order: hints.render_order,
+            blend: blend_state(plan.pipeline.alpha_mode),
+            cull: cull_state(plan.pipeline.cull_mode),
+            depth: depth_state(plan.pipeline.depth_test, plan.pipeline.depth_write),
+            render_order: plan.pipeline.render_order,
         },
-        MtoonPipelinePass::Outline(hints) => WgpuPipelineKey {
+        MtoonRendererPass::Outline => WgpuPipelineKey {
             pass: RendererPass::Outline,
             blend: BlendState::Opaque,
-            cull: cull_state(hints.cull_mode),
+            cull: cull_state(plan.pipeline.cull_mode),
             depth: depth_state(true, true),
-            render_order: hints.render_order,
+            render_order: plan.pipeline.render_order,
         },
     };
     WgpuPipelineDescriptor {
         key,
-        bind_layout: bind_layout(&descriptor.textures),
+        bind_layout: bind_layout(&plan.texture_bindings),
         vertex_layout: "position_normal_uv_skinning",
         fragment_entry: match key.pass {
             RendererPass::Base => "mtoon_base_frag",
@@ -218,28 +214,26 @@ fn wgpu_pipeline_descriptor(
     }
 }
 
-fn ash_pipeline_descriptor(
-    descriptor: &vrm_adapter::MtoonMaterialDescriptor,
-) -> AshPipelineDescriptor {
-    match descriptor.pass {
-        MtoonPipelinePass::Base(hints) => AshPipelineDescriptor {
+fn ash_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> AshPipelineDescriptor {
+    match plan.pass {
+        MtoonRendererPass::Base => AshPipelineDescriptor {
             pass: RendererPass::Base,
-            blend: blend_state(hints.alpha_mode),
-            cull: cull_state(hints.cull_mode),
-            depth: depth_state(hints.depth_test, hints.depth_write),
-            render_order: hints.render_order,
-            descriptor_layout: bind_layout(&descriptor.textures),
+            blend: blend_state(plan.pipeline.alpha_mode),
+            cull: cull_state(plan.pipeline.cull_mode),
+            depth: depth_state(plan.pipeline.depth_test, plan.pipeline.depth_write),
+            render_order: plan.pipeline.render_order,
+            descriptor_layout: bind_layout(&plan.texture_bindings),
             push_constant_bytes: 16,
             vertex_shader: "mtoon_base.vert.spv",
             fragment_shader: "mtoon_base.frag.spv",
         },
-        MtoonPipelinePass::Outline(hints) => AshPipelineDescriptor {
+        MtoonRendererPass::Outline => AshPipelineDescriptor {
             pass: RendererPass::Outline,
             blend: BlendState::Opaque,
-            cull: cull_state(hints.cull_mode),
+            cull: cull_state(plan.pipeline.cull_mode),
             depth: depth_state(true, true),
-            render_order: hints.render_order,
-            descriptor_layout: bind_layout(&descriptor.textures),
+            render_order: plan.pipeline.render_order,
+            descriptor_layout: bind_layout(&plan.texture_bindings),
             push_constant_bytes: 16,
             vertex_shader: "mtoon_outline.vert.spv",
             fragment_shader: "mtoon_outline.frag.spv",
@@ -279,68 +273,46 @@ fn mtoon_uniform_bytes() -> usize {
     256
 }
 
-fn bind_layout(textures: &MtoonTextureSet) -> BindLayout {
+fn bind_layout(bindings: &[MtoonTextureBindingPlan]) -> BindLayout {
     BindLayout {
         uniform_bytes: mtoon_uniform_bytes(),
-        textures: texture_bindings(textures)
-            .into_iter()
+        textures: bindings
+            .iter()
             .map(|binding| binding.slot)
+            .map(texture_slot)
             .collect(),
     }
 }
 
-fn texture_bindings(textures: &MtoonTextureSet) -> Vec<TextureBinding> {
-    [
-        (
-            TextureSlot::Main,
-            textures.main_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::ShadeMultiply,
-            textures.shade_multiply_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::ShadingShift,
-            textures.shading_shift_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::Normal,
-            textures.normal_texture,
-            SamplerKind::NormalMap,
-        ),
-        (
-            TextureSlot::Matcap,
-            textures.matcap_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::RimMultiply,
-            textures.rim_multiply_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::OutlineWidth,
-            textures.outline_width_multiply_texture,
-            SamplerKind::LinearRepeat,
-        ),
-        (
-            TextureSlot::UvAnimationMask,
-            textures.uv_animation_mask_texture,
-            SamplerKind::LinearRepeat,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(slot, texture, sampler)| {
-        texture.map(|texture| TextureBinding {
-            slot,
-            texture,
-            sampler,
+fn texture_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<TextureBinding> {
+    bindings
+        .iter()
+        .map(|binding| TextureBinding {
+            slot: texture_slot(binding.slot),
+            texture: binding.texture,
+            sampler: sampler_kind(binding.sampler),
         })
-    })
-    .collect()
+        .collect()
+}
+
+fn texture_slot(slot: MtoonTextureSlot) -> TextureSlot {
+    match slot {
+        MtoonTextureSlot::Main => TextureSlot::Main,
+        MtoonTextureSlot::ShadeMultiply => TextureSlot::ShadeMultiply,
+        MtoonTextureSlot::ShadingShift => TextureSlot::ShadingShift,
+        MtoonTextureSlot::Normal => TextureSlot::Normal,
+        MtoonTextureSlot::Matcap => TextureSlot::Matcap,
+        MtoonTextureSlot::RimMultiply => TextureSlot::RimMultiply,
+        MtoonTextureSlot::OutlineWidth => TextureSlot::OutlineWidth,
+        MtoonTextureSlot::UvAnimationMask => TextureSlot::UvAnimationMask,
+    }
+}
+
+fn sampler_kind(sampler: MtoonSamplerHint) -> SamplerKind {
+    match sampler {
+        MtoonSamplerHint::LinearRepeat => SamplerKind::LinearRepeat,
+        MtoonSamplerHint::NormalMapLinearRepeat => SamplerKind::NormalMap,
+    }
 }
 
 fn sample_document() -> VrmDocument {

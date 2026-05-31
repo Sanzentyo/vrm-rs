@@ -18,9 +18,10 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use vrm_core::{
     ColliderShape, ConstraintKind, EmissiveStrength, ExpressionBind, ExpressionName, Feature,
-    FirstPersonAnnotation, HumanBoneName, MaterialRef, MtoonMaterial, MtoonPipelinePass,
-    MtoonTextureSet, NodeConstraint, NodeRef, RawAbsolutePose, RawPose, Spring, SpringBoneSystem,
-    TextureRef, Transform, VrmDocument,
+    FirstPersonAnnotation, HumanBoneName, MaterialRef, MtoonAlphaMode, MtoonCullMode,
+    MtoonMaterial, MtoonPipelinePass, MtoonTextureSet, NodeConstraint, NodeRef, OutlineWidthMode,
+    RawAbsolutePose, RawPose, Spring, SpringBoneSystem, TextureRef, Transform, UvAnimation,
+    VrmDocument,
 };
 use vrm_runtime::{
     AimConstraintInput, AppliedExpression, CenterSpringParticleState, CenterSpringRuntimeState,
@@ -1226,6 +1227,178 @@ pub struct MtoonMaterialDescriptor {
     pub v0_compat_shade: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MtoonRendererMaterialPlan {
+    pub material: MaterialRef,
+    pub name: Option<String>,
+    pub pass: MtoonRendererPass,
+    pub pipeline: MtoonRendererPipelineState,
+    pub shader: MtoonShaderParameters,
+    pub textures: MtoonRendererTextureRefs,
+    pub texture_bindings: Vec<MtoonTextureBindingPlan>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MtoonRendererPass {
+    Base,
+    Outline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MtoonRendererPipelineState {
+    pub render_order: i32,
+    pub alpha_mode: MtoonAlphaMode,
+    pub cull_mode: MtoonCullMode,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub blend: bool,
+    pub outline_width_mode: Option<OutlineWidthMode>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MtoonShaderParameters {
+    pub base_color_factor: [f32; 4],
+    pub shade_color_factor: [f32; 3],
+    pub emissive_color: [f32; 3],
+    pub cutoff_factor: f32,
+    pub receive_shadow_rate_factor: f32,
+    pub shading_grade_rate_factor: f32,
+    pub shading_shift_factor: f32,
+    pub shading_shift_texture_scale: f32,
+    pub shading_toony_factor: f32,
+    pub light_color_attenuation_factor: f32,
+    pub gi_equalization_factor: f32,
+    pub matcap_factor: [f32; 3],
+    pub parametric_rim_color_factor: [f32; 3],
+    pub rim_lighting_mix_factor: f32,
+    pub parametric_rim_fresnel_power_factor: f32,
+    pub parametric_rim_lift_factor: f32,
+    pub outline_width_factor: f32,
+    pub outline_color_factor: [f32; 3],
+    pub outline_lighting_mix_factor: f32,
+    pub uv_animation: UvAnimation,
+    pub debug_mode: MtoonDebugMode,
+    pub v0_compat_shade: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MtoonRendererTextureRefs {
+    pub main: Option<TextureRef>,
+    pub shade_multiply: Option<TextureRef>,
+    pub shading_shift: Option<TextureRef>,
+    pub normal: Option<TextureRef>,
+    pub matcap: Option<TextureRef>,
+    pub rim_multiply: Option<TextureRef>,
+    pub outline_width: Option<TextureRef>,
+    pub uv_animation_mask: Option<TextureRef>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MtoonTextureBindingPlan {
+    pub slot: MtoonTextureSlot,
+    pub texture: TextureRef,
+    pub sampler: MtoonSamplerHint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MtoonTextureSlot {
+    Main,
+    ShadeMultiply,
+    ShadingShift,
+    Normal,
+    Matcap,
+    RimMultiply,
+    OutlineWidth,
+    UvAnimationMask,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MtoonSamplerHint {
+    LinearRepeat,
+    NormalMapLinearRepeat,
+}
+
+impl MtoonRendererMaterialPlan {
+    pub fn from_descriptor(descriptor: &MtoonMaterialDescriptor) -> Self {
+        let (pass, pipeline) = match descriptor.pass {
+            MtoonPipelinePass::Base(hints) => (
+                MtoonRendererPass::Base,
+                MtoonRendererPipelineState {
+                    render_order: hints.render_order,
+                    alpha_mode: hints.alpha_mode,
+                    cull_mode: hints.cull_mode,
+                    depth_test: hints.depth_test,
+                    depth_write: hints.depth_write,
+                    blend: hints.blend,
+                    outline_width_mode: None,
+                },
+            ),
+            MtoonPipelinePass::Outline(hints) => (
+                MtoonRendererPass::Outline,
+                MtoonRendererPipelineState {
+                    render_order: hints.render_order,
+                    alpha_mode: MtoonAlphaMode::Opaque,
+                    cull_mode: hints.cull_mode,
+                    depth_test: true,
+                    depth_write: true,
+                    blend: false,
+                    outline_width_mode: Some(hints.width_mode),
+                },
+            ),
+        };
+
+        Self {
+            material: descriptor.material,
+            name: descriptor.name.clone(),
+            pass,
+            pipeline,
+            shader: MtoonShaderParameters {
+                base_color_factor: descriptor.base_color_factor,
+                shade_color_factor: descriptor.shade_color_factor,
+                emissive_color: descriptor
+                    .emissive_factor
+                    .map(|channel| channel * descriptor.emissive_strength.0),
+                cutoff_factor: descriptor.cutoff_factor,
+                receive_shadow_rate_factor: descriptor.receive_shadow_rate_factor,
+                shading_grade_rate_factor: descriptor.shading_grade_rate_factor,
+                shading_shift_factor: descriptor.shading_shift_factor,
+                shading_shift_texture_scale: descriptor.shading_shift_texture_scale,
+                shading_toony_factor: descriptor.shading_toony_factor,
+                light_color_attenuation_factor: descriptor.light_color_attenuation_factor,
+                gi_equalization_factor: descriptor.gi_equalization_factor,
+                matcap_factor: descriptor.matcap_factor,
+                parametric_rim_color_factor: descriptor.parametric_rim_color_factor,
+                rim_lighting_mix_factor: descriptor.rim_lighting_mix_factor,
+                parametric_rim_fresnel_power_factor: descriptor.parametric_rim_fresnel_power_factor,
+                parametric_rim_lift_factor: descriptor.parametric_rim_lift_factor,
+                outline_width_factor: descriptor.outline_width_factor,
+                outline_color_factor: descriptor.outline_color_factor,
+                outline_lighting_mix_factor: descriptor.outline_lighting_mix_factor,
+                uv_animation: descriptor.uv_animation,
+                debug_mode: descriptor.debug_mode,
+                v0_compat_shade: descriptor.v0_compat_shade,
+            },
+            textures: MtoonRendererTextureRefs::from_set(&descriptor.textures),
+            texture_bindings: mtoon_texture_binding_plans(&descriptor.textures),
+        }
+    }
+}
+
+impl MtoonRendererTextureRefs {
+    pub fn from_set(textures: &MtoonTextureSet) -> Self {
+        Self {
+            main: textures.main_texture,
+            shade_multiply: textures.shade_multiply_texture,
+            shading_shift: textures.shading_shift_texture,
+            normal: textures.normal_texture,
+            matcap: textures.matcap_texture,
+            rim_multiply: textures.rim_multiply_texture,
+            outline_width: textures.outline_width_multiply_texture,
+            uv_animation_mask: textures.uv_animation_mask_texture,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MtoonDebugMode {
     #[default]
@@ -1678,6 +1851,70 @@ pub fn mtoon_material_descriptors(
             })
         })
         .collect()
+}
+
+pub fn mtoon_renderer_material_plans(
+    document: &VrmDocument,
+    options: MtoonMaterializationOptions,
+) -> Vec<MtoonRendererMaterialPlan> {
+    mtoon_material_descriptors(document, options)
+        .iter()
+        .map(MtoonRendererMaterialPlan::from_descriptor)
+        .collect()
+}
+
+pub fn mtoon_texture_binding_plans(textures: &MtoonTextureSet) -> Vec<MtoonTextureBindingPlan> {
+    [
+        (
+            MtoonTextureSlot::Main,
+            textures.main_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::ShadeMultiply,
+            textures.shade_multiply_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::ShadingShift,
+            textures.shading_shift_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::Normal,
+            textures.normal_texture,
+            MtoonSamplerHint::NormalMapLinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::Matcap,
+            textures.matcap_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::RimMultiply,
+            textures.rim_multiply_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::OutlineWidth,
+            textures.outline_width_multiply_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+        (
+            MtoonTextureSlot::UvAnimationMask,
+            textures.uv_animation_mask_texture,
+            MtoonSamplerHint::LinearRepeat,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(slot, texture, sampler)| {
+        texture.map(|texture| MtoonTextureBindingPlan {
+            slot,
+            texture,
+            sampler,
+        })
+    })
+    .collect()
 }
 
 fn mtoon_material_descriptor(
@@ -2361,7 +2598,8 @@ mod tests {
     use vrm_core::{
         EmissiveStrength, Expression, ExpressionSet, Feature, FirstPerson,
         FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, Material,
-        MtoonMaterial, MtoonRenderQueue, PoseTransform, RotationTrack, VrmAnimation, VrmDocument,
+        MtoonMaterial, MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, PoseTransform,
+        RotationTrack, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -3769,6 +4007,77 @@ mod tests {
         assert_eq!(descriptors[0].parametric_rim_lift_factor, 0.1);
         assert_eq!(descriptors[0].outline_width_factor, 0.01);
         assert_eq!(descriptors[0].outline_lighting_mix_factor, 0.6);
+    }
+
+    #[test]
+    fn mtoon_renderer_material_plans_expose_pipeline_state_and_texture_bindings() {
+        let document = VrmDocument {
+            materials: vec![vrm_core::Material {
+                name: Some("mtoon".to_owned()),
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    outline_width_mode: OutlineWidthMode::ScreenCoordinates,
+                    outline_width_factor: 0.02,
+                    base_color_factor: [0.8, 0.7, 0.6, 0.5],
+                    emissive_factor: [0.1, 0.2, 0.3],
+                    textures: MtoonTextureSet {
+                        main_texture: Some(TextureRef(1)),
+                        normal_texture: Some(TextureRef(2)),
+                        uv_animation_mask_texture: Some(TextureRef(3)),
+                        ..MtoonTextureSet::default()
+                    },
+                    ..MtoonMaterial::default()
+                }),
+                ..vrm_core::Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+
+        let plans = mtoon_renderer_material_plans(
+            &document,
+            MtoonMaterializationOptions {
+                debug_mode: MtoonDebugMode::Normal,
+                v0_compat_shade: true,
+            },
+        );
+
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].pass, MtoonRendererPass::Base);
+        assert_eq!(plans[0].pipeline.render_order, 3000);
+        assert_eq!(plans[0].pipeline.alpha_mode, MtoonAlphaMode::Blend);
+        assert!(plans[0].pipeline.blend);
+        assert!(!plans[0].pipeline.depth_write);
+        assert_eq!(plans[0].shader.emissive_color, [0.2, 0.4, 0.6]);
+        assert_eq!(plans[0].shader.debug_mode, MtoonDebugMode::Normal);
+        assert!(plans[0].shader.v0_compat_shade);
+        assert_eq!(plans[0].textures.main, Some(TextureRef(1)));
+        assert_eq!(
+            plans[0].texture_bindings,
+            vec![
+                MtoonTextureBindingPlan {
+                    slot: MtoonTextureSlot::Main,
+                    texture: TextureRef(1),
+                    sampler: MtoonSamplerHint::LinearRepeat,
+                },
+                MtoonTextureBindingPlan {
+                    slot: MtoonTextureSlot::Normal,
+                    texture: TextureRef(2),
+                    sampler: MtoonSamplerHint::NormalMapLinearRepeat,
+                },
+                MtoonTextureBindingPlan {
+                    slot: MtoonTextureSlot::UvAnimationMask,
+                    texture: TextureRef(3),
+                    sampler: MtoonSamplerHint::LinearRepeat,
+                },
+            ]
+        );
+        assert_eq!(plans[1].pass, MtoonRendererPass::Outline);
+        assert_eq!(
+            plans[1].pipeline.outline_width_mode,
+            Some(OutlineWidthMode::ScreenCoordinates)
+        );
+        assert_eq!(plans[1].shader.outline_width_factor, 0.02);
     }
 
     #[test]

@@ -13,10 +13,10 @@ use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
     ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess,
-    MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess, SceneGraph,
-    SkinVertexInfluence, SpringRestMap, TransformAccess, ViewMode, VisibilityAccess,
-    VrmRuntimeDriver, WorldMatrixAccess, WorldTransformAccess, WorldTransformUpdate,
-    is_head_or_descendant, plan_headless_mesh,
+    MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess,
+    MtoonRendererMaterialPlan, MtoonRendererPass, SceneGraph, SkinVertexInfluence, SpringRestMap,
+    TransformAccess, ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldMatrixAccess,
+    WorldTransformAccess, WorldTransformUpdate, is_head_or_descendant, plan_headless_mesh,
 };
 use vrm_core::Transform;
 use vrm_core::{
@@ -932,50 +932,37 @@ pub struct BevyMtoonTextureRefs {
 
 impl BevyMtoonMaterialPlan {
     pub fn from_descriptor(descriptor: &MtoonMaterialDescriptor) -> Self {
-        let (pass, render_order, alpha_mode, cull_mode, depth_write, outline_width) =
-            match descriptor.pass {
-                MtoonPipelinePass::Base(hints) => (
-                    BevyMtoonPass::Base,
-                    hints.render_order,
-                    hints.alpha_mode,
-                    hints.cull_mode,
-                    hints.depth_write,
-                    None,
-                ),
-                MtoonPipelinePass::Outline(hints) => (
-                    BevyMtoonPass::Outline,
-                    hints.render_order,
-                    MtoonAlphaMode::Opaque,
-                    hints.cull_mode,
-                    true,
-                    Some(descriptor.outline_width_factor),
-                ),
-            };
-        let emissive_color = descriptor
-            .emissive_factor
-            .map(|channel| channel * descriptor.emissive_strength.0);
+        let plan = MtoonRendererMaterialPlan::from_descriptor(descriptor);
+        let pass = match plan.pass {
+            MtoonRendererPass::Base => BevyMtoonPass::Base,
+            MtoonRendererPass::Outline => BevyMtoonPass::Outline,
+        };
+        let outline_width = plan
+            .pipeline
+            .outline_width_mode
+            .map(|_| plan.shader.outline_width_factor);
 
         Self {
-            material: descriptor.material,
-            name: descriptor.name.clone(),
+            material: plan.material,
+            name: plan.name,
             pass,
-            render_order,
-            alpha_mode,
-            cull_mode,
-            depth_write,
-            base_color: descriptor.base_color_factor,
-            shade_color: descriptor.shade_color_factor,
-            emissive_color,
-            cutoff: descriptor.cutoff_factor,
+            render_order: plan.pipeline.render_order,
+            alpha_mode: plan.pipeline.alpha_mode,
+            cull_mode: plan.pipeline.cull_mode,
+            depth_write: plan.pipeline.depth_write,
+            base_color: plan.shader.base_color_factor,
+            shade_color: plan.shader.shade_color_factor,
+            emissive_color: plan.shader.emissive_color,
+            cutoff: plan.shader.cutoff_factor,
             textures: BevyMtoonTextureRefs {
-                base_color: descriptor.textures.main_texture,
-                shade: descriptor.textures.shade_multiply_texture,
-                shading_shift: descriptor.textures.shading_shift_texture,
-                normal: descriptor.textures.normal_texture,
-                matcap: descriptor.textures.matcap_texture,
-                rim: descriptor.textures.rim_multiply_texture,
-                outline_width: descriptor.textures.outline_width_multiply_texture,
-                uv_animation_mask: descriptor.textures.uv_animation_mask_texture,
+                base_color: plan.textures.main,
+                shade: plan.textures.shade_multiply,
+                shading_shift: plan.textures.shading_shift,
+                normal: plan.textures.normal,
+                matcap: plan.textures.matcap,
+                rim: plan.textures.rim_multiply,
+                outline_width: plan.textures.outline_width,
+                uv_animation_mask: plan.textures.uv_animation_mask,
             },
             outline_width,
         }
