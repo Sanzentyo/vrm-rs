@@ -121,6 +121,94 @@ impl LoadedVrm {
                 .map_or(0.0, |mtoon| mtoon.uv_animation.rotation_speed * mtoon_time),
         }
     }
+
+    pub fn material_shading_plan(
+        &self,
+        material: Option<usize>,
+        options: GltfMaterialShadingOptions,
+    ) -> GltfMaterialShadingPlan {
+        if let Some(shading) = material
+            .and_then(|index| self.model.document().materials.get(index))
+            .and_then(|core_material| {
+                let mtoon = core_material.mtoon.as_ref()?;
+                let (emissive_strength, _) = core_material.effective_emissive_strength();
+                Some(GltfMaterialShadingPlan {
+                    base_color: mtoon.base_color_factor,
+                    shade_color: [
+                        mtoon.shade_color_factor[0],
+                        mtoon.shade_color_factor[1],
+                        mtoon.shade_color_factor[2],
+                        1.0,
+                    ],
+                    shading_shift: mtoon.shading_shift_factor,
+                    shading_toony: mtoon.shading_toony_factor,
+                    shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
+                    gi_equalization: mtoon.gi_equalization_factor,
+                    emissive: mtoon
+                        .emissive_factor
+                        .map(|channel| channel * emissive_strength.0),
+                    matcap_factor: mtoon.matcap_factor,
+                    parametric_rim_color: mtoon.parametric_rim_color_factor,
+                    rim_lighting_mix: mtoon.rim_lighting_mix_factor,
+                    parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
+                    parametric_rim_lift: mtoon.parametric_rim_lift_factor,
+                    normal_scale: self.material_normal_scale(material),
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    occlusion_strength: 0.0,
+                    pbr_fallback: false,
+                    unlit: false,
+                    v0_compat_shade: options.v0_compat_shade,
+                })
+            })
+        {
+            return shading;
+        }
+
+        let gltf = material.and_then(|index| self.gltf_materials.get(index));
+        let base_color = gltf
+            .map(|material| material.base_color_factor)
+            .unwrap_or([0.78, 0.78, 0.78, 1.0]);
+        let emissive = gltf
+            .map(|material| {
+                material
+                    .emissive_factor
+                    .map(|channel| channel * material.emissive_strength)
+            })
+            .unwrap_or([0.0, 0.0, 0.0]);
+
+        GltfMaterialShadingPlan {
+            base_color,
+            shade_color: base_color,
+            shading_shift: 0.0,
+            shading_toony: 0.0,
+            shading_shift_texture_scale: 1.0,
+            gi_equalization: 0.0,
+            emissive,
+            matcap_factor: [0.0, 0.0, 0.0],
+            parametric_rim_color: [0.0, 0.0, 0.0],
+            rim_lighting_mix: 1.0,
+            parametric_rim_fresnel_power: 5.0,
+            parametric_rim_lift: 0.0,
+            normal_scale: self.material_normal_scale(material),
+            metallic: gltf.map_or(0.0, |material| material.metallic_factor),
+            roughness: gltf.map_or(1.0, |material| material.roughness_factor),
+            occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
+            pbr_fallback: true,
+            unlit: gltf.is_some_and(|material| material.unlit),
+            v0_compat_shade: false,
+        }
+    }
+
+    fn material_normal_scale(&self, material: Option<usize>) -> f32 {
+        self.material_texture_slots(material)
+            .normal
+            .map_or(0.0, |_| {
+                material
+                    .and_then(|index| self.gltf_materials.get(index))
+                    .map_or(1.0, |material| material.normal_scale)
+            })
+    }
 }
 
 impl GltfSceneRest {
@@ -454,6 +542,34 @@ pub struct GltfMaterialUvTransforms {
     pub uv_animation_mask: Option<TextureTransform2d>,
     pub uv_animation_scroll: [f32; 2],
     pub uv_animation_rotation: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GltfMaterialShadingOptions {
+    pub v0_compat_shade: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMaterialShadingPlan {
+    pub base_color: [f32; 4],
+    pub shade_color: [f32; 4],
+    pub shading_shift: f32,
+    pub shading_toony: f32,
+    pub shading_shift_texture_scale: f32,
+    pub gi_equalization: f32,
+    pub emissive: [f32; 3],
+    pub matcap_factor: [f32; 3],
+    pub parametric_rim_color: [f32; 3],
+    pub rim_lighting_mix: f32,
+    pub parametric_rim_fresnel_power: f32,
+    pub parametric_rim_lift: f32,
+    pub normal_scale: f32,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub occlusion_strength: f32,
+    pub pbr_fallback: bool,
+    pub unlit: bool,
+    pub v0_compat_shade: bool,
 }
 
 pub fn transform_tex_coord_0(
@@ -1713,6 +1829,13 @@ mod tests {
             .for_each(|(actual, expected)| assert_f32_close(actual, expected));
     }
 
+    fn assert_vec4_close(actual: [f32; 4], expected: [f32; 4]) {
+        actual
+            .into_iter()
+            .zip(expected)
+            .for_each(|(actual, expected)| assert_f32_close(actual, expected));
+    }
+
     fn assert_vec2_close(actual: [f32; 2], expected: [f32; 2]) {
         actual
             .into_iter()
@@ -2233,6 +2356,28 @@ mod tests {
                 ..Default::default()
             }
         );
+        let shading = loaded.material_shading_plan(
+            Some(0),
+            GltfMaterialShadingOptions {
+                v0_compat_shade: true,
+            },
+        );
+        assert_vec4_close(shading.base_color, [0.25, 0.5, 0.75, 1.0]);
+        assert_vec3_close(shading.emissive, [0.2, 0.4, 0.6]);
+        assert_f32_close(shading.normal_scale, 0.25);
+        assert_f32_close(shading.metallic, 0.0);
+        assert_f32_close(shading.roughness, 1.0);
+        assert_f32_close(shading.occlusion_strength, 0.0);
+        assert!(!shading.pbr_fallback);
+        assert!(!shading.unlit);
+        assert!(shading.v0_compat_shade);
+
+        let fallback = loaded.material_shading_plan(None, GltfMaterialShadingOptions::default());
+        assert_vec4_close(fallback.base_color, [0.78, 0.78, 0.78, 1.0]);
+        assert_vec4_close(fallback.shade_color, fallback.base_color);
+        assert_vec3_close(fallback.emissive, [0.0, 0.0, 0.0]);
+        assert!(fallback.pbr_fallback);
+        assert!(!fallback.v0_compat_shade);
     }
 
     #[test]

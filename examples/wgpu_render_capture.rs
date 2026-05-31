@@ -20,10 +20,10 @@ use std::sync::mpsc;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    CpuRgba8Image, GltfMagFilter, GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMeshData,
-    GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfSkinData, GltfWrapMode,
-    LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    CpuRgba8Image, GltfMagFilter, GltfMaterialShadingOptions, GltfMaterialShadingPlan,
+    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter, GltfNodeRest,
+    GltfPrimitiveData, GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
+    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -978,7 +978,7 @@ fn morphed_vertex(
 }
 
 fn material_extra_uniform(
-    shading: MaterialShading,
+    shading: GltfMaterialShadingPlan,
     options: &CaptureOptions,
 ) -> MaterialExtraUniform {
     MaterialExtraUniform {
@@ -1201,144 +1201,47 @@ fn transform_direction(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct MaterialShading {
-    base_color: [f32; 4],
-    shade_color: [f32; 4],
-    shading_shift: f32,
-    shading_toony: f32,
-    shading_shift_texture_scale: f32,
-    gi_equalization: f32,
-    emissive: [f32; 3],
-    matcap_factor: [f32; 3],
-    parametric_rim_color: [f32; 3],
-    rim_lighting_mix: f32,
-    parametric_rim_fresnel_power: f32,
-    parametric_rim_lift: f32,
-    normal_scale: f32,
-    metallic: f32,
-    roughness: f32,
-    occlusion_strength: f32,
-    pbr_fallback: bool,
-    unlit: bool,
-    v0_compat_shade: bool,
-}
-
 fn material_shading(
     loaded: &LoadedVrm,
     material: Option<usize>,
     expression_effects: &ExpressionRenderEffects,
     options: &CaptureOptions,
-) -> MaterialShading {
-    if let Some(shading) = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|core_material| {
-            let mtoon = core_material.mtoon.as_ref()?;
-            let (emissive_strength, _) = core_material.effective_emissive_strength();
-            let base_color = apply_color_effect4(
-                mtoon.base_color_factor,
-                material,
-                "color",
-                expression_effects,
-            );
-            let shade_color = apply_color_effect4(
-                [
-                    mtoon.shade_color_factor[0],
-                    mtoon.shade_color_factor[1],
-                    mtoon.shade_color_factor[2],
-                    1.0,
-                ],
-                material,
-                "shadeColor",
-                expression_effects,
-            );
-            let emissive = apply_color_effect3(
-                [
-                    mtoon.emissive_factor[0] * emissive_strength.0,
-                    mtoon.emissive_factor[1] * emissive_strength.0,
-                    mtoon.emissive_factor[2] * emissive_strength.0,
-                ],
-                material,
-                "emissionColor",
-                expression_effects,
-            );
-            Some(MaterialShading {
-                base_color,
-                shade_color,
-                shading_shift: mtoon.shading_shift_factor,
-                shading_toony: mtoon.shading_toony_factor,
-                shading_shift_texture_scale: mtoon.shading_shift_texture_scale,
-                gi_equalization: mtoon.gi_equalization_factor,
-                emissive,
-                matcap_factor: apply_color_effect3(
-                    mtoon.matcap_factor,
-                    material,
-                    "matcapColor",
-                    expression_effects,
-                ),
-                parametric_rim_color: apply_color_effect3(
-                    mtoon.parametric_rim_color_factor,
-                    material,
-                    "rimColor",
-                    expression_effects,
-                ),
-                rim_lighting_mix: mtoon.rim_lighting_mix_factor,
-                parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
-                parametric_rim_lift: mtoon.parametric_rim_lift_factor,
-                normal_scale: loaded
-                    .material_texture_slots(material)
-                    .normal
-                    .map_or(0.0, |_| {
-                        material
-                            .and_then(|index| loaded.gltf_materials.get(index))
-                            .map_or(1.0, |gltf_material| gltf_material.normal_scale)
-                    }),
-                metallic: 0.0,
-                roughness: 1.0,
-                occlusion_strength: 0.0,
-                pbr_fallback: false,
-                unlit: false,
-                v0_compat_shade: options.mtoon_v0_compat_shade,
-            })
-        })
-    {
-        return shading;
+) -> GltfMaterialShadingPlan {
+    let mut shading = loaded.material_shading_plan(
+        material,
+        GltfMaterialShadingOptions {
+            v0_compat_shade: options.mtoon_v0_compat_shade,
+        },
+    );
+    shading.base_color =
+        apply_color_effect4(shading.base_color, material, "color", expression_effects);
+    if !shading.pbr_fallback {
+        shading.shade_color = apply_color_effect4(
+            shading.shade_color,
+            material,
+            "shadeColor",
+            expression_effects,
+        );
+        shading.matcap_factor = apply_color_effect3(
+            shading.matcap_factor,
+            material,
+            "matcapColor",
+            expression_effects,
+        );
+        shading.parametric_rim_color = apply_color_effect3(
+            shading.parametric_rim_color,
+            material,
+            "rimColor",
+            expression_effects,
+        );
     }
-    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
-    let base_color = gltf
-        .map(|material| material.base_color_factor)
-        .unwrap_or([0.78, 0.78, 0.78, 1.0]);
-    let emissive = gltf
-        .map(|material| {
-            material
-                .emissive_factor
-                .map(|channel| channel * material.emissive_strength)
-        })
-        .unwrap_or([0.0, 0.0, 0.0]);
-    MaterialShading {
-        base_color: apply_color_effect4(base_color, material, "color", expression_effects),
-        shade_color: base_color,
-        shading_shift: 0.0,
-        shading_toony: 0.0,
-        shading_shift_texture_scale: 1.0,
-        gi_equalization: 0.0,
-        emissive: apply_color_effect3(emissive, material, "emissionColor", expression_effects),
-        matcap_factor: [0.0, 0.0, 0.0],
-        parametric_rim_color: [0.0, 0.0, 0.0],
-        rim_lighting_mix: 1.0,
-        parametric_rim_fresnel_power: 5.0,
-        parametric_rim_lift: 0.0,
-        normal_scale: loaded
-            .material_texture_slots(material)
-            .normal
-            .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
-        metallic: gltf.map_or(0.0, |material| material.metallic_factor),
-        roughness: gltf.map_or(1.0, |material| material.roughness_factor),
-        occlusion_strength: gltf.map_or(1.0, |material| material.occlusion_strength),
-        pbr_fallback: true,
-        unlit: gltf.is_some_and(|material| material.unlit),
-        v0_compat_shade: false,
-    }
+    shading.emissive = apply_color_effect3(
+        shading.emissive,
+        material,
+        "emissionColor",
+        expression_effects,
+    );
+    shading
 }
 
 fn material_uv_transforms(

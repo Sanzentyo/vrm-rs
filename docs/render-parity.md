@@ -727,6 +727,10 @@ The matching `LoadedVrm::material_uv_transforms` helper now centralizes MToon
 texture transforms, glTF texture-transform fallbacks, shade fallback-to-base
 behavior, and time-based UV animation scroll/rotation before the concrete
 captures apply expression-driven transform overrides.
+`LoadedVrm::material_shading_plan` similarly centralizes the renderer-facing
+MToon/PBR fallback shading inputs, including effective emissive strength,
+normal scale, rim/matcap parameters, and VRM0 compatibility flags, while
+leaving expression-driven color overrides at the capture edge.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.
