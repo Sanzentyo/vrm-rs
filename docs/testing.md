@@ -87,11 +87,13 @@ set without the VRM0 compatibility sample under
 opaque-black background makes every pixel visible, `rgb-visible` is the stable
 full-review regression metric but can hide object-body color error behind black
 background pixels. Use `just render-parity-samples-nonblack` for the same
-six-fixture sweep under `.external-fixtures/render-parity-samples-nonblack/`;
-it selects `rgb-nonblack >= 26.9 dB`, comparing only pixels where either render
-has non-zero RGB. The current model-body floor is the UV animation sample at
-wgpu `27.0034 dB` / Bevy `26.9834 dB`, while Alicia VRM0 now reports wgpu
-`28.1749 dB` / Bevy `28.1599 dB`.
+six-fixture sweep under
+`.external-fixtures/render-parity-samples-nonblack-interior/`; it selects
+`rgb-nonblack-interior1px >= 27.4 dB`, comparing model-body pixels where either
+render has non-zero RGB while dropping the one-pixel silhouette edge. The
+current model-body floor is Seed-san Bevy `27.5065 dB`; Seed-san wgpu is
+`30.0461 dB`, the UV animation sample is wgpu `28.6651 dB` / Bevy
+`28.6173 dB`, and Alicia VRM0 is wgpu `34.4442 dB` / Bevy `34.3709 dB`.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample
@@ -279,7 +281,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB`, a matching object-body `rgb-nonblack >= 26.9 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB`, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

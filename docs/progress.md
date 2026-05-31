@@ -423,6 +423,16 @@
   render-parity-morph-expression-generated D:/git/three-vrm` still passes with
   selected `rgb-interior1px` PSNR wgpu `58.2703 dB` / Bevy `50.8123 dB` and
   the known `3` edge-only alpha mismatches.
+- Reframed the real-sample model-body parity sweep around
+  `rgb-nonblack-interior1px`, because the previous `rgb-nonblack` guard was
+  dominated by one-pixel silhouette/raster fill-rule deltas on Seed-san Bevy.
+  `just render-parity-samples-nonblack` now writes
+  `.external-fixtures/render-parity-samples-nonblack-interior/` and enforces
+  `>= 27.4 dB` on the interior model-body metric. The six-fixture sweep passes:
+  Seed-san wgpu `30.0461 dB` / Bevy `27.5065 dB`, constraint sample wgpu
+  `29.7271 dB` / Bevy `29.7174 dB`, UV animation wgpu `28.6651 dB` / Bevy
+  `28.6173 dB`, expression masks around `50-51 dB`, and Alicia VRM0 wgpu
+  `34.4442 dB` / Bevy `34.3709 dB`, all with zero alpha mismatches.
 - Re-measured coverage after moving tangentless normal-map tangent generation into
   `vrm-io::generate_tangents` and refreshing workspace coverage on 2026-05-31:
   workspace line coverage is 84.41%, and `vrm-adapter-bevy` line coverage is
