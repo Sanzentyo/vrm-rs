@@ -1569,6 +1569,42 @@ impl GltfPrimitiveData {
         let offset = normal * offset_scale;
         Some(transform.transform_point3(morphed.position + offset))
     }
+
+    pub fn outline_vertices(
+        &self,
+        morph_weights: &[f32],
+        settings: GltfOutlineVertexSettings<'_>,
+        world: Mat4,
+        skin_matrices: Option<&[Mat4]>,
+    ) -> Option<Vec<GltfTransformedVertex>> {
+        (0..self.positions.len())
+            .map(|index| {
+                let mut vertex =
+                    self.transformed_vertex(index, morph_weights, world, skin_matrices)?;
+                let width = settings.base_width
+                    * settings
+                        .width_texture
+                        .map(|image| {
+                            image.sample_green_repeat_linear(
+                                transform_tex_coord_0(vertex.tex_coord_0, settings.width_transform),
+                                settings.width_texture_origin,
+                            )
+                        })
+                        .unwrap_or(1.0);
+                vertex.position = self.outline_position(
+                    index,
+                    morph_weights,
+                    GltfOutlineSettings {
+                        width,
+                        scale: settings.scale,
+                    },
+                    world,
+                    skin_matrices,
+                )?;
+                Some(vertex)
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1597,6 +1633,15 @@ pub struct GltfSkinnedVertex {
 pub struct GltfOutlineSettings {
     pub width: f32,
     pub scale: GltfOutlineScale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfOutlineVertexSettings<'a> {
+    pub base_width: f32,
+    pub scale: GltfOutlineScale,
+    pub width_texture: Option<&'a CpuRgba8Image>,
+    pub width_transform: Option<TextureTransform2d>,
+    pub width_texture_origin: Rgba8SamplingOrigin,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3861,23 +3906,39 @@ mod tests {
             .to_array(),
             [1.0, 0.0, 0.0],
         );
+        let world_outline_scale =
+            GltfOutlineScale::new(OutlineWidthMode::WorldCoordinates, Mat4::IDENTITY, 1.0);
         let outline = primitive
             .outline_position(
                 2,
                 &[0.5],
                 GltfOutlineSettings {
                     width: 0.2,
-                    scale: GltfOutlineScale::new(
-                        OutlineWidthMode::WorldCoordinates,
-                        Mat4::IDENTITY,
-                        1.0,
-                    ),
+                    scale: world_outline_scale,
                 },
                 Mat4::IDENTITY,
                 Some(&skin_matrices),
             )
             .unwrap();
         assert_vec3_close(outline.to_array(), [0.0, 1.0, 0.45]);
+        let outline_width_texture = CpuRgba8Image::from_rgba8(1, 1, vec![0, 255, 0, 255]).unwrap();
+        let outline_vertices = primitive
+            .outline_vertices(
+                &[0.5],
+                GltfOutlineVertexSettings {
+                    base_width: 0.2,
+                    scale: world_outline_scale,
+                    width_texture: Some(&outline_width_texture),
+                    width_transform: None,
+                    width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+                },
+                Mat4::IDENTITY,
+                Some(&skin_matrices),
+            )
+            .unwrap();
+        assert_eq!(outline_vertices.len(), 3);
+        assert_vec3_close(outline_vertices[2].position.to_array(), [0.0, 1.0, 0.45]);
+        assert_vec3_close(outline_vertices[2].normal.to_array(), [0.0, 0.0, 1.0]);
         let screen_scale =
             GltfOutlineScale::new(OutlineWidthMode::ScreenCoordinates, Mat4::IDENTITY, 2.0);
         assert_f32_close(screen_scale.at(Vec3::new(0.0, 0.0, -4.0)), 2.0);

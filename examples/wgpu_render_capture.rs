@@ -24,9 +24,9 @@ use vrm_io::{
     GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
     GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter,
     GltfMtoonLightAccumulation as GltfLightAccumulation, GltfNormalMapMode, GltfOutlineScale,
-    GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
+    GltfOutlineVertexSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
     Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -426,35 +426,25 @@ fn outline_primitive(
         camera_view(context.options),
         projection_y_scale(),
     );
+    let outline_vertices = primitive.outline_vertices(
+        morph_weights,
+        GltfOutlineVertexSettings {
+            base_width: width,
+            scale: outline_scale,
+            width_texture: width_texture.as_ref(),
+            width_transform: uv_transforms.outline_width,
+            width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+        },
+        context.world,
+        context.skin_matrices,
+    )?;
     let vertices = surface
         .vertices
         .iter()
-        .enumerate()
-        .map(|(index, vertex)| {
-            let outline_coord =
-                transform_tex_coord_0(vertex.tex_coord, uv_transforms.outline_width);
-            let width = width
-                * width_texture
-                    .as_ref()
-                    .map(|image| {
-                        image
-                            .sample_green_repeat_linear(outline_coord, Rgba8SamplingOrigin::TopLeft)
-                    })
-                    .unwrap_or(1.0);
+        .zip(outline_vertices)
+        .map(|(vertex, outline_vertex)| {
             let mut vertex = *vertex;
-            vertex.position = primitive
-                .outline_position(
-                    index,
-                    morph_weights,
-                    GltfOutlineSettings {
-                        width,
-                        scale: outline_scale,
-                    },
-                    context.world,
-                    context.skin_matrices,
-                )
-                .unwrap_or_else(|| Vec3::from_array(vertex.position))
-                .to_array();
+            vertex.position = outline_vertex.position.to_array();
             vertex.outline_color = outline.color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;

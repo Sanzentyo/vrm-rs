@@ -56,10 +56,10 @@ use vrm_io::{
     GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfMaterialTextureBinding,
     GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
     GltfMaterialTextureSlot, GltfMinFilter, GltfMtoonLightAccumulation as GltfLightAccumulation,
-    GltfNormalMapMode, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData,
-    GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
-    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
-    transform_tex_coord_0,
+    GltfNormalMapMode, GltfOutlineScale, GltfOutlineVertexSettings, GltfPrimitiveData,
+    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
+    generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
+    load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -531,52 +531,30 @@ fn bevy_outline_mesh(
         camera_view(settings.capture),
         projection_y_scale(),
     );
-    let transformed_vertices = primitive
-        .transformed_vertices(morph_weights, world, skin_matrices)
+    let outline_vertices = primitive
+        .outline_vertices(
+            morph_weights,
+            GltfOutlineVertexSettings {
+                base_width: settings.width,
+                scale: outline_scale,
+                width_texture: settings.width_texture,
+                width_transform: settings.width_transform,
+                width_texture_origin: Rgba8SamplingOrigin::BottomLeft,
+            },
+            world,
+            skin_matrices,
+        )
         .expect("iterating over primitive positions should keep vertex indices valid");
-    let positions = primitive
-        .positions
+    let positions = outline_vertices
         .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            let transformed = transformed_vertices[index];
-            let width = settings.width
-                * settings
-                    .width_texture
-                    .map(|image| {
-                        image.sample_green_repeat_linear(
-                            transform_tex_coord_0(
-                                primitive.tex_coord_0_or_default(index),
-                                settings.width_transform,
-                            ),
-                            Rgba8SamplingOrigin::BottomLeft,
-                        )
-                    })
-                    .unwrap_or(1.0);
-            primitive
-                .outline_position(
-                    index,
-                    morph_weights,
-                    GltfOutlineSettings {
-                        width,
-                        scale: outline_scale,
-                    },
-                    world,
-                    skin_matrices,
-                )
-                .unwrap_or(
-                    transformed.position
-                        + transformed.normal * width * outline_scale.at(transformed.position),
-                )
-                .to_array()
-        })
+        .map(|vertex| vertex.position.to_array())
         .collect::<Vec<_>>();
-    let normals = transformed_vertices
+    let normals = outline_vertices
         .iter()
         .map(|vertex| vertex.normal.to_array())
         .collect::<Vec<_>>();
     let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
-        transformed_vertices
+        outline_vertices
             .iter()
             .map(|vertex| vertex.tangent.to_array())
             .collect::<Vec<_>>()

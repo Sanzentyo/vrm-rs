@@ -293,11 +293,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.98% | 84.90% |
+| Workspace total | 82.04% | 84.95% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.94% | 74.74% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 87.51% | 86.75% |
+| `vrm-io` | 87.62% | 86.91% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
@@ -345,7 +345,11 @@ construction and zero-delta world-matrix evaluation are shared before
 renderer-specific buffer creation. Morph/skin/world-transformed primitive
 vertices are shared through `GltfPrimitiveData::transformed_vertices`, so
 renderer-specific paths receive the same prepared position, normal, tangent,
-UV, and color inputs before constructing wgpu buffers or Bevy meshes.
+UV, and color inputs before constructing wgpu buffers or Bevy meshes. Outline
+width texture sampling, outline UV transform application, sampling origin, and
+expanded outline positions are shared through
+`GltfPrimitiveData::outline_vertices` before renderer-specific outline buffers
+or Bevy meshes are built.
 Expression-applied renderer material state is also shared through
 `LoadedVrm::expression_material_shading_plan` and
 `LoadedVrm::expression_material_uv_transforms`, while MToon outline material
