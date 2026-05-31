@@ -715,6 +715,10 @@ if glTF unlit is also present, matching the measured three-vrm behavior. This
 keeps non-mipmapped VRM0 textures, mipmapped VRM1 textures, generated fixtures,
 and mixed glTF/VRMC material extensions on the same sampling/material contract
 as GLTFLoader/three-vrm.
+CPU-side texture diagnostics now use the shared `vrm-io::CpuRgba8Image`
+repeat/linear sampler with an explicit `Rgba8SamplingOrigin`, so renderer
+captures can preserve their coordinate-origin choices while sharing the same
+outline-width texture sampling math.
 
 The canonical comparison images for the current local sample sweep are:
 

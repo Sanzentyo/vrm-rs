@@ -97,6 +97,95 @@ pub fn image_data_to_rgba8(image: &ImageData) -> Result<Vec<u8>, Rgba8ImageError
     image_bytes_to_rgba8(image.width, image.height, image.format, &image.bytes)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rgba8SamplingOrigin {
+    #[default]
+    TopLeft,
+    BottomLeft,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuRgba8Image {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl CpuRgba8Image {
+    pub fn from_image_data(image: &ImageData) -> Result<Self, Rgba8ImageError> {
+        Self::from_rgba8(image.width, image.height, image_data_to_rgba8(image)?)
+    }
+
+    pub fn from_rgba8(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self, Rgba8ImageError> {
+        let expected = rgba_len(width, height).map_err(|_| Rgba8ImageError::InvalidDimensions)?;
+        if rgba.len() != expected {
+            return Err(Rgba8ImageError::InvalidByteLength {
+                format: ImageFormat::R8G8B8A8,
+                expected,
+                actual: rgba.len(),
+            });
+        }
+        Ok(Self {
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    pub fn sample_green_repeat_linear(
+        &self,
+        tex_coord: [f32; 2],
+        origin: Rgba8SamplingOrigin,
+    ) -> f32 {
+        self.sample_channel_repeat_linear(tex_coord, 1, 255, origin)
+    }
+
+    pub fn sample_channel_repeat_linear(
+        &self,
+        tex_coord: [f32; 2],
+        channel: usize,
+        fallback: u8,
+        origin: Rgba8SamplingOrigin,
+    ) -> f32 {
+        if channel >= 4 {
+            return f32::from(fallback) / 255.0;
+        }
+        let u = tex_coord[0].rem_euclid(1.0);
+        let v = tex_coord[1].rem_euclid(1.0);
+        let x = u * self.width as f32 - 0.5;
+        let y = match origin {
+            Rgba8SamplingOrigin::TopLeft => v * self.height as f32 - 0.5,
+            Rgba8SamplingOrigin::BottomLeft => (1.0 - v) * self.height as f32 - 0.5,
+        };
+        let x0 = x.floor();
+        let y0 = y.floor();
+        let tx = x - x0;
+        let ty = y - y0;
+        let x0 = x0 as i32;
+        let y0 = y0 as i32;
+        let top = lerp(
+            self.channel_at_repeat(x0, y0, channel, fallback),
+            self.channel_at_repeat(x0 + 1, y0, channel, fallback),
+            tx,
+        );
+        let bottom = lerp(
+            self.channel_at_repeat(x0, y0 + 1, channel, fallback),
+            self.channel_at_repeat(x0 + 1, y0 + 1, channel, fallback),
+            tx,
+        );
+        lerp(top, bottom, ty)
+    }
+
+    fn channel_at_repeat(&self, x: i32, y: i32, channel: usize, fallback: u8) -> f32 {
+        let width = self.width as i32;
+        let height = self.height as i32;
+        let x = x.rem_euclid(width) as u32;
+        let y = y.rem_euclid(height) as u32;
+        let index = ((y * self.width + x) * 4) as usize + channel;
+        f32::from(self.rgba.get(index).copied().unwrap_or(fallback)) / 255.0
+    }
+}
+
 pub fn image_bytes_to_rgba8(
     width: u32,
     height: u32,
@@ -233,6 +322,10 @@ fn checked_pixel_count(width: u32, height: u32) -> Option<usize> {
             .ok()
             .and_then(|height| width.checked_mul(height))
     })
+}
+
+fn lerp(left: f32, right: f32, t: f32) -> f32 {
+    left + (right - left) * t
 }
 
 impl From<gltf::image::Format> for ImageFormat {
@@ -1564,6 +1657,45 @@ mod tests {
         assert_eq!(
             image_bytes_to_rgba8(1, 1, ImageFormat::R16, &[0, 0]),
             Err(Rgba8ImageError::UnsupportedFormat(ImageFormat::R16))
+        );
+    }
+
+    #[test]
+    fn cpu_rgba8_image_samples_repeat_linear_with_explicit_origin() {
+        let image = CpuRgba8Image::from_rgba8(
+            2,
+            2,
+            vec![0, 10, 0, 255, 0, 20, 0, 255, 0, 30, 0, 255, 0, 40, 0, 255],
+        )
+        .unwrap();
+
+        assert_f32_close(
+            image.sample_green_repeat_linear([0.25, 0.25], Rgba8SamplingOrigin::TopLeft),
+            10.0 / 255.0,
+        );
+        assert_f32_close(
+            image.sample_green_repeat_linear([0.25, 0.25], Rgba8SamplingOrigin::BottomLeft),
+            30.0 / 255.0,
+        );
+        assert_f32_close(
+            image.sample_green_repeat_linear([1.25, 1.25], Rgba8SamplingOrigin::TopLeft),
+            10.0 / 255.0,
+        );
+        assert_f32_close(
+            image.sample_channel_repeat_linear([0.25, 0.25], 7, 128, Rgba8SamplingOrigin::TopLeft),
+            128.0 / 255.0,
+        );
+    }
+
+    #[test]
+    fn cpu_rgba8_image_validates_rgba_length() {
+        assert_eq!(
+            CpuRgba8Image::from_rgba8(2, 2, vec![255; 4]),
+            Err(Rgba8ImageError::InvalidByteLength {
+                format: ImageFormat::R8G8B8A8,
+                expected: 16,
+                actual: 4,
+            })
         );
     }
 

@@ -52,9 +52,9 @@ use std::sync::{
 use std::time::Duration;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfWrapMode, ImageData, LoadedVrm, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path,
+    CpuRgba8Image, GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
+    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
+    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -202,12 +202,6 @@ struct SceneController {
     state: SceneState,
     width: u32,
     height: u32,
-}
-
-struct CpuRgbaImage {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -555,10 +549,13 @@ fn bevy_outline_mesh(
                 * settings
                     .width_texture
                     .map(|image| {
-                        image.sample_green(transform_uv(
-                            primitive_tex_coord(primitive, index),
-                            settings.width_transform,
-                        ))
+                        image.sample_green_repeat_linear(
+                            transform_uv(
+                                primitive_tex_coord(primitive, index),
+                                settings.width_transform,
+                            ),
+                            Rgba8SamplingOrigin::BottomLeft,
+                        )
                     })
                     .unwrap_or(1.0);
             outline_position(
@@ -631,7 +628,7 @@ struct BevyOutlineMeshSettings<'a> {
     width: f32,
     width_mode: OutlineWidthMode,
     capture: &'a CaptureOptions,
-    width_texture: Option<&'a CpuRgbaImage>,
+    width_texture: Option<&'a CpuRgba8Image>,
     width_transform: Option<TextureTransform2d>,
 }
 
@@ -2057,7 +2054,7 @@ fn material_uv_animation_mask_texture(
 fn material_outline_width_image(
     loaded: &LoadedVrm,
     material: Option<usize>,
-) -> Option<CpuRgbaImage> {
+) -> Option<CpuRgba8Image> {
     material
         .and_then(|index| loaded.model().document().materials.get(index))
         .and_then(|material| material.mtoon.as_ref())
@@ -2065,57 +2062,10 @@ fn material_outline_width_image(
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0))
 }
 
-fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgbaImage> {
+fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
     let image = loaded.textures.get(texture)?.image;
     let image = loaded.images.get(image)?;
-    Some(CpuRgbaImage {
-        width: image.width,
-        height: image.height,
-        rgba: image_data_to_rgba8(image).ok()?,
-    })
-}
-
-impl CpuRgbaImage {
-    fn sample_green(&self, tex_coord: [f32; 2]) -> f32 {
-        self.sample_channel(tex_coord, 1, 255)
-    }
-
-    fn sample_channel(&self, tex_coord: [f32; 2], channel: usize, fallback: u8) -> f32 {
-        let u = tex_coord[0].rem_euclid(1.0);
-        let v = tex_coord[1].rem_euclid(1.0);
-        let x = u * self.width as f32 - 0.5;
-        let y = (1.0 - v) * self.height as f32 - 0.5;
-        let x0 = x.floor();
-        let y0 = y.floor();
-        let tx = x - x0;
-        let ty = y - y0;
-        let x0 = x0 as i32;
-        let y0 = y0 as i32;
-        let top = lerp(
-            self.channel_at(x0, y0, channel, fallback),
-            self.channel_at(x0 + 1, y0, channel, fallback),
-            tx,
-        );
-        let bottom = lerp(
-            self.channel_at(x0, y0 + 1, channel, fallback),
-            self.channel_at(x0 + 1, y0 + 1, channel, fallback),
-            tx,
-        );
-        lerp(top, bottom, ty)
-    }
-
-    fn channel_at(&self, x: i32, y: i32, channel: usize, fallback: u8) -> f32 {
-        let width = self.width as i32;
-        let height = self.height as i32;
-        let x = x.rem_euclid(width) as u32;
-        let y = y.rem_euclid(height) as u32;
-        let index = ((y * self.width + x) * 4) as usize + channel;
-        self.rgba.get(index).copied().unwrap_or(fallback) as f32 / 255.0
-    }
-}
-
-fn lerp(left: f32, right: f32, t: f32) -> f32 {
-    left + (right - left) * t
+    CpuRgba8Image::from_image_data(image).ok()
 }
 
 fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {

@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfSkinData, GltfWrapMode, LoadedVrm, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path,
+    CpuRgba8Image, GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
+    GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
+    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -352,12 +352,6 @@ struct TextureUpload<'a> {
     rgba: &'a [u8],
 }
 
-struct CpuRgbaImage {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 struct MaterialUvTransforms {
     base: Option<TextureTransform2d>,
@@ -487,7 +481,10 @@ fn outline_primitive(
             let width = width
                 * width_texture
                     .as_ref()
-                    .map(|image| image.sample_green(outline_coord))
+                    .map(|image| {
+                        image
+                            .sample_green_repeat_linear(outline_coord, Rgba8SamplingOrigin::TopLeft)
+                    })
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
             vertex.position = outline_position(
@@ -1540,45 +1537,10 @@ fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImage
     }
 }
 
-fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgbaImage> {
+fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
     let image = loaded.textures.get(texture)?.image;
     let image = loaded.images.get(image)?;
-    Some(CpuRgbaImage {
-        width: image.width,
-        height: image.height,
-        rgba: image_data_to_rgba8(image).ok()?,
-    })
-}
-
-impl CpuRgbaImage {
-    fn sample_green(&self, tex_coord: [f32; 2]) -> f32 {
-        let u = tex_coord[0].rem_euclid(1.0);
-        let v = tex_coord[1].rem_euclid(1.0);
-        let x = u * self.width as f32 - 0.5;
-        let y = v * self.height as f32 - 0.5;
-        let x0 = x.floor();
-        let y0 = y.floor();
-        let tx = x - x0;
-        let ty = y - y0;
-        let x0 = x0 as i32;
-        let y0 = y0 as i32;
-        let top = lerp(self.green_at(x0, y0), self.green_at(x0 + 1, y0), tx);
-        let bottom = lerp(self.green_at(x0, y0 + 1), self.green_at(x0 + 1, y0 + 1), tx);
-        lerp(top, bottom, ty)
-    }
-
-    fn green_at(&self, x: i32, y: i32) -> f32 {
-        let width = self.width as i32;
-        let height = self.height as i32;
-        let x = x.rem_euclid(width) as u32;
-        let y = y.rem_euclid(height) as u32;
-        let index = ((y * self.width + x) * 4 + 1) as usize;
-        self.rgba.get(index).copied().unwrap_or(255) as f32 / 255.0
-    }
-}
-
-fn lerp(left: f32, right: f32, t: f32) -> f32 {
-    left + (right - left) * t
+    CpuRgba8Image::from_image_data(image).ok()
 }
 
 fn texture_resources(
