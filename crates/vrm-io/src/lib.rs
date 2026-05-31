@@ -1266,6 +1266,66 @@ pub struct GltfMorphTargetData {
     pub tangents: Vec<[f32; 3]>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfNormalMapMode {
+    #[default]
+    GeneratedTangents,
+    Derivative,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfNormalMapPlan {
+    pub normal_scale: f32,
+    pub mode: GltfNormalMapMode,
+    pub authored_tangents: bool,
+}
+
+impl GltfNormalMapPlan {
+    pub fn new(normal_scale: f32, authored_tangents: bool, mode: GltfNormalMapMode) -> Self {
+        Self {
+            normal_scale: normal_scale.max(0.0),
+            mode,
+            authored_tangents,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self::new(0.0, false, GltfNormalMapMode::GeneratedTangents)
+    }
+
+    pub fn is_enabled(self) -> bool {
+        self.normal_scale > 0.0
+    }
+
+    pub fn should_generate_tangents(self) -> bool {
+        self.is_enabled()
+            && !self.authored_tangents
+            && self.mode == GltfNormalMapMode::GeneratedTangents
+    }
+
+    pub fn uses_derivative_normals(self) -> bool {
+        self.is_enabled() && !self.authored_tangents && self.mode == GltfNormalMapMode::Derivative
+    }
+
+    pub fn material_normal_scale(self, has_runtime_tangents: bool) -> f32 {
+        if self.uses_derivative_normals() || has_runtime_tangents {
+            self.normal_scale
+        } else {
+            0.0
+        }
+    }
+
+    pub fn vertex_normal_scale(self, has_vertex_tangent: bool) -> f32 {
+        if self.uses_derivative_normals() {
+            -self.normal_scale
+        } else if has_vertex_tangent {
+            self.normal_scale
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GltfPrimitiveData {
     pub material: Option<usize>,
@@ -1281,6 +1341,14 @@ pub struct GltfPrimitiveData {
 }
 
 impl GltfPrimitiveData {
+    pub fn has_authored_tangents(&self) -> bool {
+        self.tangents.len() == self.positions.len()
+    }
+
+    pub fn normal_map_plan(&self, normal_scale: f32, mode: GltfNormalMapMode) -> GltfNormalMapPlan {
+        GltfNormalMapPlan::new(normal_scale, self.has_authored_tangents(), mode)
+    }
+
     pub fn tex_coord_0_or_default(&self, index: usize) -> [f32; 2] {
         self.tex_coords_0.get(index).copied().unwrap_or([0.0, 0.0])
     }
@@ -3706,6 +3774,41 @@ mod tests {
         assert_eq!(tangents.tangents[2], None);
         assert_eq!(tangents.tangents[3], Some([1.0, 0.0, 0.0, 1.0]));
         assert_eq!(tangents.all_tangents(), None);
+    }
+
+    #[test]
+    fn normal_map_plan_selects_authored_generated_and_derivative_paths() {
+        let mut primitive = GltfPrimitiveData {
+            positions: vec![[0.0, 0.0, 0.0]; 3],
+            ..Default::default()
+        };
+
+        let generated = primitive.normal_map_plan(0.8, GltfNormalMapMode::GeneratedTangents);
+        assert!(!generated.authored_tangents);
+        assert!(generated.should_generate_tangents());
+        assert!(!generated.uses_derivative_normals());
+        assert_eq!(generated.material_normal_scale(false), 0.0);
+        assert_f32_close(generated.material_normal_scale(true), 0.8);
+        assert_eq!(generated.vertex_normal_scale(false), 0.0);
+
+        let derivative = primitive.normal_map_plan(0.8, GltfNormalMapMode::Derivative);
+        assert!(!derivative.should_generate_tangents());
+        assert!(derivative.uses_derivative_normals());
+        assert_f32_close(derivative.material_normal_scale(false), 0.8);
+        assert_f32_close(derivative.vertex_normal_scale(false), -0.8);
+
+        primitive.tangents = vec![[1.0, 0.0, 0.0, 1.0]; 3];
+        let authored = primitive.normal_map_plan(0.8, GltfNormalMapMode::Derivative);
+        assert!(authored.authored_tangents);
+        assert!(!authored.should_generate_tangents());
+        assert!(!authored.uses_derivative_normals());
+        assert_f32_close(authored.material_normal_scale(true), 0.8);
+        assert_f32_close(authored.vertex_normal_scale(true), 0.8);
+
+        let disabled = primitive.normal_map_plan(0.0, GltfNormalMapMode::GeneratedTangents);
+        assert!(!disabled.is_enabled());
+        assert_eq!(disabled.material_normal_scale(true), 0.0);
+        assert_eq!(disabled.vertex_normal_scale(true), 0.0);
     }
 
     #[test]

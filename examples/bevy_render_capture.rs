@@ -55,10 +55,10 @@ use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMinFilter, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData,
-    GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
-    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
-    transform_tex_coord_0,
+    GltfMinFilter, GltfNormalMapMode, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData,
+    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
+    generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
+    load_vrm_from_path, transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -182,6 +182,15 @@ impl NormalMapMode {
         match self {
             Self::GeneratedTangents => "generated-tangents",
             Self::Derivative => "derivative",
+        }
+    }
+}
+
+impl From<NormalMapMode> for GltfNormalMapMode {
+    fn from(value: NormalMapMode) -> Self {
+        match value {
+            NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
+            NormalMapMode::Derivative => Self::Derivative,
         }
     }
 }
@@ -387,15 +396,14 @@ fn spawn_vrm_meshes(
                 shading.normal_scale = 0.0;
             }
             let render_order = material_render_order(loaded, primitive.material);
-            let use_derivative_normals = options.normal_map_mode == NormalMapMode::Derivative
-                && primitive.tangents.is_empty()
-                && shading.normal_scale > 0.0;
+            let normal_plan =
+                primitive.normal_map_plan(shading.normal_scale, options.normal_map_mode.into());
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
                 &morph_weights,
                 world,
                 skin_matrices.as_deref(),
-                shading.normal_scale > 0.0 && !use_derivative_normals,
+                normal_plan.should_generate_tangents(),
             );
             let surface = BevyPrimitive {
                 mesh,
@@ -405,12 +413,8 @@ fn spawn_vrm_meshes(
                     shading,
                     &primitive_context,
                     render_depth_bias(render_order),
-                    if has_tangents || use_derivative_normals {
-                        shading.normal_scale
-                    } else {
-                        0.0
-                    },
-                    use_derivative_normals,
+                    normal_plan.material_normal_scale(has_tangents),
+                    normal_plan.uses_derivative_normals(),
                 )),
                 render_order,
                 phase_order: material_phase_order(loaded, primitive.material),

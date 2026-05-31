@@ -22,10 +22,10 @@ use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfOutlineScale,
-    GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
-    Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfNormalMapMode,
+    GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode,
+    LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents,
+    image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -228,6 +228,15 @@ impl NormalMapMode {
         match self {
             Self::GeneratedTangents => "generated-tangents",
             Self::Derivative => "derivative",
+        }
+    }
+}
+
+impl From<NormalMapMode> for GltfNormalMapMode {
+    fn from(value: NormalMapMode) -> Self {
+        match value {
+            NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
+            NormalMapMode::Derivative => Self::Derivative,
         }
     }
 }
@@ -481,6 +490,10 @@ fn draw_primitive(
         context.expression_effects,
     );
     let policy = material_policy(loaded, primitive.material);
+    let normal_plan = primitive.normal_map_plan(
+        shading.normal_scale,
+        GltfNormalMapMode::from(context.options.normal_map_mode),
+    );
     let mut vertices = primitive
         .positions
         .iter()
@@ -489,17 +502,8 @@ fn draw_primitive(
             let transformed = primitive
                 .transformed_vertex(index, morph_weights, context.world, context.skin_matrices)
                 .expect("iterating over primitive positions should keep vertex indices valid");
-            let use_derivative_normals = context.options.normal_map_mode
-                == NormalMapMode::Derivative
-                && primitive.tangents.is_empty()
-                && shading.normal_scale > 0.0;
-            let normal_scale = if use_derivative_normals {
-                -shading.normal_scale
-            } else if primitive.tangents.get(index).is_some() {
-                shading.normal_scale
-            } else {
-                0.0
-            };
+            let normal_scale =
+                normal_plan.vertex_normal_scale(primitive.tangents.get(index).is_some());
             Vertex {
                 position: transformed.position.to_array(),
                 normal: transformed.normal.to_array(),
@@ -553,11 +557,8 @@ fn draw_primitive(
             }
         })
         .collect::<Vec<_>>();
-    if shading.normal_scale > 0.0
-        && primitive.tangents.is_empty()
-        && context.options.normal_map_mode == NormalMapMode::GeneratedTangents
-    {
-        generate_missing_tangents(&mut vertices, &primitive.indices, shading.normal_scale);
+    if normal_plan.should_generate_tangents() {
+        generate_missing_tangents(&mut vertices, &primitive.indices, normal_plan.normal_scale);
     }
     Ok(DrawPrimitive {
         vertices,

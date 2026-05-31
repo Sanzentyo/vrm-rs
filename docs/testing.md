@@ -293,11 +293,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.82% | 84.81% |
+| Workspace total | 81.93% | 84.87% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.94% | 74.74% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 87.16% | 86.46% |
+| `vrm-io` | 87.39% | 86.63% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
@@ -333,8 +333,12 @@ lookup/RGBA8 conversion, renderer-neutral texCoord0 fallback, and
 renderer-neutral prepared vertex generation before renderer-specific buffer
 creation, renderer-neutral outline-width texture lookup, renderer-neutral
 whole-primitive UV fallback generation, and renderer-neutral RGBA mip-chain
-generation. Facade-level headless scene construction and zero-delta world-matrix
-evaluation are shared before renderer-specific buffer creation.
+generation. Normal-map fallback policy is shared through
+`GltfNormalMapPlan`, so authored tangents, generated tangents, derivative
+normal fallback, and normal-scale delivery are decided before renderer-specific
+buffer/material construction. Facade-level headless scene construction and
+zero-delta world-matrix evaluation are shared before renderer-specific buffer
+creation.
 Expression-applied renderer material state is also shared through
 `LoadedVrm::expression_material_shading_plan` and
 `LoadedVrm::expression_material_uv_transforms`, while MToon outline material
