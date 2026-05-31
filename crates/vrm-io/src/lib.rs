@@ -1525,8 +1525,16 @@ mod tests {
             "minFilter": 9729,
             "wrapS": 33071,
             "wrapT": 33648
+        }, {
+            "magFilter": 9729,
+            "minFilter": 9985,
+            "wrapS": 10497,
+            "wrapT": 33071
         }]);
-        sample["textures"] = json!([{ "source": 0, "sampler": 0 }]);
+        sample["textures"] = json!([
+            { "source": 0, "sampler": 0 },
+            { "source": 0, "sampler": 1 }
+        ]);
         sample["materials"][0]["pbrMetallicRoughness"] = json!({
             "baseColorTexture": {
                 "index": 0,
@@ -1544,14 +1552,14 @@ mod tests {
             "roughnessFactor": 0.25
         });
         sample["materials"][0]["normalTexture"] = json!({
-            "index": 0,
+            "index": 1,
             "scale": 0.25,
             "extensions": {
                 "KHR_texture_transform": { "offset": [0.1, 0.2], "scale": [0.5, 0.75] }
             }
         });
         sample["materials"][0]["occlusionTexture"] = json!({
-            "index": 0,
+            "index": 1,
             "strength": 0.5,
             "extensions": {
                 "KHR_texture_transform": { "offset": [0.3, 0.4], "scale": [0.6, 0.7], "texCoord": 0 }
@@ -1572,15 +1580,26 @@ mod tests {
         assert!(!loaded.images[0].bytes.is_empty());
         assert_eq!(
             loaded.textures,
-            vec![GltfTextureData {
-                image: 0,
-                sampler: GltfSamplerData {
-                    mag_filter: GltfMagFilter::Nearest,
-                    min_filter: GltfMinFilter::Linear,
-                    wrap_s: GltfWrapMode::ClampToEdge,
-                    wrap_t: GltfWrapMode::MirroredRepeat,
+            vec![
+                GltfTextureData {
+                    image: 0,
+                    sampler: GltfSamplerData {
+                        mag_filter: GltfMagFilter::Nearest,
+                        min_filter: GltfMinFilter::Linear,
+                        wrap_s: GltfWrapMode::ClampToEdge,
+                        wrap_t: GltfWrapMode::MirroredRepeat,
+                    },
                 },
-            }]
+                GltfTextureData {
+                    image: 0,
+                    sampler: GltfSamplerData {
+                        mag_filter: GltfMagFilter::Linear,
+                        min_filter: GltfMinFilter::LinearMipmapNearest,
+                        wrap_s: GltfWrapMode::Repeat,
+                        wrap_t: GltfWrapMode::ClampToEdge,
+                    },
+                },
+            ]
         );
         assert_eq!(
             loaded.gltf_materials[0],
@@ -1595,7 +1614,7 @@ mod tests {
                 }),
                 metallic_factor: 0.75,
                 roughness_factor: 0.25,
-                normal_texture: Some(0),
+                normal_texture: Some(1),
                 normal_texture_transform: Some(TextureTransform2d {
                     offset: [0.1, 0.2],
                     scale: [0.5, 0.75],
@@ -1603,7 +1622,7 @@ mod tests {
                     tex_coord: Some(0),
                 }),
                 normal_scale: 0.25,
-                occlusion_texture: Some(0),
+                occlusion_texture: Some(1),
                 occlusion_texture_transform: Some(TextureTransform2d {
                     offset: [0.3, 0.4],
                     scale: [0.6, 0.7],
@@ -1636,7 +1655,7 @@ mod tests {
                 tex_coord: Some(1),
             })
         );
-        assert_eq!(mtoon.textures.normal_texture, Some(TextureRef(0)));
+        assert_eq!(mtoon.textures.normal_texture, Some(TextureRef(1)));
         assert_eq!(
             mtoon.texture_transforms.normal_texture,
             Some(TextureTransform2d {

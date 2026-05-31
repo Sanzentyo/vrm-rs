@@ -1809,7 +1809,22 @@ fn material_texture_bind_group(
         0,
     );
     let normal = texture_view(resources.normal, resources.indices, images.normal, 2);
-    let sampler = texture_sampler(resources.color, resources.indices, images.base, 0);
+    let base_sampler = texture_sampler(resources.color, resources.indices, images.base, 0);
+    let shade_sampler = texture_sampler(resources.color, resources.indices, images.shade, 0);
+    let shading_shift_sampler =
+        texture_sampler(resources.color, resources.indices, images.shading_shift, 1);
+    let matcap_sampler = texture_sampler(resources.color, resources.indices, images.matcap, 1);
+    let rim_sampler = texture_sampler(resources.color, resources.indices, images.rim, 0);
+    let normal_sampler = texture_sampler(resources.normal, resources.indices, images.normal, 2);
+    let emissive_sampler = texture_sampler(resources.color, resources.indices, images.emissive, 0);
+    let uv_animation_mask_sampler = texture_sampler(
+        resources.color,
+        resources.indices,
+        images.uv_animation_mask,
+        0,
+    );
+    let occlusion_sampler =
+        texture_sampler(resources.normal, resources.indices, images.occlusion, 0);
     let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render parity material uv transform uniform"),
         contents: bytemuck::bytes_of(&MaterialUvUniform::from(uv_transforms)),
@@ -1850,7 +1865,7 @@ fn material_texture_bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 6,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: wgpu::BindingResource::Sampler(base_sampler),
             },
             wgpu::BindGroupEntry {
                 binding: 7,
@@ -1871,6 +1886,38 @@ fn material_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 11,
                 resource: wgpu::BindingResource::TextureView(occlusion),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: wgpu::BindingResource::Sampler(shade_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: wgpu::BindingResource::Sampler(shading_shift_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 14,
+                resource: wgpu::BindingResource::Sampler(matcap_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 15,
+                resource: wgpu::BindingResource::Sampler(rim_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 16,
+                resource: wgpu::BindingResource::Sampler(normal_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 17,
+                resource: wgpu::BindingResource::Sampler(emissive_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 18,
+                resource: wgpu::BindingResource::Sampler(uv_animation_mask_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 19,
+                resource: wgpu::BindingResource::Sampler(occlusion_sampler),
             },
         ],
     });
@@ -2230,6 +2277,54 @@ async fn render_capture(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 19,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
     let color_texture_resources =
@@ -2584,6 +2679,30 @@ var<uniform> material_extra: MaterialExtraUniform;
 @group(1) @binding(11)
 var occlusion_texture: texture_2d<f32>;
 
+@group(1) @binding(12)
+var shade_sampler: sampler;
+
+@group(1) @binding(13)
+var shading_shift_sampler: sampler;
+
+@group(1) @binding(14)
+var matcap_sampler: sampler;
+
+@group(1) @binding(15)
+var rim_sampler: sampler;
+
+@group(1) @binding(16)
+var normal_sampler: sampler;
+
+@group(1) @binding(17)
+var emissive_sampler: sampler;
+
+@group(1) @binding(18)
+var uv_animation_mask_sampler: sampler;
+
+@group(1) @binding(19)
+var occlusion_sampler: sampler;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -2710,7 +2829,7 @@ fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
         material_uv.uv_animation_mask_transform,
         material_uv.rotation_b.z,
     );
-    let mask = textureSample(uv_animation_mask_texture, base_sampler, mask_uv).b;
+    let mask = textureSample(uv_animation_mask_texture, uv_animation_mask_sampler, mask_uv).b;
     let phase = material_uv.uv_animation.z * mask;
     let c = cos(phase);
     let s = sin(phase);
@@ -2731,7 +2850,7 @@ fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) ->
     let normal_scale = abs(input.normal_scale);
     let tangent = normalize(input.tangent.xyz) * face_sign;
     let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w) * face_sign;
-    let sampled = textureSample(normal_texture, base_sampler, normal_uv).xyz;
+    let sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz;
     let tangent_normal = vec3<f32>(
         (sampled.x * 2.0 - 1.0) * normal_scale,
         (1.0 - sampled.y * 2.0) * normal_scale,
@@ -2779,7 +2898,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let normal = surface_normal(input, front_facing, normal_uv);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let texel = textureSample(base_texture, base_sampler, base_uv);
-    let emissive_texel = textureSample(emissive_texture, base_sampler, emissive_uv).rgb;
+    let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < input.rim_params.w {
         discard;
@@ -2796,7 +2915,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
             material_extra.pbr_params.x,
             material_extra.pbr_params.y,
         ) * uniforms.light_color.rgb * uniforms.light_dir.w;
-        let occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+        let occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
         let ambient = diffuse * (1.0 - material_extra.pbr_params.x) * uniforms.mtoon_lighting.w * occlusion;
         var pbr_color = direct + ambient + input.emissive.rgb * emissive_texel;
         if input.outline_color.a >= 0.0 {
@@ -2804,9 +2923,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         }
         return output_color(pbr_color, opaque_alpha);
     }
-    let shade_texel = textureSample(shade_texture, base_sampler, shade_uv);
+    let shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
     let shade = input.shade_color.rgb * shade_texel.rgb;
-    let shift_texel = textureSample(shading_shift_texture, base_sampler, shading_shift_uv).r;
+    let shift_texel = textureSample(shading_shift_texture, shading_shift_sampler, shading_shift_uv).r;
     let shift = input.shading.x + shift_texel * input.shading.w;
     let toony = input.shading.y;
     let gi = input.shading.z;
@@ -2815,7 +2934,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if material_extra.flags.x > 0.5 {
         direct = min(direct, diffuse);
     }
-    let sampled_occlusion = (textureSample(occlusion_texture, base_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    let sampled_occlusion = (textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
     let occlusion = select(sampled_occlusion, 1.0, material_extra.flags.z > 0.5);
     let ambient = diffuse * (uniforms.mtoon_lighting.y + uniforms.mtoon_lighting.z * gi) * occlusion;
     let matcap_view_position = (uniforms.view * vec4<f32>(input.world_position, 1.0)).xyz;
@@ -2828,12 +2947,12 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         0.5 - 0.5 * dot(matcap_y, matcap_normal),
     );
     let matcap_uv = transform_uv(raw_matcap_uv, material_uv.matcap_transform, material_uv.rotation_b.w);
-    let matcap = textureSample(matcap_texture, base_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
+    let matcap = textureSample(matcap_texture, matcap_sampler, matcap_uv).rgb * input.matcap_factor.rgb;
     let rim_base = input.rim_color.rgb * pow(
         clamp(1.0 - dot(view_dir, normal) + input.rim_params.z, 0.0, 1.0),
         input.rim_params.y,
     );
-    let rim_texel = textureSample(rim_texture, base_sampler, rim_uv).rgb;
+    let rim_texel = textureSample(rim_texture, rim_sampler, rim_uv).rgb;
     let rim_light = uniforms.light_color.rgb * uniforms.light_dir.w + vec3<f32>(uniforms.mtoon_lighting.w);
     let rim_mix = mix(vec3<f32>(1.0), rim_light, input.rim_params.x);
     let rim = (rim_base + matcap) * rim_texel * rim_mix;
