@@ -4,12 +4,13 @@ use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
-    ExpressionName, Feature, HumanBoneName, MtoonMaterial, Resolved, RotationTrack, ScalarTrack,
-    TextureRef, TextureTransform2d, Transform, TranslationTrack, VrmAnimation, VrmKind, VrmModel,
+    ExpressionBind, ExpressionName, Feature, HumanBoneName, MtoonMaterial, Resolved, RotationTrack,
+    ScalarTrack, TextureRef, TextureTransform2d, Transform, TranslationTrack, VrmAnimation,
+    VrmKind, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -208,6 +209,98 @@ impl LoadedVrm {
                     .and_then(|index| self.gltf_materials.get(index))
                     .map_or(1.0, |material| material.normal_scale)
             })
+    }
+
+    pub fn expression_render_effects<I, N>(
+        &self,
+        expression_weights: I,
+    ) -> Result<GltfExpressionRenderEffects, VrmIoError>
+    where
+        I: IntoIterator<Item = (N, f32)>,
+        N: AsRef<str>,
+    {
+        let requested = expression_weights
+            .into_iter()
+            .map(|(name, weight)| (name.as_ref().to_owned(), weight))
+            .collect::<Vec<_>>();
+        let mut result = GltfExpressionRenderEffects::default();
+        let Feature::Present(expressions) = &self.model.document().expressions else {
+            if requested.is_empty() {
+                return Ok(result);
+            }
+            return Err(VrmIoError::MissingExpressions);
+        };
+
+        for expression in expressions
+            .preset
+            .values()
+            .chain(expressions.custom.values())
+        {
+            for bind in &expression.binds {
+                match bind {
+                    ExpressionBind::MorphTarget { node, index, .. } => {
+                        result.cleared.entry(node.0).or_default().insert(*index);
+                    }
+                    ExpressionBind::MaterialColor { .. }
+                    | ExpressionBind::TextureTransform { .. } => {}
+                }
+            }
+        }
+
+        for (name, weight) in requested {
+            let (expression, binary) = if let Some(expression) =
+                expressions.preset.get(&ExpressionName::from(name.as_str()))
+            {
+                (expression, expression.is_binary)
+            } else if let Some(expression) = expressions.custom.get(&name) {
+                (expression, expression.is_binary)
+            } else {
+                return Err(VrmIoError::UnknownExpression { name });
+            };
+            let effective_weight = if binary {
+                if weight >= 1.0 { 1.0 } else { 0.0 }
+            } else {
+                weight.clamp(0.0, 1.0)
+            };
+            for bind in &expression.binds {
+                match bind {
+                    ExpressionBind::MorphTarget {
+                        node,
+                        index,
+                        weight,
+                    } => {
+                        *result.weights.entry((node.0, *index)).or_default() +=
+                            effective_weight * *weight;
+                    }
+                    ExpressionBind::MaterialColor {
+                        material,
+                        kind,
+                        target_value,
+                    } => {
+                        result.material_colors.push(GltfMaterialColorEffect {
+                            material: material.0,
+                            kind: kind.clone(),
+                            target_value: target_value.clone(),
+                            weight: effective_weight,
+                        });
+                    }
+                    ExpressionBind::TextureTransform {
+                        material,
+                        scale,
+                        offset,
+                    } => {
+                        result.texture_transforms.push(GltfTextureTransformEffect {
+                            material: material.0,
+                            scale: *scale,
+                            offset: *offset,
+                            weight: effective_weight,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -512,6 +605,174 @@ impl From<gltf::image::Format> for ImageFormat {
 pub struct GltfTextureData {
     pub image: usize,
     pub sampler: GltfSamplerData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GltfExpressionRenderEffects {
+    pub cleared: HashMap<usize, HashSet<usize>>,
+    pub weights: HashMap<(usize, usize), f32>,
+    pub material_colors: Vec<GltfMaterialColorEffect>,
+    pub texture_transforms: Vec<GltfTextureTransformEffect>,
+}
+
+impl GltfExpressionRenderEffects {
+    pub fn active_morph_weights(
+        &self,
+        node_index: usize,
+        node: &GltfNodeRest,
+        mesh: &GltfMeshData,
+    ) -> Vec<f32> {
+        let mut weights = if node.weights.is_empty() {
+            mesh.weights.clone()
+        } else {
+            node.weights.clone()
+        };
+
+        if let Some(cleared) = self.cleared.get(&node_index) {
+            for index in cleared {
+                if weights.len() <= *index {
+                    weights.resize(index + 1, 0.0);
+                }
+                weights[*index] = 0.0;
+            }
+        }
+        for ((node, index), weight) in &self.weights {
+            if *node != node_index {
+                continue;
+            }
+            if weights.len() <= *index {
+                weights.resize(index + 1, 0.0);
+            }
+            weights[*index] += *weight;
+        }
+        weights
+    }
+
+    pub fn apply_color4(&self, initial: [f32; 4], material: Option<usize>, kind: &str) -> [f32; 4] {
+        let Some(material) = material else {
+            return initial;
+        };
+        self.material_colors
+            .iter()
+            .filter(|effect| effect.material == material && effect.kind == kind)
+            .fold(initial, |mut color, effect| {
+                let target = [
+                    effect.target_value.first().copied().unwrap_or(initial[0]),
+                    effect.target_value.get(1).copied().unwrap_or(initial[1]),
+                    effect.target_value.get(2).copied().unwrap_or(initial[2]),
+                    effect.target_value.get(3).copied().unwrap_or(1.0),
+                ];
+                for index in 0..4 {
+                    color[index] += (target[index] - initial[index]) * effect.weight;
+                }
+                color
+            })
+    }
+
+    pub fn apply_color3(&self, initial: [f32; 3], material: Option<usize>, kind: &str) -> [f32; 3] {
+        let Some(material) = material else {
+            return initial;
+        };
+        self.material_colors
+            .iter()
+            .filter(|effect| effect.material == material && effect.kind == kind)
+            .fold(initial, |mut color, effect| {
+                let target = [
+                    effect.target_value.first().copied().unwrap_or(initial[0]),
+                    effect.target_value.get(1).copied().unwrap_or(initial[1]),
+                    effect.target_value.get(2).copied().unwrap_or(initial[2]),
+                ];
+                for index in 0..3 {
+                    color[index] += (target[index] - initial[index]) * effect.weight;
+                }
+                color
+            })
+    }
+
+    pub fn apply_uv_transforms(
+        &self,
+        mut transforms: GltfMaterialUvTransforms,
+        material: Option<usize>,
+    ) -> GltfMaterialUvTransforms {
+        let Some(material) = material else {
+            return transforms;
+        };
+        for effect in self
+            .texture_transforms
+            .iter()
+            .filter(|effect| effect.material == material)
+        {
+            transforms.base = Some(apply_expression_texture_transform(transforms.base, effect));
+            transforms.shade = Some(apply_expression_texture_transform(transforms.shade, effect));
+            transforms.shading_shift = Some(apply_expression_texture_transform(
+                transforms.shading_shift,
+                effect,
+            ));
+            transforms.normal = Some(apply_expression_texture_transform(
+                transforms.normal,
+                effect,
+            ));
+            transforms.matcap = Some(apply_expression_texture_transform(
+                transforms.matcap,
+                effect,
+            ));
+            transforms.rim = Some(apply_expression_texture_transform(transforms.rim, effect));
+            transforms.outline_width = Some(apply_expression_texture_transform(
+                transforms.outline_width,
+                effect,
+            ));
+            transforms.emissive = Some(apply_expression_texture_transform(
+                transforms.emissive,
+                effect,
+            ));
+            transforms.occlusion = Some(apply_expression_texture_transform(
+                transforms.occlusion,
+                effect,
+            ));
+            transforms.uv_animation_mask = Some(apply_expression_texture_transform(
+                transforms.uv_animation_mask,
+                effect,
+            ));
+        }
+        transforms
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GltfMaterialColorEffect {
+    pub material: usize,
+    pub kind: String,
+    pub target_value: Vec<f32>,
+    pub weight: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfTextureTransformEffect {
+    pub material: usize,
+    pub scale: Option<[f32; 2]>,
+    pub offset: Option<[f32; 2]>,
+    pub weight: f32,
+}
+
+fn apply_expression_texture_transform(
+    initial: Option<TextureTransform2d>,
+    effect: &GltfTextureTransformEffect,
+) -> TextureTransform2d {
+    let initial = initial.unwrap_or_default();
+    let target_scale = effect.scale.unwrap_or(initial.scale);
+    let target_offset = effect.offset.unwrap_or(initial.offset);
+    TextureTransform2d {
+        offset: [
+            initial.offset[0] + (target_offset[0] - initial.offset[0]) * effect.weight,
+            initial.offset[1] + (target_offset[1] - initial.offset[1]) * effect.weight,
+        ],
+        scale: [
+            initial.scale[0] + (target_scale[0] - initial.scale[0]) * effect.weight,
+            initial.scale[1] + (target_scale[1] - initial.scale[1]) * effect.weight,
+        ],
+        rotation: initial.rotation,
+        tex_coord: initial.tex_coord,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -1961,6 +2222,10 @@ pub enum VrmIoError {
     },
     #[error("invalid animation channel: {message}")]
     InvalidAnimationChannel { message: String },
+    #[error("render expression was requested, but the VRM has no expressions")]
+    MissingExpressions,
+    #[error("unknown render expression: {name}")]
+    UnknownExpression { name: String },
 }
 
 trait ImageFormatExt {
@@ -2200,6 +2465,51 @@ mod tests {
         assert_eq!(emissive_strength.0, 5.0);
         assert_eq!(document.node_constraints.len(), 1);
         assert!(document.spring_bone.is_present());
+
+        let effects = loaded
+            .expression_render_effects([("blink", 0.5)])
+            .expect("generated expression should resolve render effects");
+        let mesh = GltfMeshData {
+            weights: vec![0.2],
+            primitives: Vec::new(),
+        };
+        assert_eq!(
+            effects.active_morph_weights(2, &loaded.scene.nodes[2], &mesh),
+            vec![50.0]
+        );
+        assert_vec4_close(
+            effects.apply_color4([0.25, 0.5, 0.75, 1.0], Some(0), "color"),
+            [0.575, 0.65, 0.725, 0.8],
+        );
+        assert_vec3_close(
+            effects.apply_color3([0.0, 0.0, 0.0], Some(0), "emissionColor"),
+            [0.25, 0.2, 0.15],
+        );
+        let transforms = effects.apply_uv_transforms(
+            GltfMaterialUvTransforms {
+                base: Some(TextureTransform2d {
+                    offset: [0.25, 0.5],
+                    scale: [1.0, 1.0],
+                    rotation: 0.25,
+                    tex_coord: Some(0),
+                }),
+                ..Default::default()
+            },
+            Some(0),
+        );
+        assert_eq!(
+            transforms.base,
+            Some(TextureTransform2d {
+                offset: [0.5, 0.375],
+                scale: [0.625, 0.75],
+                rotation: 0.25,
+                tex_coord: Some(0),
+            })
+        );
+        assert!(matches!(
+            loaded.expression_render_effects([("missing", 1.0)]),
+            Err(VrmIoError::UnknownExpression { name }) if name == "missing"
+        ));
     }
 
     #[test]
@@ -3183,6 +3493,20 @@ mod tests {
                                     "node": 2,
                                     "index": 0,
                                     "weight": 100.0
+                                }],
+                                "materialColorBinds": [{
+                                    "material": 0,
+                                    "type": "color",
+                                    "targetValue": [0.9, 0.8, 0.7, 0.6]
+                                }, {
+                                    "material": 0,
+                                    "type": "emissionColor",
+                                    "targetValue": [0.5, 0.4, 0.3]
+                                }],
+                                "textureTransformBinds": [{
+                                    "material": 0,
+                                    "scale": [0.25, 0.5],
+                                    "offset": [0.75, 0.25]
                                 }],
                                 "overrideLookAt": "block"
                             }

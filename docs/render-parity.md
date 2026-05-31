@@ -737,7 +737,9 @@ and UV animation uniform layout identical for wgpu, Bevy, and future adapters.
 `LoadedVrm::material_shading_plan` similarly centralizes the renderer-facing
 MToon/PBR fallback shading inputs, including effective emissive strength,
 normal scale, rim/matcap parameters, and VRM0 compatibility flags, while
-leaving expression-driven color overrides at the capture edge.
+`LoadedVrm::expression_render_effects` centralizes the expression-driven morph,
+material-color, and texture-transform overrides that are applied on top of that
+base material plan before each capture builds backend resources.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.

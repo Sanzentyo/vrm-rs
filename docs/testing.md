@@ -181,6 +181,11 @@ Material shading input selection is shared through
 values, effective emissive strength, normal scale, rim/matcap parameters,
 metallic/roughness, unlit state, and VRM0 compatibility flags before concrete
 captures apply runtime expression color overrides.
+Expression render effect selection is shared through
+`LoadedVrm::expression_render_effects` and `GltfExpressionRenderEffects`,
+covering binary expression weights, morph-target clears and accumulation,
+material color binds, and texture-transform binds before concrete captures
+convert them into mesh weights, material colors, and UV transform uniforms.
 CPU-side texCoord0 transform application is shared through
 `vrm-io::transform_tex_coord_0`, covering offset/scale/rotation and the current
 policy of ignoring transforms that target non-zero UV sets.
@@ -282,14 +287,14 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.64% | 83.67% |
+| Workspace total | 80.93% | 83.99% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.22% | 73.91% |
-| `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 84.95% | 83.48% |
+| `vrm-core` | 70.18% | 77.46% |
+| `vrm-io` | 85.51% | 84.41% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
-| `vrm-sans-io` | 92.69% | 95.68% |
+| `vrm-sans-io` | 93.07% | 96.13% |
 | `facade src/lib.rs` | 98.77% | 100.00% |
 
 The current external fixture tests cover recursive fixture discovery, semantic
@@ -314,8 +319,9 @@ RGBA8 image normalization, renderer-neutral RGBA channel sampling,
 renderer-neutral material texture slot resolution and binding plans,
 renderer-neutral material UV transform resolution, renderer-neutral UV uniform
 packing, renderer-neutral material shading input selection, renderer-neutral
-texCoord0 transform application, renderer-neutral MToon lighting accumulator
-resolution, and renderer-neutral RGBA mip-chain generation.
+expression render effect planning, renderer-neutral texCoord0 transform
+application, renderer-neutral MToon lighting accumulator resolution, and
+renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

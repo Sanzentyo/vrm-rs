@@ -2,6 +2,16 @@
 
 ## 2026-05-31
 
+- Added `LoadedVrm::expression_render_effects` and
+  `GltfExpressionRenderEffects`, moving render-facing expression morph clears,
+  morph weight accumulation, material color binds, and texture transform binds
+  into a renderer-neutral plan. The wgpu and Bevy captures now share the same
+  expression effect resolution before mapping the result into mesh weights,
+  MToon/PBR color inputs, and UV transform uniforms.
+- Delegated the coverage docs refresh for this expression-planning slice to
+  `gpt-5.3-codex-spark`, reviewed the generated diff, and restored the
+  surrounding `docs/testing.md` coverage explanation after the scripted block
+  replacement. Workspace line coverage is now `83.99%`.
 - Added `GltfMaterialTextureSlots::binding_plan`, a renderer-neutral MToon
   texture binding plan that attaches each shader slot to its texture index,
   sRGB/linear upload table, and white/black/neutral-normal fallback. The wgpu
@@ -340,7 +350,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 83.67%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 83.99%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Attempted to delegate the latest coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and restored the surrounding testing documentation after reviewing the generated diff.
 - Attempted to delegate the 2026-05-30 coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and reviewed the resulting docs diff.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.

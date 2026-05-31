@@ -12,18 +12,18 @@ use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
-use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
+use vrm_core::OutlineWidthMode;
 use vrm_io::{
-    CpuRgba8Image, GltfMagFilter, GltfMaterialShadingOptions, GltfMaterialShadingPlan,
-    GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace,
-    GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialTextureSlots,
-    GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
+    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
+    GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
+    GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
+    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData,
     GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
     generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
 };
@@ -356,7 +356,7 @@ fn mesh_draw_data(
             .skin
             .and_then(|skin| loaded.skins.get(skin))
             .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
-        let morph_weights = active_morph_weights(node_index, node, mesh, &expression_effects);
+        let morph_weights = expression_effects.active_morph_weights(node_index, node, mesh);
         let draw_context = PrimitiveDrawContext {
             expression_effects: &expression_effects,
             world,
@@ -384,7 +384,7 @@ fn mesh_draw_data(
 
 #[derive(Clone, Copy)]
 struct PrimitiveDrawContext<'a> {
-    expression_effects: &'a ExpressionRenderEffects,
+    expression_effects: &'a GltfExpressionRenderEffects,
     world: Mat4,
     skin_matrices: Option<&'a [Mat4]>,
     options: &'a CaptureOptions,
@@ -404,7 +404,7 @@ fn outline_primitive(
     if !mtoon.outline_enabled() {
         return None;
     }
-    let outline_color = apply_color_effect4(
+    let outline_color = context.expression_effects.apply_color4(
         [
             mtoon.outline_color_factor[0],
             mtoon.outline_color_factor[1],
@@ -413,7 +413,6 @@ fn outline_primitive(
         ],
         primitive.material,
         "outlineColor",
-        context.expression_effects,
     );
     let width_texture = mtoon
         .textures
@@ -702,142 +701,11 @@ fn draw_primitive(
     })
 }
 
-#[derive(Clone, Debug, Default)]
-struct ExpressionRenderEffects {
-    cleared: HashMap<usize, HashSet<usize>>,
-    weights: HashMap<(usize, usize), f32>,
-    material_colors: Vec<MaterialColorEffect>,
-    texture_transforms: Vec<TextureTransformEffect>,
-}
-
-#[derive(Clone, Debug)]
-struct MaterialColorEffect {
-    material: usize,
-    kind: String,
-    target_value: Vec<f32>,
-    weight: f32,
-}
-
-#[derive(Clone, Debug)]
-struct TextureTransformEffect {
-    material: usize,
-    scale: Option<[f32; 2]>,
-    offset: Option<[f32; 2]>,
-    weight: f32,
-}
-
-fn active_morph_weights(
-    node_index: usize,
-    node: &GltfNodeRest,
-    mesh: &GltfMeshData,
-    expressions: &ExpressionRenderEffects,
-) -> Vec<f32> {
-    let mut weights = if node.weights.is_empty() {
-        mesh.weights.clone()
-    } else {
-        node.weights.clone()
-    };
-
-    if let Some(cleared) = expressions.cleared.get(&node_index) {
-        for index in cleared {
-            if weights.len() <= *index {
-                weights.resize(index + 1, 0.0);
-            }
-            weights[*index] = 0.0;
-        }
-    }
-    for ((node, index), weight) in &expressions.weights {
-        if *node != node_index {
-            continue;
-        }
-        if weights.len() <= *index {
-            weights.resize(index + 1, 0.0);
-        }
-        weights[*index] += *weight;
-    }
-    weights
-}
-
 fn expression_render_effects(
     loaded: &LoadedVrm,
     expression_args: &[String],
-) -> Result<ExpressionRenderEffects, Box<dyn Error>> {
-    let mut result = ExpressionRenderEffects::default();
-    let Feature::Present(expressions) = &loaded.model().document().expressions else {
-        if expression_args.is_empty() {
-            return Ok(result);
-        }
-        return Err("render expression was requested, but the VRM has no expressions".into());
-    };
-
-    for expression in expressions
-        .preset
-        .values()
-        .chain(expressions.custom.values())
-    {
-        for bind in &expression.binds {
-            match bind {
-                ExpressionBind::MorphTarget { node, index, .. } => {
-                    result.cleared.entry(node.0).or_default().insert(*index);
-                }
-                ExpressionBind::MaterialColor { .. } | ExpressionBind::TextureTransform { .. } => {}
-            }
-        }
-    }
-
-    for (name, weight) in parse_expression_args(expression_args)? {
-        let (expression, binary) = if let Some(expression) =
-            expressions.preset.get(&ExpressionName::from(name.as_str()))
-        {
-            (expression, expression.is_binary)
-        } else if let Some(expression) = expressions.custom.get(&name) {
-            (expression, expression.is_binary)
-        } else {
-            return Err(format!("unknown render expression: {name}").into());
-        };
-        let effective_weight = if binary {
-            if weight >= 1.0 { 1.0 } else { 0.0 }
-        } else {
-            weight.clamp(0.0, 1.0)
-        };
-        for bind in &expression.binds {
-            match bind {
-                ExpressionBind::MorphTarget {
-                    node,
-                    index,
-                    weight,
-                } => {
-                    *result.weights.entry((node.0, *index)).or_default() +=
-                        effective_weight * *weight;
-                }
-                ExpressionBind::MaterialColor {
-                    material,
-                    kind,
-                    target_value,
-                } => {
-                    result.material_colors.push(MaterialColorEffect {
-                        material: material.0,
-                        kind: kind.clone(),
-                        target_value: target_value.clone(),
-                        weight: effective_weight,
-                    });
-                }
-                ExpressionBind::TextureTransform {
-                    material,
-                    scale,
-                    offset,
-                } => {
-                    result.texture_transforms.push(TextureTransformEffect {
-                        material: material.0,
-                        scale: *scale,
-                        offset: *offset,
-                        weight: effective_weight,
-                    });
-                }
-            }
-        }
-    }
-    Ok(result)
+) -> Result<GltfExpressionRenderEffects, Box<dyn Error>> {
+    Ok(loaded.expression_render_effects(parse_expression_args(expression_args)?)?)
 }
 
 fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn Error>> {
@@ -852,59 +720,6 @@ fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn 
             Ok((name.to_owned(), weight))
         })
         .collect()
-}
-
-fn apply_color_effect4(
-    initial: [f32; 4],
-    material: Option<usize>,
-    kind: &str,
-    effects: &ExpressionRenderEffects,
-) -> [f32; 4] {
-    let Some(material) = material else {
-        return initial;
-    };
-    effects
-        .material_colors
-        .iter()
-        .filter(|effect| effect.material == material && effect.kind == kind)
-        .fold(initial, |mut color, effect| {
-            let target = [
-                effect.target_value.first().copied().unwrap_or(initial[0]),
-                effect.target_value.get(1).copied().unwrap_or(initial[1]),
-                effect.target_value.get(2).copied().unwrap_or(initial[2]),
-                effect.target_value.get(3).copied().unwrap_or(1.0),
-            ];
-            for index in 0..4 {
-                color[index] += (target[index] - initial[index]) * effect.weight;
-            }
-            color
-        })
-}
-
-fn apply_color_effect3(
-    initial: [f32; 3],
-    material: Option<usize>,
-    kind: &str,
-    effects: &ExpressionRenderEffects,
-) -> [f32; 3] {
-    let Some(material) = material else {
-        return initial;
-    };
-    effects
-        .material_colors
-        .iter()
-        .filter(|effect| effect.material == material && effect.kind == kind)
-        .fold(initial, |mut color, effect| {
-            let target = [
-                effect.target_value.first().copied().unwrap_or(initial[0]),
-                effect.target_value.get(1).copied().unwrap_or(initial[1]),
-                effect.target_value.get(2).copied().unwrap_or(initial[2]),
-            ];
-            for index in 0..3 {
-                color[index] += (target[index] - initial[index]) * effect.weight;
-            }
-            color
-        })
 }
 
 fn morphed_vertex(
@@ -1173,7 +988,7 @@ fn transform_direction(
 fn material_shading(
     loaded: &LoadedVrm,
     material: Option<usize>,
-    expression_effects: &ExpressionRenderEffects,
+    expression_effects: &GltfExpressionRenderEffects,
     options: &CaptureOptions,
 ) -> GltfMaterialShadingPlan {
     let mut shading = loaded.material_shading_plan(
@@ -1182,34 +997,16 @@ fn material_shading(
             v0_compat_shade: options.mtoon_v0_compat_shade,
         },
     );
-    shading.base_color =
-        apply_color_effect4(shading.base_color, material, "color", expression_effects);
+    shading.base_color = expression_effects.apply_color4(shading.base_color, material, "color");
     if !shading.pbr_fallback {
-        shading.shade_color = apply_color_effect4(
-            shading.shade_color,
-            material,
-            "shadeColor",
-            expression_effects,
-        );
-        shading.matcap_factor = apply_color_effect3(
-            shading.matcap_factor,
-            material,
-            "matcapColor",
-            expression_effects,
-        );
-        shading.parametric_rim_color = apply_color_effect3(
-            shading.parametric_rim_color,
-            material,
-            "rimColor",
-            expression_effects,
-        );
+        shading.shade_color =
+            expression_effects.apply_color4(shading.shade_color, material, "shadeColor");
+        shading.matcap_factor =
+            expression_effects.apply_color3(shading.matcap_factor, material, "matcapColor");
+        shading.parametric_rim_color =
+            expression_effects.apply_color3(shading.parametric_rim_color, material, "rimColor");
     }
-    shading.emissive = apply_color_effect3(
-        shading.emissive,
-        material,
-        "emissionColor",
-        expression_effects,
-    );
+    shading.emissive = expression_effects.apply_color3(shading.emissive, material, "emissionColor");
     shading
 }
 
@@ -1217,67 +1014,10 @@ fn material_uv_transforms(
     loaded: &LoadedVrm,
     material: Option<usize>,
     mtoon_time: f32,
-    expression_effects: &ExpressionRenderEffects,
+    expression_effects: &GltfExpressionRenderEffects,
 ) -> GltfMaterialUvTransforms {
     let transforms = loaded.material_uv_transforms(material, mtoon_time);
-    apply_texture_transform_effects(transforms, material, expression_effects)
-}
-
-fn apply_texture_transform_effects(
-    mut transforms: GltfMaterialUvTransforms,
-    material: Option<usize>,
-    effects: &ExpressionRenderEffects,
-) -> GltfMaterialUvTransforms {
-    let Some(material) = material else {
-        return transforms;
-    };
-    for effect in effects
-        .texture_transforms
-        .iter()
-        .filter(|effect| effect.material == material)
-    {
-        transforms.base = Some(apply_texture_transform_slot(transforms.base, effect));
-        transforms.shade = Some(apply_texture_transform_slot(transforms.shade, effect));
-        transforms.shading_shift = Some(apply_texture_transform_slot(
-            transforms.shading_shift,
-            effect,
-        ));
-        transforms.normal = Some(apply_texture_transform_slot(transforms.normal, effect));
-        transforms.matcap = Some(apply_texture_transform_slot(transforms.matcap, effect));
-        transforms.rim = Some(apply_texture_transform_slot(transforms.rim, effect));
-        transforms.outline_width = Some(apply_texture_transform_slot(
-            transforms.outline_width,
-            effect,
-        ));
-        transforms.emissive = Some(apply_texture_transform_slot(transforms.emissive, effect));
-        transforms.occlusion = Some(apply_texture_transform_slot(transforms.occlusion, effect));
-        transforms.uv_animation_mask = Some(apply_texture_transform_slot(
-            transforms.uv_animation_mask,
-            effect,
-        ));
-    }
-    transforms
-}
-
-fn apply_texture_transform_slot(
-    initial: Option<TextureTransform2d>,
-    effect: &TextureTransformEffect,
-) -> TextureTransform2d {
-    let initial = initial.unwrap_or_default();
-    let target_scale = effect.scale.unwrap_or(initial.scale);
-    let target_offset = effect.offset.unwrap_or(initial.offset);
-    TextureTransform2d {
-        offset: [
-            initial.offset[0] + (target_offset[0] - initial.offset[0]) * effect.weight,
-            initial.offset[1] + (target_offset[1] - initial.offset[1]) * effect.weight,
-        ],
-        scale: [
-            initial.scale[0] + (target_scale[0] - initial.scale[0]) * effect.weight,
-            initial.scale[1] + (target_scale[1] - initial.scale[1]) * effect.weight,
-        ],
-        rotation: initial.rotation,
-        tex_coord: initial.tex_coord,
-    }
+    expression_effects.apply_uv_transforms(transforms, material)
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
