@@ -20,7 +20,7 @@ use std::sync::mpsc;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfSkinData, GltfWrapMode, ImageData, ImageFormat, LoadedVrm, generate_rgba_mip_chain,
+    GltfSkinData, GltfWrapMode, LoadedVrm, generate_rgba_mip_chain, image_data_to_rgba8,
     load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
@@ -1546,7 +1546,7 @@ fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRg
     Some(CpuRgbaImage {
         width: image.width,
         height: image.height,
-        rgba: image_rgba8(image).ok()?,
+        rgba: image_data_to_rgba8(image).ok()?,
     })
 }
 
@@ -1629,7 +1629,7 @@ fn texture_resources(
         let Some(image) = loaded.images.get(texture.image) else {
             continue;
         };
-        let rgba = image_rgba8(image)?;
+        let rgba = image_data_to_rgba8(image)?;
         resources.push(texture_resource(
             device,
             queue,
@@ -1929,37 +1929,6 @@ fn texture_resource_indices(resources: &[TextureResource]) -> HashMap<usize, usi
         .enumerate()
         .filter_map(|(index, resource)| resource.texture.map(|texture| (texture, index)))
         .collect()
-}
-
-fn image_rgba8(image: &ImageData) -> Result<Vec<u8>, Box<dyn Error>> {
-    match image.format {
-        ImageFormat::R8 => Ok(image
-            .bytes
-            .iter()
-            .flat_map(|value| [*value, *value, *value, 255])
-            .collect()),
-        ImageFormat::R8G8 => Ok(image
-            .bytes
-            .chunks_exact(2)
-            .flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]])
-            .collect()),
-        ImageFormat::R8G8B8 => Ok(image
-            .bytes
-            .chunks_exact(3)
-            .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
-            .collect()),
-        ImageFormat::R8G8B8A8 => Ok(image.bytes.clone()),
-        ImageFormat::R16
-        | ImageFormat::R16G16
-        | ImageFormat::R16G16B16
-        | ImageFormat::R16G16B16A16
-        | ImageFormat::R32G32B32Float
-        | ImageFormat::R32G32B32A32Float => Err(format!(
-            "unsupported render capture image format: {:?}",
-            image.format
-        )
-        .into()),
-    }
 }
 
 fn pipeline_keys(mesh: &MeshDrawData) -> Vec<PipelineKey> {

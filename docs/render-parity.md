@@ -702,10 +702,12 @@ The Rust capture paths also honor glTF sampler min/mag/wrap policy per texture
 using structured sampler data extracted by `vrm-io`; wgpu binds a sampler for
 each material texture slot, while Bevy carries the sampler through each image
 asset. CPU-generated mip chains use the shared
-`vrm-io::generate_rgba_mip_chain` helper with CatmullRom downsampling for the
-current capture path, which tracks the WebGL generated-mipmap reference better
-than the previous triangle filter on the official UV-animation and
-Seed/constraint fixtures. Renderer-facing glTF material data also exposes
+`vrm-io::image_data_to_rgba8` / `vrm-io::image_bytes_to_rgba8` helpers for
+source image normalization and `vrm-io::generate_rgba_mip_chain` with
+CatmullRom downsampling for the current capture path, which tracks the WebGL
+generated-mipmap reference better than the previous triangle filter on the
+official UV-animation and Seed/constraint fixtures. Renderer-facing glTF
+material data also exposes
 `KHR_materials_unlit`
 for non-MToon/PBR fallback materials; when a material has
 `VRMC_materials_mtoon`, the concrete captures keep the MToon shader branch even

@@ -150,10 +150,12 @@ RGBA JSON parsing, alpha counting, diff heatmap pixel generation, PSNR report
 summary extraction, and summary Markdown construction work on in-memory values,
 while filesystem reads/writes remain in the surrounding runner functions.
 Texture upload preparation follows the same direction: `vrm-io` exposes
-`generate_rgba_mip_chain`, which takes dimensions plus RGBA bytes and returns
-renderer-neutral mip levels without touching files or GPU APIs. The wgpu and
-Bevy captures both use that helper before converting the plan into backend
-texture uploads, so ash/custom-engine paths can reuse the same validated mip
+`image_bytes_to_rgba8` / `image_data_to_rgba8` for source image byte
+normalization and `generate_rgba_mip_chain` for validated mip planning. These
+helpers take dimensions, formats, and bytes, then return renderer-neutral RGBA8
+bytes or mip levels without touching files or GPU APIs. The wgpu and Bevy
+captures both use those helpers before converting the plan into backend texture
+uploads, so ash/custom-engine paths can reuse the same validated texture input
 data.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
 `CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
@@ -249,11 +251,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.77% | 82.97% |
+| Workspace total | 79.86% | 83.04% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 81.84% | 79.26% |
+| `vrm-io` | 82.20% | 79.80% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -276,8 +278,8 @@ writeback path. Renderer-facing generated glTF coverage now also includes
 primitive `COLOR_0`, morph target deltas, mesh/node default morph weights,
 public MToon renderer material plans, public primitive pipeline plans, glTF
 sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
-`KHR_materials_unlit` extraction for PBR fallback material data, and
-renderer-neutral RGBA mip-chain generation.
+`KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
+RGBA8 image normalization, and renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

@@ -77,6 +77,85 @@ pub enum ImageFormat {
     R32G32B32A32Float,
 }
 
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum Rgba8ImageError {
+    #[error("image dimensions must be non-zero")]
+    InvalidDimensions,
+    #[error(
+        "image byte length mismatch for {format:?}: expected {expected} bytes, got {actual} bytes"
+    )]
+    InvalidByteLength {
+        format: ImageFormat,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("unsupported image format for RGBA8 conversion: {0:?}")]
+    UnsupportedFormat(ImageFormat),
+}
+
+pub fn image_data_to_rgba8(image: &ImageData) -> Result<Vec<u8>, Rgba8ImageError> {
+    image_bytes_to_rgba8(image.width, image.height, image.format, &image.bytes)
+}
+
+pub fn image_bytes_to_rgba8(
+    width: u32,
+    height: u32,
+    format: ImageFormat,
+    bytes: &[u8],
+) -> Result<Vec<u8>, Rgba8ImageError> {
+    let pixels = checked_pixel_count(width, height).ok_or(Rgba8ImageError::InvalidDimensions)?;
+    let Some(bytes_per_pixel) = rgba8_source_bytes_per_pixel(format) else {
+        return Err(Rgba8ImageError::UnsupportedFormat(format));
+    };
+    let expected = pixels
+        .checked_mul(bytes_per_pixel)
+        .ok_or(Rgba8ImageError::InvalidDimensions)?;
+    if bytes.len() != expected {
+        return Err(Rgba8ImageError::InvalidByteLength {
+            format,
+            expected,
+            actual: bytes.len(),
+        });
+    }
+
+    match format {
+        ImageFormat::R8 => Ok(bytes
+            .iter()
+            .flat_map(|value| [*value, *value, *value, 255])
+            .collect()),
+        ImageFormat::R8G8 => Ok(bytes
+            .chunks_exact(2)
+            .flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]])
+            .collect()),
+        ImageFormat::R8G8B8 => Ok(bytes
+            .chunks_exact(3)
+            .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
+            .collect()),
+        ImageFormat::R8G8B8A8 => Ok(bytes.to_vec()),
+        ImageFormat::R16
+        | ImageFormat::R16G16
+        | ImageFormat::R16G16B16
+        | ImageFormat::R16G16B16A16
+        | ImageFormat::R32G32B32Float
+        | ImageFormat::R32G32B32A32Float => Err(Rgba8ImageError::UnsupportedFormat(format)),
+    }
+}
+
+fn rgba8_source_bytes_per_pixel(format: ImageFormat) -> Option<usize> {
+    match format {
+        ImageFormat::R8 => Some(1),
+        ImageFormat::R8G8 => Some(2),
+        ImageFormat::R8G8B8 => Some(3),
+        ImageFormat::R8G8B8A8 => Some(4),
+        ImageFormat::R16
+        | ImageFormat::R16G16
+        | ImageFormat::R16G16B16
+        | ImageFormat::R16G16B16A16
+        | ImageFormat::R32G32B32Float
+        | ImageFormat::R32G32B32A32Float => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RgbaMipLevel {
     pub width: u32,
@@ -140,15 +219,20 @@ pub fn generate_rgba_mip_chain(
 }
 
 fn rgba_len(width: u32, height: u32) -> Result<usize, TextureMipError> {
-    usize::try_from(width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
+    checked_pixel_count(width, height)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or(TextureMipError::InvalidDimensions)
+}
+
+fn checked_pixel_count(width: u32, height: u32) -> Option<usize> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    usize::try_from(width).ok().and_then(|width| {
+        usize::try_from(height)
+            .ok()
+            .and_then(|height| width.checked_mul(height))
+    })
 }
 
 impl From<gltf::image::Format> for ImageFormat {
@@ -1440,6 +1524,46 @@ mod tests {
                 expected: 16,
                 actual: 4,
             })
+        );
+    }
+
+    #[test]
+    fn image_bytes_to_rgba8_converts_supported_formats() {
+        assert_eq!(
+            image_bytes_to_rgba8(2, 1, ImageFormat::R8, &[8, 16]).unwrap(),
+            vec![8, 8, 8, 255, 16, 16, 16, 255]
+        );
+        assert_eq!(
+            image_bytes_to_rgba8(2, 1, ImageFormat::R8G8, &[8, 80, 16, 160]).unwrap(),
+            vec![8, 8, 8, 80, 16, 16, 16, 160]
+        );
+        assert_eq!(
+            image_bytes_to_rgba8(2, 1, ImageFormat::R8G8B8, &[1, 2, 3, 4, 5, 6]).unwrap(),
+            vec![1, 2, 3, 255, 4, 5, 6, 255]
+        );
+        assert_eq!(
+            image_bytes_to_rgba8(2, 1, ImageFormat::R8G8B8A8, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap(),
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
+
+    #[test]
+    fn image_bytes_to_rgba8_rejects_invalid_lengths_and_unsupported_formats() {
+        assert_eq!(
+            image_bytes_to_rgba8(0, 1, ImageFormat::R8, &[]),
+            Err(Rgba8ImageError::InvalidDimensions)
+        );
+        assert_eq!(
+            image_bytes_to_rgba8(2, 1, ImageFormat::R8G8B8, &[1, 2, 3]),
+            Err(Rgba8ImageError::InvalidByteLength {
+                format: ImageFormat::R8G8B8,
+                expected: 6,
+                actual: 3,
+            })
+        );
+        assert_eq!(
+            image_bytes_to_rgba8(1, 1, ImageFormat::R16, &[0, 0]),
+            Err(Rgba8ImageError::UnsupportedFormat(ImageFormat::R16))
         );
     }
 

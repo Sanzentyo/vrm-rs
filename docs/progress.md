@@ -2,6 +2,14 @@
 
 ## 2026-05-31
 
+- Moved capture image-format normalization out of the concrete wgpu/Bevy
+  examples into `vrm-io::image_data_to_rgba8` and
+  `vrm-io::image_bytes_to_rgba8`. Texture upload planning now has a Sans I/O
+  path for both source image byte normalization and CatmullRom mip-chain
+  generation, so wgpu/Bevy/ash/custom renderers can share byte-for-byte input
+  preparation before touching engine texture APIs. `vrm-io` unit tests cover
+  R8/RG/RGB/RGBA conversion, invalid lengths, zero dimensions, and unsupported
+  16/float source formats.
 - Moved capture mip-chain generation out of the concrete wgpu/Bevy examples
   into `vrm-io::generate_rgba_mip_chain`, a renderer-neutral Sans I/O helper
   that validates dimensions and returns explicit `RgbaMipLevel` values. Both
@@ -286,7 +294,7 @@
 - Started the P2 docs.rs-ready example slice. The goal is short rustdoc examples that compile for the facade, sans-IO conversion, runtime update, and adapter driver entry points.
 - Added docs.rs-ready rustdoc examples for the root facade load/runtime path, sans-IO protocol-to-model conversion, runtime event updates, and adapter `VrmRuntimeDriver` construction. The targeted doc-tests compile successfully.
 - Addressed the pessimistic gpt-5.5 review for the completed P2 slice. `ResolvedVrmModel` is now a concrete resolved-model alias, the facade path-loader test uses a unique temp filename, generated IO tests cover an invalid GLB header plus embedded PNG image extraction, and the testing/progress docs no longer point at completed docs.rs examples as future work.
-- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 82.97%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 83.04%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Attempted to delegate the 2026-05-30 coverage docs refresh to `gpt-5.3-codex-spark`, but the requested model was at capacity. The main agent ran the same documented JSON summary/update flow locally and reviewed the resulting docs diff.
 - Created and pushed the public GitHub repository at `https://github.com/Sanzentyo/vrm-rs`.
 - Started P3 render parity work. The new target is optional external-fixture local automation, additional official VRMA parity discovery, non-Bevy adapter implementation depth, concrete wgpu/ash material pipeline examples, and a three-vrm-vs-Rust render parity harness with PSNR plus visual-review artifacts.

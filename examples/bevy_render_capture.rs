@@ -53,7 +53,8 @@ use std::time::Duration;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfWrapMode, ImageData, ImageFormat, LoadedVrm, generate_rgba_mip_chain, load_vrm_from_path,
+    GltfWrapMode, ImageData, LoadedVrm, generate_rgba_mip_chain, image_data_to_rgba8,
+    load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -2070,7 +2071,7 @@ fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRg
     Some(CpuRgbaImage {
         width: image.width,
         height: image.height,
-        rgba: image_rgba8(image)?,
+        rgba: image_data_to_rgba8(image).ok()?,
     })
 }
 
@@ -2129,7 +2130,7 @@ fn bevy_image_with_format(
     Some(bevy_image_from_rgba(
         image.width,
         image.height,
-        image_rgba8(image)?,
+        image_data_to_rgba8(image).ok()?,
         format,
         sampler,
     ))
@@ -2222,39 +2223,6 @@ fn bevy_mipmap_filter(filter: GltfMinFilter) -> ImageFilterMode {
         GltfMinFilter::NearestMipmapLinear | GltfMinFilter::LinearMipmapLinear => {
             ImageFilterMode::Linear
         }
-    }
-}
-
-fn image_rgba8(image: &ImageData) -> Option<Vec<u8>> {
-    match image.format {
-        ImageFormat::R8 => Some(
-            image
-                .bytes
-                .iter()
-                .flat_map(|value| [*value, *value, *value, 255])
-                .collect(),
-        ),
-        ImageFormat::R8G8 => Some(
-            image
-                .bytes
-                .chunks_exact(2)
-                .flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]])
-                .collect(),
-        ),
-        ImageFormat::R8G8B8 => Some(
-            image
-                .bytes
-                .chunks_exact(3)
-                .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
-                .collect(),
-        ),
-        ImageFormat::R8G8B8A8 => Some(image.bytes.clone()),
-        ImageFormat::R16
-        | ImageFormat::R16G16
-        | ImageFormat::R16G16B16
-        | ImageFormat::R16G16B16A16
-        | ImageFormat::R32G32B32Float
-        | ImageFormat::R32G32B32A32Float => None,
     }
 }
 
