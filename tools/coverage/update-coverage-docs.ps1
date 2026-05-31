@@ -146,12 +146,28 @@ function Update-TestingDoc {
         $endIdx++
     }
 
+    $oldSection = $lines[$startIdx..($endIdx - 1)]
+    $lastTableLine = -1
+    for ($i = 0; $i -lt $oldSection.Length; $i++) {
+        if ($oldSection[$i] -match "^\|") {
+            $lastTableLine = $i
+        }
+    }
+
+    $preservedTail = @()
+    if ($lastTableLine -ge 0 -and ($lastTableLine + 1) -lt $oldSection.Length) {
+        $preservedTail = $oldSection[($lastTableLine + 1)..($oldSection.Length - 1)]
+    }
+
     $replacement = Build-TestingSection -DateText $DateText -CommandText $CommandText -SummaryMap $SummaryMap
     $newLines = @()
     $newLines += $lines[0..$startIdx]
     $newLines += ""
     if ($replacement.Length -gt 2) {
         $newLines += $replacement[2..($replacement.Length - 1)] # remove heading to keep original heading
+    }
+    if ($preservedTail.Length -gt 0) {
+        $newLines += $preservedTail
     }
     if ($endIdx -lt $lines.Length) {
         $newLines += ""

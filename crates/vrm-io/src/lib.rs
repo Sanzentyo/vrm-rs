@@ -1142,6 +1142,33 @@ pub struct GltfSkinData {
     pub inverse_bind_matrices: Vec<Mat4>,
 }
 
+impl GltfSkinData {
+    pub fn joint_matrices(
+        &self,
+        scene: &GltfSceneRest,
+        world_matrices: &[Mat4],
+        orientation: Mat4,
+    ) -> Vec<Mat4> {
+        self.joints
+            .iter()
+            .enumerate()
+            .map(|(index, joint)| {
+                let joint_world = world_matrices
+                    .get(*joint)
+                    .copied()
+                    .or_else(|| scene.node(*joint).map(|node| node.world_matrix))
+                    .unwrap_or(Mat4::IDENTITY);
+                let inverse_bind = self
+                    .inverse_bind_matrices
+                    .get(index)
+                    .copied()
+                    .unwrap_or(Mat4::IDENTITY);
+                orientation * joint_world * inverse_bind
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GltfMeshData {
     pub weights: Vec<f32>,
@@ -1215,6 +1242,98 @@ pub struct GltfMorphedVertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub tangent: Vec4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfSkinnedVertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+}
+
+pub fn skin_vertex(
+    position: Vec3,
+    normal: Vec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> GltfSkinnedVertex {
+    let fallback = || GltfSkinnedVertex {
+        position: world.transform_point3(position),
+        normal: world.transform_vector3(normal).normalize_or_zero(),
+    };
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return fallback();
+    };
+
+    let (position, normal, total_weight) = joints
+        .into_iter()
+        .zip(weights)
+        .filter(|(_, weight)| *weight > 0.0)
+        .filter_map(|(joint, weight)| {
+            skin_matrices
+                .get(usize::from(joint))
+                .map(|matrix| (matrix, weight))
+        })
+        .fold(
+            (Vec3::ZERO, Vec3::ZERO, 0.0),
+            |(skinned_position, skinned_normal, total_weight), (matrix, weight)| {
+                (
+                    skinned_position + matrix.transform_point3(position) * weight,
+                    skinned_normal + matrix.transform_vector3(normal) * weight,
+                    total_weight + weight,
+                )
+            },
+        );
+
+    if total_weight > 0.0 {
+        GltfSkinnedVertex {
+            position,
+            normal: normal.normalize_or_zero(),
+        }
+    } else {
+        fallback()
+    }
+}
+
+pub fn skin_direction(
+    direction: Vec3,
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> Vec3 {
+    let fallback = || world.transform_vector3(direction).normalize_or_zero();
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return fallback();
+    };
+
+    let (transformed, total_weight) = joints
+        .into_iter()
+        .zip(weights)
+        .filter(|(_, weight)| *weight > 0.0)
+        .filter_map(|(joint, weight)| {
+            skin_matrices
+                .get(usize::from(joint))
+                .map(|matrix| (matrix, weight))
+        })
+        .fold(
+            (Vec3::ZERO, 0.0),
+            |(transformed, total_weight), (matrix, weight)| {
+                (
+                    transformed + matrix.transform_vector3(direction) * weight,
+                    total_weight + weight,
+                )
+            },
+        );
+
+    if total_weight > 0.0 {
+        transformed.normalize_or_zero()
+    } else {
+        fallback()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3102,6 +3221,30 @@ mod tests {
         assert_vec3_close(morphed.position.to_array(), [0.0, 1.0, 0.25]);
         assert_vec3_close(morphed.normal.to_array(), [0.0, 0.0, 1.0]);
         assert_vec4_close(morphed.tangent.to_array(), [1.0, 0.0, 0.0, 1.0]);
+        let skin_matrices =
+            loaded.skins[0].joint_matrices(&loaded.scene, &[Mat4::IDENTITY], Mat4::IDENTITY);
+        assert_eq!(skin_matrices, vec![Mat4::IDENTITY]);
+        let skinned = skin_vertex(
+            morphed.position,
+            morphed.normal,
+            Mat4::IDENTITY,
+            Some(&skin_matrices),
+            primitive.joints_0.get(2).copied(),
+            primitive.weights_0.get(2).copied(),
+        );
+        assert_vec3_close(skinned.position.to_array(), [0.0, 1.0, 0.25]);
+        assert_vec3_close(skinned.normal.to_array(), [0.0, 0.0, 1.0]);
+        assert_vec3_close(
+            skin_direction(
+                morphed.tangent.truncate(),
+                Mat4::IDENTITY,
+                Some(&skin_matrices),
+                primitive.joints_0.get(2).copied(),
+                primitive.weights_0.get(2).copied(),
+            )
+            .to_array(),
+            [1.0, 0.0, 0.0],
+        );
     }
 
     #[test]

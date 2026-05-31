@@ -747,6 +747,11 @@ state without reimplementing capture-only policy.
 `GltfPrimitiveData::morphed_vertex` centralizes the local morph target
 accumulation used by wgpu and Bevy before skinning, outline expansion, generated
 tangents, and backend mesh construction.
+`GltfSkinData::joint_matrices`, `vrm-io::skin_vertex`, and
+`vrm-io::skin_direction` now centralize CPU-side joint matrix assembly plus
+position/normal/tangent-direction skinning, removing another duplicate
+renderer-edge path before wgpu, Bevy, ash-style examples, or custom engines map
+the data into backend meshes.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.

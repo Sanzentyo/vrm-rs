@@ -57,7 +57,7 @@ use vrm_io::{
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
     GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData, GltfSamplerData, GltfWrapMode,
     ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -365,7 +365,7 @@ fn spawn_vrm_meshes(
         let skin_matrices = node
             .skin
             .and_then(|skin| loaded.skins.get(skin))
-            .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
+            .map(|skin| skin.joint_matrices(&loaded.scene, &world_matrices, orientation));
         let morph_weights = expression_effects.active_morph_weights(node_index, node, mesh);
         let primitive_context = BevyPrimitiveContext {
             expression_effects: &expression_effects,
@@ -1387,31 +1387,6 @@ fn projection_y_scale() -> f32 {
     1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
-fn skin_matrices(
-    loaded: &LoadedVrm,
-    skin: &vrm_io::GltfSkinData,
-    world_matrices: &[Mat4],
-    orientation: Mat4,
-) -> Vec<Mat4> {
-    skin.joints
-        .iter()
-        .enumerate()
-        .map(|(index, joint)| {
-            let joint_world = world_matrices
-                .get(*joint)
-                .copied()
-                .or_else(|| loaded.scene.node(*joint).map(|node| node.world_matrix))
-                .unwrap_or(Mat4::IDENTITY);
-            let inverse_bind = skin
-                .inverse_bind_matrices
-                .get(index)
-                .copied()
-                .unwrap_or(Mat4::IDENTITY);
-            orientation * joint_world * inverse_bind
-        })
-        .collect()
-}
-
 fn transform_vertex(
     position: GVec3,
     normal: GVec3,
@@ -1420,36 +1395,8 @@ fn transform_vertex(
     joints: Option<[u16; 4]>,
     weights: Option<[f32; 4]>,
 ) -> (GVec3, GVec3) {
-    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
-    else {
-        return (
-            world.transform_point3(position),
-            world.transform_vector3(normal).normalize_or_zero(),
-        );
-    };
-
-    let mut skinned_position = GVec3::ZERO;
-    let mut skinned_normal = GVec3::ZERO;
-    let mut total_weight = 0.0;
-    for (joint, weight) in joints.into_iter().zip(weights) {
-        if weight <= 0.0 {
-            continue;
-        }
-        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
-            continue;
-        };
-        skinned_position += matrix.transform_point3(position) * weight;
-        skinned_normal += matrix.transform_vector3(normal) * weight;
-        total_weight += weight;
-    }
-    if total_weight > 0.0 {
-        (skinned_position, skinned_normal.normalize_or_zero())
-    } else {
-        (
-            world.transform_point3(position),
-            world.transform_vector3(normal).normalize_or_zero(),
-        )
-    }
+    let vertex = skin_vertex(position, normal, world, skin_matrices, joints, weights);
+    (vertex.position, vertex.normal)
 }
 
 fn transform_direction(
@@ -1459,30 +1406,7 @@ fn transform_direction(
     joints: Option<[u16; 4]>,
     weights: Option<[f32; 4]>,
 ) -> GVec3 {
-    let Some(skin_matrices) = skin_matrices else {
-        return world.transform_vector3(direction).normalize_or_zero();
-    };
-    let (Some(joints), Some(weights)) = (joints, weights) else {
-        return world.transform_vector3(direction).normalize_or_zero();
-    };
-
-    let mut transformed = GVec3::ZERO;
-    let mut total_weight = 0.0;
-    for (joint, weight) in joints.into_iter().zip(weights) {
-        if weight <= 0.0 {
-            continue;
-        }
-        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
-            continue;
-        };
-        transformed += matrix.transform_vector3(direction) * weight;
-        total_weight += weight;
-    }
-    if total_weight > 0.0 {
-        transformed.normalize_or_zero()
-    } else {
-        world.transform_vector3(direction).normalize_or_zero()
-    }
+    skin_direction(direction, world, skin_matrices, joints, weights)
 }
 
 fn tex_coords_or_default(vertex_count: usize, tex_coords: &[[f32; 2]]) -> Vec<[f32; 2]> {

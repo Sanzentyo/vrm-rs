@@ -24,8 +24,8 @@ use vrm_io::{
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
     GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData,
-    GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
+    GltfSamplerData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
+    image_data_to_rgba8, load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -355,7 +355,7 @@ fn mesh_draw_data(
         let skin_matrices = node
             .skin
             .and_then(|skin| loaded.skins.get(skin))
-            .map(|skin| skin_matrices(loaded, skin, &world_matrices, orientation));
+            .map(|skin| skin.joint_matrices(&loaded.scene, &world_matrices, orientation));
         let morph_weights = expression_effects.active_morph_weights(node_index, node, mesh);
         let draw_context = PrimitiveDrawContext {
             expression_effects: &expression_effects,
@@ -788,31 +788,6 @@ fn alpha_mode_code(mode: CaptureAlphaMode) -> f32 {
     }
 }
 
-fn skin_matrices(
-    loaded: &LoadedVrm,
-    skin: &GltfSkinData,
-    world_matrices: &[Mat4],
-    orientation: Mat4,
-) -> Vec<Mat4> {
-    skin.joints
-        .iter()
-        .enumerate()
-        .map(|(index, joint)| {
-            let joint_world = world_matrices
-                .get(*joint)
-                .copied()
-                .or_else(|| loaded.scene.node(*joint).map(|node| node.world_matrix))
-                .unwrap_or(Mat4::IDENTITY);
-            let inverse_bind = skin
-                .inverse_bind_matrices
-                .get(index)
-                .copied()
-                .unwrap_or(Mat4::IDENTITY);
-            orientation * joint_world * inverse_bind
-        })
-        .collect()
-}
-
 fn transform_vertex(
     position: Vec3,
     normal: Vec3,
@@ -821,36 +796,8 @@ fn transform_vertex(
     joints: Option<[u16; 4]>,
     weights: Option<[f32; 4]>,
 ) -> (Vec3, Vec3) {
-    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
-    else {
-        return (
-            world.transform_point3(position),
-            world.transform_vector3(normal).normalize_or_zero(),
-        );
-    };
-
-    let mut skinned_position = Vec3::ZERO;
-    let mut skinned_normal = Vec3::ZERO;
-    let mut total_weight = 0.0;
-    for (joint, weight) in joints.into_iter().zip(weights) {
-        if weight <= 0.0 {
-            continue;
-        }
-        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
-            continue;
-        };
-        skinned_position += matrix.transform_point3(position) * weight;
-        skinned_normal += matrix.transform_vector3(normal) * weight;
-        total_weight += weight;
-    }
-    if total_weight > 0.0 {
-        (skinned_position, skinned_normal.normalize_or_zero())
-    } else {
-        (
-            world.transform_point3(position),
-            world.transform_vector3(normal).normalize_or_zero(),
-        )
-    }
+    let vertex = skin_vertex(position, normal, world, skin_matrices, joints, weights);
+    (vertex.position, vertex.normal)
 }
 
 fn multiply_rgba(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -924,30 +871,7 @@ fn transform_direction(
     joints: Option<[u16; 4]>,
     weights: Option<[f32; 4]>,
 ) -> Vec3 {
-    let Some(skin_matrices) = skin_matrices else {
-        return world.transform_vector3(direction).normalize_or_zero();
-    };
-    let (Some(joints), Some(weights)) = (joints, weights) else {
-        return world.transform_vector3(direction).normalize_or_zero();
-    };
-
-    let mut transformed = Vec3::ZERO;
-    let mut total_weight = 0.0;
-    for (joint, weight) in joints.into_iter().zip(weights) {
-        if weight <= 0.0 {
-            continue;
-        }
-        let Some(matrix) = skin_matrices.get(joint as usize) else {
-            continue;
-        };
-        transformed += matrix.transform_vector3(direction) * weight;
-        total_weight += weight;
-    }
-    if total_weight > 0.0 {
-        transformed.normalize_or_zero()
-    } else {
-        world.transform_vector3(direction).normalize_or_zero()
-    }
+    skin_direction(direction, world, skin_matrices, joints, weights)
 }
 
 fn material_shading(

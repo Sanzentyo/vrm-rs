@@ -40,7 +40,7 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 
 ### 運用ルール
 
-- `docs/testing.md` は `## Current Coverage Snapshot` セクションの見出しから次の `##` 見出し直前までを差し替えます。
+- `docs/testing.md` は `## Current Coverage Snapshot` セクション内のコマンド/表を更新し、表の後ろにある説明文は保持します。
 - `docs/progress.md` は `- Re-measured coverage ...` で始まる最終行を置換します（最新行更新用）。
 - `docs/testing.md` と `docs/progress.md` は本業務で触らない前提なので、反映後は差分を一度確認してからコミットしてください。
 
@@ -55,4 +55,3 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 
 - `docs/progress.md` 側は「最新行更新」なので、既存ログの行と競合しないよう 1 回の更新で 1 回ずつ使う。
 - `-SummaryJsonPath` なしで実行すると時間がかかる（実行+テスト）ため、CI ローカル再現時は事前 JSON を使う運用が軽いです。
-
