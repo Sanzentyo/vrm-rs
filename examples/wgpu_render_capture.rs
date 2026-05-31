@@ -509,7 +509,9 @@ fn outline_position(
     world: Mat4,
     skin_matrices: Option<&[Mat4]>,
 ) -> Option<Vec3> {
-    let (position, normal, _) = morphed_vertex(primitive, index, morph_weights)?;
+    let morphed = primitive.morphed_vertex(index, morph_weights)?;
+    let position = morphed.position;
+    let normal = morphed.normal;
     let normal = normal.normalize_or_zero();
     let transform = blended_vertex_transform(
         world,
@@ -593,8 +595,10 @@ fn draw_primitive(
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            let (position, normal, tangent) = morphed_vertex(primitive, index, morph_weights)
-                .unwrap_or((Vec3::ZERO, Vec3::Z, Vec4::new(1.0, 0.0, 0.0, 1.0)));
+            let morphed = primitive.morphed_vertex(index, morph_weights);
+            let position = morphed.map_or(Vec3::ZERO, |vertex| vertex.position);
+            let normal = morphed.map_or(Vec3::Z, |vertex| vertex.normal);
+            let tangent = morphed.map_or(Vec4::new(1.0, 0.0, 0.0, 1.0), |vertex| vertex.tangent);
             let tex_coord = primitive
                 .tex_coords_0
                 .get(index)
@@ -720,45 +724,6 @@ fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn 
             Ok((name.to_owned(), weight))
         })
         .collect()
-}
-
-fn morphed_vertex(
-    primitive: &GltfPrimitiveData,
-    index: usize,
-    morph_weights: &[f32],
-) -> Option<(Vec3, Vec3, Vec4)> {
-    let mut position = Vec3::from_array(*primitive.positions.get(index)?);
-    let mut normal = primitive
-        .normals
-        .get(index)
-        .copied()
-        .map(Vec3::from_array)
-        .unwrap_or(Vec3::Z);
-    let base_tangent = primitive
-        .tangents
-        .get(index)
-        .copied()
-        .unwrap_or([1.0, 0.0, 0.0, 1.0]);
-    let mut tangent = Vec3::new(base_tangent[0], base_tangent[1], base_tangent[2]);
-
-    for (target, weight) in primitive
-        .morph_targets
-        .iter()
-        .zip(morph_weights.iter().copied())
-        .filter(|(_, weight)| weight.abs() > f32::EPSILON)
-    {
-        if let Some(delta) = target.positions.get(index).copied() {
-            position += Vec3::from_array(delta) * weight;
-        }
-        if let Some(delta) = target.normals.get(index).copied() {
-            normal += Vec3::from_array(delta) * weight;
-        }
-        if let Some(delta) = target.tangents.get(index).copied() {
-            tangent += Vec3::from_array(delta) * weight;
-        }
-    }
-
-    Some((position, normal, tangent.extend(base_tangent[3])))
 }
 
 fn material_extra_uniform(

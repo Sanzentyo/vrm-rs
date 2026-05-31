@@ -186,6 +186,10 @@ Expression render effect selection is shared through
 covering binary expression weights, morph-target clears and accumulation,
 material color binds, and texture-transform binds before concrete captures
 convert them into mesh weights, material colors, and UV transform uniforms.
+Primitive morph target evaluation is shared through
+`GltfPrimitiveData::morphed_vertex`, covering local position, normal, and
+tangent deltas before concrete captures apply skinning, outline expansion,
+normal-map tangent generation, or backend mesh construction.
 CPU-side texCoord0 transform application is shared through
 `vrm-io::transform_tex_coord_0`, covering offset/scale/rotation and the current
 policy of ignoring transforms that target non-zero UV sets.
@@ -287,11 +291,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.93% | 83.99% |
+| Workspace total | 80.96% | 84.02% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.22% | 73.91% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 85.51% | 84.41% |
+| `vrm-io` | 85.53% | 84.54% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.07% | 96.13% |

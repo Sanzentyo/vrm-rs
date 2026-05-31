@@ -740,6 +740,9 @@ normal scale, rim/matcap parameters, and VRM0 compatibility flags, while
 `LoadedVrm::expression_render_effects` centralizes the expression-driven morph,
 material-color, and texture-transform overrides that are applied on top of that
 base material plan before each capture builds backend resources.
+`GltfPrimitiveData::morphed_vertex` centralizes the local morph target
+accumulation used by wgpu and Bevy before skinning, outline expansion, generated
+tangents, and backend mesh construction.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.

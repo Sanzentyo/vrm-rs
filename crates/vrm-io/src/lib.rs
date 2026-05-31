@@ -1,6 +1,6 @@
 //! glTF/GLB IO for VRM and VRMA assets.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
@@ -1167,6 +1167,54 @@ pub struct GltfPrimitiveData {
     pub weights_0: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub morph_targets: Vec<GltfMorphTargetData>,
+}
+
+impl GltfPrimitiveData {
+    pub fn morphed_vertex(&self, index: usize, morph_weights: &[f32]) -> Option<GltfMorphedVertex> {
+        let mut position = Vec3::from_array(*self.positions.get(index)?);
+        let mut normal = self
+            .normals
+            .get(index)
+            .copied()
+            .map(Vec3::from_array)
+            .unwrap_or(Vec3::Z);
+        let base_tangent = self
+            .tangents
+            .get(index)
+            .copied()
+            .unwrap_or([1.0, 0.0, 0.0, 1.0]);
+        let mut tangent = Vec3::new(base_tangent[0], base_tangent[1], base_tangent[2]);
+
+        for (target, weight) in self
+            .morph_targets
+            .iter()
+            .zip(morph_weights.iter().copied())
+            .filter(|(_, weight)| weight.abs() > f32::EPSILON)
+        {
+            if let Some(delta) = target.positions.get(index).copied() {
+                position += Vec3::from_array(delta) * weight;
+            }
+            if let Some(delta) = target.normals.get(index).copied() {
+                normal += Vec3::from_array(delta) * weight;
+            }
+            if let Some(delta) = target.tangents.get(index).copied() {
+                tangent += Vec3::from_array(delta) * weight;
+            }
+        }
+
+        Some(GltfMorphedVertex {
+            position,
+            normal,
+            tangent: tangent.extend(base_tangent[3]),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMorphedVertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub tangent: Vec4,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3050,6 +3098,10 @@ mod tests {
         assert_eq!(primitive.indices, vec![0, 1, 2]);
         assert_eq!(primitive.morph_targets.len(), 1);
         assert_eq!(primitive.morph_targets[0].positions[2], [0.0, 0.0, 0.5]);
+        let morphed = primitive.morphed_vertex(2, &[0.5]).unwrap();
+        assert_vec3_close(morphed.position.to_array(), [0.0, 1.0, 0.25]);
+        assert_vec3_close(morphed.normal.to_array(), [0.0, 0.0, 1.0]);
+        assert_vec4_close(morphed.tangent.to_array(), [1.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]
