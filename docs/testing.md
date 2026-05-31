@@ -123,6 +123,10 @@ compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.
+The runner keeps the reusable comparison logic Sans I/O where practical:
+RGBA JSON parsing, alpha counting, diff heatmap pixel generation, PSNR report
+summary extraction, and summary Markdown construction work on in-memory values,
+while filesystem reads/writes remain in the surrounding runner functions.
 If `tools/render-parity/three-vrm-browser-capture.mjs` is invoked directly
 with `--png-out`, that PNG is also encoded from the raw RGBA readback buffer,
 not from a browser canvas screenshot/data URL.

@@ -64,3 +64,7 @@ Runtime math remains renderer-agnostic. Engine adapters are expected to provide 
 ## Test Fixture Policy
 
 Concrete sample data is generated in tests rather than committed as model files. This gives us repeatable VRM-shaped data without adding binary assets or license baggage to the repository.
+
+## Local Tooling Boundaries
+
+Local automation should keep IO at the edge even when it lives outside the library crates. `tools/ci/local-ci.rs` is allowed to read and write `.external-fixtures/`, spawn renderer/reference commands, and create PNG/HTML/Markdown artifacts, but artifact interpretation is kept in small side-effect-free helpers where practical. RGBA JSON parsing, alpha statistics, diff-heatmap pixel generation, PSNR report summary extraction, and render summary Markdown construction operate on strings, JSON values, or in-memory RGBA buffers before the runner writes files. This keeps the render-parity harness reusable for future non-Bevy engines and makes failures easier to test without launching three-vrm, wgpu, or Bevy.

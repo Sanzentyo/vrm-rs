@@ -1,5 +1,9 @@
 # Progress
 
+## 2026-05-31
+
+- Refactored the local render-parity runner toward a Sans I/O boundary. `tools/ci/local-ci.rs` now keeps filesystem operations in thin wrappers while RGBA JSON parsing, diff-heatmap generation, PSNR report summary extraction, and summary Markdown formatting operate on in-memory strings, JSON values, or `RgbaArtifact` buffers. `just render-parity-transparent-queue-matrix D:/git/three-vrm` still passes after the refactor, proving PNG/diff/summary artifact generation remains wired through the new pure helpers.
+
 ## 2026-05-30
 
 - Added a broader transparent queue-matrix render-parity guard. `tools/render-parity/generate-transparent-fixture.rs --case queue-matrix` now emits `.external-fixtures/generated/transparent-queue-matrix.vrm.gltf` with overlapping MToon `BLEND` layers that combine texture alpha, non-identity `KHR_texture_transform`, mixed render queue offsets, `transparentWithZWrite`, forced shade, parametric rim, and emissive texture strength. `just render-parity-transparent-queue-matrix` uses the exact `three-vrm` accumulator on a transparent background and passes with identical alpha buckets (`transparent=512`, `opaque=0`, `partial=65024`), only 1-LSB alpha rounding, selected `rgb-visible` PSNR wgpu `53.0342 dB` / Bevy `48.4839 dB`, and max selected channel delta `2` / `3`.

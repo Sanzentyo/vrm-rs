@@ -998,9 +998,31 @@ fn write_render_diff_image(
 ) -> Result<(), String> {
     let expected = read_rgba_artifact(&render_artifact(options, fixture, "three-vrm"))?;
     let actual = read_rgba_artifact(&render_artifact(options, fixture, renderer))?;
+    let diff = rgba_diff_heatmap(&expected, &actual, renderer)?;
+
+    let out = render_diff_png(options, fixture, renderer);
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", path(parent)))?;
+    }
+    image::save_buffer(
+        &out,
+        &diff.rgba,
+        diff.width,
+        diff.height,
+        image::ColorType::Rgba8,
+    )
+    .map_err(|err| format!("failed to write {}: {err}", path(&out)))
+}
+
+fn rgba_diff_heatmap(
+    expected: &RgbaArtifact,
+    actual: &RgbaArtifact,
+    label: &str,
+) -> Result<RgbaArtifact, String> {
     if expected.width != actual.width || expected.height != actual.height {
         return Err(format!(
-            "{renderer}: dimension mismatch: expected {}x{}, actual {}x{}",
+            "{label}: dimension mismatch: expected {}x{}, actual {}x{}",
             expected.width, expected.height, actual.width, actual.height
         ));
     }
@@ -1023,19 +1045,11 @@ fn write_render_diff_image(
         })
         .collect::<Vec<_>>();
 
-    let out = render_diff_png(options, fixture, renderer);
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {err}", path(parent)))?;
-    }
-    image::save_buffer(
-        &out,
-        &rgba,
-        expected.width,
-        expected.height,
-        image::ColorType::Rgba8,
-    )
-    .map_err(|err| format!("failed to write {}: {err}", path(&out)))
+    Ok(RgbaArtifact {
+        width: expected.width,
+        height: expected.height,
+        rgba,
+    })
 }
 
 fn amplify_delta(delta: u8) -> u8 {
@@ -1169,21 +1183,30 @@ struct RgbaArtifact {
 fn read_rgba_artifact(path: &Path) -> Result<RgbaArtifact, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", self::path(path)))?;
+    parse_rgba_artifact_json(&text, &self::path(path))
+}
+
+fn parse_rgba_artifact_json(text: &str, source: &str) -> Result<RgbaArtifact, String> {
     let value = serde_json::from_str::<serde_json::Value>(&text)
-        .map_err(|err| format!("failed to parse {}: {err}", self::path(path)))?;
-    let width = json_u32(&value, "width", path)?;
-    let height = json_u32(&value, "height", path)?;
+        .map_err(|err| format!("failed to parse {source}: {err}"))?;
+    parse_rgba_artifact_value(&value, source)
+}
+
+fn parse_rgba_artifact_value(
+    value: &serde_json::Value,
+    source: &str,
+) -> Result<RgbaArtifact, String> {
+    let width = json_u32(value, "width", source)?;
+    let height = json_u32(value, "height", source)?;
     let rgba_values = value
         .get("rgba")
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| format!("{}: rgba must be an array", self::path(path)))?;
+        .ok_or_else(|| format!("{source}: rgba must be an array"))?;
     let expected_len = width as usize * height as usize * 4;
     if rgba_values.len() != expected_len {
         return Err(format!(
-            "{}: rgba length {} does not match {}",
-            self::path(path),
-            rgba_values.len(),
-            expected_len
+            "{source}: rgba length {} does not match {expected_len}",
+            rgba_values.len()
         ));
     }
     let rgba = rgba_values
@@ -1192,9 +1215,9 @@ fn read_rgba_artifact(path: &Path) -> Result<RgbaArtifact, String> {
         .map(|(index, value)| {
             let value = value
                 .as_u64()
-                .ok_or_else(|| format!("{}: rgba[{index}] must be an integer", self::path(path)))?;
+                .ok_or_else(|| format!("{source}: rgba[{index}] must be an integer"))?;
             u8::try_from(value)
-                .map_err(|_| format!("{}: rgba[{index}] must be in 0..255", self::path(path)))
+                .map_err(|_| format!("{source}: rgba[{index}] must be in 0..255"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RgbaArtifact {
@@ -1204,56 +1227,42 @@ fn read_rgba_artifact(path: &Path) -> Result<RgbaArtifact, String> {
     })
 }
 
-fn json_u32(value: &serde_json::Value, field: &str, path: &Path) -> Result<u32, String> {
+fn json_u32(value: &serde_json::Value, field: &str, source: &str) -> Result<u32, String> {
     let value = value
         .get(field)
         .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| format!("{}: {field} must be a positive integer", self::path(path)))?;
+        .ok_or_else(|| format!("{source}: {field} must be a positive integer"))?;
     let value = u32::try_from(value)
-        .map_err(|_| format!("{}: {field} is too large for u32", self::path(path)))?;
+        .map_err(|_| format!("{source}: {field} is too large for u32"))?;
     if value == 0 {
-        Err(format!(
-            "{}: {field} must be a positive integer",
-            self::path(path)
-        ))
+        Err(format!("{source}: {field} must be a positive integer"))
     } else {
         Ok(value)
     }
 }
 
 fn render_summary_markdown(options: &Options, fixtures: &[RenderFixture]) -> Result<String, String> {
-    let mut output = String::from("# vrm-rs Render Parity Summary\n\n");
-    output.push_str("Generated by `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity`.\n\n");
-    output.push_str(&format!(
-        "- Artifacts: `{}`\n- Visual review: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
-        path(&options.render_parity_dir),
-        path(&options.render_parity_dir.join("visual-review.html")),
-        options.render_psnr_metric.as_cli_value(),
-        options.render_background.as_cli_value(),
-        options.render_mtoon_light_accumulation.as_cli_value(),
-        options.render_alpha_mismatch_tolerance,
-        options.render_alpha_channel_tolerance,
-    ));
-    output.push_str("| Fixture | Renderer | Selected PSNR | Max channel delta | Alpha mismatches | Alpha max delta | Pass |\n");
-    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- |\n");
-
-    for fixture in fixtures {
-        for renderer in ["wgpu", "bevy"] {
-            let report = render_report_summary(options, fixture, renderer)?;
-            output.push_str(&format!(
-                "| `{}` | `{}` | {} | {} | {} | {} | {} |\n",
-                fixture.name,
-                renderer,
-                report.selected_psnr,
-                report.max_channel_delta,
-                report.alpha_mismatches,
-                report.alpha_max_delta,
-                if report.pass { "yes" } else { "no" },
-            ));
-        }
-    }
-    output.push('\n');
-    Ok(output)
+    let meta = RenderSummaryMeta {
+        artifacts: path(&options.render_parity_dir),
+        visual_review: path(&options.render_parity_dir.join("visual-review.html")),
+        metric: options.render_psnr_metric.as_cli_value().to_owned(),
+        background: options.render_background.as_cli_value().to_owned(),
+        mtoon_light_accumulation: options.render_mtoon_light_accumulation.as_cli_value().to_owned(),
+        alpha_mismatch_tolerance: options.render_alpha_mismatch_tolerance,
+        alpha_channel_tolerance: options.render_alpha_channel_tolerance,
+    };
+    let rows = fixtures
+        .iter()
+        .flat_map(|fixture| ["wgpu", "bevy"].map(move |renderer| (fixture, renderer)))
+        .map(|(fixture, renderer)| {
+            Ok(RenderSummaryRow {
+                fixture_name: fixture.name.clone(),
+                renderer: renderer.to_owned(),
+                report: render_report_summary(options, fixture, renderer)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(render_summary_markdown_from_rows(&meta, &rows))
 }
 
 fn write_render_summary(options: &Options, summary: &str) -> Result<(), String> {
@@ -1270,6 +1279,56 @@ struct RenderReportSummary {
     pass: bool,
 }
 
+#[derive(Clone, Debug)]
+struct RenderSummaryMeta {
+    artifacts: String,
+    visual_review: String,
+    metric: String,
+    background: String,
+    mtoon_light_accumulation: String,
+    alpha_mismatch_tolerance: usize,
+    alpha_channel_tolerance: u8,
+}
+
+#[derive(Clone, Debug)]
+struct RenderSummaryRow {
+    fixture_name: String,
+    renderer: String,
+    report: RenderReportSummary,
+}
+
+fn render_summary_markdown_from_rows(meta: &RenderSummaryMeta, rows: &[RenderSummaryRow]) -> String {
+    let mut output = String::from("# vrm-rs Render Parity Summary\n\n");
+    output.push_str("Generated by `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity`.\n\n");
+    output.push_str(&format!(
+        "- Artifacts: `{}`\n- Visual review: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
+        meta.artifacts,
+        meta.visual_review,
+        meta.metric,
+        meta.background,
+        meta.mtoon_light_accumulation,
+        meta.alpha_mismatch_tolerance,
+        meta.alpha_channel_tolerance,
+    ));
+    output.push_str("| Fixture | Renderer | Selected PSNR | Max channel delta | Alpha mismatches | Alpha max delta | Pass |\n");
+    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- |\n");
+
+    for row in rows {
+        output.push_str(&format!(
+            "| `{}` | `{}` | {} | {} | {} | {} | {} |\n",
+            row.fixture_name,
+            row.renderer,
+            row.report.selected_psnr,
+            row.report.max_channel_delta,
+            row.report.alpha_mismatches,
+            row.report.alpha_max_delta,
+            if row.report.pass { "yes" } else { "no" },
+        ));
+    }
+    output.push('\n');
+    output
+}
+
 fn render_report_summary(
     options: &Options,
     fixture: &RenderFixture,
@@ -1278,49 +1337,63 @@ fn render_report_summary(
     let report = render_report(options, fixture, renderer);
     let text = std::fs::read_to_string(&report)
         .map_err(|err| format!("failed to read {}: {err}", path(&report)))?;
+    parse_render_report_summary_json(&text, &path(&report))
+}
+
+fn parse_render_report_summary_json(
+    text: &str,
+    source: &str,
+) -> Result<RenderReportSummary, String> {
     let json = serde_json::from_str::<serde_json::Value>(&text)
-        .map_err(|err| format!("failed to parse {}: {err}", path(&report)))?;
+        .map_err(|err| format!("failed to parse {source}: {err}"))?;
+    render_report_summary_from_value(&json, source)
+}
+
+fn render_report_summary_from_value(
+    json: &serde_json::Value,
+    source: &str,
+) -> Result<RenderReportSummary, String> {
     let selected = json
         .get("selectedMetric")
-        .ok_or_else(|| format!("{}: missing selectedMetric", path(&report)))?;
+        .ok_or_else(|| format!("{source}: missing selectedMetric"))?;
     let alpha = json
         .get("alpha")
-        .ok_or_else(|| format!("{}: missing alpha", path(&report)))?;
+        .ok_or_else(|| format!("{source}: missing alpha"))?;
     Ok(RenderReportSummary {
-        selected_psnr: json_f64_string(selected, "psnr", &report)?,
-        max_channel_delta: json_u64_string(selected, "maxChannelDelta", &report)?,
-        alpha_mismatches: json_u64_string(alpha, "mismatches", &report)?,
-        alpha_max_delta: json_u64_string(alpha, "maxDelta", &report)?,
-        pass: json_bool(&json, "pass", &report)?,
+        selected_psnr: json_f64_string(selected, "psnr", source)?,
+        max_channel_delta: json_u64_string(selected, "maxChannelDelta", source)?,
+        alpha_mismatches: json_u64_string(alpha, "mismatches", source)?,
+        alpha_max_delta: json_u64_string(alpha, "maxDelta", source)?,
+        pass: json_bool(json, "pass", source)?,
     })
 }
 
-fn json_f64_string(value: &serde_json::Value, field: &str, path: &Path) -> Result<String, String> {
+fn json_f64_string(value: &serde_json::Value, field: &str, source: &str) -> Result<String, String> {
     let Some(value) = value.get(field) else {
-        return Err(format!("{}: {field} must be a number", self::path(path)));
+        return Err(format!("{source}: {field} must be a number"));
     };
     if value.is_null() || value.as_str() == Some("Infinity") {
         return Ok("Infinity".to_owned());
     }
     let value = value
         .as_f64()
-        .ok_or_else(|| format!("{}: {field} must be a number", self::path(path)))?;
+        .ok_or_else(|| format!("{source}: {field} must be a number"))?;
     Ok(format!("{value:.4}"))
 }
 
-fn json_u64_string(value: &serde_json::Value, field: &str, path: &Path) -> Result<String, String> {
+fn json_u64_string(value: &serde_json::Value, field: &str, source: &str) -> Result<String, String> {
     let value = value
         .get(field)
         .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| format!("{}: {field} must be an integer", self::path(path)))?;
+        .ok_or_else(|| format!("{source}: {field} must be an integer"))?;
     Ok(value.to_string())
 }
 
-fn json_bool(value: &serde_json::Value, field: &str, path: &Path) -> Result<bool, String> {
+fn json_bool(value: &serde_json::Value, field: &str, source: &str) -> Result<bool, String> {
     value
         .get(field)
         .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| format!("{}: {field} must be a boolean", self::path(path)))
+        .ok_or_else(|| format!("{source}: {field} must be a boolean"))
 }
 
 fn write_render_visual_review(
