@@ -13,10 +13,15 @@
   CPU RGBA8 conversion, and texCoord0 fallback policy out of the concrete wgpu
   and Bevy render captures. This keeps another small renderer-edge decision in
   the Sans I/O layer for future ash/custom-engine capture paths.
+- Added `GltfPrimitiveData::transformed_vertex`, a renderer-neutral prepared
+  vertex helper that combines morph target accumulation, CPU skinning, tangent
+  direction transformation, texCoord0 fallback, and vertex-color fallback. The
+  wgpu and Bevy capture paths now consume the same prepared vertex data before
+  backend-specific buffer or mesh creation.
 - Tried to delegate the first coverage refresh for the outline-helper slice to
   a `gpt-5.3-codex-spark` subagent, but the Codex thread was at its agent
   limit, so that refresh was run locally. After the follow-up texture-helper
-  slice, delegated the coverage docs refresh to Spark and reviewed its diff;
+  slices, delegated the coverage docs refresh to Spark and reviewed its diff;
   workspace line coverage is now `84.55%`, with `vrm-io` at `85.82%`.
 - Added `GltfSkinData::joint_matrices`, `vrm-io::skin_vertex`, and
   `vrm-io::skin_direction`, moving renderer-facing CPU joint matrix assembly
@@ -374,7 +379,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 84.55%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-05-31: workspace line coverage is 84.60%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.

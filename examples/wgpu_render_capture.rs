@@ -25,7 +25,7 @@ use vrm_io::{
     GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfOutlineScale,
     GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
     Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents, image_data_to_rgba8,
-    load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
+    load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -504,16 +504,9 @@ fn draw_primitive(
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            let morphed = primitive.morphed_vertex(index, morph_weights);
-            let position = morphed.map_or(Vec3::ZERO, |vertex| vertex.position);
-            let normal = morphed.map_or(Vec3::Z, |vertex| vertex.normal);
-            let tangent = morphed.map_or(Vec4::new(1.0, 0.0, 0.0, 1.0), |vertex| vertex.tangent);
-            let tex_coord = primitive.tex_coord_0_or_default(index);
-            let vertex_color = primitive
-                .colors_0
-                .get(index)
-                .copied()
-                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let transformed = primitive
+                .transformed_vertex(index, morph_weights, context.world, context.skin_matrices)
+                .expect("iterating over primitive positions should keep vertex indices valid");
             let use_derivative_normals = context.options.normal_map_mode
                 == NormalMapMode::Derivative
                 && primitive.tangents.is_empty()
@@ -525,29 +518,13 @@ fn draw_primitive(
             } else {
                 0.0
             };
-            let (position, normal) = transform_vertex(
-                position,
-                normal,
-                context.world,
-                context.skin_matrices,
-                primitive.joints_0.get(index).copied(),
-                primitive.weights_0.get(index).copied(),
-            );
-            let tangent = transform_direction(
-                tangent.truncate(),
-                context.world,
-                context.skin_matrices,
-                primitive.joints_0.get(index).copied(),
-                primitive.weights_0.get(index).copied(),
-            )
-            .extend(tangent.w);
             Vertex {
-                position: position.to_array(),
-                normal: normal.to_array(),
-                tangent: tangent.to_array(),
-                tex_coord,
+                position: transformed.position.to_array(),
+                normal: transformed.normal.to_array(),
+                tangent: transformed.tangent.to_array(),
+                tex_coord: transformed.tex_coord_0,
                 color: if shading.pbr_fallback {
-                    multiply_rgba(shading.base_color, vertex_color)
+                    multiply_rgba(shading.base_color, transformed.color_0)
                 } else {
                     shading.base_color
                 },
@@ -693,18 +670,6 @@ fn alpha_mode_code(mode: CaptureAlphaMode) -> f32 {
     }
 }
 
-fn transform_vertex(
-    position: Vec3,
-    normal: Vec3,
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    joints: Option<[u16; 4]>,
-    weights: Option<[f32; 4]>,
-) -> (Vec3, Vec3) {
-    let vertex = skin_vertex(position, normal, world, skin_matrices, joints, weights);
-    (vertex.position, vertex.normal)
-}
-
 fn multiply_rgba(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]]
 }
@@ -734,16 +699,6 @@ fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_sc
             vertex.normal_scale = 0.0;
         }
     }
-}
-
-fn transform_direction(
-    direction: Vec3,
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    joints: Option<[u16; 4]>,
-    weights: Option<[f32; 4]>,
-) -> Vec3 {
-    skin_direction(direction, world, skin_matrices, joints, weights)
 }
 
 fn material_shading(

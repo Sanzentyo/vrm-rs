@@ -1249,6 +1249,46 @@ impl GltfPrimitiveData {
         })
     }
 
+    pub fn transformed_vertex(
+        &self,
+        index: usize,
+        morph_weights: &[f32],
+        world: Mat4,
+        skin_matrices: Option<&[Mat4]>,
+    ) -> Option<GltfTransformedVertex> {
+        let morphed = self.morphed_vertex(index, morph_weights)?;
+        let joints = self.joints_0.get(index).copied();
+        let weights = self.weights_0.get(index).copied();
+        let skinned = skin_vertex(
+            morphed.position,
+            morphed.normal,
+            world,
+            skin_matrices,
+            joints,
+            weights,
+        );
+        let tangent = skin_direction(
+            morphed.tangent.truncate(),
+            world,
+            skin_matrices,
+            joints,
+            weights,
+        )
+        .extend(morphed.tangent.w);
+
+        Some(GltfTransformedVertex {
+            position: skinned.position,
+            normal: skinned.normal,
+            tangent,
+            tex_coord_0: self.tex_coord_0_or_default(index),
+            color_0: self
+                .colors_0
+                .get(index)
+                .copied()
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]),
+        })
+    }
+
     pub fn outline_position(
         &self,
         index: usize,
@@ -1278,6 +1318,15 @@ pub struct GltfMorphedVertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub tangent: Vec4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfTransformedVertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub tangent: Vec4,
+    pub tex_coord_0: [f32; 2],
+    pub color_0: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3454,6 +3503,14 @@ mod tests {
         );
         assert_vec3_close(skinned.position.to_array(), [0.0, 1.0, 0.25]);
         assert_vec3_close(skinned.normal.to_array(), [0.0, 0.0, 1.0]);
+        let transformed = primitive
+            .transformed_vertex(2, &[0.5], Mat4::IDENTITY, Some(&skin_matrices))
+            .unwrap();
+        assert_vec3_close(transformed.position.to_array(), [0.0, 1.0, 0.25]);
+        assert_vec3_close(transformed.normal.to_array(), [0.0, 0.0, 1.0]);
+        assert_vec4_close(transformed.tangent.to_array(), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(transformed.tex_coord_0, [0.0, 1.0]);
+        assert_eq!(transformed.color_0, [1.0, 0.0, 0.0, 0.0]);
         assert_vec3_close(
             skin_direction(
                 morphed.tangent.truncate(),
