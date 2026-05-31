@@ -456,6 +456,27 @@ pub struct GltfMaterialUvTransforms {
     pub uv_animation_rotation: f32,
 }
 
+pub fn transform_tex_coord_0(
+    tex_coord: [f32; 2],
+    transform: Option<TextureTransform2d>,
+) -> [f32; 2] {
+    let Some(transform) = transform else {
+        return tex_coord;
+    };
+    if transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0) {
+        return tex_coord;
+    }
+    let (sin, cos) = transform.rotation.sin_cos();
+    let scaled = [
+        tex_coord[0] * transform.scale[0],
+        tex_coord[1] * transform.scale[1],
+    ];
+    [
+        cos * scaled[0] - sin * scaled[1] + transform.offset[0],
+        sin * scaled[0] + cos * scaled[1] + transform.offset[1],
+    ]
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GltfSamplerData {
     pub mag_filter: GltfMagFilter,
@@ -1692,6 +1713,13 @@ mod tests {
             .for_each(|(actual, expected)| assert_f32_close(actual, expected));
     }
 
+    fn assert_vec2_close(actual: [f32; 2], expected: [f32; 2]) {
+        actual
+            .into_iter()
+            .zip(expected)
+            .for_each(|(actual, expected)| assert_f32_close(actual, expected));
+    }
+
     fn gamma_eotf(value: f32) -> f32 {
         value.powf(2.2)
     }
@@ -1801,6 +1829,38 @@ mod tests {
                 expected: 16,
                 actual: 4,
             })
+        );
+    }
+
+    #[test]
+    fn transform_tex_coord_0_applies_scale_rotation_and_offset() {
+        let actual = transform_tex_coord_0(
+            [0.25, 0.5],
+            Some(TextureTransform2d {
+                offset: [0.1, -0.2],
+                scale: [2.0, 0.5],
+                rotation: std::f32::consts::FRAC_PI_2,
+                tex_coord: Some(0),
+            }),
+        );
+
+        assert_vec2_close(actual, [-0.15, 0.3]);
+    }
+
+    #[test]
+    fn transform_tex_coord_0_ignores_none_and_nonzero_tex_coord_sets() {
+        assert_eq!(transform_tex_coord_0([0.25, 0.5], None), [0.25, 0.5]);
+        assert_eq!(
+            transform_tex_coord_0(
+                [0.25, 0.5],
+                Some(TextureTransform2d {
+                    offset: [1.0, 2.0],
+                    scale: [3.0, 4.0],
+                    rotation: 1.0,
+                    tex_coord: Some(1),
+                }),
+            ),
+            [0.25, 0.5]
         );
     }
 

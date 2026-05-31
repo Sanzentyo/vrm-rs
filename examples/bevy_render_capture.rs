@@ -55,6 +55,7 @@ use vrm_io::{
     CpuRgba8Image, GltfMagFilter, GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter,
     GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm,
     Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
+    transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -534,7 +535,7 @@ fn bevy_outline_mesh(
                     .width_texture
                     .map(|image| {
                         image.sample_green_repeat_linear(
-                            transform_uv(
+                            transform_tex_coord_0(
                                 primitive_tex_coord(primitive, index),
                                 settings.width_transform,
                             ),
@@ -1897,21 +1898,6 @@ fn apply_texture_transform_slot(
         rotation: initial.rotation,
         tex_coord: initial.tex_coord,
     }
-}
-
-fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2] {
-    let Some(transform) = transform else {
-        return uv;
-    };
-    if transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0) {
-        return uv;
-    }
-    let (sin, cos) = transform.rotation.sin_cos();
-    let scaled = [uv[0] * transform.scale[0], uv[1] * transform.scale[1]];
-    [
-        cos * scaled[0] - sin * scaled[1] + transform.offset[0],
-        sin * scaled[0] + cos * scaled[1] + transform.offset[1],
-    ]
 }
 
 fn bevy_uv_transform(transform: Option<TextureTransform2d>) -> BVec4 {

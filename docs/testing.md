@@ -168,6 +168,9 @@ Material UV transform selection is shared through
 `LoadedVrm::material_uv_transforms`, including MToon transforms, glTF
 base/normal/emissive/occlusion fallbacks, shade fallback-to-base behavior, and
 MToon UV animation scroll/rotation at a requested time.
+CPU-side texCoord0 transform application is shared through
+`vrm-io::transform_tex_coord_0`, covering offset/scale/rotation and the current
+policy of ignoring transforms that target non-zero UV sets.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
 `CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
 MToon/glTF alpha, culling, depth-write, blend, render-order, phase-order, and
@@ -262,11 +265,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.15% | 83.28% |
+| Workspace total | 80.21% | 83.35% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 83.30% | 81.42% |
+| `vrm-io` | 83.55% | 81.80% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -291,8 +294,9 @@ public MToon renderer material plans, public primitive pipeline plans, glTF
 sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
 `KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
 RGBA8 image normalization, renderer-neutral RGBA channel sampling,
-renderer-neutral material texture slot and UV transform resolution, and
-renderer-neutral RGBA mip-chain generation.
+renderer-neutral material texture slot and UV transform resolution,
+renderer-neutral texCoord0 transform application, and renderer-neutral RGBA
+mip-chain generation.
 
 ## Ordered Parity Milestones
 

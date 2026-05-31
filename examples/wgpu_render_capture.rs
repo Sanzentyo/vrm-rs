@@ -22,7 +22,7 @@ use vrm_io::{
     CpuRgba8Image, GltfMagFilter, GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMeshData,
     GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfSkinData, GltfWrapMode,
     LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8,
-    load_vrm_from_path,
+    load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -451,7 +451,8 @@ fn outline_primitive(
         .iter()
         .enumerate()
         .map(|(index, vertex)| {
-            let outline_coord = transform_uv(vertex.tex_coord, uv_transforms.outline_width);
+            let outline_coord =
+                transform_tex_coord_0(vertex.tex_coord, uv_transforms.outline_width);
             let width = width
                 * width_texture
                     .as_ref()
@@ -1397,21 +1398,6 @@ fn apply_texture_transform_slot(
         rotation: initial.rotation,
         tex_coord: initial.tex_coord,
     }
-}
-
-fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2] {
-    let Some(transform) = transform else {
-        return uv;
-    };
-    if transform.tex_coord.is_some_and(|tex_coord| tex_coord != 0) {
-        return uv;
-    }
-    let (sin, cos) = transform.rotation.sin_cos();
-    let scaled = [uv[0] * transform.scale[0], uv[1] * transform.scale[1]];
-    [
-        cos * scaled[0] - sin * scaled[1] + transform.offset[0],
-        sin * scaled[0] + cos * scaled[1] + transform.offset[1],
-    ]
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
