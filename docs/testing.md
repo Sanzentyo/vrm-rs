@@ -171,6 +171,10 @@ MToon UV animation scroll/rotation at a requested time.
 CPU-side texCoord0 transform application is shared through
 `vrm-io::transform_tex_coord_0`, covering offset/scale/rotation and the current
 policy of ignoring transforms that target non-zero UV sets.
+MToon capture lighting policy is shared through
+`vrm-adapter::MtoonLightingConfig`, so the tuned diagnostic accumulator and the
+reference-shaped `three-vrm` accumulator produce the same effective uniform
+values for wgpu, Bevy, and future renderer examples.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
 `CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
 MToon/glTF alpha, culling, depth-write, blend, render-order, phase-order, and
@@ -265,9 +269,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.21% | 83.35% |
+| Workspace total | 80.25% | 83.36% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
-| `vrm-adapter` | 63.93% | 73.76% |
+| `vrm-adapter` | 64.22% | 73.91% |
 | `vrm-core` | 69.52% | 75.92% |
 | `vrm-io` | 83.55% | 81.80% |
 | `vrm-protocol` | 92.41% | 90.93% |
@@ -295,8 +299,8 @@ sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
 `KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
 RGBA8 image normalization, renderer-neutral RGBA channel sampling,
 renderer-neutral material texture slot and UV transform resolution,
-renderer-neutral texCoord0 transform application, and renderer-neutral RGBA
-mip-chain generation.
+renderer-neutral texCoord0 transform application, renderer-neutral MToon
+lighting accumulator resolution, and renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

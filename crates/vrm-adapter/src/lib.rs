@@ -1196,6 +1196,84 @@ pub trait MtoonPipelineAccess {
     ) -> Result<(), Self::Error>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MtoonLightAccumulation {
+    Tuned,
+    ThreeVrm,
+}
+
+impl MtoonLightAccumulation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tuned => "tuned",
+            Self::ThreeVrm => "three-vrm",
+        }
+    }
+
+    pub fn is_three_vrm(self) -> bool {
+        matches!(self, Self::ThreeVrm)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MtoonLightingConfig {
+    pub accumulation: MtoonLightAccumulation,
+    pub exposure: f32,
+    pub ambient_base: f32,
+    pub ambient_gi_scale: f32,
+    pub pbr_ambient: f32,
+}
+
+impl Default for MtoonLightingConfig {
+    fn default() -> Self {
+        Self {
+            accumulation: MtoonLightAccumulation::ThreeVrm,
+            exposure: 0.78,
+            ambient_base: 0.12,
+            ambient_gi_scale: 0.20,
+            pbr_ambient: 0.03183099,
+        }
+    }
+}
+
+impl MtoonLightingConfig {
+    pub fn effective_values(self) -> MtoonLightingValues {
+        match self.accumulation {
+            MtoonLightAccumulation::Tuned => MtoonLightingValues {
+                exposure: self.exposure,
+                ambient_base: self.ambient_base,
+                ambient_gi_scale: self.ambient_gi_scale,
+                pbr_ambient: self.pbr_ambient,
+            },
+            MtoonLightAccumulation::ThreeVrm => MtoonLightingValues {
+                exposure: 1.0,
+                ambient_base: self.pbr_ambient,
+                ambient_gi_scale: 0.0,
+                pbr_ambient: self.pbr_ambient,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MtoonLightingValues {
+    pub exposure: f32,
+    pub ambient_base: f32,
+    pub ambient_gi_scale: f32,
+    pub pbr_ambient: f32,
+}
+
+impl MtoonLightingValues {
+    pub fn to_array(self) -> [f32; 4] {
+        [
+            self.exposure,
+            self.ambient_base,
+            self.ambient_gi_scale,
+            self.pbr_ambient,
+        ]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MtoonMaterialDescriptor {
     pub material: MaterialRef,
@@ -4091,6 +4169,34 @@ mod tests {
             mock.mtoon_passes[0].1.as_slice(),
             [MtoonPipelinePass::Base(_)]
         ));
+    }
+
+    #[test]
+    fn mtoon_lighting_config_resolves_reference_and_tuned_accumulators() {
+        let tuned = MtoonLightingConfig {
+            accumulation: MtoonLightAccumulation::Tuned,
+            exposure: 0.5,
+            ambient_base: 0.25,
+            ambient_gi_scale: 0.75,
+            pbr_ambient: 0.125,
+        };
+        assert_eq!(
+            tuned.effective_values().to_array(),
+            [0.5, 0.25, 0.75, 0.125]
+        );
+        assert_eq!(tuned.accumulation.as_str(), "tuned");
+        assert!(!tuned.accumulation.is_three_vrm());
+
+        let reference = MtoonLightingConfig {
+            accumulation: MtoonLightAccumulation::ThreeVrm,
+            ..tuned
+        };
+        assert_eq!(
+            reference.effective_values().to_array(),
+            [1.0, 0.125, 0.0, 0.125]
+        );
+        assert_eq!(reference.accumulation.as_str(), "three-vrm");
+        assert!(reference.accumulation.is_three_vrm());
     }
 
     #[test]

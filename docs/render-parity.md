@@ -730,6 +730,10 @@ captures apply expression-driven transform overrides.
 CPU-side outline-width texture sampling also shares
 `vrm-io::transform_tex_coord_0` for offset/scale/rotation application on UV set
 0, keeping the wgpu and Bevy diagnostic path aligned.
+MToon light accumulator resolution is now shared through
+`vrm-adapter::MtoonLightingConfig`, so the tuned diagnostic mode and the
+reference-shaped `three-vrm` mode feed identical effective lighting values into
+wgpu and Bevy before each backend performs shader-specific material work.
 
 The canonical comparison images for the current local sample sweep are:
 

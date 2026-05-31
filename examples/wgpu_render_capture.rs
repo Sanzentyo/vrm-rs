@@ -17,6 +17,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     CpuRgba8Image, GltfMagFilter, GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMeshData,
@@ -180,9 +181,15 @@ enum MtoonLightAccumulation {
 
 impl MtoonLightAccumulation {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Tuned => "tuned",
-            Self::ThreeVrm => "three-vrm",
+        AdapterMtoonLightAccumulation::from(self).as_str()
+    }
+}
+
+impl From<MtoonLightAccumulation> for AdapterMtoonLightAccumulation {
+    fn from(value: MtoonLightAccumulation) -> Self {
+        match value {
+            MtoonLightAccumulation::Tuned => Self::Tuned,
+            MtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
         }
     }
 }
@@ -978,7 +985,8 @@ fn material_extra_uniform(
         flags: [
             if shading.v0_compat_shade { 1.0 } else { 0.0 },
             if shading.pbr_fallback { 1.0 } else { 0.0 },
-            if options.mtoon_light_accumulation == MtoonLightAccumulation::ThreeVrm {
+            if AdapterMtoonLightAccumulation::from(options.mtoon_light_accumulation).is_three_vrm()
+            {
                 1.0
             } else {
                 0.0
@@ -2278,15 +2286,15 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
 }
 
 fn mtoon_lighting_uniform(options: &CaptureOptions) -> [f32; 4] {
-    match options.mtoon_light_accumulation {
-        MtoonLightAccumulation::Tuned => [
-            options.mtoon_exposure,
-            options.mtoon_ambient_base,
-            options.mtoon_ambient_gi_scale,
-            options.pbr_ambient,
-        ],
-        MtoonLightAccumulation::ThreeVrm => [1.0, options.pbr_ambient, 0.0, options.pbr_ambient],
+    MtoonLightingConfig {
+        accumulation: options.mtoon_light_accumulation.into(),
+        exposure: options.mtoon_exposure,
+        ambient_base: options.mtoon_ambient_base,
+        ambient_gi_scale: options.mtoon_ambient_gi_scale,
+        pbr_ambient: options.pbr_ambient,
     }
+    .effective_values()
+    .to_array()
 }
 
 fn camera_eye(options: &CaptureOptions) -> Vec3 {
