@@ -504,14 +504,13 @@ fn draw_primitive(
         shading.normal_scale,
         GltfNormalMapMode::from(context.options.normal_map_mode),
     );
-    let mut vertices = primitive
-        .positions
+    let transformed_vertices = primitive
+        .transformed_vertices(morph_weights, context.world, context.skin_matrices)
+        .ok_or("failed to prepare transformed primitive vertices")?;
+    let mut vertices = transformed_vertices
         .iter()
         .enumerate()
-        .map(|(index, _)| {
-            let transformed = primitive
-                .transformed_vertex(index, morph_weights, context.world, context.skin_matrices)
-                .expect("iterating over primitive positions should keep vertex indices valid");
+        .map(|(index, transformed)| {
             let normal_scale =
                 normal_plan.vertex_normal_scale(primitive.tangents.get(index).is_some());
             Vertex {

@@ -1536,6 +1536,17 @@ impl GltfPrimitiveData {
         })
     }
 
+    pub fn transformed_vertices(
+        &self,
+        morph_weights: &[f32],
+        world: Mat4,
+        skin_matrices: Option<&[Mat4]>,
+    ) -> Option<Vec<GltfTransformedVertex>> {
+        (0..self.positions.len())
+            .map(|index| self.transformed_vertex(index, morph_weights, world, skin_matrices))
+            .collect()
+    }
+
     pub fn outline_position(
         &self,
         index: usize,
@@ -3827,6 +3838,18 @@ mod tests {
         assert_vec4_close(transformed.tangent.to_array(), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(transformed.tex_coord_0, [0.0, 1.0]);
         assert_eq!(transformed.color_0, [1.0, 0.0, 0.0, 0.0]);
+        let transformed_vertices = primitive
+            .transformed_vertices(&[0.5], Mat4::IDENTITY, Some(&skin_matrices))
+            .unwrap();
+        assert_eq!(transformed_vertices.len(), 3);
+        assert_vec3_close(
+            transformed_vertices[2].position.to_array(),
+            [0.0, 1.0, 0.25],
+        );
+        assert_vec4_close(
+            transformed_vertices[2].tangent.to_array(),
+            [1.0, 0.0, 0.0, 1.0],
+        );
         assert_vec3_close(
             skin_direction(
                 morphed.tangent.truncate(),

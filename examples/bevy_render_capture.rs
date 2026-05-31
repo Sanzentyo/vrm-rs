@@ -531,14 +531,15 @@ fn bevy_outline_mesh(
         camera_view(settings.capture),
         projection_y_scale(),
     );
+    let transformed_vertices = primitive
+        .transformed_vertices(morph_weights, world, skin_matrices)
+        .expect("iterating over primitive positions should keep vertex indices valid");
     let positions = primitive
         .positions
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            let transformed = primitive
-                .transformed_vertex(index, morph_weights, world, skin_matrices)
-                .expect("iterating over primitive positions should keep vertex indices valid");
+            let transformed = transformed_vertices[index];
             let width = settings.width
                 * settings
                     .width_texture
@@ -570,27 +571,14 @@ fn bevy_outline_mesh(
                 .to_array()
         })
         .collect::<Vec<_>>();
-    let normals = (0..primitive.positions.len())
-        .map(|index| {
-            primitive
-                .transformed_vertex(index, morph_weights, world, skin_matrices)
-                .expect("iterating over primitive positions should keep vertex indices valid")
-                .normal
-                .to_array()
-        })
+    let normals = transformed_vertices
+        .iter()
+        .map(|vertex| vertex.normal.to_array())
         .collect::<Vec<_>>();
     let tangents = (primitive.tangents.len() == primitive.positions.len()).then(|| {
-        primitive
-            .tangents
+        transformed_vertices
             .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                primitive
-                    .transformed_vertex(index, morph_weights, world, skin_matrices)
-                    .expect("iterating over primitive tangents should keep vertex indices valid")
-                    .tangent
-                    .to_array()
-            })
+            .map(|vertex| vertex.tangent.to_array())
             .collect::<Vec<_>>()
     });
     let mut mesh = Mesh::new(
@@ -666,42 +654,22 @@ fn bevy_mesh(
     skin_matrices: Option<&[Mat4]>,
     generate_tangents: bool,
 ) -> (Mesh, bool) {
-    let positions = primitive
-        .positions
+    let transformed_vertices = primitive
+        .transformed_vertices(morph_weights, world, skin_matrices)
+        .expect("iterating over primitive positions should keep vertex indices valid");
+    let positions = transformed_vertices
         .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            primitive
-                .transformed_vertex(index, morph_weights, world, skin_matrices)
-                .expect("iterating over primitive positions should keep vertex indices valid")
-                .position
-                .to_array()
-        })
+        .map(|vertex| vertex.position.to_array())
         .collect::<Vec<_>>();
-    let normals = (0..primitive.positions.len())
-        .map(|index| {
-            primitive
-                .transformed_vertex(index, morph_weights, world, skin_matrices)
-                .expect("iterating over primitive positions should keep vertex indices valid")
-                .normal
-                .to_array()
-        })
+    let normals = transformed_vertices
+        .iter()
+        .map(|vertex| vertex.normal.to_array())
         .collect::<Vec<_>>();
     let tangents = if primitive.tangents.len() == primitive.positions.len() {
         Some(
-            primitive
-                .tangents
+            transformed_vertices
                 .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    primitive
-                        .transformed_vertex(index, morph_weights, world, skin_matrices)
-                        .expect(
-                            "iterating over primitive tangents should keep vertex indices valid",
-                        )
-                        .tangent
-                        .to_array()
-                })
+                .map(|vertex| vertex.tangent.to_array())
                 .collect::<Vec<_>>(),
         )
     } else if generate_tangents {

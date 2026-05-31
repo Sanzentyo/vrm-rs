@@ -285,7 +285,7 @@ Current known coverage gaps:
 
 ## Current Coverage Snapshot
 
-Measured locally on 2026-05-31 with:
+Measured locally on 2026-06-01 with:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
@@ -293,11 +293,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.96% | 84.88% |
+| Workspace total | 81.98% | 84.90% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.94% | 74.74% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 87.44% | 86.67% |
+| `vrm-io` | 87.51% | 86.75% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
@@ -342,7 +342,10 @@ three-vrm light accumulation, derivative normal fallback, unlit state, metallic,
 roughness, occlusion strength, and direct-light scale are also decided before
 renderer-specific material construction. Facade-level headless scene
 construction and zero-delta world-matrix evaluation are shared before
-renderer-specific buffer creation.
+renderer-specific buffer creation. Morph/skin/world-transformed primitive
+vertices are shared through `GltfPrimitiveData::transformed_vertices`, so
+renderer-specific paths receive the same prepared position, normal, tangent,
+UV, and color inputs before constructing wgpu buffers or Bevy meshes.
 Expression-applied renderer material state is also shared through
 `LoadedVrm::expression_material_shading_plan` and
 `LoadedVrm::expression_material_uv_transforms`, while MToon outline material
