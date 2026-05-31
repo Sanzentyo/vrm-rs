@@ -1585,6 +1585,29 @@ impl RendererMaterialPipelinePlan {
     }
 }
 
+pub fn renderer_material_pipeline_plan(
+    document: &VrmDocument,
+    material: Option<MaterialRef>,
+    options: MtoonMaterializationOptions,
+    gltf_override: Option<GltfMaterialPipelineOverride>,
+) -> RendererMaterialPipelinePlan {
+    let mut plan = material
+        .and_then(|material| {
+            mtoon_renderer_material_plans(document, options)
+                .into_iter()
+                .find(|plan| plan.material == material && plan.pass == MtoonRendererPass::Base)
+        })
+        .as_ref()
+        .map(RendererMaterialPipelinePlan::from_mtoon_plan)
+        .unwrap_or_default();
+
+    if let Some(gltf_override) = gltf_override {
+        plan = plan.with_gltf_override(gltf_override);
+    }
+
+    plan
+}
+
 impl MtoonRendererTextureRefs {
     pub fn from_set(textures: &MtoonTextureSet) -> Self {
         Self {
@@ -4348,6 +4371,66 @@ mod tests {
         assert_eq!(capture_plan.alpha_mode, RendererMaterialAlphaMode::Blend);
         assert_eq!(capture_plan.cull_mode, RendererMaterialCullMode::Off);
         assert!(capture_plan.depth_write);
+    }
+
+    #[test]
+    fn renderer_material_pipeline_plan_combines_mtoon_and_gltf_override() {
+        let document = VrmDocument {
+            materials: vec![vrm_core::Material {
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    transparent_with_z_write: false,
+                    render_queue_offset_number: 3,
+                    cull_mode: MtoonCullMode::Back,
+                    cutoff_factor: 0.25,
+                    ..MtoonMaterial::default()
+                }),
+                ..vrm_core::Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+
+        let plan = renderer_material_pipeline_plan(
+            &document,
+            Some(MaterialRef(0)),
+            MtoonMaterializationOptions::default(),
+            Some(GltfMaterialPipelineOverride {
+                alpha_mode: GltfMaterialAlphaMode::Blend,
+                alpha_cutoff: None,
+                double_sided: true,
+            }),
+        );
+
+        assert_eq!(plan.render_order, 3022);
+        assert_eq!(plan.phase_order, 22);
+        assert_eq!(plan.alpha_mode, RendererMaterialAlphaMode::Blend);
+        assert_eq!(plan.cull_mode, RendererMaterialCullMode::Off);
+        assert!(!plan.depth_write);
+        assert!(plan.blend);
+        assert_eq!(plan.alpha_cutoff, 0.25);
+    }
+
+    #[test]
+    fn renderer_material_pipeline_plan_handles_gltf_only_materials() {
+        let document = VrmDocument::default();
+
+        let plan = renderer_material_pipeline_plan(
+            &document,
+            Some(MaterialRef(9)),
+            MtoonMaterializationOptions::default(),
+            Some(GltfMaterialPipelineOverride {
+                alpha_mode: GltfMaterialAlphaMode::Mask,
+                alpha_cutoff: Some(0.8),
+                double_sided: false,
+            }),
+        );
+
+        assert_eq!(plan.render_order, 2000);
+        assert_eq!(plan.alpha_mode, RendererMaterialAlphaMode::Mask);
+        assert_eq!(plan.cull_mode, RendererMaterialCullMode::Back);
+        assert!(plan.depth_write);
+        assert!(!plan.blend);
+        assert_eq!(plan.alpha_cutoff, 0.8);
     }
 
     #[test]

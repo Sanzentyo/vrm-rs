@@ -291,9 +291,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.96% | 84.02% |
+| Workspace total | 81.09% | 84.24% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
-| `vrm-adapter` | 64.22% | 73.91% |
+| `vrm-adapter` | 64.83% | 74.68% |
 | `vrm-core` | 70.18% | 77.46% |
 | `vrm-io` | 85.53% | 84.54% |
 | `vrm-protocol` | 92.41% | 90.93% |
@@ -323,9 +323,9 @@ RGBA8 image normalization, renderer-neutral RGBA channel sampling,
 renderer-neutral material texture slot resolution and binding plans,
 renderer-neutral material UV transform resolution, renderer-neutral UV uniform
 packing, renderer-neutral material shading input selection, renderer-neutral
-expression render effect planning, renderer-neutral texCoord0 transform
-application, renderer-neutral MToon lighting accumulator resolution, and
-renderer-neutral RGBA mip-chain generation.
+expression render effect planning, renderer-neutral material pipeline planning,
+renderer-neutral texCoord0 transform application, renderer-neutral MToon
+lighting accumulator resolution, and renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

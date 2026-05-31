@@ -740,6 +740,10 @@ normal scale, rim/matcap parameters, and VRM0 compatibility flags, while
 `LoadedVrm::expression_render_effects` centralizes the expression-driven morph,
 material-color, and texture-transform overrides that are applied on top of that
 base material plan before each capture builds backend resources.
+`vrm-adapter::renderer_material_pipeline_plan` now centralizes the MToon base
+pass pipeline policy plus glTF alpha/double-sided override merge, so wgpu,
+Bevy, ash-style examples, and custom renderers can select cull/depth/blend
+state without reimplementing capture-only policy.
 `GltfPrimitiveData::morphed_vertex` centralizes the local morph target
 accumulation used by wgpu and Bevy before skinning, outline expansion, generated
 tangents, and backend mesh construction.
