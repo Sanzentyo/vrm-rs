@@ -1,5 +1,17 @@
 # Progress
 
+## 2026-06-01
+
+- Refreshed the local `imq-cli` skill through chezmoi after upstream added
+  `references/imqraw-library.md`, then used its TypeScript/WASM sample path to
+  add `tools/render-parity/imqraw-compare-rgba-json.ts`. The script imports the
+  fixed `imqraw` `v0.1.0` browser distribution, packs two renderer `.rgba.json`
+  artifacts with `encodeBundle`, and pipes the resulting lossless `imqraw`
+  bytes to `imq image` so numeric parity can be checked without PNG conversion.
+  `just render-parity-imqraw-seed-normal` now re-measures the current Seed-san
+  real normal-map artifacts through this path; the verified reports are written
+  under `.external-fixtures/render-parity-real-normal-maps/reports/`.
+
 ## 2026-05-31
 
 - Added `GltfPrimitiveData::outline_position`, `GltfOutlineSettings`,

@@ -48,6 +48,7 @@ just render-parity
 just render-parity-samples
 just render-parity-samples-nonblack
 just render-parity-vrm1-samples
+just render-parity-imqraw-seed-normal
 ```
 
 The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons` and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
@@ -71,6 +72,12 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, writes `.external-fixtures/render-parity/summary.md`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+For a PNG-free cross-check of existing RGBA artifacts, use
+`just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
+the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the
+`imqraw` TypeScript/WASM library to pack `.rgba.json` buffers into a lossless
+stdin bundle and lets `imq image` compute metrics directly from the raw RGBA
+data.
 Pass `--render-fixture NAME.vrm` more than once to broaden the render set while
 keeping binaries external. `just render-parity-samples` currently renders
 `Seed-san.vrm`, `VRM1_Constraint_Twist_Sample.vrm`, the official

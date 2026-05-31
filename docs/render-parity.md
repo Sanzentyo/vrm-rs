@@ -21,6 +21,23 @@ The RGBA artifact is intentionally simple so browser canvas, Bevy readback,
 wgpu readback, or an ash staging image can all write the same format before a
 PNG visual artifact is added for human review.
 
+For independent raw-image metric checks that do not pass through PNG encoding
+or decoding, use the `imqraw` TypeScript/WASM pack path:
+
+```powershell
+just imqraw-compare-rgba `
+  .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json `
+  .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.rgba.json `
+  .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.imqraw-ts.json
+```
+
+This runs `tools/render-parity/imqraw-compare-rgba-json.ts`, imports the fixed
+`https://sanzentyo.github.io/imq/imqraw/v0.1.0/imqraw.js` distribution, packs
+the two `.rgba.json` buffers with `encodeBundle`, and pipes the resulting
+lossless `imqraw` bytes to `imq image - - --stdin-format imqraw`. The PNG and
+HTML artifacts remain for visual review only; this path compares the raw RGBA
+buffers produced by the renderers.
+
 ## PSNR
 
 Use the dependency-free comparator:

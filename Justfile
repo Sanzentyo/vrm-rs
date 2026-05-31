@@ -172,3 +172,12 @@ render-parity-full:
 # Run the coverage gate used by local CI.
 coverage:
     cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
+
+# Compare two render-parity RGBA JSON artifacts by packing them with the imqraw TypeScript/WASM library and piping raw imqraw bytes into imq.
+imqraw-compare-rgba expected actual output metrics="psnr:color,mse:color,mae:color,maxae:color,psnr:all,mse:all":
+    deno run --allow-import=sanzentyo.github.io --allow-net=sanzentyo.github.io --allow-read --allow-run=imq --allow-write tools/render-parity/imqraw-compare-rgba-json.ts --expected "{{ expected }}" --actual "{{ actual }}" --metrics "{{ metrics }}" --output "{{ output }}"
+
+# Re-measure the current real normal-map Seed-san artifacts through the JS/TS imqraw pack path without PNG conversion.
+render-parity-imqraw-seed-normal:
+    just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.imqraw-ts.json
+    just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/bevy/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.bevy-vs-three-vrm.imqraw-ts.json
