@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use thiserror::Error;
 use vrm_core::{
-    ExpressionBind, ExpressionName, Feature, HumanBoneName, MtoonMaterial, Resolved, RotationTrack,
-    ScalarTrack, TextureRef, TextureTransform2d, Transform, TranslationTrack, VrmAnimation,
-    VrmKind, VrmModel,
+    ExpressionBind, ExpressionName, Feature, HumanBoneName, MtoonMaterial, OutlineWidthMode,
+    Resolved, RotationTrack, ScalarTrack, TextureRef, TextureTransform2d, Transform,
+    TranslationTrack, VrmAnimation, VrmKind, VrmModel,
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
@@ -1235,6 +1235,29 @@ impl GltfPrimitiveData {
             tangent: tangent.extend(base_tangent[3]),
         })
     }
+
+    pub fn outline_position(
+        &self,
+        index: usize,
+        morph_weights: &[f32],
+        settings: GltfOutlineSettings,
+        world: Mat4,
+        skin_matrices: Option<&[Mat4]>,
+    ) -> Option<Vec3> {
+        let morphed = self.morphed_vertex(index, morph_weights)?;
+        let normal = morphed.normal.normalize_or_zero();
+        let transform = blended_vertex_transform(
+            world,
+            skin_matrices,
+            self.joints_0.get(index).copied(),
+            self.weights_0.get(index).copied(),
+        );
+        let world_position = transform.transform_point3(morphed.position);
+        let normal_scale = normal_matrix_length(transform, normal);
+        let offset_scale = settings.width * normal_scale * settings.scale.at(world_position);
+        let offset = normal * offset_scale;
+        Some(transform.transform_point3(morphed.position + offset))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1248,6 +1271,41 @@ pub struct GltfMorphedVertex {
 pub struct GltfSkinnedVertex {
     pub position: Vec3,
     pub normal: Vec3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfOutlineSettings {
+    pub width: f32,
+    pub scale: GltfOutlineScale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfOutlineScale {
+    pub mode: OutlineWidthMode,
+    pub view: Mat4,
+    pub projection_y: f32,
+}
+
+impl GltfOutlineScale {
+    pub fn new(mode: OutlineWidthMode, view: Mat4, projection_y: f32) -> Self {
+        Self {
+            mode,
+            view,
+            projection_y,
+        }
+    }
+
+    pub fn at(self, world_position: Vec3) -> f32 {
+        match self.mode {
+            OutlineWidthMode::ScreenCoordinates => {
+                let view_z = self.view.transform_point3(world_position).z;
+                (-view_z / self.projection_y).max(0.0)
+            }
+            OutlineWidthMode::None
+            | OutlineWidthMode::WorldCoordinates
+            | OutlineWidthMode::Unknown => 1.0,
+        }
+    }
 }
 
 pub fn skin_vertex(
@@ -1333,6 +1391,52 @@ pub fn skin_direction(
         transformed.normalize_or_zero()
     } else {
         fallback()
+    }
+}
+
+pub fn blended_vertex_transform(
+    world: Mat4,
+    skin_matrices: Option<&[Mat4]>,
+    joints: Option<[u16; 4]>,
+    weights: Option<[f32; 4]>,
+) -> Mat4 {
+    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
+    else {
+        return world;
+    };
+
+    let (transform, total_weight) = joints
+        .into_iter()
+        .zip(weights)
+        .filter(|(_, weight)| *weight > 0.0)
+        .filter_map(|(joint, weight)| {
+            skin_matrices
+                .get(usize::from(joint))
+                .map(|matrix| (matrix, weight))
+        })
+        .fold(
+            (Mat4::ZERO, 0.0),
+            |(transform, total_weight), (matrix, weight)| {
+                (transform + *matrix * weight, total_weight + weight)
+            },
+        );
+
+    if total_weight > 0.0 { transform } else { world }
+}
+
+pub fn normal_matrix_length(transform: Mat4, normal: Vec3) -> f32 {
+    if normal.length_squared() <= f32::EPSILON || transform.determinant().abs() <= 0.000001 {
+        return 1.0;
+    }
+    let length = transform
+        .inverse()
+        .transpose()
+        .transform_vector3(normal)
+        .length();
+    if length.is_finite() && length > 0.0 {
+        length
+    } else {
+        1.0
     }
 }
 
@@ -3342,6 +3446,26 @@ mod tests {
             .to_array(),
             [1.0, 0.0, 0.0],
         );
+        let outline = primitive
+            .outline_position(
+                2,
+                &[0.5],
+                GltfOutlineSettings {
+                    width: 0.2,
+                    scale: GltfOutlineScale::new(
+                        OutlineWidthMode::WorldCoordinates,
+                        Mat4::IDENTITY,
+                        1.0,
+                    ),
+                },
+                Mat4::IDENTITY,
+                Some(&skin_matrices),
+            )
+            .unwrap();
+        assert_vec3_close(outline.to_array(), [0.0, 1.0, 0.45]);
+        let screen_scale =
+            GltfOutlineScale::new(OutlineWidthMode::ScreenCoordinates, Mat4::IDENTITY, 2.0);
+        assert_f32_close(screen_scale.at(Vec3::new(0.0, 0.0, -4.0)), 2.0);
         let generated_tangents = generate_tangents(
             &primitive.positions,
             &primitive.normals,

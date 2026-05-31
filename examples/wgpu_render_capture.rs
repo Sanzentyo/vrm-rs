@@ -18,15 +18,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
-use vrm_core::OutlineWidthMode;
 use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
-    generate_tangents, image_data_to_rgba8, load_vrm_from_path, skin_direction, skin_vertex,
-    transform_tex_coord_0,
+    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfOutlineScale,
+    GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, LoadedVrm,
+    Rgba8SamplingOrigin, generate_rgba_mip_chain, generate_tangents, image_data_to_rgba8,
+    load_vrm_from_path, skin_direction, skin_vertex, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
 
@@ -421,7 +420,11 @@ fn outline_primitive(
         .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
     let uv_transforms = surface.uv_transforms;
     let width = mtoon.outline_width_factor * context.options.outline_width_scale;
-    let outline_scale = OutlineScale::new(mtoon.outline_width_mode, context.options);
+    let outline_scale = GltfOutlineScale::new(
+        mtoon.outline_width_mode,
+        camera_view(context.options),
+        projection_y_scale(),
+    );
     let vertices = surface
         .vertices
         .iter()
@@ -438,17 +441,19 @@ fn outline_primitive(
                     })
                     .unwrap_or(1.0);
             let mut vertex = *vertex;
-            vertex.position = outline_position(
-                primitive,
-                index,
-                morph_weights,
-                width,
-                outline_scale,
-                context.world,
-                context.skin_matrices,
-            )
-            .unwrap_or_else(|| Vec3::from_array(vertex.position))
-            .to_array();
+            vertex.position = primitive
+                .outline_position(
+                    index,
+                    morph_weights,
+                    GltfOutlineSettings {
+                        width,
+                        scale: outline_scale,
+                    },
+                    context.world,
+                    context.skin_matrices,
+                )
+                .unwrap_or_else(|| Vec3::from_array(vertex.position))
+                .to_array();
             vertex.outline_color = outline_color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;
@@ -470,103 +475,6 @@ fn outline_primitive(
             alpha_cutoff: 0.5,
         },
     })
-}
-
-#[derive(Clone, Copy, Debug)]
-struct OutlineScale {
-    mode: OutlineWidthMode,
-    view: Mat4,
-    projection_y: f32,
-}
-
-impl OutlineScale {
-    fn new(mode: OutlineWidthMode, options: &CaptureOptions) -> Self {
-        Self {
-            mode,
-            view: camera_view(options),
-            projection_y: projection_y_scale(),
-        }
-    }
-
-    fn at(self, world_position: Vec3) -> f32 {
-        match self.mode {
-            OutlineWidthMode::ScreenCoordinates => {
-                let view_z = self.view.transform_point3(world_position).z;
-                (-view_z / self.projection_y).max(0.0)
-            }
-            OutlineWidthMode::None
-            | OutlineWidthMode::WorldCoordinates
-            | OutlineWidthMode::Unknown => 1.0,
-        }
-    }
-}
-
-fn outline_position(
-    primitive: &GltfPrimitiveData,
-    index: usize,
-    morph_weights: &[f32],
-    width: f32,
-    outline_scale: OutlineScale,
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-) -> Option<Vec3> {
-    let morphed = primitive.morphed_vertex(index, morph_weights)?;
-    let position = morphed.position;
-    let normal = morphed.normal;
-    let normal = normal.normalize_or_zero();
-    let transform = blended_vertex_transform(
-        world,
-        skin_matrices,
-        primitive.joints_0.get(index).copied(),
-        primitive.weights_0.get(index).copied(),
-    );
-    let world_position = transform.transform_point3(position);
-    let normal_scale = normal_matrix_length(transform, normal);
-    let offset_scale = width * normal_scale * outline_scale.at(world_position);
-    let offset = normal * offset_scale;
-    Some(transform.transform_point3(position + offset))
-}
-
-fn blended_vertex_transform(
-    world: Mat4,
-    skin_matrices: Option<&[Mat4]>,
-    joints: Option<[u16; 4]>,
-    weights: Option<[f32; 4]>,
-) -> Mat4 {
-    let (Some(skin_matrices), Some(joints), Some(weights)) = (skin_matrices, joints, weights)
-    else {
-        return world;
-    };
-
-    let mut transform = Mat4::ZERO;
-    let mut total_weight = 0.0;
-    for (joint, weight) in joints.into_iter().zip(weights) {
-        if weight <= 0.0 {
-            continue;
-        }
-        let Some(matrix) = skin_matrices.get(usize::from(joint)) else {
-            continue;
-        };
-        transform += *matrix * weight;
-        total_weight += weight;
-    }
-    if total_weight > 0.0 { transform } else { world }
-}
-
-fn normal_matrix_length(transform: Mat4, normal: Vec3) -> f32 {
-    if normal.length_squared() <= f32::EPSILON || transform.determinant().abs() <= 0.000001 {
-        return 1.0;
-    }
-    let length = transform
-        .inverse()
-        .transpose()
-        .transform_vector3(normal)
-        .length();
-    if length.is_finite() && length > 0.0 {
-        length
-    } else {
-        1.0
-    }
 }
 
 fn draw_primitive(

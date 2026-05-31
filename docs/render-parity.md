@@ -1053,6 +1053,11 @@ outline mesh expansion multiplies width by view depth divided by the fixed
 Skinned outline vertices are expanded after the blended skin transform along
 the skinned normal direction; unskinned primitives keep the local/object normal
 offset path so non-uniform object transforms keep matching the shader formula.
+That expansion math is now exposed by `vrm-io` as
+`GltfPrimitiveData::outline_position` plus
+`GltfOutlineScale`/`GltfOutlineSettings`, so wgpu, Bevy, ash-style examples,
+and custom engines can reuse the same Sans I/O morph/skin-aware outline
+position calculation before converting vertices into backend buffers.
 The current official sweep does not exercise that branch, so the remaining
 outline gap is fixture breadth plus exact edge/color parity rather than a
 missing mode in wgpu/Bevy captures.
