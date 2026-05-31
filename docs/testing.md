@@ -51,6 +51,10 @@ just render-parity-vrm1-samples
 ```
 
 The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons` and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
+The Rust script also sets cargo dev/test debug info to level `1` for commands
+it launches. That keeps Windows MSVC PDB files below the observed Bevy-heavy
+debug-info limit without changing runtime behavior, render output, or the
+coverage threshold.
 
 Run the external fixture parity pass locally with:
 
@@ -145,6 +149,12 @@ The runner keeps the reusable comparison logic Sans I/O where practical:
 RGBA JSON parsing, alpha counting, diff heatmap pixel generation, PSNR report
 summary extraction, and summary Markdown construction work on in-memory values,
 while filesystem reads/writes remain in the surrounding runner functions.
+Texture upload preparation follows the same direction: `vrm-io` exposes
+`generate_rgba_mip_chain`, which takes dimensions plus RGBA bytes and returns
+renderer-neutral mip levels without touching files or GPU APIs. The wgpu and
+Bevy captures both use that helper before converting the plan into backend
+texture uploads, so ash/custom-engine paths can reuse the same validated mip
+data.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
 `CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
 MToon/glTF alpha, culling, depth-write, blend, render-order, phase-order, and
@@ -239,11 +249,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.62% | 82.87% |
+| Workspace total | 79.77% | 82.97% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 81.15% | 78.48% |
+| `vrm-io` | 81.84% | 79.26% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -266,7 +276,8 @@ writeback path. Renderer-facing generated glTF coverage now also includes
 primitive `COLOR_0`, morph target deltas, mesh/node default morph weights,
 public MToon renderer material plans, public primitive pipeline plans, glTF
 sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
-and `KHR_materials_unlit` extraction for PBR fallback material data.
+`KHR_materials_unlit` extraction for PBR fallback material data, and
+renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

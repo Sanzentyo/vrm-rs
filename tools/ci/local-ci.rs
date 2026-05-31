@@ -1548,11 +1548,19 @@ fn run_cmd_in<const N: usize>(
 }
 
 fn run_command(mut command: Command) -> Result<(), String> {
+    configure_cargo_debug_info(&mut command);
     println!("> {}", display_command(&command));
     let status = command
         .status()
         .map_err(|err| format!("failed to spawn command: {err}"))?;
     ensure_success(status)
+}
+
+fn configure_cargo_debug_info(command: &mut Command) {
+    if command.get_program() == OsStr::new("cargo") {
+        command.env("CARGO_PROFILE_DEV_DEBUG", "1");
+        command.env("CARGO_PROFILE_TEST_DEBUG", "1");
+    }
 }
 
 fn ensure_success(status: ExitStatus) -> Result<(), String> {

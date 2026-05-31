@@ -77,6 +77,80 @@ pub enum ImageFormat {
     R32G32B32A32Float,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RgbaMipLevel {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum TextureMipError {
+    #[error("texture dimensions must be non-zero")]
+    InvalidDimensions,
+    #[error("RGBA data length mismatch: expected {expected} bytes, got {actual} bytes")]
+    InvalidRgbaLength { expected: usize, actual: usize },
+}
+
+pub fn generate_rgba_mip_chain(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<Vec<RgbaMipLevel>, TextureMipError> {
+    if width == 0 || height == 0 {
+        return Err(TextureMipError::InvalidDimensions);
+    }
+    let expected = rgba_len(width, height)?;
+    if rgba.len() != expected {
+        return Err(TextureMipError::InvalidRgbaLength {
+            expected,
+            actual: rgba.len(),
+        });
+    }
+
+    let mut levels = vec![RgbaMipLevel {
+        width,
+        height,
+        rgba: rgba.to_vec(),
+    }];
+    let mut current_width = width;
+    let mut current_height = height;
+    let mut current_rgba = rgba.to_vec();
+    while current_width > 1 || current_height > 1 {
+        let next_width = (current_width / 2).max(1);
+        let next_height = (current_height / 2).max(1);
+        let image = image::RgbaImage::from_raw(current_width, current_height, current_rgba)
+            .expect("validated mip level RGBA length should match its dimensions");
+        let next = image::imageops::resize(
+            &image,
+            next_width,
+            next_height,
+            image::imageops::FilterType::CatmullRom,
+        );
+        current_width = next_width;
+        current_height = next_height;
+        current_rgba = next.into_raw();
+        levels.push(RgbaMipLevel {
+            width: current_width,
+            height: current_height,
+            rgba: current_rgba.clone(),
+        });
+    }
+    Ok(levels)
+}
+
+fn rgba_len(width: u32, height: u32) -> Result<usize, TextureMipError> {
+    usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(TextureMipError::InvalidDimensions)
+}
+
 impl From<gltf::image::Format> for ImageFormat {
     fn from(value: gltf::image::Format) -> Self {
         match value {
@@ -1338,6 +1412,35 @@ mod tests {
 
     fn gamma_eotf(value: f32) -> f32 {
         value.powf(2.2)
+    }
+
+    #[test]
+    fn generated_rgba_mip_chain_is_renderer_neutral() {
+        let rgba = (0..32).collect::<Vec<u8>>();
+        let levels = generate_rgba_mip_chain(4, 2, &rgba).unwrap();
+
+        assert_eq!(levels.len(), 3);
+        assert_eq!((levels[0].width, levels[0].height), (4, 2));
+        assert_eq!(levels[0].rgba, rgba);
+        assert_eq!((levels[1].width, levels[1].height), (2, 1));
+        assert_eq!(levels[1].rgba.len(), 8);
+        assert_eq!((levels[2].width, levels[2].height), (1, 1));
+        assert_eq!(levels[2].rgba.len(), 4);
+    }
+
+    #[test]
+    fn generated_rgba_mip_chain_rejects_invalid_input() {
+        assert_eq!(
+            generate_rgba_mip_chain(0, 1, &[]),
+            Err(TextureMipError::InvalidDimensions)
+        );
+        assert_eq!(
+            generate_rgba_mip_chain(2, 2, &[255, 0, 0, 255]),
+            Err(TextureMipError::InvalidRgbaLength {
+                expected: 16,
+                actual: 4,
+            })
+        );
     }
 
     #[test]

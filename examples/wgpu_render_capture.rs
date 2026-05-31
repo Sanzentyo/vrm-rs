@@ -20,7 +20,8 @@ use std::sync::mpsc;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfSkinData, GltfWrapMode, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+    GltfSkinData, GltfWrapMode, ImageData, ImageFormat, LoadedVrm, generate_rgba_mip_chain,
+    load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -1652,7 +1653,8 @@ fn texture_resource(
     sampler_data: GltfSamplerData,
     upload: TextureUpload<'_>,
 ) -> TextureResource {
-    let mip_levels = mip_chain(upload.width, upload.height, upload.rgba);
+    let mip_levels = generate_rgba_mip_chain(upload.width, upload.height, upload.rgba)
+        .expect("texture upload RGBA data should match its dimensions");
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("render parity material texture"),
         size: wgpu::Extent3d {
@@ -1750,46 +1752,6 @@ fn mipmap_filter(filter: GltfMinFilter) -> wgpu::MipmapFilterMode {
             wgpu::MipmapFilterMode::Linear
         }
     }
-}
-
-struct TextureMipLevel {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
-}
-
-fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
-    let mut levels = vec![TextureMipLevel {
-        width,
-        height,
-        rgba: rgba.to_vec(),
-    }];
-    let mut current_width = width;
-    let mut current_height = height;
-    let mut current_rgba = rgba.to_vec();
-    while current_width > 1 || current_height > 1 {
-        let next_width = (current_width / 2).max(1);
-        let next_height = (current_height / 2).max(1);
-        let Some(image) = image::RgbaImage::from_raw(current_width, current_height, current_rgba)
-        else {
-            break;
-        };
-        let next = image::imageops::resize(
-            &image,
-            next_width,
-            next_height,
-            image::imageops::FilterType::CatmullRom,
-        );
-        current_width = next_width;
-        current_height = next_height;
-        current_rgba = next.into_raw();
-        levels.push(TextureMipLevel {
-            width: current_width,
-            height: current_height,
-            rgba: current_rgba.clone(),
-        });
-    }
-    levels
 }
 
 fn material_texture_bind_group(

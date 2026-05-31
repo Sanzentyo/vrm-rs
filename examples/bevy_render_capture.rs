@@ -53,7 +53,7 @@ use std::time::Duration;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData,
-    GltfWrapMode, ImageData, ImageFormat, LoadedVrm, load_vrm_from_path,
+    GltfWrapMode, ImageData, ImageFormat, LoadedVrm, generate_rgba_mip_chain, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -2142,7 +2142,8 @@ fn bevy_image_from_rgba(
     format: TextureFormat,
     sampler: GltfSamplerData,
 ) -> Image {
-    let levels = mip_chain(width, height, &rgba);
+    let levels = generate_rgba_mip_chain(width, height, &rgba)
+        .expect("texture upload RGBA data should match its dimensions");
     let mip_level_count = u32::try_from(levels.len()).unwrap_or(1);
     let data = levels
         .into_iter()
@@ -2222,40 +2223,6 @@ fn bevy_mipmap_filter(filter: GltfMinFilter) -> ImageFilterMode {
             ImageFilterMode::Linear
         }
     }
-}
-
-struct TextureMipLevel {
-    rgba: Vec<u8>,
-}
-
-fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<TextureMipLevel> {
-    let mut levels = vec![TextureMipLevel {
-        rgba: rgba.to_vec(),
-    }];
-    let mut current_width = width;
-    let mut current_height = height;
-    let mut current_rgba = rgba.to_vec();
-    while current_width > 1 || current_height > 1 {
-        let next_width = (current_width / 2).max(1);
-        let next_height = (current_height / 2).max(1);
-        let Some(image) = image::RgbaImage::from_raw(current_width, current_height, current_rgba)
-        else {
-            break;
-        };
-        let next = image::imageops::resize(
-            &image,
-            next_width,
-            next_height,
-            image::imageops::FilterType::CatmullRom,
-        );
-        current_width = next_width;
-        current_height = next_height;
-        current_rgba = next.into_raw();
-        levels.push(TextureMipLevel {
-            rgba: current_rgba.clone(),
-        });
-    }
-    levels
 }
 
 fn image_rgba8(image: &ImageData) -> Option<Vec<u8>> {
