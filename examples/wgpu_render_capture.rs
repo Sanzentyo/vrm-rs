@@ -397,31 +397,13 @@ fn outline_primitive(
     surface: &DrawPrimitive,
     context: &PrimitiveDrawContext<'_>,
 ) -> Option<DrawPrimitive> {
-    let material = primitive
-        .material
-        .and_then(|index| loaded.model().document().materials.get(index))?;
-    let mtoon = material.mtoon.as_ref()?;
-    if !mtoon.outline_enabled() {
-        return None;
-    }
-    let outline_color = context.expression_effects.apply_color4(
-        [
-            mtoon.outline_color_factor[0],
-            mtoon.outline_color_factor[1],
-            mtoon.outline_color_factor[2],
-            mtoon.outline_lighting_mix_factor,
-        ],
-        primitive.material,
-        "outlineColor",
-    );
-    let width_texture = mtoon
-        .textures
-        .outline_width_multiply_texture
-        .and_then(|texture| loaded.texture_rgba8_image(texture.0));
+    let outline =
+        loaded.expression_mtoon_outline_plan(primitive.material, context.expression_effects)?;
+    let width_texture = loaded.material_outline_width_rgba8_image(primitive.material);
     let uv_transforms = surface.uv_transforms;
-    let width = mtoon.outline_width_factor * context.options.outline_width_scale;
+    let width = outline.width_factor * context.options.outline_width_scale;
     let outline_scale = GltfOutlineScale::new(
-        mtoon.outline_width_mode,
+        outline.width_mode,
         camera_view(context.options),
         projection_y_scale(),
     );
@@ -454,7 +436,7 @@ fn outline_primitive(
                 )
                 .unwrap_or_else(|| Vec3::from_array(vertex.position))
                 .to_array();
-            vertex.outline_color = outline_color;
+            vertex.outline_color = outline.color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;
             vertex

@@ -250,6 +250,34 @@ impl LoadedVrm {
         shading
     }
 
+    pub fn expression_mtoon_outline_plan(
+        &self,
+        material: Option<usize>,
+        expression_effects: &GltfExpressionRenderEffects,
+    ) -> Option<GltfMtoonOutlinePlan> {
+        let mtoon = material
+            .and_then(|index| self.model.document().materials.get(index))
+            .and_then(|material| material.mtoon.as_ref())?;
+        if !mtoon.outline_enabled() {
+            return None;
+        }
+        let color = expression_effects.apply_color4(
+            [
+                mtoon.outline_color_factor[0],
+                mtoon.outline_color_factor[1],
+                mtoon.outline_color_factor[2],
+                mtoon.outline_lighting_mix_factor,
+            ],
+            material,
+            "outlineColor",
+        );
+        Some(GltfMtoonOutlinePlan {
+            width_factor: mtoon.outline_width_factor,
+            width_mode: mtoon.outline_width_mode,
+            color,
+        })
+    }
+
     fn material_normal_scale(&self, material: Option<usize>) -> f32 {
         self.material_texture_slots(material)
             .normal
@@ -1062,6 +1090,13 @@ pub struct GltfMaterialShadingPlan {
     pub pbr_fallback: bool,
     pub unlit: bool,
     pub v0_compat_shade: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfMtoonOutlinePlan {
+    pub width_factor: f32,
+    pub width_mode: OutlineWidthMode,
+    pub color: [f32; 4],
 }
 
 pub fn transform_tex_coord_0(
@@ -2972,6 +3007,21 @@ mod tests {
         );
         assert_vec4_close(expression_shading.base_color, [0.95, 0.9, 0.85, 0.8]);
         assert_vec3_close(expression_shading.emissive, [0.25, 0.2, 0.15]);
+        let outline = loaded
+            .expression_mtoon_outline_plan(Some(0), &effects)
+            .unwrap();
+        let mtoon = document.materials[0].mtoon.as_ref().unwrap();
+        assert_f32_close(outline.width_factor, mtoon.outline_width_factor);
+        assert_eq!(outline.width_mode, mtoon.outline_width_mode);
+        assert_vec4_close(
+            outline.color,
+            [
+                mtoon.outline_color_factor[0],
+                mtoon.outline_color_factor[1],
+                mtoon.outline_color_factor[2],
+                mtoon.outline_lighting_mix_factor,
+            ],
+        );
         let transforms = effects.apply_uv_transforms(
             GltfMaterialUvTransforms {
                 base: Some(TextureTransform2d {

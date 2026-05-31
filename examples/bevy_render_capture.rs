@@ -457,23 +457,8 @@ fn bevy_outline_primitive(
     morph_weights: &[f32],
     context: &BevyPrimitiveContext<'_>,
 ) -> Option<BevyPrimitive> {
-    let material = primitive
-        .material
-        .and_then(|index| loaded.model().document().materials.get(index))?;
-    let mtoon = material.mtoon.as_ref()?;
-    if !mtoon.outline_enabled() {
-        return None;
-    }
-    let outline_color = context.expression_effects.apply_color4(
-        [
-            mtoon.outline_color_factor[0],
-            mtoon.outline_color_factor[1],
-            mtoon.outline_color_factor[2],
-            mtoon.outline_lighting_mix_factor,
-        ],
-        primitive.material,
-        "outlineColor",
-    );
+    let outline =
+        loaded.expression_mtoon_outline_plan(primitive.material, context.expression_effects)?;
     let width_texture = loaded.material_outline_width_rgba8_image(primitive.material);
     let uv_transforms = loaded.expression_material_uv_transforms(
         primitive.material,
@@ -486,8 +471,8 @@ fn bevy_outline_primitive(
         context.world,
         context.skin_matrices,
         BevyOutlineMeshSettings {
-            width: mtoon.outline_width_factor * context.options.outline_width_scale,
-            width_mode: mtoon.outline_width_mode,
+            width: outline.width_factor * context.options.outline_width_scale,
+            width_mode: outline.width_mode,
             capture: context.options,
             width_texture: width_texture.as_ref(),
             width_transform: uv_transforms.outline_width,
@@ -508,7 +493,7 @@ fn bevy_outline_primitive(
         0.0,
         false,
     );
-    material.outline_color = BVec4::from_array(outline_color);
+    material.outline_color = BVec4::from_array(outline.color);
     material.alpha_mode = AlphaMode::Opaque;
     material.cull_mode = Some(Face::Front);
     material.pipeline.w = 0.0;
