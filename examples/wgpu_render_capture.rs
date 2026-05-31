@@ -508,11 +508,7 @@ fn draw_primitive(
             let position = morphed.map_or(Vec3::ZERO, |vertex| vertex.position);
             let normal = morphed.map_or(Vec3::Z, |vertex| vertex.normal);
             let tangent = morphed.map_or(Vec4::new(1.0, 0.0, 0.0, 1.0), |vertex| vertex.tangent);
-            let tex_coord = primitive
-                .tex_coords_0
-                .get(index)
-                .copied()
-                .unwrap_or([0.0, 0.0]);
+            let tex_coord = primitive.tex_coord_0_or_default(index);
             let vertex_color = primitive
                 .colors_0
                 .get(index)
@@ -786,9 +782,7 @@ fn material_uv_transforms(
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
-    let image = loaded.textures.get(texture)?.image;
-    let image = loaded.images.get(image)?;
-    CpuRgba8Image::from_image_data(image).ok()
+    loaded.texture_rgba8_image(texture)
 }
 
 fn texture_resources(

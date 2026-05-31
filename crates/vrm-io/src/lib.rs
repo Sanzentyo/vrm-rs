@@ -48,6 +48,15 @@ impl LoadedVrm {
         &self.scene
     }
 
+    pub fn texture_image(&self, texture: usize) -> Option<&ImageData> {
+        let image = self.textures.get(texture)?.image;
+        self.images.get(image)
+    }
+
+    pub fn texture_rgba8_image(&self, texture: usize) -> Option<CpuRgba8Image> {
+        CpuRgba8Image::from_image_data(self.texture_image(texture)?).ok()
+    }
+
     pub fn material_texture_slots(&self, material: Option<usize>) -> GltfMaterialTextureSlots {
         let mtoon = material
             .and_then(|index| self.model.document().materials.get(index))
@@ -1197,6 +1206,10 @@ pub struct GltfPrimitiveData {
 }
 
 impl GltfPrimitiveData {
+    pub fn tex_coord_0_or_default(&self, index: usize) -> [f32; 2] {
+        self.tex_coords_0.get(index).copied().unwrap_or([0.0, 0.0])
+    }
+
     pub fn morphed_vertex(&self, index: usize, morph_weights: &[f32]) -> Option<GltfMorphedVertex> {
         let mut position = Vec3::from_array(*self.positions.get(index)?);
         let mut normal = self
@@ -3088,6 +3101,10 @@ mod tests {
         assert_eq!(loaded.images[0].height, 1);
         assert_eq!(loaded.images[0].format, ImageFormat::R8G8B8A8);
         assert!(!loaded.images[0].bytes.is_empty());
+        assert_eq!(loaded.texture_image(0).unwrap().width, 1);
+        assert_eq!(loaded.texture_image(99), None);
+        assert_eq!(loaded.texture_rgba8_image(0).unwrap().rgba.len(), 4);
+        assert_eq!(loaded.texture_rgba8_image(99), None);
         assert_eq!(
             loaded.textures,
             vec![
@@ -3409,6 +3426,8 @@ mod tests {
             primitive.tex_coords_0,
             vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
         );
+        assert_eq!(primitive.tex_coord_0_or_default(1), [1.0, 0.0]);
+        assert_eq!(primitive.tex_coord_0_or_default(99), [0.0, 0.0]);
         assert_eq!(primitive.colors_0, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
         assert_eq!(
             primitive.joints_0,

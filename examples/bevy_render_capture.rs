@@ -549,7 +549,7 @@ fn bevy_outline_mesh(
                     .map(|image| {
                         image.sample_green_repeat_linear(
                             transform_tex_coord_0(
-                                primitive_tex_coord(primitive, index),
+                                primitive.tex_coord_0_or_default(index),
                                 settings.width_transform,
                             ),
                             Rgba8SamplingOrigin::BottomLeft,
@@ -631,14 +631,6 @@ struct BevyOutlineMeshSettings<'a> {
     capture: &'a CaptureOptions,
     width_texture: Option<&'a CpuRgba8Image>,
     width_transform: Option<TextureTransform2d>,
-}
-
-fn primitive_tex_coord(primitive: &GltfPrimitiveData, index: usize) -> [f32; 2] {
-    primitive
-        .tex_coords_0
-        .get(index)
-        .copied()
-        .unwrap_or([0.0, 0.0])
 }
 
 struct BevyPrimitive {
@@ -1312,9 +1304,7 @@ fn material_outline_width_image(
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
-    let image = loaded.textures.get(texture)?.image;
-    let image = loaded.images.get(image)?;
-    CpuRgba8Image::from_image_data(image).ok()
+    loaded.texture_rgba8_image(texture)
 }
 
 fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {
