@@ -57,6 +57,15 @@ impl LoadedVrm {
         CpuRgba8Image::from_image_data(self.texture_image(texture)?).ok()
     }
 
+    pub fn material_outline_width_rgba8_image(
+        &self,
+        material: Option<usize>,
+    ) -> Option<CpuRgba8Image> {
+        self.material_texture_slots(material)
+            .outline_width
+            .and_then(|texture| self.texture_rgba8_image(texture))
+    }
+
     pub fn material_texture_slots(&self, material: Option<usize>) -> GltfMaterialTextureSlots {
         let mtoon = material
             .and_then(|index| self.model.document().materials.get(index))
@@ -1208,6 +1217,14 @@ pub struct GltfPrimitiveData {
 impl GltfPrimitiveData {
     pub fn tex_coord_0_or_default(&self, index: usize) -> [f32; 2] {
         self.tex_coords_0.get(index).copied().unwrap_or([0.0, 0.0])
+    }
+
+    pub fn tex_coords_0_or_defaults(&self) -> Vec<[f32; 2]> {
+        if self.tex_coords_0.len() == self.positions.len() {
+            self.tex_coords_0.clone()
+        } else {
+            vec![[0.0, 0.0]; self.positions.len()]
+        }
     }
 
     pub fn morphed_vertex(&self, index: usize, morph_weights: &[f32]) -> Option<GltfMorphedVertex> {
@@ -3129,6 +3146,8 @@ mod tests {
                 "KHR_texture_transform": { "offset": [0.1, 0.2], "scale": [0.5, 0.75] }
             }
         });
+        sample["materials"][0]["extensions"]["VRMC_materials_mtoon"]["outlineWidthMultiplyTexture"] =
+            json!({ "index": 0 });
         sample["materials"][0]["occlusionTexture"] = json!({
             "index": 1,
             "strength": 0.5,
@@ -3154,6 +3173,15 @@ mod tests {
         assert_eq!(loaded.texture_image(99), None);
         assert_eq!(loaded.texture_rgba8_image(0).unwrap().rgba.len(), 4);
         assert_eq!(loaded.texture_rgba8_image(99), None);
+        assert_eq!(
+            loaded
+                .material_outline_width_rgba8_image(Some(0))
+                .unwrap()
+                .rgba
+                .len(),
+            4
+        );
+        assert_eq!(loaded.material_outline_width_rgba8_image(Some(99)), None);
         assert_eq!(
             loaded.textures,
             vec![
@@ -3247,6 +3275,7 @@ mod tests {
             GltfMaterialTextureSlots {
                 base: Some(0),
                 normal: Some(1),
+                outline_width: Some(0),
                 emissive: Some(0),
                 occlusion: Some(1),
                 ..Default::default()
@@ -3477,6 +3506,10 @@ mod tests {
         );
         assert_eq!(primitive.tex_coord_0_or_default(1), [1.0, 0.0]);
         assert_eq!(primitive.tex_coord_0_or_default(99), [0.0, 0.0]);
+        assert_eq!(
+            primitive.tex_coords_0_or_defaults(),
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+        );
         assert_eq!(primitive.colors_0, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
         assert_eq!(
             primitive.joints_0,

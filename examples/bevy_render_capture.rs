@@ -469,7 +469,7 @@ fn bevy_outline_primitive(
         primitive.material,
         "outlineColor",
     );
-    let width_texture = material_outline_width_image(loaded, primitive.material);
+    let width_texture = loaded.material_outline_width_rgba8_image(primitive.material);
     let uv_transforms = material_uv_transforms(
         loaded,
         primitive.material,
@@ -598,10 +598,7 @@ fn bevy_outline_mesh(
     if let Some(tangents) = tangents {
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     }
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
-    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, primitive.tex_coords_0_or_defaults());
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     mesh
 }
@@ -707,7 +704,7 @@ fn bevy_mesh(
         generate_gltf_tangents(
             &positions,
             &normals,
-            &tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
+            &primitive.tex_coords_0_or_defaults(),
             &primitive.indices,
         )
         .and_then(|tangents| tangents.all_tangents())
@@ -724,10 +721,7 @@ fn bevy_mesh(
     if let Some(tangents) = tangents {
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     }
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        tex_coords_or_default(primitive.positions.len(), &primitive.tex_coords_0),
-    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, primitive.tex_coords_0_or_defaults());
     mesh.insert_indices(Indices::U32(primitive.indices.clone()));
     (mesh, has_tangents)
 }
@@ -1178,14 +1172,6 @@ fn projection_y_scale() -> f32 {
     1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
-fn tex_coords_or_default(vertex_count: usize, tex_coords: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    if tex_coords.len() == vertex_count {
-        tex_coords.to_vec()
-    } else {
-        vec![[0.0, 0.0]; vertex_count]
-    }
-}
-
 fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
     let plan = render_capture_scene::capture_material_plan(loaded, material);
     if plan.alpha_mode == render_capture_scene::CaptureMaterialAlphaMode::Blend {
@@ -1233,20 +1219,6 @@ fn material_uv_transforms(
 ) -> GltfMaterialUvTransforms {
     let transforms = loaded.material_uv_transforms(material, mtoon_time);
     expression_effects.apply_uv_transforms(transforms, material)
-}
-
-fn material_outline_width_image(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-) -> Option<CpuRgba8Image> {
-    loaded
-        .material_texture_slots(material)
-        .outline_width
-        .and_then(|texture| sampled_image_for_texture(loaded, texture))
-}
-
-fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
-    loaded.texture_rgba8_image(texture)
 }
 
 fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {

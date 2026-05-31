@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
 use vrm_io::{
-    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
+    GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
     GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMinFilter, GltfOutlineScale,
@@ -417,7 +417,7 @@ fn outline_primitive(
     let width_texture = mtoon
         .textures
         .outline_width_multiply_texture
-        .and_then(|texture| sampled_image_for_texture(loaded, texture.0));
+        .and_then(|texture| loaded.texture_rgba8_image(texture.0));
     let uv_transforms = surface.uv_transforms;
     let width = mtoon.outline_width_factor * context.options.outline_width_scale;
     let outline_scale = GltfOutlineScale::new(
@@ -734,10 +734,6 @@ fn material_uv_transforms(
 ) -> GltfMaterialUvTransforms {
     let transforms = loaded.material_uv_transforms(material, mtoon_time);
     expression_effects.apply_uv_transforms(transforms, material)
-}
-
-fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
-    loaded.texture_rgba8_image(texture)
 }
 
 fn texture_resources(
