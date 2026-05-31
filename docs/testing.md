@@ -291,11 +291,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.66% | 84.66% |
+| Workspace total | 81.74% | 84.72% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.83% | 74.68% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 86.86% | 86.09% |
+| `vrm-io` | 87.08% | 86.32% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
@@ -331,7 +331,9 @@ lookup/RGBA8 conversion, renderer-neutral texCoord0 fallback, and
 renderer-neutral prepared vertex generation before renderer-specific buffer
 creation, renderer-neutral outline-width texture lookup, renderer-neutral
 whole-primitive UV fallback generation, and renderer-neutral RGBA mip-chain
-generation.
+generation. Expression-applied renderer material state is also shared through
+`LoadedVrm::expression_material_shading_plan` and
+`LoadedVrm::expression_material_uv_transforms`.
 
 ## Ordered Parity Milestones
 

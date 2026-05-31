@@ -55,10 +55,10 @@ use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialShadingOptions,
     GltfMaterialShadingPlan, GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan,
     GltfMaterialTextureColorSpace, GltfMaterialTextureFallback, GltfMaterialTextureSlot,
-    GltfMaterialUvTransforms, GltfMinFilter, GltfOutlineScale, GltfOutlineSettings,
-    GltfPrimitiveData, GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
-    load_vrm_from_path, transform_tex_coord_0,
+    GltfMinFilter, GltfOutlineScale, GltfOutlineSettings, GltfPrimitiveData, GltfSamplerData,
+    GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain,
+    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
+    transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -376,8 +376,13 @@ fn spawn_vrm_meshes(
             image_handles: &image_handles,
         };
         for primitive in &mesh.primitives {
-            let mut shading =
-                material_shading(loaded, primitive.material, &expression_effects, options);
+            let mut shading = loaded.expression_material_shading_plan(
+                primitive.material,
+                GltfMaterialShadingOptions {
+                    v0_compat_shade: options.mtoon_v0_compat_shade,
+                },
+                &expression_effects,
+            );
             if options.disable_normal_maps {
                 shading.normal_scale = 0.0;
             }
@@ -470,8 +475,7 @@ fn bevy_outline_primitive(
         "outlineColor",
     );
     let width_texture = loaded.material_outline_width_rgba8_image(primitive.material);
-    let uv_transforms = material_uv_transforms(
-        loaded,
+    let uv_transforms = loaded.expression_material_uv_transforms(
         primitive.material,
         context.options.mtoon_time,
         context.expression_effects,
@@ -492,11 +496,12 @@ fn bevy_outline_primitive(
     let mut material = bevy_mtoon_material(
         loaded,
         primitive,
-        material_shading(
-            loaded,
+        loaded.expression_material_shading_plan(
             primitive.material,
+            GltfMaterialShadingOptions {
+                v0_compat_shade: context.options.mtoon_v0_compat_shade,
+            },
             context.expression_effects,
-            context.options,
         ),
         context,
         render_depth_bias(material_render_order(loaded, primitive.material) + 1),
@@ -726,31 +731,6 @@ fn bevy_mesh(
     (mesh, has_tangents)
 }
 
-fn material_shading(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-    expression_effects: &GltfExpressionRenderEffects,
-    options: &CaptureOptions,
-) -> GltfMaterialShadingPlan {
-    let mut shading = loaded.material_shading_plan(
-        material,
-        GltfMaterialShadingOptions {
-            v0_compat_shade: options.mtoon_v0_compat_shade,
-        },
-    );
-    shading.base_color = expression_effects.apply_color4(shading.base_color, material, "color");
-    if !shading.pbr_fallback {
-        shading.shade_color =
-            expression_effects.apply_color4(shading.shade_color, material, "shadeColor");
-        shading.matcap_factor =
-            expression_effects.apply_color3(shading.matcap_factor, material, "matcapColor");
-        shading.parametric_rim_color =
-            expression_effects.apply_color3(shading.parametric_rim_color, material, "rimColor");
-    }
-    shading.emissive = expression_effects.apply_color3(shading.emissive, material, "emissionColor");
-    shading
-}
-
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 #[uniform(0, BevyMtoonUniform)]
 #[bind_group_data(BevyMtoonKey)]
@@ -941,8 +921,7 @@ fn bevy_mtoon_material(
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
     let cull_mode = material_cull_mode(loaded, primitive.material);
     let depth_write = material_depth_write(loaded, primitive.material);
-    let uv_transforms = material_uv_transforms(
-        loaded,
+    let uv_transforms = loaded.expression_material_uv_transforms(
         primitive.material,
         context.options.mtoon_time,
         context.expression_effects,
@@ -1209,16 +1188,6 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
         render_capture_scene::CaptureMaterialAlphaMode::Mask => AlphaMode::Mask(plan.alpha_cutoff),
         render_capture_scene::CaptureMaterialAlphaMode::Blend => AlphaMode::Blend,
     }
-}
-
-fn material_uv_transforms(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-    mtoon_time: f32,
-    expression_effects: &GltfExpressionRenderEffects,
-) -> GltfMaterialUvTransforms {
-    let transforms = loaded.material_uv_transforms(material, mtoon_time);
-    expression_effects.apply_uv_transforms(transforms, material)
 }
 
 fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {

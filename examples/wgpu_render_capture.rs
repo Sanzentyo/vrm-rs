@@ -483,17 +483,17 @@ fn draw_primitive(
     morph_weights: &[f32],
     context: &PrimitiveDrawContext<'_>,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
-    let mut shading = material_shading(
-        loaded,
+    let mut shading = loaded.expression_material_shading_plan(
         primitive.material,
+        GltfMaterialShadingOptions {
+            v0_compat_shade: context.options.mtoon_v0_compat_shade,
+        },
         context.expression_effects,
-        context.options,
     );
     if context.options.disable_normal_maps {
         shading.normal_scale = 0.0;
     }
-    let uv_transforms = material_uv_transforms(
-        loaded,
+    let uv_transforms = loaded.expression_material_uv_transforms(
         primitive.material,
         context.options.mtoon_time,
         context.expression_effects,
@@ -699,41 +699,6 @@ fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_sc
             vertex.normal_scale = 0.0;
         }
     }
-}
-
-fn material_shading(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-    expression_effects: &GltfExpressionRenderEffects,
-    options: &CaptureOptions,
-) -> GltfMaterialShadingPlan {
-    let mut shading = loaded.material_shading_plan(
-        material,
-        GltfMaterialShadingOptions {
-            v0_compat_shade: options.mtoon_v0_compat_shade,
-        },
-    );
-    shading.base_color = expression_effects.apply_color4(shading.base_color, material, "color");
-    if !shading.pbr_fallback {
-        shading.shade_color =
-            expression_effects.apply_color4(shading.shade_color, material, "shadeColor");
-        shading.matcap_factor =
-            expression_effects.apply_color3(shading.matcap_factor, material, "matcapColor");
-        shading.parametric_rim_color =
-            expression_effects.apply_color3(shading.parametric_rim_color, material, "rimColor");
-    }
-    shading.emissive = expression_effects.apply_color3(shading.emissive, material, "emissionColor");
-    shading
-}
-
-fn material_uv_transforms(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-    mtoon_time: f32,
-    expression_effects: &GltfExpressionRenderEffects,
-) -> GltfMaterialUvTransforms {
-    let transforms = loaded.material_uv_transforms(material, mtoon_time);
-    expression_effects.apply_uv_transforms(transforms, material)
 }
 
 fn texture_resources(

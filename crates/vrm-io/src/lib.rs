@@ -141,6 +141,16 @@ impl LoadedVrm {
         }
     }
 
+    pub fn expression_material_uv_transforms(
+        &self,
+        material: Option<usize>,
+        mtoon_time: f32,
+        expression_effects: &GltfExpressionRenderEffects,
+    ) -> GltfMaterialUvTransforms {
+        let transforms = self.material_uv_transforms(material, mtoon_time);
+        expression_effects.apply_uv_transforms(transforms, material)
+    }
+
     pub fn material_shading_plan(
         &self,
         material: Option<usize>,
@@ -217,6 +227,27 @@ impl LoadedVrm {
             unlit: gltf.is_some_and(|material| material.unlit),
             v0_compat_shade: false,
         }
+    }
+
+    pub fn expression_material_shading_plan(
+        &self,
+        material: Option<usize>,
+        options: GltfMaterialShadingOptions,
+        expression_effects: &GltfExpressionRenderEffects,
+    ) -> GltfMaterialShadingPlan {
+        let mut shading = self.material_shading_plan(material, options);
+        shading.base_color = expression_effects.apply_color4(shading.base_color, material, "color");
+        if !shading.pbr_fallback {
+            shading.shade_color =
+                expression_effects.apply_color4(shading.shade_color, material, "shadeColor");
+            shading.matcap_factor =
+                expression_effects.apply_color3(shading.matcap_factor, material, "matcapColor");
+            shading.parametric_rim_color =
+                expression_effects.apply_color3(shading.parametric_rim_color, material, "rimColor");
+        }
+        shading.emissive =
+            expression_effects.apply_color3(shading.emissive, material, "emissionColor");
+        shading
     }
 
     fn material_normal_scale(&self, material: Option<usize>) -> f32 {
@@ -2932,6 +2963,15 @@ mod tests {
             effects.apply_color3([0.0, 0.0, 0.0], Some(0), "emissionColor"),
             [0.25, 0.2, 0.15],
         );
+        let expression_shading = loaded.expression_material_shading_plan(
+            Some(0),
+            GltfMaterialShadingOptions {
+                v0_compat_shade: false,
+            },
+            &effects,
+        );
+        assert_vec4_close(expression_shading.base_color, [0.95, 0.9, 0.85, 0.8]);
+        assert_vec3_close(expression_shading.emissive, [0.25, 0.2, 0.15]);
         let transforms = effects.apply_uv_transforms(
             GltfMaterialUvTransforms {
                 base: Some(TextureTransform2d {
@@ -2951,6 +2991,17 @@ mod tests {
                 scale: [0.625, 0.75],
                 rotation: 0.25,
                 tex_coord: Some(0),
+            })
+        );
+        let expression_transforms =
+            loaded.expression_material_uv_transforms(Some(0), 0.0, &effects);
+        assert_eq!(
+            expression_transforms.base,
+            Some(TextureTransform2d {
+                offset: [0.375, 0.125],
+                scale: [0.625, 0.75],
+                rotation: 0.0,
+                tex_coord: None,
             })
         );
         assert!(matches!(
