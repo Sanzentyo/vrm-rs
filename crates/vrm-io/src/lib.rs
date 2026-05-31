@@ -79,6 +79,48 @@ impl LoadedVrm {
             ),
         }
     }
+
+    pub fn material_uv_transforms(
+        &self,
+        material: Option<usize>,
+        mtoon_time: f32,
+    ) -> GltfMaterialUvTransforms {
+        let mtoon = material
+            .and_then(|index| self.model.document().materials.get(index))
+            .and_then(|material| material.mtoon.as_ref());
+        let gltf = material.and_then(|index| self.gltf_materials.get(index));
+        let base = mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.main_texture)
+            .or_else(|| gltf.and_then(|material| material.base_color_texture_transform));
+        let shade = mtoon
+            .and_then(|mtoon| mtoon.texture_transforms.shade_multiply_texture)
+            .or(base);
+
+        GltfMaterialUvTransforms {
+            base,
+            shade,
+            shading_shift: mtoon.and_then(|mtoon| mtoon.texture_transforms.shading_shift_texture),
+            normal: mtoon
+                .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
+                .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
+            matcap: mtoon.and_then(|mtoon| mtoon.texture_transforms.matcap_texture),
+            rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
+            outline_width: mtoon
+                .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
+            emissive: gltf.and_then(|material| material.emissive_texture_transform),
+            occlusion: gltf.and_then(|material| material.occlusion_texture_transform),
+            uv_animation_mask: mtoon
+                .and_then(|mtoon| mtoon.texture_transforms.uv_animation_mask_texture),
+            uv_animation_scroll: mtoon.map_or([0.0, 0.0], |mtoon| {
+                [
+                    mtoon.uv_animation.scroll_x_speed * mtoon_time,
+                    mtoon.uv_animation.scroll_y_speed * mtoon_time,
+                ]
+            }),
+            uv_animation_rotation: mtoon
+                .map_or(0.0, |mtoon| mtoon.uv_animation.rotation_speed * mtoon_time),
+        }
+    }
 }
 
 impl GltfSceneRest {
@@ -396,6 +438,22 @@ pub struct GltfMaterialTextureSlots {
     pub emissive: Option<usize>,
     pub occlusion: Option<usize>,
     pub uv_animation_mask: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GltfMaterialUvTransforms {
+    pub base: Option<TextureTransform2d>,
+    pub shade: Option<TextureTransform2d>,
+    pub shading_shift: Option<TextureTransform2d>,
+    pub normal: Option<TextureTransform2d>,
+    pub matcap: Option<TextureTransform2d>,
+    pub rim: Option<TextureTransform2d>,
+    pub outline_width: Option<TextureTransform2d>,
+    pub emissive: Option<TextureTransform2d>,
+    pub occlusion: Option<TextureTransform2d>,
+    pub uv_animation_mask: Option<TextureTransform2d>,
+    pub uv_animation_scroll: [f32; 2],
+    pub uv_animation_rotation: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -2082,6 +2140,36 @@ mod tests {
                 normal: Some(1),
                 emissive: Some(0),
                 occlusion: Some(1),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            loaded.material_uv_transforms(Some(0), 1.0),
+            GltfMaterialUvTransforms {
+                base: Some(TextureTransform2d {
+                    offset: [0.25, 0.5],
+                    scale: [2.0, 3.0],
+                    rotation: 0.125,
+                    tex_coord: Some(1),
+                }),
+                shade: Some(TextureTransform2d {
+                    offset: [0.25, 0.5],
+                    scale: [2.0, 3.0],
+                    rotation: 0.125,
+                    tex_coord: Some(1),
+                }),
+                normal: Some(TextureTransform2d {
+                    offset: [0.1, 0.2],
+                    scale: [0.5, 0.75],
+                    rotation: 0.0,
+                    tex_coord: Some(0),
+                }),
+                occlusion: Some(TextureTransform2d {
+                    offset: [0.3, 0.4],
+                    scale: [0.6, 0.7],
+                    rotation: 0.0,
+                    tex_coord: Some(0),
+                }),
                 ..Default::default()
             }
         );

@@ -52,9 +52,9 @@ use std::sync::{
 use std::time::Duration;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    CpuRgba8Image, GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
+    CpuRgba8Image, GltfMagFilter, GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter,
+    GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm,
+    Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -202,22 +202,6 @@ struct SceneController {
     state: SceneState,
     width: u32,
     height: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct MaterialUvTransforms {
-    base: Option<TextureTransform2d>,
-    shade: Option<TextureTransform2d>,
-    shading_shift: Option<TextureTransform2d>,
-    normal: Option<TextureTransform2d>,
-    matcap: Option<TextureTransform2d>,
-    rim: Option<TextureTransform2d>,
-    outline_width: Option<TextureTransform2d>,
-    emissive: Option<TextureTransform2d>,
-    occlusion: Option<TextureTransform2d>,
-    uv_animation_mask: Option<TextureTransform2d>,
-    uv_animation_scroll: [f32; 2],
-    uv_animation_rotation: f32,
 }
 
 impl SceneController {
@@ -1853,49 +1837,16 @@ fn material_uv_transforms(
     material: Option<usize>,
     mtoon_time: f32,
     expression_effects: &ExpressionRenderEffects,
-) -> MaterialUvTransforms {
-    let mtoon = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref());
-    let gltf = material.and_then(|index| loaded.gltf_materials.get(index));
-    let base = mtoon
-        .and_then(|mtoon| mtoon.texture_transforms.main_texture)
-        .or_else(|| gltf.and_then(|material| material.base_color_texture_transform));
-    let shade = mtoon
-        .and_then(|mtoon| mtoon.texture_transforms.shade_multiply_texture)
-        .or(base);
-    let transforms = MaterialUvTransforms {
-        base,
-        shade,
-        shading_shift: mtoon.and_then(|mtoon| mtoon.texture_transforms.shading_shift_texture),
-        normal: mtoon
-            .and_then(|mtoon| mtoon.texture_transforms.normal_texture)
-            .or_else(|| gltf.and_then(|material| material.normal_texture_transform)),
-        matcap: mtoon.and_then(|mtoon| mtoon.texture_transforms.matcap_texture),
-        rim: mtoon.and_then(|mtoon| mtoon.texture_transforms.rim_multiply_texture),
-        outline_width: mtoon
-            .and_then(|mtoon| mtoon.texture_transforms.outline_width_multiply_texture),
-        emissive: gltf.and_then(|material| material.emissive_texture_transform),
-        occlusion: gltf.and_then(|material| material.occlusion_texture_transform),
-        uv_animation_mask: mtoon
-            .and_then(|mtoon| mtoon.texture_transforms.uv_animation_mask_texture),
-        uv_animation_scroll: mtoon.map_or([0.0, 0.0], |mtoon| {
-            [
-                mtoon.uv_animation.scroll_x_speed * mtoon_time,
-                mtoon.uv_animation.scroll_y_speed * mtoon_time,
-            ]
-        }),
-        uv_animation_rotation: mtoon
-            .map_or(0.0, |mtoon| mtoon.uv_animation.rotation_speed * mtoon_time),
-    };
+) -> GltfMaterialUvTransforms {
+    let transforms = loaded.material_uv_transforms(material, mtoon_time);
     apply_texture_transform_effects(transforms, material, expression_effects)
 }
 
 fn apply_texture_transform_effects(
-    mut transforms: MaterialUvTransforms,
+    mut transforms: GltfMaterialUvTransforms,
     material: Option<usize>,
     effects: &ExpressionRenderEffects,
-) -> MaterialUvTransforms {
+) -> GltfMaterialUvTransforms {
     let Some(material) = material else {
         return transforms;
     };

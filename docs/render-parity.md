@@ -723,6 +723,10 @@ Texture slot selection for concrete captures now goes through
 `LoadedVrm::material_texture_slots`, which keeps MToon slot lookup and glTF
 base/normal fallback behavior identical between wgpu, Bevy, and future
 ash/custom renderer examples.
+The matching `LoadedVrm::material_uv_transforms` helper now centralizes MToon
+texture transforms, glTF texture-transform fallbacks, shade fallback-to-base
+behavior, and time-based UV animation scroll/rotation before the concrete
+captures apply expression-driven transform overrides.
 
 The canonical comparison images for the current local sample sweep are:
 
