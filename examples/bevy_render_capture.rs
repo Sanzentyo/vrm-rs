@@ -54,9 +54,11 @@ use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, Mtoon
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     CpuRgba8Image, GltfMagFilter, GltfMaterialShadingOptions, GltfMaterialShadingPlan,
-    GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
+    GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace,
+    GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialUvTransforms, GltfMeshData,
+    GltfMinFilter, GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, ImageData,
+    LoadedVrm, Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8,
+    load_vrm_from_path, transform_tex_coord_0,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -1393,7 +1395,9 @@ fn bevy_mtoon_material(
     );
     let uv_plan = uv_transforms.uniform_plan();
     let image_handles = context.image_handles;
-    let texture_slots = loaded.material_texture_slots(primitive.material);
+    let texture_plan = loaded
+        .material_texture_slots(primitive.material)
+        .binding_plan();
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -1472,55 +1476,92 @@ fn bevy_mtoon_material(
         uv_rotation_a: BVec4::from_array(uv_plan.rotation_a),
         uv_rotation_b: BVec4::from_array(uv_plan.rotation_b),
         uv_animation: BVec4::from_array(uv_plan.uv_animation),
-        base_texture: texture_slots
-            .base
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
-        shade_texture: texture_slots
-            .shade
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
-        shading_shift_texture: texture_slots
-            .shading_shift
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.black.clone()),
-        matcap_texture: texture_slots
-            .matcap
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.black.clone()),
-        rim_texture: texture_slots
-            .rim
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
-        normal_texture: texture_slots
-            .normal
-            .and_then(|texture| image_handles.linear_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.neutral_normal.clone()),
-        emissive_texture: texture_slots
-            .emissive
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
-        uv_animation_mask_texture: texture_slots
-            .uv_animation_mask
-            .and_then(|texture| image_handles.color_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
-        occlusion_texture: texture_slots
-            .occlusion
-            .and_then(|texture| image_handles.linear_images.get(texture))
-            .and_then(Clone::clone)
-            .unwrap_or_else(|| image_handles.white.clone()),
+        base_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Base,
+            image_handles,
+        ),
+        shade_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Shade,
+            image_handles,
+        ),
+        shading_shift_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::ShadingShift,
+            image_handles,
+        ),
+        matcap_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Matcap,
+            image_handles,
+        ),
+        rim_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Rim,
+            image_handles,
+        ),
+        normal_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Normal,
+            image_handles,
+        ),
+        emissive_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Emissive,
+            image_handles,
+        ),
+        uv_animation_mask_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::UvAnimationMask,
+            image_handles,
+        ),
+        occlusion_texture: bevy_texture_binding(
+            &texture_plan,
+            GltfMaterialTextureSlot::Occlusion,
+            image_handles,
+        ),
         alpha_mode,
         cull_mode,
         depth_write,
         depth_bias,
+    }
+}
+
+fn bevy_texture_binding(
+    plan: &GltfMaterialTextureBindingPlan,
+    slot: GltfMaterialTextureSlot,
+    handles: &BevyImageHandles,
+) -> Handle<Image> {
+    let binding = plan
+        .binding(slot)
+        .expect("MToon texture binding plan must contain every shader slot");
+    bevy_texture_handle(binding, handles)
+}
+
+fn bevy_texture_handle(
+    binding: GltfMaterialTextureBinding,
+    handles: &BevyImageHandles,
+) -> Handle<Image> {
+    let images = match binding.color_space {
+        GltfMaterialTextureColorSpace::Srgb => &handles.color_images,
+        GltfMaterialTextureColorSpace::Linear => &handles.linear_images,
+    };
+    binding
+        .texture
+        .and_then(|texture| images.get(texture))
+        .and_then(Clone::clone)
+        .unwrap_or_else(|| bevy_fallback_texture(binding.fallback, handles))
+}
+
+fn bevy_fallback_texture(
+    fallback: GltfMaterialTextureFallback,
+    handles: &BevyImageHandles,
+) -> Handle<Image> {
+    match fallback {
+        GltfMaterialTextureFallback::White => handles.white.clone(),
+        GltfMaterialTextureFallback::Black => handles.black.clone(),
+        GltfMaterialTextureFallback::NeutralNormal => handles.neutral_normal.clone(),
     }
 }
 

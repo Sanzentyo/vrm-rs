@@ -528,6 +528,118 @@ pub struct GltfMaterialTextureSlots {
     pub uv_animation_mask: Option<usize>,
 }
 
+impl GltfMaterialTextureSlots {
+    pub fn binding_plan(self) -> GltfMaterialTextureBindingPlan {
+        GltfMaterialTextureBindingPlan {
+            bindings: [
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Base,
+                    texture: self.base,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Shade,
+                    texture: self.shade,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::ShadingShift,
+                    texture: self.shading_shift,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::Black,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Normal,
+                    texture: self.normal,
+                    color_space: GltfMaterialTextureColorSpace::Linear,
+                    fallback: GltfMaterialTextureFallback::NeutralNormal,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Matcap,
+                    texture: self.matcap,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::Black,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Rim,
+                    texture: self.rim,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Emissive,
+                    texture: self.emissive,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::Occlusion,
+                    texture: self.occlusion,
+                    color_space: GltfMaterialTextureColorSpace::Linear,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+                GltfMaterialTextureBinding {
+                    slot: GltfMaterialTextureSlot::UvAnimationMask,
+                    texture: self.uv_animation_mask,
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    fallback: GltfMaterialTextureFallback::White,
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GltfMaterialTextureSlot {
+    Base,
+    Shade,
+    ShadingShift,
+    Normal,
+    Matcap,
+    Rim,
+    Emissive,
+    Occlusion,
+    UvAnimationMask,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GltfMaterialTextureColorSpace {
+    Srgb,
+    Linear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GltfMaterialTextureFallback {
+    White,
+    Black,
+    NeutralNormal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GltfMaterialTextureBinding {
+    pub slot: GltfMaterialTextureSlot,
+    pub texture: Option<usize>,
+    pub color_space: GltfMaterialTextureColorSpace,
+    pub fallback: GltfMaterialTextureFallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GltfMaterialTextureBindingPlan {
+    pub bindings: [GltfMaterialTextureBinding; 9],
+}
+
+impl GltfMaterialTextureBindingPlan {
+    pub fn iter(&self) -> impl Iterator<Item = GltfMaterialTextureBinding> + '_ {
+        self.bindings.iter().copied()
+    }
+
+    pub fn binding(&self, slot: GltfMaterialTextureSlot) -> Option<GltfMaterialTextureBinding> {
+        self.iter().find(|binding| binding.slot == slot)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GltfMaterialUvTransforms {
     pub base: Option<TextureTransform2d>,
@@ -2396,6 +2508,44 @@ mod tests {
                 ..Default::default()
             }
         );
+        let texture_plan = loaded.material_texture_slots(Some(0)).binding_plan();
+        assert_eq!(
+            texture_plan.binding(GltfMaterialTextureSlot::Base),
+            Some(GltfMaterialTextureBinding {
+                slot: GltfMaterialTextureSlot::Base,
+                texture: Some(0),
+                color_space: GltfMaterialTextureColorSpace::Srgb,
+                fallback: GltfMaterialTextureFallback::White,
+            })
+        );
+        assert_eq!(
+            texture_plan.binding(GltfMaterialTextureSlot::Normal),
+            Some(GltfMaterialTextureBinding {
+                slot: GltfMaterialTextureSlot::Normal,
+                texture: Some(1),
+                color_space: GltfMaterialTextureColorSpace::Linear,
+                fallback: GltfMaterialTextureFallback::NeutralNormal,
+            })
+        );
+        assert_eq!(
+            texture_plan.binding(GltfMaterialTextureSlot::Occlusion),
+            Some(GltfMaterialTextureBinding {
+                slot: GltfMaterialTextureSlot::Occlusion,
+                texture: Some(1),
+                color_space: GltfMaterialTextureColorSpace::Linear,
+                fallback: GltfMaterialTextureFallback::White,
+            })
+        );
+        assert_eq!(
+            texture_plan.binding(GltfMaterialTextureSlot::ShadingShift),
+            Some(GltfMaterialTextureBinding {
+                slot: GltfMaterialTextureSlot::ShadingShift,
+                texture: None,
+                color_space: GltfMaterialTextureColorSpace::Srgb,
+                fallback: GltfMaterialTextureFallback::Black,
+            })
+        );
+        assert_eq!(texture_plan.iter().count(), 9);
         assert_eq!(
             loaded.material_uv_transforms(Some(0), 1.0),
             GltfMaterialUvTransforms {

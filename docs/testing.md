@@ -164,6 +164,10 @@ Material texture slot selection is shared through
 `LoadedVrm::material_texture_slots`, including MToon texture slots, glTF
 base/normal fallbacks, emissive and occlusion textures, and outline/UV-animation
 mask slots after texture-index validation.
+The matching `GltfMaterialTextureSlots::binding_plan` keeps shader-slot
+texture index, sRGB/linear table selection, and white/black/neutral-normal
+fallback policy in renderer-neutral data before wgpu, Bevy, ash, or custom
+engines allocate concrete texture handles.
 Material UV transform selection is shared through
 `LoadedVrm::material_uv_transforms`, including MToon transforms, glTF
 base/normal/emissive/occlusion fallbacks, shade fallback-to-base behavior, and
@@ -278,11 +282,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.56% | 83.57% |
+| Workspace total | 80.64% | 83.67% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.22% | 73.91% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 84.68% | 82.99% |
+| `vrm-io` | 84.95% | 83.48% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -307,11 +311,11 @@ public MToon renderer material plans, public primitive pipeline plans, glTF
 sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
 `KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
 RGBA8 image normalization, renderer-neutral RGBA channel sampling,
-renderer-neutral material texture slot and UV transform resolution,
-renderer-neutral UV uniform packing, renderer-neutral material shading input
-selection, renderer-neutral texCoord0 transform application, renderer-neutral
-MToon lighting accumulator resolution, and renderer-neutral RGBA mip-chain
-generation.
+renderer-neutral material texture slot resolution and binding plans,
+renderer-neutral material UV transform resolution, renderer-neutral UV uniform
+packing, renderer-neutral material shading input selection, renderer-neutral
+texCoord0 transform application, renderer-neutral MToon lighting accumulator
+resolution, and renderer-neutral RGBA mip-chain generation.
 
 ## Ordered Parity Milestones
 

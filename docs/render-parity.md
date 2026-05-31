@@ -723,6 +723,10 @@ Texture slot selection for concrete captures now goes through
 `LoadedVrm::material_texture_slots`, which keeps MToon slot lookup and glTF
 base/normal fallback behavior identical between wgpu, Bevy, and future
 ash/custom renderer examples.
+`GltfMaterialTextureSlots::binding_plan` further shares the shader-slot
+binding contract: each slot carries its resolved texture index, sRGB versus
+linear upload-table choice, and white/black/neutral-normal fallback before a
+renderer creates handles, bind groups, or descriptor sets.
 The matching `LoadedVrm::material_uv_transforms` helper now centralizes MToon
 texture transforms, glTF texture-transform fallbacks, shade fallback-to-base
 behavior, and time-based UV animation scroll/rotation before the concrete

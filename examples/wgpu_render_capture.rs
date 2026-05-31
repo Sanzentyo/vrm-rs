@@ -21,8 +21,10 @@ use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, Mtoon
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     CpuRgba8Image, GltfMagFilter, GltfMaterialShadingOptions, GltfMaterialShadingPlan,
-    GltfMaterialTextureSlots, GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter, GltfNodeRest,
-    GltfPrimitiveData, GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
+    GltfMaterialTextureBinding, GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace,
+    GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialTextureSlots,
+    GltfMaterialUvTransforms, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
+    GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
     generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path, transform_tex_coord_0,
 };
 use wgpu::util::DeviceExt;
@@ -302,6 +304,7 @@ struct TextureResource {
     sampler: wgpu::Sampler,
 }
 
+#[derive(Clone, Copy)]
 struct TextureResourceTables<'a> {
     color: &'a [TextureResource],
     normal: &'a [TextureResource],
@@ -1464,36 +1467,50 @@ fn material_texture_bind_group(
     uv_transforms: MaterialUvTransforms,
     material_extra: MaterialExtraUniform,
 ) -> TextureBindGroup {
-    let base = texture_view(resources.color, resources.indices, images.base, 0);
-    let shade = texture_view(resources.color, resources.indices, images.shade, 0);
-    let shading_shift = texture_view(resources.color, resources.indices, images.shading_shift, 1);
-    let matcap = texture_view(resources.color, resources.indices, images.matcap, 1);
-    let rim = texture_view(resources.color, resources.indices, images.rim, 0);
-    let emissive = texture_view(resources.color, resources.indices, images.emissive, 0);
-    let occlusion = texture_view(resources.normal, resources.indices, images.occlusion, 0);
-    let uv_animation_mask = texture_view(
-        resources.color,
-        resources.indices,
-        images.uv_animation_mask,
-        0,
+    let binding_plan = images.binding_plan();
+    let base = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Base, resources);
+    let shade = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Shade, resources);
+    let shading_shift = texture_binding_view(
+        &binding_plan,
+        GltfMaterialTextureSlot::ShadingShift,
+        resources,
     );
-    let normal = texture_view(resources.normal, resources.indices, images.normal, 2);
-    let base_sampler = texture_sampler(resources.color, resources.indices, images.base, 0);
-    let shade_sampler = texture_sampler(resources.color, resources.indices, images.shade, 0);
-    let shading_shift_sampler =
-        texture_sampler(resources.color, resources.indices, images.shading_shift, 1);
-    let matcap_sampler = texture_sampler(resources.color, resources.indices, images.matcap, 1);
-    let rim_sampler = texture_sampler(resources.color, resources.indices, images.rim, 0);
-    let normal_sampler = texture_sampler(resources.normal, resources.indices, images.normal, 2);
-    let emissive_sampler = texture_sampler(resources.color, resources.indices, images.emissive, 0);
-    let uv_animation_mask_sampler = texture_sampler(
-        resources.color,
-        resources.indices,
-        images.uv_animation_mask,
-        0,
+    let matcap = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Matcap, resources);
+    let rim = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Rim, resources);
+    let emissive =
+        texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Emissive, resources);
+    let occlusion =
+        texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Occlusion, resources);
+    let uv_animation_mask = texture_binding_view(
+        &binding_plan,
+        GltfMaterialTextureSlot::UvAnimationMask,
+        resources,
+    );
+    let normal = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Normal, resources);
+    let base_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Base, resources);
+    let shade_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Shade, resources);
+    let shading_shift_sampler = texture_binding_sampler(
+        &binding_plan,
+        GltfMaterialTextureSlot::ShadingShift,
+        resources,
+    );
+    let matcap_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Matcap, resources);
+    let rim_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Rim, resources);
+    let normal_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Normal, resources);
+    let emissive_sampler =
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Emissive, resources);
+    let uv_animation_mask_sampler = texture_binding_sampler(
+        &binding_plan,
+        GltfMaterialTextureSlot::UvAnimationMask,
+        resources,
     );
     let occlusion_sampler =
-        texture_sampler(resources.normal, resources.indices, images.occlusion, 0);
+        texture_binding_sampler(&binding_plan, GltfMaterialTextureSlot::Occlusion, resources);
     let uv_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render parity material uv transform uniform"),
         contents: bytemuck::bytes_of(&MaterialUvUniform::from(uv_transforms)),
@@ -1594,6 +1611,59 @@ fn material_texture_bind_group(
         bind_group,
         _uv_uniform_buffer: uv_uniform_buffer,
         _material_extra_buffer: material_extra_buffer,
+    }
+}
+
+fn texture_binding_view<'a>(
+    plan: &GltfMaterialTextureBindingPlan,
+    slot: GltfMaterialTextureSlot,
+    resources: TextureResourceTables<'a>,
+) -> &'a wgpu::TextureView {
+    let binding = plan
+        .binding(slot)
+        .expect("MToon texture binding plan must contain every shader slot");
+    let (resource_table, fallback_index) = texture_binding_resources(binding, resources);
+    texture_view(
+        resource_table,
+        resources.indices,
+        binding.texture,
+        fallback_index,
+    )
+}
+
+fn texture_binding_sampler<'a>(
+    plan: &GltfMaterialTextureBindingPlan,
+    slot: GltfMaterialTextureSlot,
+    resources: TextureResourceTables<'a>,
+) -> &'a wgpu::Sampler {
+    let binding = plan
+        .binding(slot)
+        .expect("MToon texture binding plan must contain every shader slot");
+    let (resource_table, fallback_index) = texture_binding_resources(binding, resources);
+    texture_sampler(
+        resource_table,
+        resources.indices,
+        binding.texture,
+        fallback_index,
+    )
+}
+
+fn texture_binding_resources<'a>(
+    binding: GltfMaterialTextureBinding,
+    resources: TextureResourceTables<'a>,
+) -> (&'a [TextureResource], usize) {
+    let selected = match binding.color_space {
+        GltfMaterialTextureColorSpace::Srgb => resources.color,
+        GltfMaterialTextureColorSpace::Linear => resources.normal,
+    };
+    (selected, texture_fallback_index(binding.fallback))
+}
+
+fn texture_fallback_index(fallback: GltfMaterialTextureFallback) -> usize {
+    match fallback {
+        GltfMaterialTextureFallback::White => 0,
+        GltfMaterialTextureFallback::Black => 1,
+        GltfMaterialTextureFallback::NeutralNormal => 2,
     }
 }
 
