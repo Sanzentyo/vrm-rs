@@ -2,6 +2,7 @@
 
 ## 2026-05-31
 
+- Shared the concrete capture material policy through a backend-neutral `CaptureMaterialPlan` in `examples/common/render_capture_scene.rs`. The wgpu and Bevy render captures now consume the same MToon/glTF alpha, cull, depth-write, blend, render-order, and transparent queue decisions before converting to backend-specific pipeline types. `just render-parity-transparent-queue-matrix D:/git/three-vrm` still passes after the refactor with identical alpha buckets, selected `rgb-visible` PSNR wgpu `53.0342 dB` / Bevy `48.4839 dB`, and max selected channel delta `2` / `3`.
 - Refactored the local render-parity runner toward a Sans I/O boundary. `tools/ci/local-ci.rs` now keeps filesystem operations in thin wrappers while RGBA JSON parsing, diff-heatmap generation, PSNR report summary extraction, and summary Markdown formatting operate on in-memory strings, JSON values, or `RgbaArtifact` buffers. `just render-parity-transparent-queue-matrix D:/git/three-vrm` still passes after the refactor, proving PNG/diff/summary artifact generation remains wired through the new pure helpers.
 
 ## 2026-05-30

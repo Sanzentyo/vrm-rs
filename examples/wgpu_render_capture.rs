@@ -18,12 +18,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{
-    ExpressionBind, ExpressionName, Feature, MtoonAlphaMode, MtoonCullMode, OutlineWidthMode,
-    TextureTransform2d, VrmKind,
+    ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d, VrmKind,
 };
 use vrm_io::{
-    GltfAlphaMode, GltfMeshData, GltfNodeRest, GltfPrimitiveData, GltfSkinData, ImageData,
-    ImageFormat, LoadedVrm, load_vrm_from_path,
+    GltfMeshData, GltfNodeRest, GltfPrimitiveData, GltfSkinData, ImageData, ImageFormat, LoadedVrm,
+    load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -1015,69 +1014,30 @@ fn material_extra_uniform(
 }
 
 fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicy {
-    let mtoon = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref());
-    let mut policy = mtoon
-        .map(|mtoon| {
-            let hints = mtoon.pipeline_hints();
-            MaterialPolicy {
-                render_order: hints.render_order,
-                cull_mode: capture_cull_mode(hints.cull_mode),
-                alpha_mode: capture_alpha_mode(hints.alpha_mode),
-                depth_write: hints.depth_write,
-                blend: hints.blend,
-                alpha_cutoff: mtoon.cutoff_factor,
-            }
-        })
-        .unwrap_or_default();
-    if let Some(gltf) = material.and_then(|index| loaded.gltf_materials.get(index)) {
-        match gltf.alpha_mode {
-            GltfAlphaMode::Opaque => {}
-            GltfAlphaMode::Mask => {
-                policy.alpha_mode = CaptureAlphaMode::Mask;
-                policy.depth_write = true;
-                policy.blend = false;
-                policy.alpha_cutoff = gltf.alpha_cutoff.unwrap_or(0.5);
-            }
-            GltfAlphaMode::Blend => {
-                policy.alpha_mode = CaptureAlphaMode::Blend;
-                policy.depth_write = mtoon.is_some_and(|mtoon| mtoon.transparent_with_z_write);
-                policy.blend = true;
-                policy.render_order = mtoon.map_or(policy.render_order.max(3000), |mtoon| {
-                    3000 + mtoon_transparent_order_offset(mtoon)
-                });
-            }
-        }
-        if gltf.double_sided {
-            policy.cull_mode = CaptureCullMode::Off;
-        }
-    }
-    policy
-}
-
-fn mtoon_transparent_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
-    let queue_offset = if mtoon.transparent_with_z_write {
-        0
-    } else {
-        19
-    };
-    queue_offset + mtoon.render_queue_offset_number
-}
-
-fn capture_cull_mode(mode: MtoonCullMode) -> CaptureCullMode {
-    match mode {
-        MtoonCullMode::Off => CaptureCullMode::Off,
-        MtoonCullMode::Front => CaptureCullMode::Front,
-        MtoonCullMode::Back => CaptureCullMode::Back,
+    let plan = render_capture_scene::capture_material_plan(loaded, material);
+    MaterialPolicy {
+        render_order: plan.render_order,
+        cull_mode: capture_cull_mode(plan.cull_mode),
+        alpha_mode: capture_alpha_mode(plan.alpha_mode),
+        depth_write: plan.depth_write,
+        blend: plan.blend,
+        alpha_cutoff: plan.alpha_cutoff,
     }
 }
 
-fn capture_alpha_mode(mode: MtoonAlphaMode) -> CaptureAlphaMode {
+fn capture_cull_mode(mode: render_capture_scene::CaptureMaterialCullMode) -> CaptureCullMode {
     match mode {
-        MtoonAlphaMode::Opaque => CaptureAlphaMode::Opaque,
-        MtoonAlphaMode::Mask => CaptureAlphaMode::Mask,
-        MtoonAlphaMode::Blend => CaptureAlphaMode::Blend,
+        render_capture_scene::CaptureMaterialCullMode::Off => CaptureCullMode::Off,
+        render_capture_scene::CaptureMaterialCullMode::Front => CaptureCullMode::Front,
+        render_capture_scene::CaptureMaterialCullMode::Back => CaptureCullMode::Back,
+    }
+}
+
+fn capture_alpha_mode(mode: render_capture_scene::CaptureMaterialAlphaMode) -> CaptureAlphaMode {
+    match mode {
+        render_capture_scene::CaptureMaterialAlphaMode::Opaque => CaptureAlphaMode::Opaque,
+        render_capture_scene::CaptureMaterialAlphaMode::Mask => CaptureAlphaMode::Mask,
+        render_capture_scene::CaptureMaterialAlphaMode::Blend => CaptureAlphaMode::Blend,
     }
 }
 

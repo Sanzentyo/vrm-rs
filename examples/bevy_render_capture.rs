@@ -51,12 +51,11 @@ use std::sync::{
 };
 use std::time::Duration;
 use vrm_core::{
-    ExpressionBind, ExpressionName, Feature, MtoonAlphaMode, MtoonCullMode, OutlineWidthMode,
-    TextureTransform2d, VrmKind,
+    ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d, VrmKind,
 };
 use vrm_io::{
-    GltfAlphaMode, GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat,
-    LoadedVrm, load_vrm_from_path,
+    GltfMeshData, GltfNodeRest, GltfPrimitiveData, ImageData, ImageFormat, LoadedVrm,
+    load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -1776,57 +1775,21 @@ fn tex_coords_or_default(vertex_count: usize, tex_coords: &[[f32; 2]]) -> Vec<[f
 }
 
 fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
-    let mtoon = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref());
-    let render_order = mtoon
-        .map(|mtoon| mtoon.pipeline_hints().render_order)
-        .unwrap_or(2000);
-    if material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .is_some_and(|material| material.alpha_mode == GltfAlphaMode::Blend)
-    {
-        mtoon.map_or(render_order.max(3000), |mtoon| {
-            3000 + bevy_transparent_spawn_order_offset(mtoon)
-        })
+    let plan = render_capture_scene::capture_material_plan(loaded, material);
+    if plan.alpha_mode == render_capture_scene::CaptureMaterialAlphaMode::Blend {
+        plan.transparent_order_offset
+            .map_or(plan.render_order.max(3000), |offset| 3000 + (1000 - offset))
     } else {
-        render_order
+        plan.render_order
     }
-}
-
-fn bevy_transparent_spawn_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
-    1000 - mtoon_transparent_order_offset(mtoon)
 }
 
 fn material_phase_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
-    material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .map_or(2000, mtoon_transparent_order_offset)
-}
-
-fn mtoon_transparent_order_offset(mtoon: &vrm_core::MtoonMaterial) -> i32 {
-    let queue_offset = if mtoon.transparent_with_z_write {
-        0
-    } else {
-        19
-    };
-    queue_offset + mtoon.render_queue_offset_number
+    render_capture_scene::capture_material_plan(loaded, material).phase_order
 }
 
 fn material_depth_write(loaded: &LoadedVrm, material: Option<usize>) -> bool {
-    let mtoon = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref());
-    let is_blend = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .is_some_and(|material| material.alpha_mode == GltfAlphaMode::Blend)
-        || mtoon.is_some_and(|mtoon| mtoon.pipeline_hints().alpha_mode == MtoonAlphaMode::Blend);
-    if is_blend {
-        mtoon.is_some_and(|mtoon| mtoon.transparent_with_z_write)
-    } else {
-        true
-    }
+    render_capture_scene::capture_material_plan(loaded, material).depth_write
 }
 
 fn render_depth_bias(_render_order: i32) -> f32 {
@@ -1834,43 +1797,20 @@ fn render_depth_bias(_render_order: i32) -> f32 {
 }
 
 fn material_cull_mode(loaded: &LoadedVrm, material: Option<usize>) -> Option<Face> {
-    let cull_mode = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .map(|mtoon| match mtoon.pipeline_hints().cull_mode {
-            MtoonCullMode::Off => None,
-            MtoonCullMode::Front => Some(Face::Front),
-            MtoonCullMode::Back => Some(Face::Back),
-        })
-        .unwrap_or(Some(Face::Back));
-    if material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .is_some_and(|material| material.double_sided)
-    {
-        None
-    } else {
-        cull_mode
+    match render_capture_scene::capture_material_plan(loaded, material).cull_mode {
+        render_capture_scene::CaptureMaterialCullMode::Off => None,
+        render_capture_scene::CaptureMaterialCullMode::Front => Some(Face::Front),
+        render_capture_scene::CaptureMaterialCullMode::Back => Some(Face::Back),
     }
 }
 
 fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode {
-    let mtoon_alpha = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .map(|mtoon| match mtoon.pipeline_hints().alpha_mode {
-            MtoonAlphaMode::Opaque => AlphaMode::Opaque,
-            MtoonAlphaMode::Mask => AlphaMode::Mask(mtoon.cutoff_factor),
-            MtoonAlphaMode::Blend => AlphaMode::Blend,
-        })
-        .unwrap_or(AlphaMode::Opaque);
-    material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .map(|material| match material.alpha_mode {
-            GltfAlphaMode::Opaque => mtoon_alpha,
-            GltfAlphaMode::Mask => AlphaMode::Mask(material.alpha_cutoff.unwrap_or(0.5)),
-            GltfAlphaMode::Blend => AlphaMode::Blend,
-        })
-        .unwrap_or(mtoon_alpha)
+    let plan = render_capture_scene::capture_material_plan(loaded, material);
+    match plan.alpha_mode {
+        render_capture_scene::CaptureMaterialAlphaMode::Opaque => AlphaMode::Opaque,
+        render_capture_scene::CaptureMaterialAlphaMode::Mask => AlphaMode::Mask(plan.alpha_cutoff),
+        render_capture_scene::CaptureMaterialAlphaMode::Blend => AlphaMode::Blend,
+    }
 }
 
 fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
