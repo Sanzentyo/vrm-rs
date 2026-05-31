@@ -160,6 +160,10 @@ data. CPU-side texture diagnostics also use `vrm-io::CpuRgba8Image`, which
 samples RGBA8 channels with repeat/linear filtering and an explicit
 `Rgba8SamplingOrigin`; this keeps outline-width texture sampling comparable
 between the concrete wgpu/Bevy captures and future ash/custom renderer tests.
+Material texture slot selection is shared through
+`LoadedVrm::material_texture_slots`, including MToon texture slots, glTF
+base/normal fallbacks, emissive and occlusion textures, and outline/UV-animation
+mask slots after texture-index validation.
 The concrete wgpu and Bevy capture examples also share a backend-neutral
 `CaptureMaterialPlan` alias over the public `RendererMaterialPipelinePlan` for
 MToon/glTF alpha, culling, depth-write, blend, render-order, phase-order, and
@@ -254,11 +258,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 80.03% | 83.16% |
+| Workspace total | 80.08% | 83.20% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 63.93% | 73.76% |
 | `vrm-core` | 69.52% | 75.92% |
-| `vrm-io` | 82.87% | 80.64% |
+| `vrm-io` | 83.07% | 80.90% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 92.69% | 95.68% |
@@ -282,8 +286,9 @@ primitive `COLOR_0`, morph target deltas, mesh/node default morph weights,
 public MToon renderer material plans, public primitive pipeline plans, glTF
 sampler min/mag/wrap extraction, same-image multi-texture sampler preservation,
 `KHR_materials_unlit` extraction for PBR fallback material data, renderer-neutral
-RGBA8 image normalization, renderer-neutral RGBA channel sampling, and
-renderer-neutral RGBA mip-chain generation.
+RGBA8 image normalization, renderer-neutral RGBA channel sampling,
+renderer-neutral material texture slot resolution, and renderer-neutral RGBA
+mip-chain generation.
 
 ## Ordered Parity Milestones
 

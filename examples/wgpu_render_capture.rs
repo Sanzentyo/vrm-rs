@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_core::{ExpressionBind, ExpressionName, Feature, OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
-    CpuRgba8Image, GltfMagFilter, GltfMeshData, GltfMinFilter, GltfNodeRest, GltfPrimitiveData,
-    GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm, Rgba8SamplingOrigin,
-    generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
+    CpuRgba8Image, GltfMagFilter, GltfMaterialTextureSlots, GltfMeshData, GltfMinFilter,
+    GltfNodeRest, GltfPrimitiveData, GltfSamplerData, GltfSkinData, GltfWrapMode, LoadedVrm,
+    Rgba8SamplingOrigin, generate_rgba_mip_chain, image_data_to_rgba8, load_vrm_from_path,
 };
 use wgpu::util::DeviceExt;
 
@@ -132,7 +132,7 @@ struct MeshDrawData {
 struct DrawPrimitive {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    images: MaterialImages,
+    images: GltfMaterialTextureSlots,
     uv_transforms: MaterialUvTransforms,
     material_extra: MaterialExtraUniform,
     policy: MaterialPolicy,
@@ -330,19 +330,6 @@ struct TextureResourceTables<'a> {
     color: &'a [TextureResource],
     normal: &'a [TextureResource],
     indices: &'a HashMap<usize, usize>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-struct MaterialImages {
-    base: Option<usize>,
-    shade: Option<usize>,
-    shading_shift: Option<usize>,
-    normal: Option<usize>,
-    matcap: Option<usize>,
-    rim: Option<usize>,
-    emissive: Option<usize>,
-    occlusion: Option<usize>,
-    uv_animation_mask: Option<usize>,
 }
 
 struct TextureUpload<'a> {
@@ -744,7 +731,7 @@ fn draw_primitive(
     Ok(DrawPrimitive {
         vertices,
         indices: primitive.indices.clone(),
-        images: material_images(loaded, primitive.material),
+        images: loaded.material_texture_slots(primitive.material),
         uv_transforms,
         material_extra: material_extra_uniform(shading, context.options),
         policy,
@@ -1302,11 +1289,14 @@ fn material_shading(
                 rim_lighting_mix: mtoon.rim_lighting_mix_factor,
                 parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
                 parametric_rim_lift: mtoon.parametric_rim_lift_factor,
-                normal_scale: material_normal_texture(loaded, material).map_or(0.0, |_| {
-                    material
-                        .and_then(|index| loaded.gltf_materials.get(index))
-                        .map_or(1.0, |gltf_material| gltf_material.normal_scale)
-                }),
+                normal_scale: loaded
+                    .material_texture_slots(material)
+                    .normal
+                    .map_or(0.0, |_| {
+                        material
+                            .and_then(|index| loaded.gltf_materials.get(index))
+                            .map_or(1.0, |gltf_material| gltf_material.normal_scale)
+                    }),
                 metallic: 0.0,
                 roughness: 1.0,
                 occlusion_strength: 0.0,
@@ -1342,7 +1332,9 @@ fn material_shading(
         rim_lighting_mix: 1.0,
         parametric_rim_fresnel_power: 5.0,
         parametric_rim_lift: 0.0,
-        normal_scale: material_normal_texture(loaded, material)
+        normal_scale: loaded
+            .material_texture_slots(material)
+            .normal
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
         metallic: gltf.map_or(0.0, |material| material.metallic_factor),
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
@@ -1351,19 +1343,6 @@ fn material_shading(
         unlit: gltf.is_some_and(|material| material.unlit),
         v0_compat_shade: false,
     }
-}
-
-fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let mtoon_texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.normal_texture)
-        .map(|texture| texture.0);
-    mtoon_texture.or_else(|| {
-        material
-            .and_then(|index| loaded.gltf_materials.get(index))
-            .and_then(|material| material.normal_texture)
-    })
 }
 
 fn material_uv_transforms(
@@ -1479,62 +1458,6 @@ fn transform_uv(uv: [f32; 2], transform: Option<TextureTransform2d>) -> [f32; 2]
         cos * scaled[0] - sin * scaled[1] + transform.offset[0],
         sin * scaled[0] + cos * scaled[1] + transform.offset[1],
     ]
-}
-
-fn material_main_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let mtoon_texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.main_texture);
-    let texture = mtoon_texture.map(|texture| texture.0).or_else(|| {
-        material
-            .and_then(|index| loaded.gltf_materials.get(index))
-            .and_then(|material| material.base_color_texture)
-    })?;
-    loaded.textures.get(texture).map(|_| texture)
-}
-
-fn material_images(loaded: &LoadedVrm, material: Option<usize>) -> MaterialImages {
-    let mtoon = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref());
-    let base = material_main_texture(loaded, material);
-    let shade = mtoon
-        .and_then(|mtoon| mtoon.textures.shade_multiply_texture)
-        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
-    let shading_shift = mtoon
-        .and_then(|mtoon| mtoon.textures.shading_shift_texture)
-        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
-    let normal = material_normal_texture(loaded, material)
-        .filter(|texture| loaded.textures.get(*texture).is_some());
-    let matcap = mtoon
-        .and_then(|mtoon| mtoon.textures.matcap_texture)
-        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
-    let rim = mtoon
-        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)
-        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
-    let emissive = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.emissive_texture)
-        .filter(|texture| loaded.textures.get(*texture).is_some());
-    let occlusion = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.occlusion_texture)
-        .filter(|texture| loaded.textures.get(*texture).is_some());
-    let uv_animation_mask = mtoon
-        .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)
-        .and_then(|texture| loaded.textures.get(texture.0).map(|_| texture.0));
-    MaterialImages {
-        base,
-        shade,
-        shading_shift,
-        normal,
-        matcap,
-        rim,
-        emissive,
-        occlusion,
-        uv_animation_mask,
-    }
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
@@ -1720,7 +1643,7 @@ fn material_texture_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     resources: TextureResourceTables<'_>,
-    images: MaterialImages,
+    images: GltfMaterialTextureSlots,
     uv_transforms: MaterialUvTransforms,
     material_extra: MaterialExtraUniform,
 ) -> TextureBindGroup {

@@ -719,6 +719,10 @@ CPU-side texture diagnostics now use the shared `vrm-io::CpuRgba8Image`
 repeat/linear sampler with an explicit `Rgba8SamplingOrigin`, so renderer
 captures can preserve their coordinate-origin choices while sharing the same
 outline-width texture sampling math.
+Texture slot selection for concrete captures now goes through
+`LoadedVrm::material_texture_slots`, which keeps MToon slot lookup and glTF
+base/normal fallback behavior identical between wgpu, Bevy, and future
+ash/custom renderer examples.
 
 The canonical comparison images for the current local sample sweep are:
 

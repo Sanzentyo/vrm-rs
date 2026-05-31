@@ -46,6 +46,39 @@ impl LoadedVrm {
     pub fn scene(&self) -> &GltfSceneRest {
         &self.scene
     }
+
+    pub fn material_texture_slots(&self, material: Option<usize>) -> GltfMaterialTextureSlots {
+        let mtoon = material
+            .and_then(|index| self.model.document().materials.get(index))
+            .and_then(|material| material.mtoon.as_ref());
+        let gltf = material.and_then(|index| self.gltf_materials.get(index));
+        let valid_texture = |texture: Option<usize>| {
+            texture.and_then(|texture| self.textures.get(texture).map(|_| texture))
+        };
+        let mtoon_texture =
+            |texture: Option<TextureRef>| valid_texture(texture.map(|texture| texture.0));
+
+        GltfMaterialTextureSlots {
+            base: mtoon_texture(mtoon.and_then(|mtoon| mtoon.textures.main_texture))
+                .or_else(|| valid_texture(gltf.and_then(|material| material.base_color_texture))),
+            shade: mtoon_texture(mtoon.and_then(|mtoon| mtoon.textures.shade_multiply_texture)),
+            shading_shift: mtoon_texture(
+                mtoon.and_then(|mtoon| mtoon.textures.shading_shift_texture),
+            ),
+            normal: mtoon_texture(mtoon.and_then(|mtoon| mtoon.textures.normal_texture))
+                .or_else(|| valid_texture(gltf.and_then(|material| material.normal_texture))),
+            matcap: mtoon_texture(mtoon.and_then(|mtoon| mtoon.textures.matcap_texture)),
+            rim: mtoon_texture(mtoon.and_then(|mtoon| mtoon.textures.rim_multiply_texture)),
+            outline_width: mtoon_texture(
+                mtoon.and_then(|mtoon| mtoon.textures.outline_width_multiply_texture),
+            ),
+            emissive: valid_texture(gltf.and_then(|material| material.emissive_texture)),
+            occlusion: valid_texture(gltf.and_then(|material| material.occlusion_texture)),
+            uv_animation_mask: mtoon_texture(
+                mtoon.and_then(|mtoon| mtoon.textures.uv_animation_mask_texture),
+            ),
+        }
+    }
 }
 
 impl GltfSceneRest {
@@ -349,6 +382,20 @@ impl From<gltf::image::Format> for ImageFormat {
 pub struct GltfTextureData {
     pub image: usize,
     pub sampler: GltfSamplerData,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GltfMaterialTextureSlots {
+    pub base: Option<usize>,
+    pub shade: Option<usize>,
+    pub shading_shift: Option<usize>,
+    pub normal: Option<usize>,
+    pub matcap: Option<usize>,
+    pub rim: Option<usize>,
+    pub outline_width: Option<usize>,
+    pub emissive: Option<usize>,
+    pub occlusion: Option<usize>,
+    pub uv_animation_mask: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -2027,6 +2074,16 @@ mod tests {
                 rotation: 0.0,
                 tex_coord: Some(0),
             })
+        );
+        assert_eq!(
+            loaded.material_texture_slots(Some(0)),
+            GltfMaterialTextureSlots {
+                base: Some(0),
+                normal: Some(1),
+                emissive: Some(0),
+                occlusion: Some(1),
+                ..Default::default()
+            }
         );
     }
 

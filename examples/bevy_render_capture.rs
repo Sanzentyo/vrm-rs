@@ -1244,11 +1244,14 @@ fn material_shading(
                 rim_lighting_mix: mtoon.rim_lighting_mix_factor,
                 parametric_rim_fresnel_power: mtoon.parametric_rim_fresnel_power_factor,
                 parametric_rim_lift: mtoon.parametric_rim_lift_factor,
-                normal_scale: material_normal_texture(loaded, material).map_or(0.0, |_| {
-                    material
-                        .and_then(|index| loaded.gltf_materials.get(index))
-                        .map_or(1.0, |gltf_material| gltf_material.normal_scale)
-                }),
+                normal_scale: loaded
+                    .material_texture_slots(material)
+                    .normal
+                    .map_or(0.0, |_| {
+                        material
+                            .and_then(|index| loaded.gltf_materials.get(index))
+                            .map_or(1.0, |gltf_material| gltf_material.normal_scale)
+                    }),
                 metallic: 0.0,
                 roughness: 1.0,
                 occlusion_strength: 0.0,
@@ -1284,7 +1287,9 @@ fn material_shading(
         rim_lighting_mix: 1.0,
         parametric_rim_fresnel_power: 5.0,
         parametric_rim_lift: 0.0,
-        normal_scale: material_normal_texture(loaded, material)
+        normal_scale: loaded
+            .material_texture_slots(material)
+            .normal
             .map_or(0.0, |_| gltf.map_or(1.0, |material| material.normal_scale)),
         metallic: gltf.map_or(0.0, |material| material.metallic_factor),
         roughness: gltf.map_or(1.0, |material| material.roughness_factor),
@@ -1492,6 +1497,7 @@ fn bevy_mtoon_material(
         context.expression_effects,
     );
     let image_handles = context.image_handles;
+    let texture_slots = loaded.material_texture_slots(primitive.material);
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -1583,39 +1589,48 @@ fn bevy_mtoon_material(
             uv_transforms.uv_animation_rotation,
             bevy_uv_rotation(uv_transforms.occlusion),
         ),
-        base_texture: material_main_texture(loaded, primitive.material)
+        base_texture: texture_slots
+            .base
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        shade_texture: material_shade_texture(loaded, primitive.material)
+        shade_texture: texture_slots
+            .shade
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        shading_shift_texture: material_shading_shift_texture(loaded, primitive.material)
+        shading_shift_texture: texture_slots
+            .shading_shift
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.black.clone()),
-        matcap_texture: material_matcap_texture(loaded, primitive.material)
+        matcap_texture: texture_slots
+            .matcap
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.black.clone()),
-        rim_texture: material_rim_texture(loaded, primitive.material)
+        rim_texture: texture_slots
+            .rim
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        normal_texture: material_normal_texture(loaded, primitive.material)
+        normal_texture: texture_slots
+            .normal
             .and_then(|texture| image_handles.linear_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.neutral_normal.clone()),
-        emissive_texture: material_emissive_texture(loaded, primitive.material)
+        emissive_texture: texture_slots
+            .emissive
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        uv_animation_mask_texture: material_uv_animation_mask_texture(loaded, primitive.material)
+        uv_animation_mask_texture: texture_slots
+            .uv_animation_mask
             .and_then(|texture| image_handles.color_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
-        occlusion_texture: material_occlusion_texture(loaded, primitive.material)
+        occlusion_texture: texture_slots
+            .occlusion
             .and_then(|texture| image_handles.linear_images.get(texture))
             .and_then(Clone::clone)
             .unwrap_or_else(|| image_handles.white.clone()),
@@ -1833,19 +1848,6 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
     }
 }
 
-fn material_normal_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let mtoon_texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.normal_texture)
-        .map(|texture| texture.0);
-    mtoon_texture.or_else(|| {
-        material
-            .and_then(|index| loaded.gltf_materials.get(index))
-            .and_then(|material| material.normal_texture)
-    })
-}
-
 fn material_uv_transforms(
     loaded: &LoadedVrm,
     material: Option<usize>,
@@ -1981,85 +1983,14 @@ fn bevy_uv_rotation(transform: Option<TextureTransform2d>) -> f32 {
         .map_or(0.0, |transform| transform.rotation)
 }
 
-fn material_main_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let mtoon_texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.main_texture);
-    let texture = mtoon_texture.map(|texture| texture.0).or_else(|| {
-        material
-            .and_then(|index| loaded.gltf_materials.get(index))
-            .and_then(|material| material.base_color_texture)
-    })?;
-    loaded.textures.get(texture).map(|_| texture)
-}
-
-fn material_shade_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.shade_multiply_texture)?;
-    loaded.textures.get(texture.0).map(|_| texture.0)
-}
-
-fn material_shading_shift_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.shading_shift_texture)?;
-    loaded.textures.get(texture.0).map(|_| texture.0)
-}
-
-fn material_matcap_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.matcap_texture)?;
-    loaded.textures.get(texture.0).map(|_| texture.0)
-}
-
-fn material_rim_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.rim_multiply_texture)?;
-    loaded.textures.get(texture.0).map(|_| texture.0)
-}
-
-fn material_emissive_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.emissive_texture)?;
-    loaded.textures.get(texture).map(|_| texture)
-}
-
-fn material_occlusion_texture(loaded: &LoadedVrm, material: Option<usize>) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.gltf_materials.get(index))
-        .and_then(|material| material.occlusion_texture)?;
-    loaded.textures.get(texture).map(|_| texture)
-}
-
-fn material_uv_animation_mask_texture(
-    loaded: &LoadedVrm,
-    material: Option<usize>,
-) -> Option<usize> {
-    let texture = material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.uv_animation_mask_texture)?;
-    loaded.textures.get(texture.0).map(|_| texture.0)
-}
-
 fn material_outline_width_image(
     loaded: &LoadedVrm,
     material: Option<usize>,
 ) -> Option<CpuRgba8Image> {
-    material
-        .and_then(|index| loaded.model().document().materials.get(index))
-        .and_then(|material| material.mtoon.as_ref())
-        .and_then(|mtoon| mtoon.textures.outline_width_multiply_texture)
-        .and_then(|texture| sampled_image_for_texture(loaded, texture.0))
+    loaded
+        .material_texture_slots(material)
+        .outline_width
+        .and_then(|texture| sampled_image_for_texture(loaded, texture))
 }
 
 fn sampled_image_for_texture(loaded: &LoadedVrm, texture: usize) -> Option<CpuRgba8Image> {
