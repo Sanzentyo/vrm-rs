@@ -115,6 +115,8 @@ For the next material/shader split, run:
 ```powershell
 just render-parity-seed-base-factor-diagnostic
 just render-parity-seed-base-color-diagnostic
+just render-parity-seed-base-color-interior2-diagnostic
+just render-parity-seed-base-color-flip-v-diagnostic
 ```
 
 `base-factor` keeps the same alpha/cull/depth/order policy and paints fragments
@@ -136,6 +138,19 @@ wgpu `28.7633 dB` / Bevy `27.8394 dB`, with max selected-channel deltas `220`
 model-body overlap region; the remaining Seed-san color blocker starts at
 base-texture sampling, UV/sampler state, texture color-space handling, or a
 texture-selection detail before the MToon lighting stack is applied.
+
+Two follow-up diagnostics keep that blocker narrower. The
+`render-parity-seed-base-color-interior2-diagnostic` recipe uses the stricter
+`rgb-shared-nonblack-interior2px` metric and still only rises to wgpu
+`29.9442 dB` / Bevy `28.8222 dB`, with large worst-case selected-channel
+deltas intact. The `render-parity-seed-base-color-flip-v-diagnostic` recipe
+samples the Rust base texture with flipped V coordinates while leaving the
+three-vrm reference unchanged; it worsens sharply to wgpu `10.9506 dB` / Bevy
+`10.9418 dB`. Together these rule out a simple one-pixel edge mask or global
+V-flip explanation. The current evidence points at localized texture sampling,
+UV discontinuity, sampler/mip selection, or per-primitive texture-selection
+behavior. Mean RGB over the shared body pixels remains close, so this is not a
+global color-space bias.
 
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
@@ -188,7 +203,8 @@ PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, `--metric rgb-nonblack`,
 `--metric rgb-interior1px`, `--metric rgb-visible-interior1px`,
 `--metric rgb-nonblack-interior1px`, and
-`--metric rgb-shared-nonblack-interior1px`; pass/fail thresholds use the
+`--metric rgb-shared-nonblack-interior1px`, and
+`--metric rgb-shared-nonblack-interior2px`; pass/fail thresholds use the
 selected metric. The nonblack metrics are intended for opaque-black review
 sweeps where empty background pixels should not dilute the model-body color
 error. The shared-nonblack metric is stricter for focused diagnostics: a pixel
@@ -207,7 +223,10 @@ one-pixel silhouette/raster edges should be dropped from that diagnostic. Use
 `rgb-visible-interior1px` when transparent interiors must be measured while
 still dropping one-pixel silhouette edges, and use
 `rgb-shared-nonblack-interior1px` when both sides must draw nonblack content
-before a body-color pixel is admitted.
+before a body-color pixel is admitted. Use
+`rgb-shared-nonblack-interior2px` as a stricter diagnostic when a two-pixel
+body mask is needed to distinguish edge contamination from interior texture
+residuals.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 

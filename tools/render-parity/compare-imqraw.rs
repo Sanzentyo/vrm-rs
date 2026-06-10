@@ -55,6 +55,7 @@ enum MetricName {
     RgbVisibleInterior1px,
     RgbNonblackInterior1px,
     RgbSharedNonblackInterior1px,
+    RgbSharedNonblackInterior2px,
 }
 
 impl std::str::FromStr for MetricName {
@@ -71,8 +72,9 @@ impl std::str::FromStr for MetricName {
             "rgb-visible-interior1px" => Ok(Self::RgbVisibleInterior1px),
             "rgb-nonblack-interior1px" => Ok(Self::RgbNonblackInterior1px),
             "rgb-shared-nonblack-interior1px" => Ok(Self::RgbSharedNonblackInterior1px),
+            "rgb-shared-nonblack-interior2px" => Ok(Self::RgbSharedNonblackInterior2px),
             other => Err(format!(
-                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, or rgb-shared-nonblack-interior1px"
+                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, or rgb-shared-nonblack-interior2px"
             )),
         }
     }
@@ -90,6 +92,7 @@ impl MetricName {
             Self::RgbVisibleInterior1px => "rgb-visible-interior1px",
             Self::RgbNonblackInterior1px => "rgb-nonblack-interior1px",
             Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
+            Self::RgbSharedNonblackInterior2px => "rgb-shared-nonblack-interior2px",
         }
     }
 }
@@ -190,6 +193,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         |pixel| is_interior_shared_nonblack(&expected, &actual, pixel),
         &[0, 1, 2],
     );
+    let shared_nonblack_interior_2px_rgb = compare_channels(
+        &expected,
+        &actual,
+        |pixel| is_interior_radius(&expected, pixel, 2, |neighbor| {
+            is_shared_nonblack(&expected, &actual, neighbor)
+        }),
+        &[0, 1, 2],
+    );
     let alpha = alpha_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
@@ -205,6 +216,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             (
                 MetricName::RgbSharedNonblackInterior1px,
                 shared_nonblack_interior_rgb,
+            ),
+            (
+                MetricName::RgbSharedNonblackInterior2px,
+                shared_nonblack_interior_2px_rgb,
             ),
         ],
     )?;
@@ -229,6 +244,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "rgbVisibleInterior1px": metric_report(visible_interior_rgb),
         "rgbNonblackInterior1px": metric_report(nonblack_interior_rgb),
         "rgbSharedNonblackInterior1px": metric_report(shared_nonblack_interior_rgb),
+        "rgbSharedNonblackInterior2px": metric_report(shared_nonblack_interior_2px_rgb),
         "selectedMetric": selected_metric_report(options.metric, selected),
         "pass": pass,
         "thresholds": {
@@ -553,16 +569,29 @@ fn is_interior_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: 
 }
 
 fn is_interior(image: &RgbaImage, pixel: usize, include_neighbor: impl Fn(usize) -> bool) -> bool {
+    is_interior_radius(image, pixel, 1, include_neighbor)
+}
+
+fn is_interior_radius(
+    image: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    include_neighbor: impl Fn(usize) -> bool,
+) -> bool {
     let pixel_index = pixel / 4;
     let x = pixel_index % image.width;
     let y = pixel_index / image.width;
-    if x == 0 || y == 0 || x == image.width - 1 || y == image.height - 1 {
+    if x < radius
+        || y < radius
+        || x + radius >= image.width
+        || y + radius >= image.height
+    {
         return false;
     }
-    for dy in [usize::MAX, 0, 1] {
-        for dx in [usize::MAX, 0, 1] {
-            let neighbor_x = x.wrapping_add(dx);
-            let neighbor_y = y.wrapping_add(dy);
+    for dy in 0..=(radius * 2) {
+        for dx in 0..=(radius * 2) {
+            let neighbor_x = x + dx - radius;
+            let neighbor_y = y + dy - radius;
             let neighbor = (neighbor_y * image.width + neighbor_x) * 4;
             if !include_neighbor(neighbor) {
                 return false;

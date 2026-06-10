@@ -12,8 +12,17 @@
   This narrows the Seed-san body-color blocker to base texture sampling,
   UV/sampler state, texture color-space handling, or texture selection before
   MToon light/normal/rim/shade terms enter the frame.
+- Added two sharper Seed-san base-texture diagnostics. The stricter
+  `rgb-shared-nonblack-interior2px` metric raises the base-color diagnostic
+  only modestly to wgpu `29.9442 dB` / Bevy `28.8222 dB`, so the residual is
+  not explained by a one-pixel silhouette mask. The Rust-only `base-color-flip-v`
+  diagnostic worsens to wgpu `10.9506 dB` / Bevy `10.9418 dB`, ruling out a
+  simple V-flip mismatch. The remaining base-texture blocker is localized:
+  shared body-pixel mean RGB is close, but large deltas remain around thin
+  texture/material/UV boundaries.
 - Reinstalled the latest public `imq` main with `cargo install --git
-  https://github.com/Sanzentyo/imq.git --locked --force imq` and confirmed the
+  https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
+  the local skills through `chezmoi --no-tty --force apply`, and confirmed the
   installed `0fdc5263` CLI still does not expose `--selected-metric` or the
   VRM render-parity domains as command-line gates. The refreshed skill is ahead
   of the currently installed binary, so `tools/render-parity/compare-imqraw.rs`

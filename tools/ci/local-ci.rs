@@ -156,6 +156,7 @@ enum RenderPsnrMetric {
     RgbVisibleInterior1px,
     RgbNonblackInterior1px,
     RgbSharedNonblackInterior1px,
+    RgbSharedNonblackInterior2px,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -177,6 +178,7 @@ enum RenderDiagnosticMode {
     Flat,
     BaseFactor,
     BaseColor,
+    BaseColorFlipV,
 }
 
 impl RenderMtoonLightAccumulation {
@@ -205,6 +207,7 @@ impl RenderDiagnosticMode {
             Self::Flat => "flat",
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
+            Self::BaseColorFlipV => "base-color-flip-v",
         }
     }
 }
@@ -221,6 +224,7 @@ impl RenderPsnrMetric {
             Self::RgbVisibleInterior1px => "rgb-visible-interior1px",
             Self::RgbNonblackInterior1px => "rgb-nonblack-interior1px",
             Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
+            Self::RgbSharedNonblackInterior2px => "rgb-shared-nonblack-interior2px",
         }
     }
 }

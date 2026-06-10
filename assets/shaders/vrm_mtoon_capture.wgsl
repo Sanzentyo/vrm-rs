@@ -234,7 +234,12 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let light_dir = normalize(vec3<f32>(-1.0, 1.0, -1.0));
     let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
 
-    let texel = textureSample(base_texture, base_sampler, base_uv);
+    let base_sample_uv = select(
+        base_uv,
+        vec2<f32>(base_uv.x, 1.0 - base_uv.y),
+        material.material_flags2.w > 1.5,
+    );
+    let texel = textureSample(base_texture, base_sampler, base_sample_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     let is_pbr_fallback = material.material_flags.y > 0.5;
     let alpha = material.base_color.a * texel.a;

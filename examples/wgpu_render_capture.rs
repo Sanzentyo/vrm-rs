@@ -269,6 +269,7 @@ enum DiagnosticRender {
     Flat,
     BaseFactor,
     BaseColor,
+    BaseColorFlipV,
 }
 
 impl DiagnosticRender {
@@ -278,6 +279,7 @@ impl DiagnosticRender {
             Self::Flat => "flat",
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
+            Self::BaseColorFlipV => "base-color-flip-v",
         }
     }
 }
@@ -666,6 +668,7 @@ fn material_extra_uniform(
             match options.diagnostic_render {
                 DiagnosticRender::BaseFactor => -1.0,
                 DiagnosticRender::BaseColor => 1.0,
+                DiagnosticRender::BaseColorFlipV => 2.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
             },
         ],
@@ -2073,7 +2076,12 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let occlusion_uv = transform_uv(animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
     let normal = surface_normal(input, front_facing, normal_uv);
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
-    let texel = textureSample(base_texture, base_sampler, base_uv);
+    let base_sample_uv = select(
+        base_uv,
+        vec2<f32>(base_uv.x, 1.0 - base_uv.y),
+        material_extra.flags2.w > 1.5,
+    );
+    let texel = textureSample(base_texture, base_sampler, base_sample_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     let alpha = input.color.a * texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < input.rim_params.w {
