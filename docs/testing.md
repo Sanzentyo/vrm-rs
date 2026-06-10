@@ -123,6 +123,10 @@ renderers have non-black model content after dropping a three-pixel local
 raster-ownership band. The current shared-body floor is the constraint sample
 at wgpu `28.6412 dB` / Bevy `28.6300 dB`, while Seed-san improves to wgpu
 `31.9233 dB` / Bevy `31.2229 dB` under this stricter shared-content mask.
+Use `just render-parity-constraint-shared-body3-diagnostics` when investigating
+that floor: outline-off improves the constraint sample to wgpu `31.0592 dB` /
+Bevy `31.0407 dB`, while normal-map-off stays flat at wgpu `28.6428 dB` /
+Bevy `28.6321 dB`.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample

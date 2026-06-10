@@ -520,6 +520,16 @@ are wgpu `51.6179 dB` / Bevy `50.1671 dB`, and Alicia VRM0 is wgpu
 `rgb-visible` review; it is the body-color/material sweep used after known
 local raster ownership bands have been classified separately.
 
+The current shared-body floor is outline-sensitive rather than normal-map
+sensitive. `just render-parity-constraint-shared-body3-diagnostics` reruns the
+constraint sample with either outlines or normal maps disabled. With normal maps
+disabled, the shared-body score remains essentially flat at wgpu `28.6428 dB` /
+Bevy `28.6321 dB`. With outlines disabled, it rises to wgpu `31.0592 dB` /
+Bevy `31.0407 dB`. The top-64 shared-body hotspots are identical between wgpu
+and Bevy, mostly on materials `12`, `6`, `7`, `9`, and `3`, with large
+base/outline color swaps near internal edges. This makes real outline
+expansion/color ownership the next constraint-sample parity target.
+
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
 ```powershell

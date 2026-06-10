@@ -117,6 +117,11 @@ render-parity-light-three-vrm three_vrm_root="D:/git/three-vrm":
 render-parity-outline-off three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-outline-off --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 34 --render-disable-outlines --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
 
+# Diagnostic: compare the constraint sample's shared-body residual with outlines or normal maps disabled.
+render-parity-constraint-shared-body3-diagnostics three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-constraint-shared-body3-outline-off --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-shared-nonblack-interior3px --render-mtoon-light-accumulation three-vrm --render-disable-outlines --render-fixture VRM1_Constraint_Twist_Sample.vrm
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-constraint-shared-body3-normal-off --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-shared-nonblack-interior3px --render-mtoon-light-accumulation three-vrm --render-disable-normal-maps --render-fixture VRM1_Constraint_Twist_Sample.vrm
+
 # Generate and render a source-like MToon light/color accumulation fixture.
 render-parity-mtoon-light-generated three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-mtoon-light-fixture.rs
