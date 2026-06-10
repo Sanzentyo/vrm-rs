@@ -316,6 +316,7 @@ struct OwnerLabel {
     material_index: Option<i64>,
     material_slot: Option<u64>,
     triangle: Option<u64>,
+    indices: Option<[u64; 3]>,
     render_order: Option<i64>,
     render_phase_order: Option<i64>,
     draw_index: Option<u64>,
@@ -1195,7 +1196,7 @@ impl OwnerGeometryClassKey {
             && self.mesh_relation != "different"
             && matches!(
                 self.triangle_relation.as_str(),
-                "same-triangle" | "adjacent-triangle-index"
+                "same-triangle" | "shared-edge-indices" | "adjacent-triangle-index"
             )
             && self.projection_relation == "overlap-depth-close"
     }
@@ -1360,12 +1361,51 @@ fn material_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>)
 }
 
 fn triangle_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
-    match (expected.and_then(|label| label.triangle), actual.and_then(|label| label.triangle)) {
+    let triangle_relation = match (
+        expected.and_then(|label| label.triangle),
+        actual.and_then(|label| label.triangle),
+    ) {
         (Some(left), Some(right)) if left == right => "same-triangle".to_owned(),
-        (Some(left), Some(right)) if left.abs_diff(right) == 1 => "adjacent-triangle-index".to_owned(),
+        _ => String::new(),
+    };
+    if !triangle_relation.is_empty() {
+        return triangle_relation;
+    }
+
+    if let Some(shared_indices) = expected
+        .and_then(|label| label.indices)
+        .zip(actual.and_then(|label| label.indices))
+        .map(|(left, right)| shared_vertex_count(left, right))
+    {
+        match shared_indices {
+            2.. => return "shared-edge-indices".to_owned(),
+            1 => return "shared-vertex-indices".to_owned(),
+            _ => {}
+        }
+    }
+
+    match (expected.and_then(|label| label.triangle), actual.and_then(|label| label.triangle)) {
+        (Some(left), Some(right)) if left.abs_diff(right) == 1 => {
+            "adjacent-triangle-index".to_owned()
+        }
         (Some(_), Some(_)) => "different-triangle".to_owned(),
         _ => "unknown".to_owned(),
     }
+}
+
+fn shared_vertex_count(left: [u64; 3], right: [u64; 3]) -> usize {
+    let mut shared = 0;
+    let mut seen = Vec::with_capacity(3);
+    for index in left {
+        if seen.contains(&index) {
+            continue;
+        }
+        seen.push(index);
+        if right.contains(&index) {
+            shared += 1;
+        }
+    }
+    shared
 }
 
 fn projection_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
@@ -1796,6 +1836,7 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         material_index: value.get("materialIndex").and_then(Value::as_i64),
         material_slot: value.get("materialSlot").and_then(Value::as_u64),
         triangle: value.get("triangle").and_then(Value::as_u64),
+        indices: owner_indices(value.get("indices")),
         render_order: value.get("renderOrder").and_then(Value::as_i64),
         render_phase_order: value.get("renderPhaseOrder").and_then(Value::as_i64),
         draw_index: value.get("drawIndex").and_then(Value::as_u64),
@@ -1824,6 +1865,14 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         gpu_front_facing: value.get("gpuFrontFacing").and_then(Value::as_bool),
         visible_by_cull_policy: value.get("visibleByCullPolicy").and_then(Value::as_bool),
     })
+}
+
+fn owner_indices(value: Option<&Value>) -> Option<[u64; 3]> {
+    let values = value?.as_array()?;
+    let [a, b, c] = values.as_slice() else {
+        return None;
+    };
+    Some([a.as_u64()?, b.as_u64()?, c.as_u64()?])
 }
 
 fn owner_screen_bounds(value: Option<&Value>) -> Option<OwnerScreenBounds> {
@@ -1965,6 +2014,50 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             },
         ),
     ]);
+    let shared_edge_expected = OwnerLabel {
+        triangle: Some(10),
+        indices: Some([1, 2, 3]),
+        pass: Some("base".to_owned()),
+        mesh_index: Some(1),
+        webgl_depth: Some(0.5),
+        screen_bounds: Some(OwnerScreenBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 2.0,
+            max_y: 2.0,
+        }),
+        ..OwnerLabel::default()
+    };
+    let shared_edge_actual = OwnerLabel {
+        triangle: Some(99),
+        indices: Some([3, 2, 4]),
+        pass: Some("base".to_owned()),
+        mesh_index: Some(1),
+        webgl_depth: Some(0.5005),
+        screen_bounds: Some(OwnerScreenBounds {
+            min_x: 1.0,
+            min_y: 0.0,
+            max_x: 3.0,
+            max_y: 2.0,
+        }),
+        ..OwnerLabel::default()
+    };
+    let shared_vertex_actual = OwnerLabel {
+        indices: Some([3, 8, 9]),
+        ..shared_edge_actual.clone()
+    };
+    assert_eq!(
+        triangle_relation(Some(&shared_edge_expected), Some(&shared_edge_actual)),
+        "shared-edge-indices"
+    );
+    assert_eq!(
+        triangle_relation(Some(&shared_edge_expected), Some(&shared_vertex_actual)),
+        "shared-vertex-indices"
+    );
+    assert!(
+        OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_edge_actual))
+            .is_same_projected_or_adjacent_triangle()
+    );
     let report = compare_owner_images(
         "expected".to_owned(),
         "actual".to_owned(),

@@ -492,12 +492,13 @@ and projected screen/depth relation. The same report also exposes
 projected-triangle mismatches and Bevy near-ID recovery artifacts from the
 detail table. On the current default CCW Seed-san run, `11649/11933`
 wgpu-vs-three-vrm mismatched shared pixels are still the same projected
-triangle, and `11742/11933` are the same or adjacent projected triangle. The
-largest bucket is same pass / same normalized mesh / different material label /
-same triangle / depth-close projection (`11590` pixels), which mainly reflects
-owner-numbering and three.js clone/material naming differences. The clean wgpu
-unexplained tail is now `191/11933`, with the largest remaining transition only
-`4` pixels. The useful remaining owner work is therefore the small non-overlap,
+triangle, and `11866/11933` are the same, adjacent, or shared-edge projected
+triangle. The largest bucket is same pass / same normalized mesh / different
+material label / same triangle / depth-close projection (`11590` pixels), which
+mainly reflects owner-numbering and three.js clone/material naming differences.
+The clean wgpu unexplained tail is now `67/11933`; `198` pixels previously read
+as different-triangle ownership are now classified as `shared-edge-indices`.
+The useful remaining owner work is therefore the small non-overlap,
 different-triangle, or different-pass tail rather than the whole owner-ID PSNR
 delta. Use wgpu for this tail; Bevy reports are still useful for consistency
 but include reverse-Z metadata convention and near-ID diagnostic-color recovery
