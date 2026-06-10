@@ -1,5 +1,19 @@
 # Progress
 
+## 2026-06-10
+
+- Reinstalled the latest public `imq` main with `cargo install --git
+  https://github.com/Sanzentyo/imq.git --locked --force imq` and confirmed the
+  installed `0fdc5263` CLI still does not expose `--selected-metric` or the
+  VRM render-parity domains as command-line gates. The refreshed skill is ahead
+  of the currently installed binary, so `tools/render-parity/compare-imqraw.rs`
+  remains the repository-local direct-raw gate for now.
+- Switched `tools/ci/local-ci.rs --render-parity` summary and threshold gate to
+  the direct `.imqraw` reports emitted by `compare-imqraw.rs`. The older
+  `.rgba.json` / `compare-psnr.mjs` report is still generated and embedded in
+  the visual review page as a diagnostic cross-check, but render pass/fail now
+  comes from the lossless direct renderer `imqraw` artifacts.
+
 ## 2026-06-01
 
 - Refreshed the local `imq-cli` skill through chezmoi after upstream added
@@ -45,9 +59,7 @@
   decodes direct renderer `.imqraw` RGBA8 bundles through the `imq` crate and
   emits the same VRM render-parity metric domains and JSON shape as
   `compare-psnr.mjs`. The local render-parity runner now writes
-  `.imqraw-rust.json` reports beside the existing `.psnr.json` reports, while
-  keeping the existing summary gate on `.psnr.json` until the public `imq` CLI
-  exposes those domains natively.
+  `.imqraw-rust.json` reports beside the existing `.psnr.json` reports.
 
 ## 2026-05-31
 

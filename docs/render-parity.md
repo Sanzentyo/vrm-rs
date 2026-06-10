@@ -49,8 +49,9 @@ node tools/render-parity/three-vrm-browser-capture.mjs `
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
-`imq image` CLI reads those files through `--stdin-format imqraw`; direct path
-arguments with `.imqraw` are not yet auto-detected by the installed CLI.
+`imq image` CLI still does not expose the VRM-specific selected-metric gates
+needed by this repository, so the local runner uses the Rust comparator below
+as the authoritative direct-raw numeric gate.
 
 For direct renderer raw-buffer checks with the same VRM-specific metric domains
 as `compare-psnr.mjs`, use the Rust imqraw comparator:
@@ -65,8 +66,9 @@ cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs `
 
 `tools/ci/local-ci.rs --render-parity` writes this direct-imqraw report beside
 the existing `.psnr.json` report as `<fixture>.<renderer>-vs-three-vrm.imqraw-rust.json`.
-The pass/fail summary still consumes `.psnr.json` until the installed public
-`imq` CLI exposes the same VRM render-parity domains and gates.
+The pass/fail summary consumes the `.imqraw-rust.json` report. The older
+`.psnr.json` report remains a diagnostic cross-check over the renderer
+`.rgba.json` artifacts and is embedded in `visual-review.html`.
 
 For independent raw-image metric checks that do not pass through PNG encoding
 or decoding, use the `imqraw` TypeScript/WASM pack path:
@@ -83,8 +85,8 @@ This runs `tools/render-parity/imqraw-compare-rgba-json.ts`, imports the fixed
 the two `.rgba.json` buffers with `encodeBundle`, and pipes the resulting
 lossless `imqraw` bytes to `imq image - - --stdin-format imqraw`. The PNG and
 HTML artifacts remain for visual review only; this path compares the raw RGBA
-buffers produced by the renderers. The feature gap that still keeps
-`compare-psnr.mjs` in the main gate is tracked in
+buffers produced by the renderers. The remaining feature gap before replacing
+the repository-local comparator with the public `imq` CLI is tracked in
 `docs/imq-compare-vrm-parity-requirements.md`.
 
 ## PSNR
@@ -150,8 +152,8 @@ set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 - `.external-fixtures/render-parity/three-vrm/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png,imqraw}`
-- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json`
-- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.imqraw-rust.json`
+- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.imqraw-rust.json` (numeric gate)
+- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json` (RGBA JSON diagnostic)
 - `.external-fixtures/render-parity/diff/<fixture>.{wgpu,bevy}-vs-three-vrm.diff.png`
 - `.external-fixtures/render-parity/summary.md`
 - `.external-fixtures/render-parity/visual-review.html`

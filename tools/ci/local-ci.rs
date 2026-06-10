@@ -335,10 +335,10 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         capture_bevy(options, fixture)?;
         write_render_png_from_artifact(options, fixture, "bevy")?;
         verify_render_alpha_consistency(options, fixture)?;
-        compare_render_pair(options, fixture, "wgpu")?;
         compare_render_imqraw_pair(options, fixture, "wgpu")?;
-        compare_render_pair(options, fixture, "bevy")?;
+        compare_render_rgba_json_pair(options, fixture, "wgpu")?;
         compare_render_imqraw_pair(options, fixture, "bevy")?;
+        compare_render_rgba_json_pair(options, fixture, "bevy")?;
         write_render_diff_image(options, fixture, "wgpu")?;
         write_render_diff_image(options, fixture, "bevy")?;
     }
@@ -353,8 +353,12 @@ fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
     for child in ["three-vrm", "wgpu", "bevy", "reports", "diff"] {
         let dir = options.render_parity_dir.join(child);
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)
-                .map_err(|err| format!("failed to remove stale render artifacts {}: {err}", path(&dir)))?;
+            std::fs::remove_dir_all(&dir).map_err(|err| {
+                format!(
+                    "failed to remove stale render artifacts {}: {err}",
+                    path(&dir)
+                )
+            })?;
         }
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("failed to create render artifact dir {}: {err}", path(&dir)))?;
@@ -377,31 +381,51 @@ fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
 fn download_external_fixtures(options: &Options) -> Result<(), String> {
     let fixtures = [
         (
-            format!("https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/Seed-san/vrm/Seed-san.vrm"),
+            format!(
+                "https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/Seed-san/vrm/Seed-san.vrm"
+            ),
             options.fixture_dir.join("Seed-san.vrm"),
         ),
         (
-            format!("https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm"),
+            format!(
+                "https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm"
+            ),
             options.fixture_dir.join("VRM1_Constraint_Twist_Sample.vrm"),
         ),
         (
-            format!("https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_materials_mtoon_UV_Animation_Test/vrm/VRMC_materials_mtoon_UV_Animation_Test.vrm"),
-            options.fixture_dir.join("VRMC_materials_mtoon_UV_Animation_Test.vrm"),
+            format!(
+                "https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_materials_mtoon_UV_Animation_Test/vrm/VRMC_materials_mtoon_UV_Animation_Test.vrm"
+            ),
+            options
+                .fixture_dir
+                .join("VRMC_materials_mtoon_UV_Animation_Test.vrm"),
         ),
         (
-            format!("https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_vrm_expressions_isBinary_Overridden/vrm/VRMC_vrm_expressions_isBinary_Overridden.vrm"),
-            options.fixture_dir.join("VRMC_vrm_expressions_isBinary_Overridden.vrm"),
+            format!(
+                "https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_vrm_expressions_isBinary_Overridden/vrm/VRMC_vrm_expressions_isBinary_Overridden.vrm"
+            ),
+            options
+                .fixture_dir
+                .join("VRMC_vrm_expressions_isBinary_Overridden.vrm"),
         ),
         (
-            format!("https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_vrm_expressions_isBinary_Overrides/vrm/VRMC_vrm_expressions_isBinary_Overrides.vrm"),
-            options.fixture_dir.join("VRMC_vrm_expressions_isBinary_Overrides.vrm"),
+            format!(
+                "https://raw.githubusercontent.com/vrm-c/vrm-specification/{VRM_SPEC_COMMIT}/samples/VRMC_vrm_expressions_isBinary_Overrides/vrm/VRMC_vrm_expressions_isBinary_Overrides.vrm"
+            ),
+            options
+                .fixture_dir
+                .join("VRMC_vrm_expressions_isBinary_Overrides.vrm"),
         ),
         (
-            format!("https://raw.githubusercontent.com/pixiv/three-vrm/{THREE_VRM_COMMIT}/packages/three-vrm-animation/examples/models/test.vrma"),
+            format!(
+                "https://raw.githubusercontent.com/pixiv/three-vrm/{THREE_VRM_COMMIT}/packages/three-vrm-animation/examples/models/test.vrma"
+            ),
             options.fixture_dir.join("test.vrma"),
         ),
         (
-            format!("https://raw.githubusercontent.com/pixiv/three-vrm/{THREE_VRM_VIEWER_COMMIT}/packages/vrm-viewer/examples/models/idle_loop.vrma"),
+            format!(
+                "https://raw.githubusercontent.com/pixiv/three-vrm/{THREE_VRM_VIEWER_COMMIT}/packages/vrm-viewer/examples/models/idle_loop.vrma"
+            ),
             options.fixture_dir.join("idle_loop.vrma"),
         ),
     ];
@@ -661,12 +685,17 @@ fn render_fixtures(options: &Options) -> Result<Vec<RenderFixture>, String> {
                 options.fixture_dir.join(&name)
             };
             if !path.exists() {
-                return Err(format!("render fixture does not exist: {}", self::path(&path)));
+                return Err(format!(
+                    "render fixture does not exist: {}",
+                    self::path(&path)
+                ));
             }
-            let stem = path
-                .file_stem()
-                .and_then(OsStr::to_str)
-                .ok_or_else(|| format!("render fixture has no valid file stem: {}", self::path(&path)))?;
+            let stem = path.file_stem().and_then(OsStr::to_str).ok_or_else(|| {
+                format!(
+                    "render fixture has no valid file stem: {}",
+                    self::path(&path)
+                )
+            })?;
             Ok(RenderFixture {
                 name,
                 stem: sanitize_artifact_stem(stem),
@@ -879,7 +908,7 @@ fn render_light_units(options: &Options) -> RenderLightUnits {
     }
 }
 
-fn compare_render_pair(
+fn compare_render_rgba_json_pair(
     options: &Options,
     fixture: &RenderFixture,
     renderer: &str,
@@ -896,18 +925,6 @@ fn compare_render_pair(
         "--metric",
         options.render_psnr_metric.as_cli_value(),
     ]);
-    if let Some(fail_under) = options.render_fail_under {
-        command.args(["--fail-under", fail_under.to_string().as_str()]);
-    }
-    if let Some(max_delta) = options.render_max_selected_channel_delta {
-        command.args([
-            "--max-selected-channel-delta",
-            max_delta.to_string().as_str(),
-        ]);
-    }
-    if let Some(max_delta) = options.render_max_alpha_delta {
-        command.args(["--max-alpha-delta", max_delta.to_string().as_str()]);
-    }
     run_command(command)
 }
 
@@ -967,20 +984,17 @@ fn render_imqraw_artifact(options: &Options, fixture: &RenderFixture, renderer: 
 }
 
 fn render_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
-    options
-        .render_parity_dir
-        .join("reports")
-        .join(format!("{}.{renderer}-vs-three-vrm.psnr.json", fixture.stem))
+    options.render_parity_dir.join("reports").join(format!(
+        "{}.{renderer}-vs-three-vrm.psnr.json",
+        fixture.stem
+    ))
 }
 
 fn render_imqraw_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
-    options
-        .render_parity_dir
-        .join("reports")
-        .join(format!(
-            "{}.{renderer}-vs-three-vrm.imqraw-rust.json",
-            fixture.stem
-        ))
+    options.render_parity_dir.join("reports").join(format!(
+        "{}.{renderer}-vs-three-vrm.imqraw-rust.json",
+        fixture.stem
+    ))
 }
 
 fn render_diff_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
@@ -1283,8 +1297,7 @@ fn parse_rgba_artifact_value(
             let value = value
                 .as_u64()
                 .ok_or_else(|| format!("{source}: rgba[{index}] must be an integer"))?;
-            u8::try_from(value)
-                .map_err(|_| format!("{source}: rgba[{index}] must be in 0..255"))
+            u8::try_from(value).map_err(|_| format!("{source}: rgba[{index}] must be in 0..255"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RgbaArtifact {
@@ -1299,8 +1312,8 @@ fn json_u32(value: &serde_json::Value, field: &str, source: &str) -> Result<u32,
         .get(field)
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| format!("{source}: {field} must be a positive integer"))?;
-    let value = u32::try_from(value)
-        .map_err(|_| format!("{source}: {field} is too large for u32"))?;
+    let value =
+        u32::try_from(value).map_err(|_| format!("{source}: {field} is too large for u32"))?;
     if value == 0 {
         Err(format!("{source}: {field} must be a positive integer"))
     } else {
@@ -1308,13 +1321,20 @@ fn json_u32(value: &serde_json::Value, field: &str, source: &str) -> Result<u32,
     }
 }
 
-fn render_summary_markdown(options: &Options, fixtures: &[RenderFixture]) -> Result<String, String> {
+fn render_summary_markdown(
+    options: &Options,
+    fixtures: &[RenderFixture],
+) -> Result<String, String> {
     let meta = RenderSummaryMeta {
         artifacts: path(&options.render_parity_dir),
         visual_review: path(&options.render_parity_dir.join("visual-review.html")),
+        numeric_gate: "direct .imqraw via tools/render-parity/compare-imqraw.rs".to_owned(),
         metric: options.render_psnr_metric.as_cli_value().to_owned(),
         background: options.render_background.as_cli_value().to_owned(),
-        mtoon_light_accumulation: options.render_mtoon_light_accumulation.as_cli_value().to_owned(),
+        mtoon_light_accumulation: options
+            .render_mtoon_light_accumulation
+            .as_cli_value()
+            .to_owned(),
         alpha_mismatch_tolerance: options.render_alpha_mismatch_tolerance,
         alpha_channel_tolerance: options.render_alpha_channel_tolerance,
     };
@@ -1350,6 +1370,7 @@ struct RenderReportSummary {
 struct RenderSummaryMeta {
     artifacts: String,
     visual_review: String,
+    numeric_gate: String,
     metric: String,
     background: String,
     mtoon_light_accumulation: String,
@@ -1364,13 +1385,19 @@ struct RenderSummaryRow {
     report: RenderReportSummary,
 }
 
-fn render_summary_markdown_from_rows(meta: &RenderSummaryMeta, rows: &[RenderSummaryRow]) -> String {
+fn render_summary_markdown_from_rows(
+    meta: &RenderSummaryMeta,
+    rows: &[RenderSummaryRow],
+) -> String {
     let mut output = String::from("# vrm-rs Render Parity Summary\n\n");
-    output.push_str("Generated by `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity`.\n\n");
+    output.push_str(
+        "Generated by `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity`.\n\n",
+    );
     output.push_str(&format!(
-        "- Artifacts: `{}`\n- Visual review: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
+        "- Artifacts: `{}`\n- Visual review: `{}`\n- Numeric gate: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
         meta.artifacts,
         meta.visual_review,
+        meta.numeric_gate,
         meta.metric,
         meta.background,
         meta.mtoon_light_accumulation,
@@ -1401,7 +1428,7 @@ fn render_report_summary(
     fixture: &RenderFixture,
     renderer: &str,
 ) -> Result<RenderReportSummary, String> {
-    let report = render_report(options, fixture, renderer);
+    let report = render_imqraw_report(options, fixture, renderer);
     let text = std::fs::read_to_string(&report)
         .map_err(|err| format!("failed to read {}: {err}", path(&report)))?;
     parse_render_report_summary_json(&text, &path(&report))
@@ -1562,9 +1589,19 @@ fn report_text(
     fixture: &RenderFixture,
     renderer: &str,
 ) -> Result<String, String> {
-    let report = render_report(options, fixture, renderer);
-    std::fs::read_to_string(&report)
-        .map_err(|err| format!("failed to read {}: {err}", path(&report)))
+    let imqraw_report = render_imqraw_report(options, fixture, renderer);
+    let rgba_report = render_report(options, fixture, renderer);
+    let imqraw_text = std::fs::read_to_string(&imqraw_report)
+        .map_err(|err| format!("failed to read {}: {err}", path(&imqraw_report)))?;
+    let rgba_text = std::fs::read_to_string(&rgba_report)
+        .map_err(|err| format!("failed to read {}: {err}", path(&rgba_report)))?;
+    Ok(format!(
+        "Direct imqraw gate report ({})\n{}\nRGBA JSON diagnostic report ({})\n{}",
+        path(&imqraw_report),
+        imqraw_text,
+        path(&rgba_report),
+        rgba_text,
+    ))
 }
 
 fn html_escape(input: &str) -> String {

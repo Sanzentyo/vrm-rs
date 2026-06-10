@@ -1,8 +1,8 @@
 # imq Compare Requirements For VRM Render Parity
 
-This document records the `compare-psnr.mjs` behavior that should move into
-`imq` before `vrm-rs` can replace the local JavaScript comparator with direct
-`imqraw` renderer output and `imq` metric reports.
+This document records the VRM render-parity comparator behavior that should
+move into `imq` before `vrm-rs` can replace its repository-local comparator
+with direct public `imq` metric reports.
 
 The target is not just generic image PSNR. VRM render parity needs metrics that
 separate model-body color drift, transparent-material alpha drift, and one-pixel
@@ -30,14 +30,17 @@ Error: unsupported metric input: unknown sample domain `rgb-visible`
 ```
 
 Until an `imq` revision exposes those domains and threshold gates in the actual
-CLI/crate, `compare-psnr.mjs` remains the authoritative VRM-specific gate and
-`imq` remains an independent raw-buffer cross-check for generic color/all
-metrics.
+CLI/crate, `tools/render-parity/compare-imqraw.rs` remains the authoritative
+VRM-specific direct-raw gate. `compare-psnr.mjs` remains only a diagnostic
+cross-check over `.rgba.json` artifacts, and the public `imq` CLI remains an
+independent raw-buffer cross-check for generic color/all metrics.
 
 ## Current Comparator Role
 
-`tools/render-parity/compare-psnr.mjs` currently compares two `.rgba.json`
-artifacts:
+`tools/render-parity/compare-imqraw.rs` currently compares two direct
+single-image `.imqraw` artifacts and emits the same report shape as the older
+`.rgba.json` comparator. `tools/render-parity/compare-psnr.mjs` still compares
+two `.rgba.json` diagnostic artifacts:
 
 ```json
 {
@@ -48,9 +51,10 @@ artifacts:
 ```
 
 The renderer outputs already contain raw top-left-origin RGBA8 readback data.
-The comparator does not compare PNG files. The long-term improvement is to have
-the JavaScript three-vrm reference and the Rust wgpu/Bevy captures emit
-`imqraw` directly, removing the JSON number-array serialization cost.
+The comparators do not compare PNG files. The JavaScript three-vrm reference
+and the Rust wgpu/Bevy captures now emit `imqraw` directly, so the remaining
+long-term improvement is to use the public `imq` CLI/crate for the VRM-specific
+domains and threshold gates instead of carrying the local comparator script.
 
 ## Required Metric Domains
 
@@ -195,8 +199,9 @@ The final render parity path should avoid `.rgba.json` for numeric comparison:
   - Current status: `tools/render-parity/compare-imqraw.rs` already compares
     direct single-image renderer `.imqraw` bundles and emits
     `.imqraw-rust.json` reports with the same local VRM domains as
-    `compare-psnr.mjs`. The main pass/fail gate still uses `.psnr.json` until
-    public `imq` exposes those domains and thresholds directly.
+    `compare-psnr.mjs`. The main pass/fail summary now consumes those
+    `.imqraw-rust.json` reports. Public `imq` still needs to expose those
+    domains and thresholds directly before the local comparator can be retired.
 
 PNG and HTML artifacts should remain review artifacts only. Numeric parity
 should operate on raw RGBA8 data.
