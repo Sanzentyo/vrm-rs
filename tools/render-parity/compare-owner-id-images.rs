@@ -69,6 +69,7 @@ struct OwnerCompareReport {
     mismatched_shared_nonzero: u64,
     same_projected_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_adjacent_triangle_mismatched_shared_nonzero: u64,
+    unexplained_owner_tail_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
     actual_metadata_bounds_miss_shared_nonzero: u64,
@@ -90,6 +91,7 @@ struct OwnerCompareReport {
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
     top_actual_to_expected_details: Vec<OwnerTransitionDetail>,
+    top_unexplained_expected_to_actual_details: Vec<OwnerTransitionDetail>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -354,6 +356,7 @@ fn compare_owner_images(
     let mut mismatched_shared_nonzero = 0;
     let mut same_projected_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_adjacent_triangle_mismatched_shared_nonzero = 0;
+    let mut unexplained_owner_tail_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
     let mut actual_metadata_bounds_miss_shared_nonzero = 0;
@@ -362,6 +365,7 @@ fn compare_owner_images(
     let mut actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero = 0;
     let mut expected_to_actual = BTreeMap::new();
     let mut actual_to_expected = BTreeMap::new();
+    let mut unexplained_expected_to_actual = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut owner_geometry_classes = BTreeMap::new();
@@ -370,6 +374,7 @@ fn compare_owner_images(
     let mut actual_metadata_recoveries = BTreeMap::new();
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
+    let mut unexplained_expected_to_actual_pixels = BTreeMap::new();
 
     for (index, (&expected_id, &actual_id)) in expected_ids.iter().zip(&actual_ids).enumerate() {
         let pixel = OwnerPixel {
@@ -429,8 +434,20 @@ fn compare_owner_images(
                     if geometry_class.is_same_projected_triangle() {
                         same_projected_triangle_mismatched_shared_nonzero += 1;
                     }
-                    if geometry_class.is_same_projected_or_adjacent_triangle() {
+                    let same_projected_or_adjacent =
+                        geometry_class.is_same_projected_or_adjacent_triangle();
+                    if same_projected_or_adjacent {
                         same_projected_or_adjacent_triangle_mismatched_shared_nonzero += 1;
+                    }
+                    if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
+                        unexplained_owner_tail_mismatched_shared_nonzero += 1;
+                        bump_transition(&mut unexplained_expected_to_actual, left, right);
+                        bump_transition_pixels(
+                            &mut unexplained_expected_to_actual_pixels,
+                            left,
+                            right,
+                            pixel,
+                        );
                     }
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
@@ -496,6 +513,7 @@ fn compare_owner_images(
         mismatched_shared_nonzero,
         same_projected_triangle_mismatched_shared_nonzero,
         same_projected_or_adjacent_triangle_mismatched_shared_nonzero,
+        unexplained_owner_tail_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
         actual_metadata_bounds_miss_shared_nonzero,
@@ -539,6 +557,13 @@ fn compare_owner_images(
             &actual_to_expected_pixels,
             actual_metadata,
             expected_metadata,
+            top,
+        ),
+        top_unexplained_expected_to_actual_details: top_transition_details(
+            &unexplained_expected_to_actual,
+            &unexplained_expected_to_actual_pixels,
+            expected_metadata,
+            actual_metadata,
             top,
         ),
     })
@@ -1385,6 +1410,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.expected_only, 0);
     assert_eq!(report.actual_only, 1);
     assert_eq!(report.mismatched_shared_nonzero, 2);
+    assert_eq!(report.unexplained_owner_tail_mismatched_shared_nonzero, 2);
+    assert_eq!(report.top_unexplained_expected_to_actual_details.len(), 2);
     assert_eq!(
         report.actual_not_visible_by_cull_policy_shared_nonzero,
         1

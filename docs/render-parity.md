@@ -486,15 +486,22 @@ owner-ID PSNR. `compare-owner-id-images.rs` reports
 `same_projected_or_adjacent_triangle_mismatched_shared_nonzero`, and
 `top_owner_geometry_classes`. These classify mismatched owner pixels by pass
 relation, normalized mesh-name relation, material relation, triangle relation,
-and projected screen/depth relation. On the current default CCW Seed-san run,
-`11649/11933` wgpu-vs-three-vrm mismatched shared pixels are still the same
-projected triangle, and `11742/11933` are the same or adjacent projected
-triangle. The largest bucket is same pass / same normalized mesh / different
-material label / same triangle / depth-close projection (`11590` pixels),
-which mainly reflects owner-numbering and three.js clone/material naming
-differences. The useful remaining owner work is therefore the small
-non-overlap, different-triangle, or different-pass tail rather than the whole
-owner-ID PSNR delta.
+and projected screen/depth relation. The same report also exposes
+`unexplained_owner_tail_mismatched_shared_nonzero` and
+`top_unexplained_expected_to_actual_details`, which remove same/adjacent
+projected-triangle mismatches and Bevy near-ID recovery artifacts from the
+detail table. On the current default CCW Seed-san run, `11649/11933`
+wgpu-vs-three-vrm mismatched shared pixels are still the same projected
+triangle, and `11742/11933` are the same or adjacent projected triangle. The
+largest bucket is same pass / same normalized mesh / different material label /
+same triangle / depth-close projection (`11590` pixels), which mainly reflects
+owner-numbering and three.js clone/material naming differences. The clean wgpu
+unexplained tail is now `191/11933`, with the largest remaining transition only
+`4` pixels. The useful remaining owner work is therefore the small non-overlap,
+different-triangle, or different-pass tail rather than the whole owner-ID PSNR
+delta. Use wgpu for this tail; Bevy reports are still useful for consistency
+but include reverse-Z metadata convention and near-ID diagnostic-color recovery
+effects.
 
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
