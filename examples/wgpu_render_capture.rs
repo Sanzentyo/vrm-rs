@@ -273,6 +273,7 @@ enum DiagnosticRender {
     BaseColor,
     BaseColorFlipV,
     Uv,
+    BaseUv,
 }
 
 impl DiagnosticRender {
@@ -284,6 +285,7 @@ impl DiagnosticRender {
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
             Self::Uv => "uv",
+            Self::BaseUv => "base-uv",
         }
     }
 }
@@ -675,6 +677,7 @@ fn material_extra_uniform(
                 DiagnosticRender::BaseColor => 1.0,
                 DiagnosticRender::BaseColorFlipV => 2.0,
                 DiagnosticRender::Uv => 3.0,
+                DiagnosticRender::BaseUv => 4.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
             },
         ],
@@ -2122,6 +2125,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     if material_extra.flags2.w > 2.5 {
+        if material_extra.flags2.w > 3.5 {
+            return output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha);
+        }
         return output_color(vec3<f32>(input.tex_coord, 0.0), opaque_alpha);
     }
     let diffuse = input.color.rgb * texel.rgb;

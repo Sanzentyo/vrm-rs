@@ -126,6 +126,7 @@ just render-parity-seed-base-color-interior2-diagnostic
 just render-parity-seed-base-color-no-mip-diagnostic
 just render-parity-seed-base-color-flip-v-diagnostic
 just render-parity-seed-uv-diagnostic
+just render-parity-seed-base-uv-diagnostic
 ```
 
 `base-factor` keeps the same alpha/cull/depth/order policy and paints fragments
@@ -172,6 +173,11 @@ better than the textured base-color diagnostic, but still in the same localized
 residual band, so the next Seed-san slice should inspect UV interpolation,
 primitive coverage, sampler state, and texture lookup locality before returning
 to MToon light/color accumulation.
+
+The `render-parity-seed-base-uv-diagnostic` recipe renders the transformed base
+texture sampling UV instead of raw `TEXCOORD_0`. On Seed-san it currently
+matches the raw UV diagnostic exactly, which rules out base texture transform
+and MToon UV animation as the focused base-texture cause for this fixture.
 
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing

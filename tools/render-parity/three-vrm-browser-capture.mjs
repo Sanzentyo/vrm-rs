@@ -49,7 +49,7 @@ const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|uv]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|uv|base-uv]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -83,8 +83,8 @@ if (!['opaque-black', 'transparent'].includes(background)) {
   console.error(`invalid background: ${background}; expected opaque-black or transparent`);
   process.exit(2);
 }
-if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'uv'].includes(diagnosticRender)) {
-  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, or uv`);
+if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'uv', 'base-uv'].includes(diagnosticRender)) {
+  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, uv, or base-uv`);
   process.exit(2);
 }
 
@@ -328,10 +328,10 @@ function capturePage(options) {
       if (${JSON.stringify(options.diagnosticRender)} !== 'shaded' && object.isMesh && object.material) {
         const diagnosticMaterial = (material, mesh) => {
           const mode = ${JSON.stringify(options.diagnosticRender)};
-          if (mode === 'uv') {
+          if (mode === 'uv' || mode === 'base-uv') {
             const uv = new THREE.MeshBasicMaterial({
               color: 0xffffff,
-              map: uvDiagnosticTexture,
+              map: mode === 'base-uv' ? material?.map ?? uvDiagnosticTexture : uvDiagnosticTexture,
               side: material?.side ?? THREE.FrontSide,
               transparent: material?.transparent ?? false,
               opacity: material?.opacity ?? 1.0,

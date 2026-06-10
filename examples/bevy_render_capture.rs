@@ -226,6 +226,7 @@ enum DiagnosticRender {
     BaseColor,
     BaseColorFlipV,
     Uv,
+    BaseUv,
 }
 
 impl DiagnosticRender {
@@ -237,6 +238,7 @@ impl DiagnosticRender {
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
             Self::Uv => "uv",
+            Self::BaseUv => "base-uv",
         }
     }
 }
@@ -973,6 +975,7 @@ fn bevy_mtoon_material(
             DiagnosticRender::BaseColor => 1.0,
             DiagnosticRender::BaseColorFlipV => 2.0,
             DiagnosticRender::Uv => 3.0,
+            DiagnosticRender::BaseUv => 4.0,
             DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
         },
     );

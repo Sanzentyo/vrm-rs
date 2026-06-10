@@ -251,6 +251,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     if material.material_flags2.w > 2.5 {
+        if material.material_flags2.w > 3.5 {
+            return output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha);
+        }
         return output_color(vec3<f32>(uv, 0.0), opaque_alpha);
     }
     let diffuse = material.base_color.rgb * texel.rgb;

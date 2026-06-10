@@ -47,6 +47,12 @@
   comparison is `43.5658 dB`; the next slice should map those local shared-UV
   hotspots back to primitive/material IDs rather than treating the whole UV
   field as globally wrong.
+- Added a Seed-san `base-uv` diagnostic that renders the transformed base
+  texture sampling UV in three-vrm, wgpu, and Bevy. For Seed-san it matches the
+  raw `uv` diagnostic exactly: selected `rgb-shared-nonblack-interior1px` PSNR
+  is wgpu `30.3816 dB` / Bevy `30.1784 dB`, with exact alpha parity and the same
+  shared-domain hotspot counts. This rules out base texture transform or MToon
+  UV animation as the focused Seed-san base-texture blocker.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the
