@@ -135,6 +135,15 @@ of an internal edge. The same report includes frontmost-to-nearest surface
 transition counts, currently showing that the largest constraint residuals are
 base-material seams such as `material_6 -> material_12` rather than outline-only
 ownership.
+Use `just render-parity-material-seam-generated` for the focused source-like
+base-material seam guard. It generates
+`.external-fixtures/generated/material-seam.vrm.gltf`, renders `base-factor`
+with outlines disabled, compares direct `.imqraw` buffers, and writes hotspot
+maps under `.external-fixtures/render-parity-material-seam-generated/`. The
+current guard has exact alpha parity and selected
+`rgb-shared-nonblack-interior1px` PSNR wgpu/Bevy `42.1555 dB`, with only `7`
+changed shared-nonblack interior pixels concentrated on the generated diagonal
+material seam.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample
@@ -344,11 +353,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 82.15% | 85.01% |
+| Workspace total | 82.24% | 85.06% |
 | `vrm-adapter-bevy` | 92.67% | 94.42% |
 | `vrm-adapter` | 64.94% | 74.74% |
 | `vrm-core` | 70.18% | 77.46% |
-| `vrm-io` | 87.89% | 87.12% |
+| `vrm-io` | 88.15% | 87.31% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |

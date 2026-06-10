@@ -402,6 +402,26 @@ colors (`32/32`), so simple generated UV seams do not reproduce the Seed-san
 residual. Treat this as a control fixture: the remaining real-model blocker is
 more specific than generic planar UV interpolation or a basic triangle split.
 
+A source-like generated base-material seam control is available through:
+
+```powershell
+just render-parity-material-seam-generated
+```
+
+It writes `.external-fixtures/generated/material-seam.vrm.gltf` and renders
+`base-factor` diagnostics into
+`.external-fixtures/render-parity-material-seam-generated/` with outlines
+disabled. The fixture uses adjacent opaque MToon primitives with shared world
+coordinates but distinct materials, including a high-contrast diagonal material
+boundary. The current run has exact alpha parity and selected
+`rgb-shared-nonblack-interior1px` PSNR wgpu `42.1555 dB` / Bevy `42.1555 dB`,
+with max selected-channel delta `192`. Direct `.imqraw` hotspot inspection finds
+only `7` changed shared-nonblack interior pixels for both Rust renderers. The
+hotspot map classifies all of them as base-pass pixels within `0.25px` of the
+diagonal material seam, with the dominant transition `material_2 ->
+material_3`. Treat this as the minimal fill-rule/material-ownership guard that
+corresponds to the larger real constraint-sample seam transitions.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
@@ -552,6 +572,10 @@ outline ownership: `material_6 -> material_12` (`13` actual / `12` expected),
 `outline material_0 -> base material_0` at `3` pixels. The next useful
 constraint-sample work is therefore material seam/fill-rule classification
 around those base-material boundaries before more shader tuning.
+`just render-parity-material-seam-generated` now isolates that branch on a
+license-safe generated glTF. Its remaining deltas are only seven base-pass seam
+pixels, so broad changes to material assignment, culling, or draw ordering
+should preserve this guard before being evaluated on the real constraint sample.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
