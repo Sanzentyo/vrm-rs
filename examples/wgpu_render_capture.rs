@@ -99,6 +99,10 @@ struct CaptureOptions {
     camera_z: f32,
     #[arg(long, default_value_t = 1.0)]
     target_y: f32,
+    #[arg(long, default_value_t = 0.0)]
+    screen_jitter_x: f32,
+    #[arg(long, default_value_t = 0.0)]
+    screen_jitter_y: f32,
     #[arg(long, default_value_t = 0.78)]
     mtoon_exposure: f32,
     #[arg(long, default_value_t = 0.12)]
@@ -1692,11 +1696,14 @@ async fn render_capture(
 fn uniforms(options: &CaptureOptions) -> Uniforms {
     let eye = camera_eye(options);
     let view = camera_view(options);
-    let projection = Mat4::perspective_rh(
-        30.0_f32.to_radians(),
-        options.width as f32 / options.height as f32,
-        0.1,
-        20.0,
+    let projection = jittered_projection(
+        Mat4::perspective_rh(
+            30.0_f32.to_radians(),
+            options.width as f32 / options.height as f32,
+            0.1,
+            20.0,
+        ),
+        options,
     );
     let light_dir = Vec3::new(-1.0, 1.0, -1.0).normalize();
     Uniforms {
@@ -1746,6 +1753,12 @@ fn camera_view(options: &CaptureOptions) -> Mat4 {
     )
 }
 
+fn jittered_projection(mut projection: Mat4, options: &CaptureOptions) -> Mat4 {
+    projection.w_axis.x += 2.0 * options.screen_jitter_x / options.width as f32;
+    projection.w_axis.y -= 2.0 * options.screen_jitter_y / options.height as f32;
+    projection
+}
+
 fn projection_y_scale() -> f32 {
     1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
@@ -1780,7 +1793,12 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
         "expressions": options.expressions,
-        "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
+        "camera": {
+            "y": options.camera_y,
+            "z": options.camera_z,
+            "targetY": options.target_y,
+            "screenJitter": [options.screen_jitter_x, options.screen_jitter_y]
+        },
         "mtoonLighting": {
             "exposure": options.mtoon_exposure,
             "ambientBase": options.mtoon_ambient_base,

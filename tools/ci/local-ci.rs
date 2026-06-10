@@ -67,6 +67,10 @@ struct Options {
     render_height: u32,
     #[arg(long, default_value_t = 3.0)]
     render_camera_z: f32,
+    #[arg(long, default_value_t = 0.0)]
+    render_screen_jitter_x: f32,
+    #[arg(long, default_value_t = 0.0)]
+    render_screen_jitter_y: f32,
     #[arg(long, default_value_t = 0.78)]
     render_mtoon_exposure: f32,
     #[arg(long, default_value_t = 0.12)]
@@ -839,6 +843,14 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_height.to_string())
         .arg("--camera-z")
         .arg(options.render_camera_z.to_string())
+        .arg(format!(
+            "--screen-jitter-x={}",
+            options.render_screen_jitter_x
+        ))
+        .arg(format!(
+            "--screen-jitter-y={}",
+            options.render_screen_jitter_y
+        ))
         .arg("--mtoon-exposure")
         .arg(options.render_mtoon_exposure.to_string())
         .arg("--mtoon-ambient-base")
@@ -906,6 +918,14 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_height.to_string())
         .arg("--camera-z")
         .arg(options.render_camera_z.to_string())
+        .arg(format!(
+            "--screen-jitter-x={}",
+            options.render_screen_jitter_x
+        ))
+        .arg(format!(
+            "--screen-jitter-y={}",
+            options.render_screen_jitter_y
+        ))
         .arg("--mtoon-exposure")
         .arg(options.render_mtoon_exposure.to_string())
         .arg("--mtoon-ambient-base")

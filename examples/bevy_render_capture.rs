@@ -119,6 +119,10 @@ struct CaptureOptions {
     camera_z: f32,
     #[arg(long, default_value_t = 1.0)]
     target_y: f32,
+    #[arg(long, default_value_t = 0.0)]
+    screen_jitter_x: f32,
+    #[arg(long, default_value_t = 0.0)]
+    screen_jitter_y: f32,
     #[arg(long, default_value_t = 0.78)]
     mtoon_exposure: f32,
     #[arg(long, default_value_t = 0.12)]
@@ -337,8 +341,7 @@ fn setup(
             ..default()
         }),
         Tonemapping::None,
-        Transform::from_xyz(0.0, options.camera_y, -options.camera_z)
-            .looking_at(Vec3::new(0.0, options.target_y, 0.0), Vec3::Y),
+        bevy_camera_transform(&options),
     ));
 }
 
@@ -1179,15 +1182,49 @@ fn alpha_cutoff(mode: AlphaMode) -> f32 {
 }
 
 fn camera_eye(options: &CaptureOptions) -> GVec3 {
-    GVec3::new(0.0, options.camera_y, -options.camera_z)
+    base_camera_eye(options) + camera_jitter_world(options)
 }
 
 fn camera_view(options: &CaptureOptions) -> Mat4 {
     Mat4::look_at_rh(
         camera_eye(options),
-        GVec3::new(0.0, options.target_y, 0.0),
+        base_camera_target(options) + camera_jitter_world(options),
         GVec3::Y,
     )
+}
+
+fn base_camera_eye(options: &CaptureOptions) -> GVec3 {
+    GVec3::new(0.0, options.camera_y, -options.camera_z)
+}
+
+fn base_camera_target(options: &CaptureOptions) -> GVec3 {
+    GVec3::new(0.0, options.target_y, 0.0)
+}
+
+fn bevy_camera_transform(options: &CaptureOptions) -> Transform {
+    Transform::from_translation(to_bevy_vec3(
+        base_camera_eye(options) + camera_jitter_world(options),
+    ))
+    .looking_at(
+        to_bevy_vec3(base_camera_target(options) + camera_jitter_world(options)),
+        Vec3::Y,
+    )
+}
+
+fn camera_jitter_world(options: &CaptureOptions) -> GVec3 {
+    let distance = options.camera_z.max(0.0001);
+    let half_height = (0.5 * 30.0_f32.to_radians()).tan() * distance;
+    let world_per_pixel_y = 2.0 * half_height / options.height as f32;
+    let world_per_pixel_x = world_per_pixel_y * options.width as f32 / options.height as f32;
+    GVec3::new(
+        -options.screen_jitter_x * world_per_pixel_x,
+        options.screen_jitter_y * world_per_pixel_y,
+        0.0,
+    )
+}
+
+fn to_bevy_vec3(value: GVec3) -> Vec3 {
+    Vec3::new(value.x, value.y, value.z)
 }
 
 fn projection_y_scale() -> f32 {
@@ -1608,7 +1645,13 @@ fn write_capture(
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
         "expressions": options.expressions,
-        "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
+        "camera": {
+            "y": options.camera_y,
+            "z": options.camera_z,
+            "targetY": options.target_y,
+            "screenJitter": [options.screen_jitter_x, options.screen_jitter_y],
+            "screenJitterMode": "camera-translation"
+        },
         "mtoonLighting": {
             "exposure": options.mtoon_exposure,
             "ambientBase": options.mtoon_ambient_base,

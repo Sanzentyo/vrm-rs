@@ -238,10 +238,20 @@ matches, expected mean UV distance `0.15`), and `0.75,0.75` lowers expected
 mean UV distance further to `0.13` with the same `16/32` expected triangle
 matches. This suggests a subpixel raster-alignment component mixed into the
 internal UV seam residual, but not a complete global offset: choosing that
-center worsens Rust actual/frontmost agreement. The next render-side experiment
-should therefore use an explicit diagnostic screen jitter in the Rust capture
-paths and judge it by PSNR, rather than hard-coding a sample-center change from
-the mapper alone.
+center worsens Rust actual/frontmost agreement.
+
+The follow-up Rust-side screen-jitter capture confirms that the sample-center
+hint should not be applied as a global projection offset. The capture examples
+and local runner accept `--screen-jitter-x/y` for focused diagnostics; the wgpu
+path applies a clip-space projection offset, while the Bevy path uses an
+equivalent fixed-camera translation approximation. On Seed-san base-UV,
+`rgb-shared-nonblack-interior1px` baseline is wgpu `38.6925 dB` / Bevy
+`38.5360 dB` with max selected-channel delta `166`. Jittering Rust by `+0.25`
+pixel on X drops the score to wgpu `30.6636 dB` / Bevy `26.9913 dB`, and
+`-0.25` drops it to wgpu `30.9648 dB` / Bevy `26.9061 dB`. Treat the
+sample-center mapper result as a classification clue, not a render correction;
+the remaining blocker is still local GPU/CPU-prepared surface selection around
+UV seams and triangle boundaries.
 
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
