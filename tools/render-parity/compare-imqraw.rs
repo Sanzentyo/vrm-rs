@@ -58,6 +58,7 @@ enum MetricName {
     RgbSharedNonblackInterior2px,
     RgbSharedNonblackInterior3px,
     RgbSharedNonblackFlat32Interior1px,
+    RgbSharedNonblackGradientInterior1px,
 }
 
 impl std::str::FromStr for MetricName {
@@ -79,8 +80,11 @@ impl std::str::FromStr for MetricName {
             "rgb-shared-nonblack-flat32-interior1px" => {
                 Ok(Self::RgbSharedNonblackFlat32Interior1px)
             }
+            "rgb-shared-nonblack-gradient-interior1px" => {
+                Ok(Self::RgbSharedNonblackGradientInterior1px)
+            }
             other => Err(format!(
-                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, rgb-shared-nonblack-interior2px, rgb-shared-nonblack-interior3px, or rgb-shared-nonblack-flat32-interior1px"
+                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, rgb-shared-nonblack-interior2px, rgb-shared-nonblack-interior3px, rgb-shared-nonblack-flat32-interior1px, or rgb-shared-nonblack-gradient-interior1px"
             )),
         }
     }
@@ -102,6 +106,9 @@ impl MetricName {
             Self::RgbSharedNonblackInterior3px => "rgb-shared-nonblack-interior3px",
             Self::RgbSharedNonblackFlat32Interior1px => {
                 "rgb-shared-nonblack-flat32-interior1px"
+            }
+            Self::RgbSharedNonblackGradientInterior1px => {
+                "rgb-shared-nonblack-gradient-interior1px"
             }
         }
     }
@@ -226,6 +233,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         |pixel| is_flat_shared_nonblack_interior(&expected, &actual, pixel, 1, 32),
         &[0, 1, 2],
     );
+    let shared_nonblack_gradient_interior_rgb = compare_channels(
+        &expected,
+        &actual,
+        |pixel| is_gradient_shared_nonblack_interior(&expected, &actual, pixel, 1, 32),
+        &[0, 1, 2],
+    );
     let alpha = alpha_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
@@ -254,6 +267,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 MetricName::RgbSharedNonblackFlat32Interior1px,
                 shared_nonblack_flat32_interior_rgb,
             ),
+            (
+                MetricName::RgbSharedNonblackGradientInterior1px,
+                shared_nonblack_gradient_interior_rgb,
+            ),
         ],
     )?;
     let pass = pass_status(selected, alpha, &options);
@@ -280,6 +297,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "rgbSharedNonblackInterior2px": metric_report(shared_nonblack_interior_2px_rgb),
         "rgbSharedNonblackInterior3px": metric_report(shared_nonblack_interior_3px_rgb),
         "rgbSharedNonblackFlat32Interior1px": metric_report(shared_nonblack_flat32_interior_rgb),
+        "rgbSharedNonblackGradientInterior1px": metric_report(shared_nonblack_gradient_interior_rgb),
         "selectedMetric": selected_metric_report(options.metric, selected),
         "pass": pass,
         "thresholds": {
@@ -662,6 +680,17 @@ fn is_flat_shared_nonblack_interior(
             && rgb_max_delta(&expected.rgba, pixel, neighbor) <= max_channel_delta
             && rgb_max_delta(&actual.rgba, pixel, neighbor) <= max_channel_delta
     })
+}
+
+fn is_gradient_shared_nonblack_interior(
+    expected: &RgbaImage,
+    actual: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    max_channel_delta: u8,
+) -> bool {
+    is_interior_shared_nonblack(expected, actual, pixel)
+        && !is_flat_shared_nonblack_interior(expected, actual, pixel, radius, max_channel_delta)
 }
 
 fn rgb_max_delta(rgba: &[u8], left: usize, right: usize) -> u8 {

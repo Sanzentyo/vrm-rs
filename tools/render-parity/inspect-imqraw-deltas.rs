@@ -53,6 +53,7 @@ enum PixelDomain {
     SharedNonblackInterior2px,
     SharedNonblackInterior3px,
     SharedNonblackFlat32Interior1px,
+    SharedNonblackGradientInterior1px,
 }
 
 impl PixelDomain {
@@ -66,6 +67,7 @@ impl PixelDomain {
             Self::SharedNonblackInterior2px => "shared-nonblack-interior2px",
             Self::SharedNonblackInterior3px => "shared-nonblack-interior3px",
             Self::SharedNonblackFlat32Interior1px => "shared-nonblack-flat32-interior1px",
+            Self::SharedNonblackGradientInterior1px => "shared-nonblack-gradient-interior1px",
         }
     }
 
@@ -84,6 +86,9 @@ impl PixelDomain {
             }),
             Self::SharedNonblackFlat32Interior1px => {
                 is_flat_shared_nonblack_interior(expected, actual, pixel, 1, 32)
+            }
+            Self::SharedNonblackGradientInterior1px => {
+                is_gradient_shared_nonblack_interior(expected, actual, pixel, 1, 32)
             }
         }
     }
@@ -278,6 +283,7 @@ fn domain_breakdown(expected: &RgbaImage, actual: &RgbaImage, deltas: &[PixelDel
         "sharedNonblackInterior2px": count(PixelDomain::SharedNonblackInterior2px),
         "sharedNonblackInterior3px": count(PixelDomain::SharedNonblackInterior3px),
         "sharedNonblackFlat32Interior1px": count(PixelDomain::SharedNonblackFlat32Interior1px),
+        "sharedNonblackGradientInterior1px": count(PixelDomain::SharedNonblackGradientInterior1px),
     })
 }
 
@@ -318,6 +324,9 @@ fn pixel_domain_json(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> 
             is_shared_nonblack(expected, actual, neighbor)
         }),
         "sharedNonblackFlat32Interior1px": is_flat_shared_nonblack_interior(
+            expected, actual, pixel, 1, 32,
+        ),
+        "sharedNonblackGradientInterior1px": is_gradient_shared_nonblack_interior(
             expected, actual, pixel, 1, 32,
         ),
     })
@@ -441,6 +450,17 @@ fn is_flat_shared_nonblack_interior(
             && rgb_max_delta(&expected.rgba, pixel, neighbor) <= max_channel_delta
             && rgb_max_delta(&actual.rgba, pixel, neighbor) <= max_channel_delta
     })
+}
+
+fn is_gradient_shared_nonblack_interior(
+    expected: &RgbaImage,
+    actual: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    max_channel_delta: u8,
+) -> bool {
+    is_interior_shared_nonblack(expected, actual, pixel)
+        && !is_flat_shared_nonblack_interior(expected, actual, pixel, radius, max_channel_delta)
 }
 
 fn rgb_max_delta(rgba: &[u8], left: usize, right: usize) -> u8 {

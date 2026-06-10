@@ -216,7 +216,11 @@ separate stable interior material/color parity from local texture/material/fill
 edges. Current values are wgpu `49.7607 dB` and Bevy `47.5483 dB`, while the
 ordinary shared-body outline-off score remains around `32.4 dB`; keep the
 ordinary metric as the compatibility pressure and use flat32 as a diagnostic
-classification signal.
+classification signal. The same recipe also writes
+`*.deltas.gradient.json` with domain
+`shared-nonblack-gradient-interior1px`, the shared-body interior complement.
+Current gradient-complement scores are wgpu `26.3277 dB` over `2638` pixels and
+Bevy `26.3322 dB` over `2642` pixels, with max channel deltas `219` / `218`.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

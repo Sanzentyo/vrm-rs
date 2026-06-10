@@ -167,6 +167,7 @@ enum RenderPsnrMetric {
     RgbSharedNonblackInterior2px,
     RgbSharedNonblackInterior3px,
     RgbSharedNonblackFlat32Interior1px,
+    RgbSharedNonblackGradientInterior1px,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -261,6 +262,9 @@ impl RenderPsnrMetric {
             Self::RgbSharedNonblackInterior3px => "rgb-shared-nonblack-interior3px",
             Self::RgbSharedNonblackFlat32Interior1px => {
                 "rgb-shared-nonblack-flat32-interior1px"
+            }
+            Self::RgbSharedNonblackGradientInterior1px => {
+                "rgb-shared-nonblack-gradient-interior1px"
             }
         }
     }
