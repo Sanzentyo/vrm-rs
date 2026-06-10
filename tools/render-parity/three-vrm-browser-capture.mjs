@@ -535,11 +535,16 @@ function capturePage(options) {
     Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
   );
 
+  const triangleSignedArea = (a, b, c) => (
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+  );
+
   const ownerTriangleProjection = (mesh, indices, viewProjection, target, clip) => {
     const projected = indices
       .map((index) => screenVertex(mesh, index, null, viewProjection, target, clip));
     if (projected.some((vertex) => vertex == null)) return null;
     const screen = projected.map((vertex) => vertex.screen);
+    const screenSignedArea = triangleSignedArea(screen[0], screen[1], screen[2]);
     return {
       screen,
       screenBounds: {
@@ -549,6 +554,10 @@ function capturePage(options) {
         maxY: Math.max(...screen.map((point) => point[1])),
       },
       depth: (projected[0].depth + projected[1].depth + projected[2].depth) / 3.0,
+      webglDepth: (projected[0].depth + projected[1].depth + projected[2].depth) / 3.0,
+      depthRange: 'webgl-ndc',
+      screenSignedArea,
+      frontFacing: screenSignedArea > 0.0,
     };
   };
 
@@ -583,18 +592,33 @@ function capturePage(options) {
         const projection = ownerTriangleProjection(mesh, indices, viewProjection, target, clip);
         const record = {
           id,
+          drawIndex: ownerIdRecords.length,
           color,
           meshName: mesh.name ?? '',
           meshUuid: mesh.uuid,
           materialIndex,
+          materialSlot: materialIndex,
           materialName: material?.name ?? '',
           pass: materialPass(material),
           materialType: material?.type ?? null,
+          side: material?.side ?? null,
+          transparent: material?.transparent ?? false,
+          opacity: material?.opacity ?? 1.0,
+          alphaTest: material?.alphaTest ?? 0.0,
+          depthWrite: material?.depthWrite ?? true,
+          depthTest: material?.depthTest ?? true,
+          blending: material?.blending ?? null,
+          premultipliedAlpha: material?.premultipliedAlpha ?? false,
+          renderOrder: mesh.renderOrder ?? 0,
           triangle: Math.floor(offset / 3),
           indices,
           screen: projection?.screen ?? null,
           screenBounds: projection?.screenBounds ?? null,
           depth: projection?.depth ?? null,
+          webglDepth: projection?.webglDepth ?? null,
+          depthRange: projection?.depthRange ?? null,
+          screenSignedArea: projection?.screenSignedArea ?? null,
+          frontFacing: projection?.frontFacing ?? null,
         };
         ownerIdRecords.push(record);
         ownerIdByColor.set(ownerColorKey(color), record);

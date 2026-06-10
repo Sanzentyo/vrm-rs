@@ -269,11 +269,31 @@ enum CaptureCullMode {
     Back,
 }
 
+impl CaptureCullMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Front => "front",
+            Self::Back => "back",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CaptureAlphaMode {
     Opaque,
     Mask,
     Blend,
+}
+
+impl CaptureAlphaMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Opaque => "opaque",
+            Self::Mask => "mask",
+            Self::Blend => "blend",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -2068,6 +2088,9 @@ struct OwnerProjection {
     screen: [[f32; 2]; 3],
     bounds: OwnerScreenBounds,
     depth: f32,
+    webgl_depth: f32,
+    screen_signed_area: f32,
+    front_facing: bool,
 }
 
 fn diagnostic_owner_ids(
@@ -2078,7 +2101,8 @@ fn diagnostic_owner_ids(
     let view_projection = diagnostic_view_projection(options);
     mesh.primitives
         .iter()
-        .flat_map(|primitive| {
+        .enumerate()
+        .flat_map(|(draw_index, primitive)| {
             primitive.owner_ids.iter().map(move |owner| {
                 let source = primitive.owner_source;
                 let projection = owner_triangle_projection(
@@ -2099,6 +2123,14 @@ fn diagnostic_owner_ids(
                     "materialName": material_name(loaded, source.material),
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
+                    "drawIndex": draw_index,
+                    "cullMode": primitive.policy.cull_mode.as_str(),
+                    "alphaMode": primitive.policy.alpha_mode.as_str(),
+                    "alphaCutoff": primitive.policy.alpha_cutoff,
+                    "depthWrite": primitive.policy.depth_write,
+                    "depthTest": true,
+                    "depthCompare": "less-equal",
+                    "blend": primitive.policy.blend,
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
@@ -2109,6 +2141,10 @@ fn diagnostic_owner_ids(
                         "maxY": projection.bounds.max_y,
                     })),
                     "depth": projection.map(|projection| projection.depth),
+                    "webglDepth": projection.map(|projection| projection.webgl_depth),
+                    "depthRange": projection.map(|_| "zero-to-one-ndc"),
+                    "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
+                    "frontFacing": projection.map(|projection| projection.front_facing),
                 })
             })
         })
@@ -2140,6 +2176,8 @@ fn owner_triangle_projection(
         owner_screen_vertex(vertices.get(start + 2)?.position, view_projection, options)?,
     ];
     let screen = points.map(|point| [point[0], point[1]]);
+    let screen_signed_area = triangle_signed_area(screen[0], screen[1], screen[2]);
+    let depth = (points[0][2] + points[1][2] + points[2][2]) / 3.0;
     Some(OwnerProjection {
         screen,
         bounds: OwnerScreenBounds {
@@ -2160,8 +2198,15 @@ fn owner_triangle_projection(
                 .map(|point| point[1])
                 .fold(f32::NEG_INFINITY, f32::max),
         },
-        depth: (points[0][2] + points[1][2] + points[2][2]) / 3.0,
+        depth,
+        webgl_depth: depth * 2.0 - 1.0,
+        screen_signed_area,
+        front_facing: screen_signed_area > 0.0,
     })
+}
+
+fn triangle_signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
 fn owner_screen_vertex(

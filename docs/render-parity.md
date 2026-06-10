@@ -385,7 +385,10 @@ from `/renderer/diagnosticOwnerIds` or `/reference/renderer/diagnosticOwnerIds`
 and writes `top_expected_to_actual_details` plus
 `top_actual_to_expected_details`. Those detail records also include the pixel
 `bounds` of the transition, up to eight `sample_pixels`, each owner's
-projected `screenBounds`, and average NDC `depth` when the capture artifact
+projected `screenBounds`, renderer-native NDC `depth`, normalized
+`webglDepth`, depth range, screen signed area, a screen-area front-facing flag,
+and render policy fields such as material side/cull mode, depth write/test,
+blend, alpha mode, render order, and draw index when the capture artifact
 contains enough triangle metadata. On the current Seed-san owner run, both Rust
 captures emit `81236` owner labels. Rust owner labels also include glTF node
 and mesh names from `vrm-io` rest data. The leading three-vrm-vs-Rust
@@ -394,14 +397,21 @@ base-pass `material_6`, node/mesh `robo_arm`, node `144`, mesh `3`, primitive
 `1`, with the same local triangle ordinal band (`406/407`). Its transition
 pixels are bounded by `x=187..209`, `y=58..65`; the expected and actual
 triangle screen bounds overlap to float precision (`x=186.98..210.80`,
-`y=57.80..65.74`) while their average NDC depths differ (`0.94899` outline in
-three-vrm versus `0.97450` base in Rust). The leading wgpu-vs-Bevy transitions
-are narrower: same material/pass/node/mesh/primitive, but neighboring triangle
-ordinals (`442 -> 443`, `418 -> 417`, `666 -> 665`) and the existing `+256`
-cluster. Treat this as evidence that the next useful parity step is pass/depth
-ownership alignment between the three-vrm WebGL draw stream and Rust's sorted
-triangle stream, with wgpu-vs-Bevy triangle-edge differences as a secondary
-sanity check.
+`y=57.80..65.74`). The renderer-native depth values differ because three-vrm
+reports WebGL -1..1 NDC while Rust reports 0..1 NDC, but `webglDepth` matches
+after normalization (`0.9489916` three-vrm versus `0.9489918` Rust). The same
+triangle is back-facing under the three.js screen-area convention
+(`screenSignedArea ~= -185.816`, `frontFacing=false`): three-vrm renders the
+BackSide outline owner (`side=1`, `drawIndex=40236`, `renderOrder=19`), while
+Rust reports the base owner (`cullMode=back`, `drawIndex=6`, `renderOrder=2000`)
+and also has a matching outline owner later in its stream (`cullMode=front`,
+`drawIndex=24`) at the same screen bounds/depth. The leading wgpu-vs-Bevy
+transitions are narrower: same material/pass/node/mesh/primitive, but
+neighboring triangle ordinals (`442 -> 443`, `418 -> 417`, `666 -> 665`) and
+the existing `+256` cluster. Treat this as evidence that the next useful parity
+step is cull/facing/pass ownership alignment between the three-vrm WebGL draw
+stream and Rust's sorted triangle stream, with wgpu-vs-Bevy triangle-edge
+differences as a secondary sanity check.
 
 The same reports include `top_pass_transitions` so pass ownership changes can
 be tracked without reading every owner pair. The current Seed-san

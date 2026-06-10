@@ -629,7 +629,8 @@ fn diagnostic_owner_ids(
     let view_projection = diagnostic_view_projection(options);
     primitives
         .iter()
-        .flat_map(|primitive| {
+        .enumerate()
+        .flat_map(|(draw_index, primitive)| {
             primitive.owner_ids.iter().map(move |owner| {
                 let source = primitive.owner_source;
                 let projection = owner_triangle_projection(
@@ -650,6 +651,15 @@ fn diagnostic_owner_ids(
                     "materialName": material_name(loaded, source.material),
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
+                    "drawIndex": draw_index,
+                    "cullMode": bevy_primitive_cull_mode(primitive),
+                    "alphaMode": bevy_primitive_alpha_mode(primitive),
+                    "alphaCutoff": bevy_primitive_alpha_cutoff(primitive),
+                    "depthWrite": bevy_primitive_depth_write(primitive),
+                    "depthTest": true,
+                    "depthCompare": "bevy-material-default",
+                    "blend": bevy_primitive_blend(primitive),
+                    "depthBias": bevy_primitive_depth_bias(primitive),
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
@@ -660,10 +670,70 @@ fn diagnostic_owner_ids(
                         "maxY": projection.bounds.max_y,
                     })),
                     "depth": projection.map(|projection| projection.depth),
+                    "webglDepth": projection.map(|projection| projection.webgl_depth),
+                    "depthRange": projection.map(|_| "zero-to-one-ndc"),
+                    "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
+                    "frontFacing": projection.map(|projection| projection.front_facing),
                 })
             })
         })
         .collect()
+}
+
+fn bevy_primitive_alpha_mode(primitive: &BevyPrimitive) -> &'static str {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => alpha_mode_name(material.alpha_mode),
+    }
+}
+
+fn bevy_primitive_alpha_cutoff(primitive: &BevyPrimitive) -> f32 {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => alpha_cutoff(material.alpha_mode),
+    }
+}
+
+fn bevy_primitive_blend(primitive: &BevyPrimitive) -> bool {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => material.alpha_mode != AlphaMode::Opaque,
+    }
+}
+
+fn bevy_primitive_cull_mode(primitive: &BevyPrimitive) -> &'static str {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => face_name(material.cull_mode),
+    }
+}
+
+fn bevy_primitive_depth_write(primitive: &BevyPrimitive) -> bool {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => material.depth_write,
+    }
+}
+
+fn bevy_primitive_depth_bias(primitive: &BevyPrimitive) -> f32 {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => material.depth_bias,
+    }
+}
+
+fn alpha_mode_name(mode: AlphaMode) -> &'static str {
+    match mode {
+        AlphaMode::Opaque => "opaque",
+        AlphaMode::Mask(_) => "mask",
+        AlphaMode::Blend => "blend",
+        AlphaMode::Premultiplied => "premultiplied",
+        AlphaMode::Add => "add",
+        AlphaMode::Multiply => "multiply",
+        AlphaMode::AlphaToCoverage => "alpha-to-coverage",
+    }
+}
+
+fn face_name(face: Option<Face>) -> &'static str {
+    match face {
+        Some(Face::Front) => "front",
+        Some(Face::Back) => "back",
+        None => "off",
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -679,6 +749,9 @@ struct OwnerProjection {
     screen: [[f32; 2]; 3],
     bounds: OwnerScreenBounds,
     depth: f32,
+    webgl_depth: f32,
+    screen_signed_area: f32,
+    front_facing: bool,
 }
 
 fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
@@ -704,6 +777,8 @@ fn owner_triangle_projection(
         owner_screen_vertex(*positions.get(start + 2)?, view_projection, options)?,
     ];
     let screen = points.map(|point| [point[0], point[1]]);
+    let screen_signed_area = triangle_signed_area(screen[0], screen[1], screen[2]);
+    let depth = (points[0][2] + points[1][2] + points[2][2]) / 3.0;
     Some(OwnerProjection {
         screen,
         bounds: OwnerScreenBounds {
@@ -724,8 +799,15 @@ fn owner_triangle_projection(
                 .map(|point| point[1])
                 .fold(f32::NEG_INFINITY, f32::max),
         },
-        depth: (points[0][2] + points[1][2] + points[2][2]) / 3.0,
+        depth,
+        webgl_depth: depth * 2.0 - 1.0,
+        screen_signed_area,
+        front_facing: screen_signed_area > 0.0,
     })
+}
+
+fn triangle_signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
 fn mesh_positions(mesh: &Mesh) -> Option<&[[f32; 3]]> {
