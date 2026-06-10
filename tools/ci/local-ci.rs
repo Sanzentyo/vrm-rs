@@ -67,9 +67,9 @@ struct Options {
     render_height: u32,
     #[arg(long, default_value_t = 3.0)]
     render_camera_z: f32,
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     render_screen_jitter_x: f32,
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     render_screen_jitter_y: f32,
     #[arg(long, default_value_t = 0.78)]
     render_mtoon_exposure: f32,

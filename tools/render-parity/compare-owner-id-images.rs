@@ -94,6 +94,7 @@ struct OwnerCompareReport {
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
     top_actual_to_expected_details: Vec<OwnerTransitionDetail>,
+    top_unexplained_material_transitions: Vec<OwnerMaterialTransition>,
     top_unexplained_expected_to_actual_details: Vec<OwnerTransitionDetail>,
 }
 
@@ -121,6 +122,20 @@ struct OwnerPassTransition {
 struct OwnerGeometryClassTransition {
     pass_relation: String,
     mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerMaterialTransition {
+    expected_pass: String,
+    expected_mesh: String,
+    expected_material: String,
+    actual_pass: String,
+    actual_mesh: String,
+    actual_material: String,
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
@@ -236,6 +251,19 @@ struct OwnerActualCullVisibilityKey {
 struct OwnerGeometryClassKey {
     pass_relation: String,
     mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerMaterialTransitionKey {
+    expected_pass: String,
+    expected_mesh: String,
+    expected_material: String,
+    actual_pass: String,
+    actual_mesh: String,
+    actual_material: String,
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
@@ -439,6 +467,7 @@ fn compare_owner_images(
     let mut expected_to_actual = BTreeMap::new();
     let mut actual_to_expected = BTreeMap::new();
     let mut unexplained_expected_to_actual = BTreeMap::new();
+    let mut unexplained_material_transitions = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut owner_geometry_classes = BTreeMap::new();
@@ -517,6 +546,11 @@ fn compare_owner_images(
                     }
                     if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
+                        bump_owner_material_transition(
+                            &mut unexplained_material_transitions,
+                            expected_label,
+                            actual_label,
+                        );
                         bump_transition(&mut unexplained_expected_to_actual, left, right);
                         bump_transition_pixels(
                             &mut unexplained_expected_to_actual_pixels,
@@ -659,6 +693,10 @@ fn compare_owner_images(
             expected_metadata,
             top,
         ),
+        top_unexplained_material_transitions: top_owner_material_transitions(
+            unexplained_material_transitions,
+            top,
+        ),
         top_unexplained_expected_to_actual_details: top_transition_details(
             &unexplained_expected_to_actual,
             &unexplained_expected_to_actual_pixels,
@@ -744,6 +782,41 @@ fn top_owner_geometry_classes(
         .map(|(key, count)| OwnerGeometryClassTransition {
             pass_relation: key.pass_relation,
             mesh_relation: key.mesh_relation,
+            material_relation: key.material_relation,
+            triangle_relation: key.triangle_relation,
+            projection_relation: key.projection_relation,
+            count,
+        })
+        .collect()
+}
+
+fn bump_owner_material_transition(
+    map: &mut BTreeMap<OwnerMaterialTransitionKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerMaterialTransitionKey::from_labels(
+        expected, actual,
+    ))
+    .or_default() += 1;
+}
+
+fn top_owner_material_transitions(
+    map: BTreeMap<OwnerMaterialTransitionKey, u64>,
+    top: usize,
+) -> Vec<OwnerMaterialTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerMaterialTransition {
+            expected_pass: key.expected_pass,
+            expected_mesh: key.expected_mesh,
+            expected_material: key.expected_material,
+            actual_pass: key.actual_pass,
+            actual_mesh: key.actual_mesh,
+            actual_material: key.actual_material,
             material_relation: key.material_relation,
             triangle_relation: key.triangle_relation,
             projection_relation: key.projection_relation,
@@ -1094,6 +1167,22 @@ impl OwnerGeometryClassKey {
     }
 }
 
+impl OwnerMaterialTransitionKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            expected_pass: owner_pass_name(expected),
+            expected_mesh: owner_mesh_name(expected),
+            expected_material: owner_material_name(expected),
+            actual_pass: owner_pass_name(actual),
+            actual_mesh: owner_mesh_name(actual),
+            actual_material: owner_material_name(actual),
+            material_relation: material_relation(expected, actual),
+            triangle_relation: triangle_relation(expected, actual),
+            projection_relation: projection_relation(expected, actual),
+        }
+    }
+}
+
 impl OwnerRenderPhaseOrderKey {
     fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
         Self {
@@ -1173,6 +1262,27 @@ fn relation_label(left: Option<&str>, right: Option<&str>) -> String {
         (Some(_), Some(_)) => "different".to_owned(),
         _ => "unknown".to_owned(),
     }
+}
+
+fn owner_pass_name(label: Option<&OwnerLabel>) -> String {
+    label
+        .and_then(|label| label.pass.as_deref())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn owner_mesh_name(label: Option<&OwnerLabel>) -> String {
+    label
+        .and_then(|label| label.mesh_name.as_deref())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn owner_material_name(label: Option<&OwnerLabel>) -> String {
+    label
+        .and_then(|label| label.material_name.as_deref())
+        .unwrap_or("unknown")
+        .to_owned()
 }
 
 fn mesh_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
@@ -1635,6 +1745,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             OwnerLabel {
                 id: 2,
                 pass: Some("outline".to_owned()),
+                mesh_name: Some("expected_mesh".to_owned()),
+                material_name: Some("expected_mat".to_owned()),
                 material_side: Some(1),
                 cull_mode: Some("back".to_owned()),
                 front_face: Some("cw".to_owned()),
@@ -1673,6 +1785,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             OwnerLabel {
                 id: 3,
                 pass: Some("base".to_owned()),
+                mesh_name: Some("actual_mesh".to_owned()),
+                material_name: Some("actual_mat".to_owned()),
                 cull_mode: Some("back".to_owned()),
                 front_face: Some("ccw".to_owned()),
                 front_facing: Some(false),
@@ -1757,6 +1871,21 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     && transition.draw_index_relation == "expected-before-actual"
                     && transition.render_order_relation == "same"
                     && transition.render_phase_order_relation == "same"
+                    && transition.count == 1
+            })
+    );
+    assert!(
+        report
+            .top_unexplained_material_transitions
+            .iter()
+            .any(|transition| {
+                transition.expected_pass == "outline"
+                    && transition.expected_mesh == "expected_mesh"
+                    && transition.expected_material == "expected_mat"
+                    && transition.actual_pass == "base"
+                    && transition.actual_mesh == "actual_mesh"
+                    && transition.actual_material == "actual_mat"
+                    && transition.material_relation == "different"
                     && transition.count == 1
             })
     );

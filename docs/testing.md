@@ -175,6 +175,15 @@ shader-derivative tangent-frame fallback; the current measured path is worse
 than generated tangents on Seed-san and is not the default guard.
 Use `just render-parity-outline-off` as a diagnostic for separating MToon
 outline expansion deltas from material, skinning, and pose deltas.
+Use `just render-parity-seed-owner-id-outline-off-diagnostic D:/git/three-vrm`
+to render Seed-san owner IDs with outlines disabled, matching the focused
+base-color residual slice. Use
+`just render-parity-seed-base-color-outline-off-owner-hotspots D:/git/three-vrm`
+after `just render-parity-seed-base-color-outline-off-diagnostic` to project
+the top shared-body hotspot pixels through the browser owner diagnostic. The
+local runner's `--render-screen-jitter-x` and `--render-screen-jitter-y` options
+accept negative values, so focused sweeps can test
+`--render-screen-jitter-x -0.25` without using an equals-form workaround.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use
