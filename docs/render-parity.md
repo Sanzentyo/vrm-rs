@@ -288,6 +288,18 @@ around local triangle ownership rather than a global camera, color, or sampler
 offset. This makes adjacent-triangle/depth-edge policy the next most useful
 diagnostic target.
 
+The same mapper now reports whether the closest actual/expected visible UV
+candidate is an immediate neighbor across the frontmost sample's nearest edge.
+On the top-32 pass, wgpu is actual `31/32` same-triangle and expected `4/32`
+same-triangle, but actual/expected edge-neighbor matches are `0/0`; Bevy is
+actual `27/32`, expected `4/32`, and edge-neighbor `1/0`. The top-256 pass
+shows more adjacency but still not enough to explain the residual by itself:
+wgpu actual/expected same-triangle `208/185` and edge-neighbor `10/17`; Bevy
+same-triangle `145/180` and edge-neighbor `39/25`. This weakens the simple
+"three-vrm picked the adjacent triangle" hypothesis for the worst pixels and
+points next toward local UV/color quantization, interpolation/sample-position,
+or non-unique UV-color matching diagnostics.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell

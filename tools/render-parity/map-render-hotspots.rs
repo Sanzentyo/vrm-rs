@@ -114,6 +114,7 @@ struct Surface {
     policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
     indices: Vec<u32>,
+    edge_adjacency: BTreeMap<[u32; 2], Vec<usize>>,
     vertices: Vec<GltfTransformedVertex>,
 }
 
@@ -151,6 +152,8 @@ struct HotspotSummary {
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
     frontmost_edge_distance_lte_100px: usize,
+    actual_frontmost_edge_neighbor_matches: usize,
+    expected_frontmost_edge_neighbor_matches: usize,
     frontmost_nearest_edge_counts: Vec<EdgeBucketCount>,
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
@@ -231,6 +234,7 @@ struct CandidateMatch {
     edge_distance_pixels: f32,
     nearest_edge: usize,
     nearest_edge_indices: [u32; 2],
+    nearest_edge_neighbor_triangles: Vec<usize>,
     front_facing: bool,
     visible_by_policy: bool,
     base_uv: [f32; 2],
@@ -267,6 +271,7 @@ struct HitCandidate {
     edge_distance_pixels: f32,
     nearest_edge: usize,
     nearest_edge_indices: [u32; 2],
+    nearest_edge_neighbor_triangles: Vec<usize>,
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     screen: [[f32; 2]; 3],
@@ -412,6 +417,13 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     if triangle_edge_indices([10, 11, 12], 2) != [12, 10] {
         return Err("triangle edge 2 indices should wrap from c to a".into());
     }
+    let adjacency = edge_adjacency(&[0, 1, 2, 2, 1, 3]);
+    if edge_neighbors(&adjacency, [1, 2], 0) != [1] {
+        return Err("shared edge should report the adjacent triangle".into());
+    }
+    if edge_neighbors(&adjacency, [0, 1], 0) != Vec::<usize>::new() {
+        return Err("boundary edge should not report neighbors".into());
+    }
     Ok(())
 }
 
@@ -475,6 +487,24 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
         frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
         frontmost_edge_distance_lte_100px: frontmost_edge_distance_lte(hotspots, 1.00),
+        actual_frontmost_edge_neighbor_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                frontmost_edge_neighbor_matches(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_edge_neighbor_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                frontmost_edge_neighbor_matches(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
         frontmost_nearest_edge_counts: frontmost_nearest_edge_counts(hotspots),
         actual_visible_sample_offsets: offset_counts(
             hotspots
@@ -505,6 +535,20 @@ fn same_material(left: Option<&CandidateMatch>, right: Option<&CandidateMatch>) 
         (left, right),
         (Some(left), Some(right))
             if left.pass == right.pass && left.material == right.material
+    )
+}
+
+fn frontmost_edge_neighbor_matches(
+    frontmost: Option<&CandidateMatch>,
+    other: Option<&CandidateMatch>,
+) -> bool {
+    matches!(
+        (frontmost, other),
+        (Some(frontmost), Some(other))
+            if frontmost.draw_index == other.draw_index
+                && frontmost.pass == other.pass
+                && frontmost.material == other.material
+                && frontmost.nearest_edge_neighbor_triangles.contains(&other.triangle)
     )
 }
 
@@ -673,6 +717,7 @@ fn build_surfaces(
             );
             let base_uv_transform = uv_transforms.base;
             let base_policy = capture_material_policy(loaded, primitive.material);
+            let indices = primitive_indices(primitive.indices.as_slice(), vertices.len());
             surfaces.push(Surface {
                 draw_index: 0,
                 node: node_index,
@@ -683,7 +728,8 @@ fn build_surfaces(
                 material_name: material_name.clone(),
                 policy: base_policy,
                 base_uv_transform,
-                indices: primitive_indices(primitive.indices.as_slice(), vertices.len()),
+                edge_adjacency: edge_adjacency(&indices),
+                indices,
                 vertices: vertices.clone(),
             });
             if options.disable_outlines {
@@ -719,6 +765,7 @@ fn build_surfaces(
             } else {
                 vertices.clone()
             };
+            let indices = primitive_indices(primitive.indices.as_slice(), outline_vertices.len());
             surfaces.push(Surface {
                 draw_index: 0,
                 node: node_index,
@@ -729,7 +776,8 @@ fn build_surfaces(
                 material_name,
                 policy: outline_material_policy(base_policy),
                 base_uv_transform,
-                indices: primitive_indices(primitive.indices.as_slice(), outline_vertices.len()),
+                edge_adjacency: edge_adjacency(&indices),
+                indices,
                 vertices: outline_vertices,
             });
         }
@@ -841,6 +889,7 @@ fn nearest_candidate_match_by(
             edge_distance_pixels: candidate.edge_distance_pixels,
             nearest_edge: candidate.nearest_edge,
             nearest_edge_indices: candidate.nearest_edge_indices,
+            nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -882,6 +931,7 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
             edge_distance_pixels: candidate.edge_distance_pixels,
             nearest_edge: candidate.nearest_edge,
             nearest_edge_indices: candidate.nearest_edge_indices,
+            nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -933,6 +983,8 @@ fn surface_candidates(
             let front_facing = signed_area < 0.0;
             let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
             let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
+            let nearest_edge_neighbor_triangles =
+                edge_neighbors(&surface.edge_adjacency, edge_indices, triangle);
             Some(HitCandidate {
                 draw_index: surface.draw_index,
                 node: surface.node,
@@ -957,6 +1009,7 @@ fn surface_candidates(
                 edge_distance_pixels: nearest_edge.distance_pixels,
                 nearest_edge: nearest_edge.edge,
                 nearest_edge_indices: edge_indices,
+                nearest_edge_neighbor_triangles,
                 raw_uv,
                 base_uv,
                 screen: [a.screen, b.screen, c.screen],
@@ -1107,6 +1160,47 @@ fn primitive_indices(indices: &[u32], vertex_count: usize) -> Vec<u32> {
         (0..u32::try_from(vertex_count).unwrap_or(0)).collect()
     } else {
         indices.to_vec()
+    }
+}
+
+fn edge_adjacency(indices: &[u32]) -> BTreeMap<[u32; 2], Vec<usize>> {
+    let mut adjacency = BTreeMap::<[u32; 2], Vec<usize>>::new();
+    for (triangle, indices) in indices.chunks_exact(3).enumerate() {
+        for edge in 0..3 {
+            adjacency
+                .entry(normalized_edge(triangle_edge_indices(
+                    [indices[0], indices[1], indices[2]],
+                    edge,
+                )))
+                .or_default()
+                .push(triangle);
+        }
+    }
+    adjacency
+}
+
+fn edge_neighbors(
+    adjacency: &BTreeMap<[u32; 2], Vec<usize>>,
+    edge_indices: [u32; 2],
+    triangle: usize,
+) -> Vec<usize> {
+    adjacency
+        .get(&normalized_edge(edge_indices))
+        .map(|triangles| {
+            triangles
+                .iter()
+                .copied()
+                .filter(|neighbor| *neighbor != triangle)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalized_edge(edge_indices: [u32; 2]) -> [u32; 2] {
+    if edge_indices[0] <= edge_indices[1] {
+        edge_indices
+    } else {
+        [edge_indices[1], edge_indices[0]]
     }
 }
 
