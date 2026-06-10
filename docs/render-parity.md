@@ -425,6 +425,26 @@ sampler, or generated UV-discontinuity failure as the Seed-san base-texture
 cause; the real-model blocker remains more specific to Seed-san's local
 primitive/texture lookup path.
 
+A source-like per-material base texture selection guard is available through:
+
+```powershell
+just render-parity-texture-selection-generated
+```
+
+It writes `.external-fixtures/generated/texture-selection.vrm.gltf` and renders
+`base-color` diagnostics into
+`.external-fixtures/render-parity-texture-selection-generated/` with outlines
+disabled. The fixture uses four opaque MToon primitives, four materials, and
+four distinct embedded PNG base textures, so a material/texture binding mix-up
+would produce a large color error. The current guard has exact alpha parity and
+selected `rgb-shared-nonblack-interior1px` PSNR wgpu `58.0021 dB` / Bevy
+`52.5998 dB`, with max selected-channel deltas `1` / `2`. The top-32 hotspot
+maps match the frontmost base-pass triangle and material for both expected and
+actual pixels, so generated per-material base texture selection is now covered.
+This narrows the remaining Seed-san base-texture blocker away from broad
+texture binding-table mistakes and toward real-model-local UV/coverage/lookup
+details.
+
 A source-like generated base-material seam control is available through:
 
 ```powershell

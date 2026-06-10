@@ -143,6 +143,14 @@ under `.external-fixtures/render-parity-texture-boundary-generated/`. The
 current guard has exact alpha parity and selected
 `rgb-shared-nonblack-interior1px` PSNR wgpu `52.9232 dB` / Bevy `49.5132 dB`,
 with max selected-channel deltas `7` / `6`.
+Use `just render-parity-texture-selection-generated` for the focused
+per-material base texture selection guard. It generates
+`.external-fixtures/generated/texture-selection.vrm.gltf`, renders `base-color`
+with outlines disabled, compares direct `.imqraw` buffers, and writes reports
+under `.external-fixtures/render-parity-texture-selection-generated/`. The
+current guard has exact alpha parity and selected
+`rgb-shared-nonblack-interior1px` PSNR wgpu `58.0021 dB` / Bevy `52.5998 dB`,
+with max selected-channel deltas `1` / `2`.
 Use `just render-parity-material-seam-generated` for the focused source-like
 base-material seam guard. It generates
 `.external-fixtures/generated/material-seam.vrm.gltf`, renders `base-factor`
