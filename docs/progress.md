@@ -40,6 +40,18 @@
   base-color residual is a local GPU raster/fill ownership mismatch around
   real UV/material boundaries, not a hidden broad texture, color, cull, alpha,
   mip, or sample-center switch.
+- Optimized the browser hotspot projector by precomputing the three.js
+  screen-space triangle set once per capture, then added owner-recovery
+  summaries for the `owner-id` mode. The Seed-san owner diagnostic now checks
+  a 3x3 same-pixel subpixel grid and a 3x3 one-pixel-neighborhood grid for the
+  rendered WebGL owner. Same-pixel subpixel search recovers only `34/64`
+  rendered owners, but every recovered owner is frontmost; the best centers
+  are mixed (`0.5,0.5` = `14`, `0.75,0.5` = `9`, `0.25,0.5` = `5`, with the
+  rest split vertically). The one-pixel-neighborhood search recovers `31/64`
+  owners, `30/64` as frontmost, with offsets spread across center/down/right/
+  left/up. This keeps the active blocker classified as local fill/raster
+  ownership at real model boundaries rather than a single global subpixel
+  convention.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base

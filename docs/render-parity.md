@@ -316,14 +316,21 @@ offset.
 with `--diagnostic-render owner-id`. The browser diagnostic replaces each
 diagnostic triangle with a stable RGB owner ID, decodes the WebGL-rendered
 owner at each hotspot pixel, and compares it with the CPU-projected candidate
-set in `reference.renderer.diagnosticHotspots`. On the current Seed-san top-64
+set in `reference.renderer.diagnosticHotspots`. The report includes a
+`summary` block plus per-pixel `renderedOwnerRecovery` records for a 3x3
+same-pixel subpixel grid and a 3x3 one-pixel-neighborhood grid. On the current
+Seed-san top-64
 shared-body base-color hotspots, every pixel has a WebGL owner, but that owner
 appears in the CPU center-sample candidate set only `20/64` times at
 `0.5,0.5` and `18/64` times at `0.75,0.75`. Owner/frontmost matches are only
-`14/64` and `17/64`. This is the current strongest evidence that the active
-base-color blocker is a local WebGL fill/raster ownership issue near real
-material/UV boundaries rather than texture binding, global color-space,
-alpha-mask, cull, mip, or sample-center policy.
+`14/64` and `17/64`. The same-pixel subpixel grid recovers `34/64` rendered
+owners, all as frontmost, with best centers split across `0.5,0.5`,
+`0.75,0.5`, `0.25,0.5`, and smaller vertical offsets. The one-pixel
+neighborhood grid recovers `31/64`, `30/64` as frontmost, with offsets spread
+across center/down/right/left/up. This is the current strongest evidence that
+the active base-color blocker is a local WebGL fill/raster ownership issue
+near real material/UV boundaries rather than texture binding, global
+color-space, alpha-mask, cull, mip, or sample-center policy.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

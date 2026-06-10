@@ -612,6 +612,66 @@ function capturePage(options) {
     owner?.id != null && candidate?.ownerId != null && owner.id === candidate.ownerId
   );
 
+  const compactOwnerCandidate = (candidate) => candidate ? {
+    meshName: candidate.meshName,
+    meshUuid: candidate.meshUuid,
+    materialIndex: candidate.materialIndex,
+    materialName: candidate.materialName,
+    materialType: candidate.materialType,
+    triangle: candidate.triangle,
+    indices: candidate.indices,
+    ownerId: candidate.ownerId,
+    ownerIdColor: candidate.ownerIdColor,
+    depth: candidate.depth,
+    rawUv: candidate.rawUv,
+    mapUv: candidate.mapUv,
+    projectedBaseColorSrgb: candidate.projectedBaseColorSrgb,
+  } : null;
+
+  const summarizeProjectedHotspots = (hotspots) => {
+    const summary = {
+      total: hotspots.length,
+      renderedOwnerCount: 0,
+      renderedOwnerCandidateCount: 0,
+      renderedOwnerFrontmostCount: 0,
+      renderedOwnerBestSubpixelCount: 0,
+      renderedOwnerBestSubpixelFrontmostCount: 0,
+      renderedOwnerBestNeighborCount: 0,
+      renderedOwnerBestNeighborFrontmostCount: 0,
+      renderedOwnerDepthRanks: {},
+      renderedOwnerBestSubpixelDepthRanks: {},
+      renderedOwnerBestNeighborDepthRanks: {},
+      renderedOwnerBestSubpixelCenters: {},
+      renderedOwnerBestNeighborOffsets: {},
+    };
+    const bump = (map, key) => {
+      map[key] = (map[key] ?? 0) + 1;
+    };
+    for (const hotspot of hotspots) {
+      if (hotspot.renderedOwner?.id != null) summary.renderedOwnerCount += 1;
+      if (hotspot.renderedOwnerCandidate) summary.renderedOwnerCandidateCount += 1;
+      if (hotspot.ownerMatch?.frontmost) summary.renderedOwnerFrontmostCount += 1;
+      if (hotspot.renderedOwnerDepthRank != null) {
+        bump(summary.renderedOwnerDepthRanks, String(hotspot.renderedOwnerDepthRank));
+      }
+      const bestSubpixel = hotspot.renderedOwnerRecovery?.bestSubpixel;
+      if (bestSubpixel) {
+        summary.renderedOwnerBestSubpixelCount += 1;
+        if (bestSubpixel.frontmost) summary.renderedOwnerBestSubpixelFrontmostCount += 1;
+        bump(summary.renderedOwnerBestSubpixelDepthRanks, String(bestSubpixel.depthRank));
+        bump(summary.renderedOwnerBestSubpixelCenters, bestSubpixel.sampleCenter.join(','));
+      }
+      const bestNeighbor = hotspot.renderedOwnerRecovery?.bestNeighbor;
+      if (bestNeighbor) {
+        summary.renderedOwnerBestNeighborCount += 1;
+        if (bestNeighbor.frontmost) summary.renderedOwnerBestNeighborFrontmostCount += 1;
+        bump(summary.renderedOwnerBestNeighborDepthRanks, String(bestNeighbor.depthRank));
+        bump(summary.renderedOwnerBestNeighborOffsets, bestNeighbor.pixelOffset.join(','));
+      }
+    }
+    return summary;
+  };
+
   const projectHotspots = (root, camera, hotspots, sampleCenter, renderedRgba = null) => {
     if (!hotspots) return null;
     root.updateMatrixWorld(true);
@@ -623,77 +683,141 @@ function capturePage(options) {
     });
     const vertex = new THREE.Vector3();
     const clip = new THREE.Vector4();
-    return {
-      source: hotspots.source,
-      width: hotspots.width,
-      height: hotspots.height,
-      sampleCenter,
-      top: hotspots.top.map((hotspot) => {
-        const point = [hotspot.x + sampleCenter[0], hotspot.y + sampleCenter[1]];
-        const candidates = [];
-        for (const mesh of meshes) {
-          const geometry = mesh.geometry;
-          const position = geometry.attributes.position;
-          const index = geometry.index;
-          const groups = geometry.groups.length > 0
-            ? geometry.groups
-            : [{ start: 0, count: index ? index.count : position.count, materialIndex: 0 }];
-          for (const group of groups) {
-            const material = materialAt(mesh, group.materialIndex);
-            const uvAttribute = uvAttributeForMaterial(geometry, material);
-            for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
-              const ia = index ? index.getX(offset) : offset;
-              const ib = index ? index.getX(offset + 1) : offset + 1;
-              const ic = index ? index.getX(offset + 2) : offset + 2;
-              const a = screenVertex(mesh, ia, uvAttribute, viewProjection, vertex, clip);
-              const b = screenVertex(mesh, ib, uvAttribute, viewProjection, vertex, clip);
-              const c = screenVertex(mesh, ic, uvAttribute, viewProjection, vertex, clip);
-              if (!a || !b || !c) continue;
-              const weights = barycentric(point, a.screen, b.screen, c.screen);
-              if (!weights) continue;
-              const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
-              if (!visibleBySide(material?.side ?? THREE.FrontSide, signedArea)) continue;
-              const depth = weights[0] * a.depth + weights[1] * b.depth + weights[2] * c.depth;
-              if (depth < -1.0 || depth > 1.0) continue;
-              const rawUv = interpolateUv(weights, a, b, c);
-              const mapUv = transformTextureUv(rawUv, material?.map);
-              const color = [
-                quantize(linearToSrgb(mapUv[0])),
-                quantize(linearToSrgb(mapUv[1])),
-                0,
-                hotspot.expected?.[3] ?? 255,
-              ];
-              const baseColor = projectedBaseColor(material, mapUv, hotspot.expected?.[3] ?? 255);
-              const materialIndex = group.materialIndex ?? 0;
-              const triangle = Math.floor(offset / 3);
-              const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
-              candidates.push({
-                meshName: mesh.name ?? '',
-                meshUuid: mesh.uuid,
-                materialIndex,
-                materialName: material?.name ?? '',
-                materialType: material?.type ?? null,
-                triangle,
-                indices: [ia, ib, ic],
-                ownerId: owner?.id ?? null,
-                ownerIdColor: owner?.color ?? null,
-                depth,
-                barycentric: weights,
-                rawUv,
-                mapUv,
-                color,
-                sampledMapRgba: baseColor.sampledMapRgba,
-                projectedBaseColorSrgb: baseColor.projectedBaseColorSrgb,
-                expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
-                actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
-                projectedBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
-                projectedBaseColorActualRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.actual ?? [0, 0, 0, 255]),
-                screen: [a.screen, b.screen, c.screen],
-              });
-            }
+    const projectedTriangles = [];
+    for (const mesh of meshes) {
+      const geometry = mesh.geometry;
+      const position = geometry.attributes.position;
+      const index = geometry.index;
+      const groups = geometry.groups.length > 0
+        ? geometry.groups
+        : [{ start: 0, count: index ? index.count : position.count, materialIndex: 0 }];
+      for (const group of groups) {
+        const material = materialAt(mesh, group.materialIndex);
+        const uvAttribute = uvAttributeForMaterial(geometry, material);
+        for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
+          const ia = index ? index.getX(offset) : offset;
+          const ib = index ? index.getX(offset + 1) : offset + 1;
+          const ic = index ? index.getX(offset + 2) : offset + 2;
+          const a = screenVertex(mesh, ia, uvAttribute, viewProjection, vertex, clip);
+          const b = screenVertex(mesh, ib, uvAttribute, viewProjection, vertex, clip);
+          const c = screenVertex(mesh, ic, uvAttribute, viewProjection, vertex, clip);
+          if (!a || !b || !c) continue;
+          const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
+          if (!visibleBySide(material?.side ?? THREE.FrontSide, signedArea)) continue;
+          const materialIndex = group.materialIndex ?? 0;
+          const triangle = Math.floor(offset / 3);
+          const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
+          projectedTriangles.push({
+            meshName: mesh.name ?? '',
+            meshUuid: mesh.uuid,
+            materialIndex,
+            materialName: material?.name ?? '',
+            materialType: material?.type ?? null,
+            material,
+            triangle,
+            indices: [ia, ib, ic],
+            ownerId: owner?.id ?? null,
+            ownerIdColor: owner?.color ?? null,
+            a,
+            b,
+            c,
+          });
+        }
+      }
+    }
+
+    const candidatesForPoint = (hotspot, point) => {
+      const candidates = [];
+      for (const projected of projectedTriangles) {
+        const weights = barycentric(point, projected.a.screen, projected.b.screen, projected.c.screen);
+        if (!weights) continue;
+        const depth = weights[0] * projected.a.depth + weights[1] * projected.b.depth + weights[2] * projected.c.depth;
+        if (depth < -1.0 || depth > 1.0) continue;
+        const rawUv = interpolateUv(weights, projected.a, projected.b, projected.c);
+        const mapUv = transformTextureUv(rawUv, projected.material?.map);
+        const color = [
+          quantize(linearToSrgb(mapUv[0])),
+          quantize(linearToSrgb(mapUv[1])),
+          0,
+          hotspot.expected?.[3] ?? 255,
+        ];
+        const baseColor = projectedBaseColor(projected.material, mapUv, hotspot.expected?.[3] ?? 255);
+        candidates.push({
+          meshName: projected.meshName,
+          meshUuid: projected.meshUuid,
+          materialIndex: projected.materialIndex,
+          materialName: projected.materialName,
+          materialType: projected.materialType,
+          triangle: projected.triangle,
+          indices: projected.indices,
+          ownerId: projected.ownerId,
+          ownerIdColor: projected.ownerIdColor,
+          depth,
+          barycentric: weights,
+          rawUv,
+          mapUv,
+          color,
+          sampledMapRgba: baseColor.sampledMapRgba,
+          projectedBaseColorSrgb: baseColor.projectedBaseColorSrgb,
+          expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
+          actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
+          projectedBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
+          projectedBaseColorActualRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.actual ?? [0, 0, 0, 255]),
+          screen: [projected.a.screen, projected.b.screen, projected.c.screen],
+        });
+      }
+      return candidates;
+    };
+
+    const ownerMatchAtPoint = (hotspot, point, renderedOwner) => {
+      if (renderedOwner?.id == null) return null;
+      const candidates = candidatesForPoint(hotspot, point);
+      const candidatesByDepth = candidates
+        .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
+        .sort((left, right) => left.depth - right.depth);
+      const index = candidatesByDepth.findIndex((candidate) => candidate.ownerId === renderedOwner.id);
+      if (index < 0) return null;
+      const candidate = candidatesByDepth[index];
+      return {
+        sampleCenter: [point[0] - hotspot.x, point[1] - hotspot.y],
+        depthRank: index + 1,
+        frontmost: index === 0,
+        depthDeltaFromFrontmost: candidatesByDepth[0] ? candidate.depth - candidatesByDepth[0].depth : null,
+        candidate: compactOwnerCandidate(candidate),
+      };
+    };
+
+    const ownerRecovery = (hotspot, renderedOwner) => {
+      if (renderedOwner?.id == null || ownerIdRecords.length === 0) return null;
+      const subpixelMatches = [];
+      for (const y of [0.25, 0.5, 0.75]) {
+        for (const x of [0.25, 0.5, 0.75]) {
+          const match = ownerMatchAtPoint(hotspot, [hotspot.x + x, hotspot.y + y], renderedOwner);
+          if (match) subpixelMatches.push(match);
+        }
+      }
+      const neighborMatches = [];
+      for (const dy of [-1, 0, 1]) {
+        for (const dx of [-1, 0, 1]) {
+          const match = ownerMatchAtPoint(hotspot, [hotspot.x + dx + 0.5, hotspot.y + dy + 0.5], renderedOwner);
+          if (match) {
+            match.pixelOffset = [dx, dy];
+            neighborMatches.push(match);
           }
         }
-        const candidatesByDepth = candidates
+      }
+      return {
+        subpixelMatches,
+        bestSubpixel: subpixelMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.sampleCenter[0] - 0.5) + Math.abs(left.sampleCenter[1] - 0.5) - (Math.abs(right.sampleCenter[0] - 0.5) + Math.abs(right.sampleCenter[1] - 0.5)))[0] ?? null,
+        neighborMatches,
+        bestNeighbor: neighborMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.pixelOffset[0]) + Math.abs(left.pixelOffset[1]) - (Math.abs(right.pixelOffset[0]) + Math.abs(right.pixelOffset[1])))[0] ?? null,
+      };
+    };
+
+    const top = hotspots.top.map((hotspot) => {
+      const point = [hotspot.x + sampleCenter[0], hotspot.y + sampleCenter[1]];
+      const candidates = candidatesForPoint(hotspot, point);
+      const candidatesByDepth = candidates
           .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
           .sort((left, right) => left.depth - right.depth);
         const frontmost = candidatesByDepth[0] ?? null;
@@ -716,6 +840,7 @@ function capturePage(options) {
         const renderedOwnerDepthRank = renderedOwnerCandidate
           ? candidatesByDepth.findIndex((candidate) => candidate.ownerId === renderedOwnerCandidate.ownerId) + 1
           : null;
+        const renderedOwnerRecovery = ownerRecovery(hotspot, renderedOwner);
         return {
           x: hotspot.x,
           y: hotspot.y,
@@ -730,6 +855,7 @@ function capturePage(options) {
           renderedOwnerCandidate,
           renderedOwnerDepthRank: renderedOwnerDepthRank && renderedOwnerDepthRank > 0 ? renderedOwnerDepthRank : null,
           renderedOwnerDepthDeltaFromFrontmost: renderedOwnerCandidate && frontmost ? renderedOwnerCandidate.depth - frontmost.depth : null,
+          renderedOwnerRecovery,
           ownerMatch: renderedOwner ? {
             frontmost: ownerMatches(renderedOwner, frontmost),
             nearestExpected: ownerMatches(renderedOwner, nearestExpected),
@@ -747,7 +873,15 @@ function capturePage(options) {
             .sort((left, right) => left.projectedBaseColorExpectedRgbDistance - right.projectedBaseColorExpectedRgbDistance || left.depth - right.depth)
             .slice(0, 8),
         };
-      }),
+      });
+    return {
+      source: hotspots.source,
+      width: hotspots.width,
+      height: hotspots.height,
+      sampleCenter,
+      projectedTriangleCount: projectedTriangles.length,
+      summary: summarizeProjectedHotspots(top),
+      top,
     };
   };
 
