@@ -347,6 +347,7 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     }
     let summary = render_summary_markdown(options, &fixtures)?;
     write_render_summary(options, &summary)?;
+    write_render_review_manifest(options, &fixtures)?;
     write_render_visual_review(options, &fixtures, &summary)
 }
 
@@ -376,6 +377,11 @@ fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
     if summary.exists() {
         std::fs::remove_file(&summary)
             .map_err(|err| format!("failed to remove stale {}: {err}", path(&summary)))?;
+    }
+    let manifest = render_review_manifest_path(options);
+    if manifest.exists() {
+        std::fs::remove_file(&manifest)
+            .map_err(|err| format!("failed to remove stale {}: {err}", path(&manifest)))?;
     }
 
     Ok(())
@@ -1018,6 +1024,10 @@ fn render_imqraw_report(options: &Options, fixture: &RenderFixture, renderer: &s
     ))
 }
 
+fn render_review_manifest_path(options: &Options) -> PathBuf {
+    options.render_parity_dir.join("review-manifest.json")
+}
+
 fn render_diff_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
@@ -1376,6 +1386,92 @@ fn render_summary_markdown(
 fn write_render_summary(options: &Options, summary: &str) -> Result<(), String> {
     let out = options.render_parity_dir.join("summary.md");
     std::fs::write(&out, summary).map_err(|err| format!("failed to write {}: {err}", path(&out)))
+}
+
+fn write_render_review_manifest(
+    options: &Options,
+    fixtures: &[RenderFixture],
+) -> Result<(), String> {
+    let manifest = render_review_manifest_value(options, fixtures)?;
+    let out = render_review_manifest_path(options);
+    let text = serde_json::to_string_pretty(&manifest)
+        .map_err(|err| format!("failed to serialize render review manifest: {err}"))?;
+    std::fs::write(&out, format!("{text}\n"))
+        .map_err(|err| format!("failed to write {}: {err}", path(&out)))
+}
+
+fn render_review_manifest_value(
+    options: &Options,
+    fixtures: &[RenderFixture],
+) -> Result<serde_json::Value, String> {
+    let fixtures = fixtures
+        .iter()
+        .map(|fixture| render_review_manifest_fixture(options, fixture))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({
+        "generatedBy": "cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity",
+        "artifacts": path(&options.render_parity_dir),
+        "summary": path(&options.render_parity_dir.join("summary.md")),
+        "visualReview": path(&options.render_parity_dir.join("visual-review.html")),
+        "numericGate": "direct .imqraw via tools/render-parity/compare-imqraw.rs",
+        "metric": options.render_psnr_metric.as_cli_value(),
+        "background": options.render_background.as_cli_value(),
+        "mtoonLightAccumulation": options.render_mtoon_light_accumulation.as_cli_value(),
+        "alphaMismatchTolerance": options.render_alpha_mismatch_tolerance,
+        "alphaChannelTolerance": options.render_alpha_channel_tolerance,
+        "fixtures": fixtures,
+    }))
+}
+
+fn render_review_manifest_fixture(
+    options: &Options,
+    fixture: &RenderFixture,
+) -> Result<serde_json::Value, String> {
+    let comparisons = ["wgpu", "bevy"]
+        .into_iter()
+        .map(|renderer| render_review_manifest_comparison(options, fixture, renderer))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({
+        "name": &fixture.name,
+        "stem": &fixture.stem,
+        "source": path(&fixture.path),
+        "reference": render_review_manifest_artifacts(options, fixture, "three-vrm"),
+        "comparisons": comparisons,
+    }))
+}
+
+fn render_review_manifest_comparison(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<serde_json::Value, String> {
+    let report = render_report_summary(options, fixture, renderer)?;
+    Ok(serde_json::json!({
+        "renderer": renderer,
+        "capture": render_review_manifest_artifacts(options, fixture, renderer),
+        "numericReport": path(&render_imqraw_report(options, fixture, renderer)),
+        "diagnosticReport": path(&render_report(options, fixture, renderer)),
+        "diffPng": path(&render_diff_png(options, fixture, renderer)),
+        "summary": {
+            "selectedPsnr": report.selected_psnr,
+            "maxChannelDelta": report.max_channel_delta,
+            "alphaMismatches": report.alpha_mismatches,
+            "alphaMaxDelta": report.alpha_max_delta,
+            "pass": report.pass,
+        },
+    }))
+}
+
+fn render_review_manifest_artifacts(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "rgbaJson": path(&render_artifact(options, fixture, renderer)),
+        "imqraw": path(&render_imqraw_artifact(options, fixture, renderer)),
+        "png": path(&render_png(options, fixture, renderer)),
+    })
 }
 
 #[derive(Clone, Debug)]

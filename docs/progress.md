@@ -19,6 +19,12 @@
   `.imqraw` numeric-gate artifact differs from the companion `.rgba.json`
   artifact used for PNGs, heatmaps, and diagnostics. A 64x64 Seed-san smoke run
   verified all three renderer artifacts before computing PSNR.
+- Added `.external-fixtures/<render-parity-dir>/review-manifest.json` output to
+  the local render-parity runner. The manifest records the numeric gate,
+  summary, visual-review HTML, source fixture, reference/capture RGBA JSON,
+  direct imqraw, PNG, numeric report, diagnostic report, diff heatmap, and
+  pass/fail summary for each wgpu/Bevy comparison, making PSNR evidence and
+  visual-review evidence easier to audit together.
 
 ## 2026-06-01
 
