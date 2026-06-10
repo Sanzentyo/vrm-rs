@@ -321,6 +321,9 @@ channel `0`, `flipY=false`, and identity texture matrix; two entries have no
 map. That rules out a normal KHR/three.js texture-transform mismatch for the
 current worst pixels and pushes the remaining investigation toward UV attribute
 selection, shader varying behavior, or sample-position/rasterization details.
+The same artifact now records `reference.renderer.diagnosticMeshes`; Seed-san
+reports 21 diagnostic meshes with `uv` present and no populated `uv1`/`uv2`
+attributes, which also weakens a UV-channel mismatch explanation.
 
 A source-like generated UV-boundary control is available through:
 

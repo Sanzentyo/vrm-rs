@@ -282,6 +282,45 @@ function capturePage(options) {
     map: textureReport(material?.map),
   });
 
+  const attributeReport = (attribute) => {
+    if (!attribute) return null;
+    const array = attribute.array ?? [];
+    const valueCount = Math.min(array.length, 24);
+    return {
+      itemSize: attribute.itemSize,
+      count: attribute.count,
+      normalized: attribute.normalized,
+      arrayType: array.constructor?.name ?? null,
+      firstValues: Array.from(array.slice?.(0, valueCount) ?? []),
+    };
+  };
+
+  const geometryReport = (mesh) => {
+    const geometry = mesh?.geometry;
+    const materialNames = (Array.isArray(mesh?.material) ? mesh.material : [mesh?.material])
+      .filter(Boolean)
+      .map((material) => material.name ?? '');
+    return {
+      meshName: mesh?.name ?? '',
+      meshUuid: mesh?.uuid ?? null,
+      materialNames,
+      index: attributeReport(geometry?.index),
+      groups: (geometry?.groups ?? []).map((group) => ({
+        start: group.start,
+        count: group.count,
+        materialIndex: group.materialIndex,
+      })),
+      attributes: {
+        position: attributeReport(geometry?.attributes?.position),
+        normal: attributeReport(geometry?.attributes?.normal),
+        uv: attributeReport(geometry?.attributes?.uv),
+        uv1: attributeReport(geometry?.attributes?.uv1),
+        uv2: attributeReport(geometry?.attributes?.uv2),
+        uv3: attributeReport(geometry?.attributes?.uv3),
+      },
+    };
+  };
+
   globalThis.captureVrmFrame = async () => {
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({
@@ -339,6 +378,7 @@ function capturePage(options) {
       }
     };
     const diagnosticMaterials = [];
+    const diagnosticMeshes = [];
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
       if (${options.disableTextureMips} && object.material) {
@@ -370,6 +410,7 @@ function capturePage(options) {
         }
       }
       if (${JSON.stringify(options.diagnosticRender)} !== 'shaded' && object.isMesh && object.material) {
+        diagnosticMeshes.push(geometryReport(object));
         const diagnosticMaterial = (material, mesh, slot) => {
           diagnosticMaterials.push(materialReport(material, mesh, slot));
           const mode = ${JSON.stringify(options.diagnosticRender)};
@@ -465,6 +506,7 @@ function capturePage(options) {
         diagnosticRenderReference: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' ? 'base-color' : options.diagnosticRender)},
         rustOnlyDiagnostic: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' ? 'base-color-flip-v' : null)},
         diagnosticMaterials,
+        diagnosticMeshes,
       },
       expressions,
       lighting: {
