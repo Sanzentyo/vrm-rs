@@ -221,6 +221,13 @@ classification signal. The same recipe also writes
 `shared-nonblack-gradient-interior1px`, the shared-body interior complement.
 Current gradient-complement scores are wgpu `26.3277 dB` over `2638` pixels and
 Bevy `26.3322 dB` over `2642` pixels, with max channel deltas `219` / `218`.
+The recipe also maps those gradient deltas through
+`map-render-hotspots.rs` and writes
+`.hotspots.gradient.summary.{json,md}`. The current gradient hotspot summaries
+match the outline-off shared-body shape: `64/64` frontmost candidates are
+visible, `58/64` are within `0.25px` of a frontmost edge, every top hotspot is
+base pass, and Rust actual is closer than three-vrm expected to the CPU
+frontmost base texture for `44/64` hotspots.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use
