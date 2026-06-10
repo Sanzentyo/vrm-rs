@@ -72,6 +72,9 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, writes `.external-fixtures/render-parity/summary.md`, creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review, and writes `.external-fixtures/render-parity/review-manifest.json` as a machine-readable audit index. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+The run validates that manifest before returning success. To re-check a
+previous artifact set, run `just render-parity-validate
+.external-fixtures/render-parity/review-manifest.json`.
 The three-vrm, wgpu, and Bevy captures also write `.frame000.imqraw` files
 beside their `.rgba.json` artifacts. Check them with
 `imq bundle-info PATH --format json` or pipe the bundle into
@@ -167,7 +170,8 @@ embedded at the top of `visual-review.html`; use it as the first stop for
 selected PSNR, max channel delta, alpha mismatch, and pass/fail status.
 `review-manifest.json` links that same gate data to source fixtures,
 reference/capture RGBA JSON, direct imqraw, PNG, diagnostic reports, and diff
-heatmaps for downstream audits. The compared images live
+heatmaps for downstream audits, and `tools/render-parity/validate-review-manifest.rs`
+checks those links plus comparison pass flags. The compared images live
 under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.

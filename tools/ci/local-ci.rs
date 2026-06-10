@@ -348,7 +348,8 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     let summary = render_summary_markdown(options, &fixtures)?;
     write_render_summary(options, &summary)?;
     write_render_review_manifest(options, &fixtures)?;
-    write_render_visual_review(options, &fixtures, &summary)
+    write_render_visual_review(options, &fixtures, &summary)?;
+    validate_render_review_manifest(options)
 }
 
 fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
@@ -933,6 +934,18 @@ fn compare_render_rgba_json_pair(
         path(&render_report(options, fixture, renderer)).as_str(),
         "--metric",
         options.render_psnr_metric.as_cli_value(),
+    ]);
+    run_command(command)
+}
+
+fn validate_render_review_manifest(options: &Options) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command.args([
+        "+nightly",
+        "-Zscript",
+        "tools/render-parity/validate-review-manifest.rs",
+        "--manifest",
+        path(&render_review_manifest_path(options)).as_str(),
     ]);
     run_command(command)
 }

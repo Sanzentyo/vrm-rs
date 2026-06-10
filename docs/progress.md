@@ -25,6 +25,12 @@
   direct imqraw, PNG, numeric report, diagnostic report, diff heatmap, and
   pass/fail summary for each wgpu/Bevy comparison, making PSNR evidence and
   visual-review evidence easier to audit together.
+- Added `tools/render-parity/validate-review-manifest.rs` and wired it into the
+  end of `tools/ci/local-ci.rs --render-parity`. The validator fails if any
+  manifest-linked source, raw artifact, PNG, report, diff heatmap, summary, or
+  visual-review file is missing, or if a comparison summary disagrees with its
+  numeric report pass flag. `just render-parity-validate` runs the same audit
+  against an existing manifest.
 
 ## 2026-06-01
 

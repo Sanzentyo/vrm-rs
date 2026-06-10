@@ -180,6 +180,15 @@ summary before the side-by-side PNGs and diff heatmaps.
 fixture and renderer to the source VRM, reference/capture RGBA JSON, direct
 imqraw, preview PNG, numeric gate report, RGBA diagnostic report, diff heatmap,
 and pass/fail summary.
+The local runner validates this manifest before completing. To re-check an
+existing artifact set, run:
+
+```powershell
+cargo +nightly -Zscript tools/render-parity/validate-review-manifest.rs `
+  --manifest .external-fixtures/render-parity/review-manifest.json
+```
+
+The `just render-parity-validate MANIFEST` wrapper runs the same audit.
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
