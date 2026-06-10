@@ -383,18 +383,25 @@ base-vs-outline pass, render order, triangle ordinal, and source indices. The
 comparator reads both normal Rust metadata and three-vrm reference metadata
 from `/renderer/diagnosticOwnerIds` or `/reference/renderer/diagnosticOwnerIds`
 and writes `top_expected_to_actual_details` plus
-`top_actual_to_expected_details`. On the current Seed-san owner run, both Rust
+`top_actual_to_expected_details`. Those detail records also include the pixel
+`bounds` of the transition, up to eight `sample_pixels`, each owner's
+projected `screenBounds`, and average NDC `depth` when the capture artifact
+contains enough triangle metadata. On the current Seed-san owner run, both Rust
 captures emit `81236` owner labels. Rust owner labels also include glTF node
 and mesh names from `vrm-io` rest data. The leading three-vrm-vs-Rust
 transition maps three-vrm `arm_plastic (Outline)` on mesh `robo_arm_2` to Rust
 base-pass `material_6`, node/mesh `robo_arm`, node `144`, mesh `3`, primitive
-`1`, with the same local triangle ordinal band (`406/407`). The leading
-wgpu-vs-Bevy transitions are narrower: same material/pass/node/mesh/primitive,
-but neighboring triangle ordinals (`442 -> 443`, `418 -> 417`, `666 -> 665`)
-and the existing `+256` cluster. Treat this as evidence that the next useful
-parity step is pass/material ownership alignment between the three-vrm WebGL
-draw stream and Rust's sorted triangle stream, with wgpu-vs-Bevy triangle-edge
-differences as a secondary sanity check.
+`1`, with the same local triangle ordinal band (`406/407`). Its transition
+pixels are bounded by `x=187..209`, `y=58..65`; the expected and actual
+triangle screen bounds overlap to float precision (`x=186.98..210.80`,
+`y=57.80..65.74`) while their average NDC depths differ (`0.94899` outline in
+three-vrm versus `0.97450` base in Rust). The leading wgpu-vs-Bevy transitions
+are narrower: same material/pass/node/mesh/primitive, but neighboring triangle
+ordinals (`442 -> 443`, `418 -> 417`, `666 -> 665`) and the existing `+256`
+cluster. Treat this as evidence that the next useful parity step is pass/depth
+ownership alignment between the three-vrm WebGL draw stream and Rust's sorted
+triangle stream, with wgpu-vs-Bevy triangle-edge differences as a secondary
+sanity check.
 
 The same reports include `top_pass_transitions` so pass ownership changes can
 be tracked without reading every owner pair. The current Seed-san

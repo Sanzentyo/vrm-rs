@@ -535,13 +535,32 @@ function capturePage(options) {
     Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
   );
 
-  const buildOwnerDiagnosticGeometry = (mesh) => {
+  const ownerTriangleProjection = (mesh, indices, viewProjection, target, clip) => {
+    const projected = indices
+      .map((index) => screenVertex(mesh, index, null, viewProjection, target, clip));
+    if (projected.some((vertex) => vertex == null)) return null;
+    const screen = projected.map((vertex) => vertex.screen);
+    return {
+      screen,
+      screenBounds: {
+        minX: Math.min(...screen.map((point) => point[0])),
+        minY: Math.min(...screen.map((point) => point[1])),
+        maxX: Math.max(...screen.map((point) => point[0])),
+        maxY: Math.max(...screen.map((point) => point[1])),
+      },
+      depth: (projected[0].depth + projected[1].depth + projected[2].depth) / 3.0,
+    };
+  };
+
+  const buildOwnerDiagnosticGeometry = (mesh, viewProjection) => {
     const sourceGeometry = mesh.geometry;
     const sourceIndex = sourceGeometry.index;
     const diagnosticGeometry = sourceIndex ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
     const position = diagnosticGeometry.attributes.position;
     const colors = new Float32Array(position.count * 3);
     const sourcePosition = sourceGeometry.attributes.position;
+    const target = new THREE.Vector3();
+    const clip = new THREE.Vector4();
     const groups = sourceGeometry.groups.length > 0
       ? sourceGeometry.groups
       : [{ start: 0, count: sourceIndex ? sourceIndex.count : sourcePosition.count, materialIndex: 0 }];
@@ -558,6 +577,10 @@ function capturePage(options) {
         }
         const materialIndex = group.materialIndex ?? 0;
         const material = materialAt(mesh, materialIndex);
+        const indices = sourceIndex
+          ? [sourceIndex.getX(offset), sourceIndex.getX(offset + 1), sourceIndex.getX(offset + 2)]
+          : [offset, offset + 1, offset + 2];
+        const projection = ownerTriangleProjection(mesh, indices, viewProjection, target, clip);
         const record = {
           id,
           color,
@@ -568,9 +591,10 @@ function capturePage(options) {
           pass: materialPass(material),
           materialType: material?.type ?? null,
           triangle: Math.floor(offset / 3),
-          indices: sourceIndex
-            ? [sourceIndex.getX(offset), sourceIndex.getX(offset + 1), sourceIndex.getX(offset + 2)]
-            : [offset, offset + 1, offset + 2],
+          indices,
+          screen: projection?.screen ?? null,
+          screenBounds: projection?.screenBounds ?? null,
+          depth: projection?.depth ?? null,
         };
         ownerIdRecords.push(record);
         ownerIdByColor.set(ownerColorKey(color), record);
@@ -951,6 +975,10 @@ function capturePage(options) {
     };
     const diagnosticMaterials = [];
     const diagnosticMeshes = [];
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    vrm.scene.updateMatrixWorld(true);
+    const ownerViewProjection = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
       if (${options.disableTextureMips} && object.material) {
@@ -985,7 +1013,7 @@ function capturePage(options) {
         diagnosticMeshes.push(geometryReport(object));
         const mode = ${JSON.stringify(options.diagnosticRender)};
         if (mode === 'owner-id') {
-          object.geometry = buildOwnerDiagnosticGeometry(object);
+          object.geometry = buildOwnerDiagnosticGeometry(object, ownerViewProjection);
         }
         const diagnosticMaterial = (material, mesh, slot) => {
           diagnosticMaterials.push(materialReport(material, mesh, slot));

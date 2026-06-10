@@ -112,6 +112,8 @@ struct OwnerLabel {
     primitive_index: Option<u64>,
     material_index: Option<i64>,
     triangle: Option<u64>,
+    screen_bounds: Option<OwnerScreenBounds>,
+    depth: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -119,6 +121,36 @@ struct OwnerTransitionDetail {
     expected: OwnerLabel,
     actual: OwnerLabel,
     count: u64,
+    bounds: Option<OwnerPixelBounds>,
+    sample_pixels: Vec<OwnerPixel>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OwnerPixel {
+    x: usize,
+    y: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OwnerPixelBounds {
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OwnerScreenBounds {
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+}
+
+#[derive(Clone, Debug)]
+struct OwnerTransitionPixels {
+    bounds: OwnerPixelBounds,
+    sample_pixels: Vec<OwnerPixel>,
 }
 
 fn main() {
@@ -199,8 +231,14 @@ fn compare_owner_images(
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
+    let mut expected_to_actual_pixels = BTreeMap::new();
+    let mut actual_to_expected_pixels = BTreeMap::new();
 
     for (index, (&expected_id, &actual_id)) in expected_ids.iter().zip(&actual_ids).enumerate() {
+        let pixel = OwnerPixel {
+            x: index % expected.width,
+            y: index / expected.width,
+        };
         if expected_id != 0 {
             expected_nonzero += 1;
         }
@@ -219,6 +257,8 @@ fn compare_owner_images(
                     mismatched_shared_nonzero += 1;
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
+                    bump_transition_pixels(&mut expected_to_actual_pixels, left, right, pixel);
+                    bump_transition_pixels(&mut actual_to_expected_pixels, right, left, pixel);
                     bump_pass_transition(
                         &mut pass_transitions,
                         expected_metadata.get(&left),
@@ -284,12 +324,14 @@ fn compare_owner_images(
         top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
         top_expected_to_actual_details: top_transition_details(
             &expected_to_actual,
+            &expected_to_actual_pixels,
             expected_metadata,
             actual_metadata,
             top,
         ),
         top_actual_to_expected_details: top_transition_details(
             &actual_to_expected,
+            &actual_to_expected_pixels,
             actual_metadata,
             expected_metadata,
             top,
@@ -351,8 +393,44 @@ fn top_pass_transitions(
         .collect()
 }
 
+fn bump_transition_pixels(
+    map: &mut BTreeMap<(u32, u32), OwnerTransitionPixels>,
+    expected: u32,
+    actual: u32,
+    pixel: OwnerPixel,
+) {
+    map.entry((expected, actual))
+        .and_modify(|entry| entry.add(pixel))
+        .or_insert_with(|| OwnerTransitionPixels::new(pixel));
+}
+
+impl OwnerTransitionPixels {
+    fn new(pixel: OwnerPixel) -> Self {
+        Self {
+            bounds: OwnerPixelBounds {
+                min_x: pixel.x,
+                min_y: pixel.y,
+                max_x: pixel.x,
+                max_y: pixel.y,
+            },
+            sample_pixels: vec![pixel],
+        }
+    }
+
+    fn add(&mut self, pixel: OwnerPixel) {
+        self.bounds.min_x = self.bounds.min_x.min(pixel.x);
+        self.bounds.min_y = self.bounds.min_y.min(pixel.y);
+        self.bounds.max_x = self.bounds.max_x.max(pixel.x);
+        self.bounds.max_y = self.bounds.max_y.max(pixel.y);
+        if self.sample_pixels.len() < 8 {
+            self.sample_pixels.push(pixel);
+        }
+    }
+}
+
 fn top_transition_details(
     map: &BTreeMap<(u32, u32), u64>,
+    pixels: &BTreeMap<(u32, u32), OwnerTransitionPixels>,
     expected_metadata: &HashMap<u32, OwnerLabel>,
     actual_metadata: &HashMap<u32, OwnerLabel>,
     top: usize,
@@ -378,6 +456,11 @@ fn top_transition_details(
                 .cloned()
                 .unwrap_or_else(|| OwnerLabel::from_id(*actual)),
             count: *count,
+            bounds: pixels.get(&(*expected, *actual)).map(|pixels| pixels.bounds),
+            sample_pixels: pixels
+                .get(&(*expected, *actual))
+                .map(|pixels| pixels.sample_pixels.clone())
+                .unwrap_or_default(),
         })
         .collect()
 }
@@ -541,6 +624,18 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         primitive_index: value.get("primitiveIndex").and_then(Value::as_u64),
         material_index: value.get("materialIndex").and_then(Value::as_i64),
         triangle: value.get("triangle").and_then(Value::as_u64),
+        screen_bounds: owner_screen_bounds(value.get("screenBounds")),
+        depth: value.get("depth").and_then(Value::as_f64),
+    })
+}
+
+fn owner_screen_bounds(value: Option<&Value>) -> Option<OwnerScreenBounds> {
+    let value = value?;
+    Some(OwnerScreenBounds {
+        min_x: value.get("minX")?.as_f64()?,
+        min_y: value.get("minY")?.as_f64()?,
+        max_x: value.get("maxX")?.as_f64()?,
+        max_y: value.get("maxY")?.as_f64()?,
     })
 }
 

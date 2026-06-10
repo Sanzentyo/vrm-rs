@@ -2001,7 +2001,7 @@ fn write_rgba_json(
         fs::create_dir_all(parent)?;
     }
     let effective_lighting = mtoon_lighting_uniform(options);
-    let diagnostic_owner_ids = diagnostic_owner_ids(loaded, mesh);
+    let diagnostic_owner_ids = diagnostic_owner_ids(loaded, mesh, options);
     let artifact = json!({
         "generator": "vrm-rs examples/wgpu_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -2055,12 +2055,38 @@ fn write_rgba_json(
     Ok(())
 }
 
-fn diagnostic_owner_ids(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_json::Value> {
+#[derive(Clone, Copy, Debug)]
+struct OwnerScreenBounds {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OwnerProjection {
+    screen: [[f32; 2]; 3],
+    bounds: OwnerScreenBounds,
+    depth: f32,
+}
+
+fn diagnostic_owner_ids(
+    loaded: &LoadedVrm,
+    mesh: &MeshDrawData,
+    options: &CaptureOptions,
+) -> Vec<serde_json::Value> {
+    let view_projection = diagnostic_view_projection(options);
     mesh.primitives
         .iter()
         .flat_map(|primitive| {
             primitive.owner_ids.iter().map(move |owner| {
                 let source = primitive.owner_source;
+                let projection = owner_triangle_projection(
+                    &primitive.vertices,
+                    owner.triangle,
+                    view_projection,
+                    options,
+                );
                 json!({
                     "id": owner.id,
                     "color": owner_id_color_u8(owner.id),
@@ -2075,10 +2101,88 @@ fn diagnostic_owner_ids(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_js
                     "renderOrder": source.render_order,
                     "triangle": owner.triangle,
                     "indices": owner.indices,
+                    "screen": projection.map(|projection| projection.screen),
+                    "screenBounds": projection.map(|projection| json!({
+                        "minX": projection.bounds.min_x,
+                        "minY": projection.bounds.min_y,
+                        "maxX": projection.bounds.max_x,
+                        "maxY": projection.bounds.max_y,
+                    })),
+                    "depth": projection.map(|projection| projection.depth),
                 })
             })
         })
         .collect()
+}
+
+fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
+    jittered_projection(
+        Mat4::perspective_rh(
+            30.0_f32.to_radians(),
+            options.width as f32 / options.height as f32,
+            0.1,
+            20.0,
+        ),
+        options,
+    ) * camera_view(options)
+}
+
+fn owner_triangle_projection(
+    vertices: &[Vertex],
+    triangle: usize,
+    view_projection: Mat4,
+    options: &CaptureOptions,
+) -> Option<OwnerProjection> {
+    let start = triangle.checked_mul(3)?;
+    let points = [
+        owner_screen_vertex(vertices.get(start)?.position, view_projection, options)?,
+        owner_screen_vertex(vertices.get(start + 1)?.position, view_projection, options)?,
+        owner_screen_vertex(vertices.get(start + 2)?.position, view_projection, options)?,
+    ];
+    let screen = points.map(|point| [point[0], point[1]]);
+    Some(OwnerProjection {
+        screen,
+        bounds: OwnerScreenBounds {
+            min_x: screen
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::INFINITY, f32::min),
+            min_y: screen
+                .iter()
+                .map(|point| point[1])
+                .fold(f32::INFINITY, f32::min),
+            max_x: screen
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::NEG_INFINITY, f32::max),
+            max_y: screen
+                .iter()
+                .map(|point| point[1])
+                .fold(f32::NEG_INFINITY, f32::max),
+        },
+        depth: (points[0][2] + points[1][2] + points[2][2]) / 3.0,
+    })
+}
+
+fn owner_screen_vertex(
+    position: [f32; 3],
+    view_projection: Mat4,
+    options: &CaptureOptions,
+) -> Option<[f32; 3]> {
+    let clip = view_projection * Vec3::from_array(position).extend(1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    let screen = [
+        (ndc.x * 0.5 + 0.5) * options.width as f32,
+        (0.5 - ndc.y * 0.5) * options.height as f32,
+        ndc.z,
+    ];
+    screen
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(screen)
 }
 
 fn node_name(loaded: &LoadedVrm, node: usize) -> Option<&str> {
