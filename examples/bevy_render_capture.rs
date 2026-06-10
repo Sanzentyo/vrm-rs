@@ -232,6 +232,7 @@ enum DiagnosticRender {
     BaseColorRawSrgb,
     Uv,
     BaseUv,
+    OwnerId,
 }
 
 impl DiagnosticRender {
@@ -245,6 +246,7 @@ impl DiagnosticRender {
             Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
+            Self::OwnerId => "owner-id",
         }
     }
 
@@ -518,6 +520,7 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
+    assign_owner_id_colors(&mut primitives);
 
     for primitive in primitives {
         let mesh = meshes.add(primitive.mesh);
@@ -533,6 +536,35 @@ fn spawn_vrm_meshes(
         }
     }
     Ok(())
+}
+
+fn assign_owner_id_colors(primitives: &mut [BevyPrimitive]) {
+    for (index, primitive) in primitives.iter_mut().enumerate() {
+        match &mut primitive.material {
+            BevyPrimitiveMaterial::Mtoon(material) => {
+                material.owner_color =
+                    BVec4::from_array(owner_id_color(u32::try_from(index + 1).unwrap_or(0)));
+            }
+        }
+    }
+}
+
+fn owner_id_color(id: u32) -> [f32; 4] {
+    [
+        srgb_u8_to_linear((id & 0xff) as u8),
+        srgb_u8_to_linear(((id >> 8) & 0xff) as u8),
+        srgb_u8_to_linear(((id >> 16) & 0xff) as u8),
+        1.0,
+    ]
+}
+
+fn srgb_u8_to_linear(value: u8) -> f32 {
+    let value = f32::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -815,6 +847,7 @@ struct BevyMtoonMaterial {
     material_flags: BVec4,
     material_flags2: BVec4,
     pbr_params: BVec4,
+    owner_color: BVec4,
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
@@ -882,6 +915,7 @@ struct BevyMtoonUniform {
     material_flags: BVec4,
     material_flags2: BVec4,
     pbr_params: BVec4,
+    owner_color: BVec4,
     outline_color: BVec4,
     pipeline: BVec4,
     lighting: BVec4,
@@ -913,6 +947,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonUniform {
             material_flags: material.material_flags,
             material_flags2: material.material_flags2,
             pbr_params: material.pbr_params,
+            owner_color: material.owner_color,
             outline_color: material.outline_color,
             pipeline: material.pipeline,
             lighting: material.lighting,
@@ -1023,6 +1058,7 @@ fn bevy_mtoon_material(
             DiagnosticRender::BaseColorRawSrgb => 1.25,
             DiagnosticRender::Uv => 3.0,
             DiagnosticRender::BaseUv => 4.0,
+            DiagnosticRender::OwnerId => 5.0,
             DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
         },
     );
@@ -1062,6 +1098,7 @@ fn bevy_mtoon_material(
         material_flags: BVec4::from_array(render_extra.flags),
         material_flags2,
         pbr_params: BVec4::from_array(render_extra.pbr_params),
+        owner_color: BVec4::ZERO,
         outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
             alpha_mode_code(alpha_mode),

@@ -289,6 +289,7 @@ just render-parity-seed-base-color-three-hotspots
 just render-parity-seed-base-color-three-hotspots D:/git/three-vrm 0.75 0.75
 just render-parity-seed-base-color-owner-hotspots
 just render-parity-seed-base-color-owner-hotspots D:/git/three-vrm 0.75 0.75
+just render-parity-seed-owner-id-diagnostic
 ```
 
 It creates `shared-nonblack-interior1px` delta reports and maps the top 64
@@ -337,6 +338,17 @@ across center/down/right/left/up. This is the current strongest evidence that
 the active base-color blocker is a local WebGL fill/raster ownership issue
 near real material/UV boundaries rather than texture binding, global
 color-space, alpha-mask, cull, mip, or sample-center policy.
+
+`render-parity-seed-owner-id-diagnostic` renders owner IDs through the normal
+three-vrm/wgpu/Bevy local render-parity runner. The three-vrm reference still
+uses per-triangle owner IDs from the browser diagnostic, while the concrete
+Rust captures currently emit draw-order-stable per-primitive/pass owner IDs
+after material sorting. Therefore the three-vrm-vs-Rust PSNR is only a
+diagnostic shape, not a compatibility threshold. The useful current invariant
+is that wgpu and Bevy owner-ID captures match byte-for-byte on Seed-san
+(`rgb-visible = Infinity`, max channel delta `0`, alpha mismatches `0`), so
+the concrete renderer paths agree on primitive/pass ownership before the
+remaining three-vrm per-triangle ownership alignment work.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

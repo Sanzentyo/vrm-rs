@@ -14,6 +14,7 @@ struct BevyMtoonUniform {
     material_flags: vec4<f32>,
     material_flags2: vec4<f32>,
     pbr_params: vec4<f32>,
+    owner_color: vec4<f32>,
     outline_color: vec4<f32>,
     pipeline: vec4<f32>,
     lighting: vec4<f32>,
@@ -268,6 +269,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 1.5);
     if material.material_flags2.z > 0.5 {
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+    }
+    if material.material_flags2.w > 4.5 && material.material_flags2.w < 5.5 {
+        return output_color(material.owner_color.rgb, opaque_alpha);
     }
     if material.material_flags2.w > 2.5 {
         if material.material_flags2.w > 3.5 {

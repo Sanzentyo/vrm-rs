@@ -61,6 +61,18 @@
   rendered-to-best-subpixel, and rendered-to-best-neighbor material/triangle
   transitions, making the local fill/raster ownership diagnosis repeatable
   without one-off node snippets.
+- Added `owner-id` diagnostic render support to the concrete wgpu and Bevy
+  capture paths. Both renderers now assign draw-order-stable primitive/pass
+  owner colors after material-order sorting and expose them through their
+  MToon capture uniforms. `just render-parity-seed-owner-id-diagnostic` renders
+  three-vrm, wgpu, and Bevy owner-ID artifacts, validates their direct imqraw
+  buffers, and writes a wgpu-vs-Bevy raw comparison. On the current Seed-san
+  run, wgpu and Bevy owner-ID captures are byte-identical
+  (`rgb-visible = Infinity`, max channel delta `0`, alpha mismatches `0`),
+  while both score `15.4666 dB` against three-vrm because three-vrm still uses
+  per-triangle owner IDs and Rust currently uses per-primitive/pass IDs. This
+  separates Rust renderer parity from the remaining three-vrm ownership
+  alignment problem.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base

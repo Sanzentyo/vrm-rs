@@ -189,6 +189,7 @@ enum RenderDiagnosticMode {
     BaseColorRawSrgb,
     Uv,
     BaseUv,
+    OwnerId,
 }
 
 impl RenderMtoonLightAccumulation {
@@ -221,6 +222,7 @@ impl RenderDiagnosticMode {
             Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
+            Self::OwnerId => "owner-id",
         }
     }
 }

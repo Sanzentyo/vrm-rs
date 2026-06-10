@@ -279,6 +279,7 @@ enum DiagnosticRender {
     BaseColorRawSrgb,
     Uv,
     BaseUv,
+    OwnerId,
 }
 
 impl DiagnosticRender {
@@ -292,6 +293,7 @@ impl DiagnosticRender {
             Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
+            Self::OwnerId => "owner-id",
         }
     }
 
@@ -364,6 +366,7 @@ struct MaterialExtraUniform {
     flags: [f32; 4],
     pbr_params: [f32; 4],
     flags2: [f32; 4],
+    owner_color: [f32; 4],
 }
 
 struct TextureResource {
@@ -460,7 +463,33 @@ fn mesh_draw_data(
         return Err("no drawable mesh primitives were found".into());
     }
     primitives.sort_by_key(|primitive| primitive.policy.render_order);
+    assign_owner_id_colors(&mut primitives);
     Ok(MeshDrawData { primitives })
+}
+
+fn assign_owner_id_colors(primitives: &mut [DrawPrimitive]) {
+    for (index, primitive) in primitives.iter_mut().enumerate() {
+        primitive.material_extra.owner_color =
+            owner_id_color(u32::try_from(index + 1).unwrap_or(0));
+    }
+}
+
+fn owner_id_color(id: u32) -> [f32; 4] {
+    [
+        srgb_u8_to_linear((id & 0xff) as u8),
+        srgb_u8_to_linear(((id >> 8) & 0xff) as u8),
+        srgb_u8_to_linear(((id >> 16) & 0xff) as u8),
+        1.0,
+    ]
+}
+
+fn srgb_u8_to_linear(value: u8) -> f32 {
+    let value = f32::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -700,9 +729,11 @@ fn material_extra_uniform(
                 DiagnosticRender::BaseColorRawSrgb => 1.25,
                 DiagnosticRender::Uv => 3.0,
                 DiagnosticRender::BaseUv => 4.0,
+                DiagnosticRender::OwnerId => 5.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
             },
         ],
+        owner_color: [0.0, 0.0, 0.0, 1.0],
     }
 }
 
@@ -1989,6 +2020,7 @@ struct MaterialExtraUniform {
     flags: vec4<f32>,
     pbr_params: vec4<f32>,
     flags2: vec4<f32>,
+    owner_color: vec4<f32>,
 };
 
 @group(1) @binding(10)
@@ -2258,6 +2290,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     if material_extra.flags2.z > 0.5 {
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+    }
+    if material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5 {
+        return output_color(material_extra.owner_color.rgb, opaque_alpha);
     }
     if material_extra.flags2.w > 2.5 {
         if material_extra.flags2.w > 3.5 {
