@@ -415,58 +415,50 @@ stream and Rust's sorted triangle stream, with wgpu-vs-Bevy triangle-edge
 differences as a secondary sanity check.
 
 The same reports include `top_pass_transitions` so pass ownership changes can
-be tracked without reading every owner pair. The default Seed-san owner
+be tracked without reading every owner pair. The three-vrm browser `owner-id`
+reference now builds a diagnostic geometry by duplicating all attributes and
+morph attributes per material group. This matters for MToon meshes such as
+Seed-san, where base and outline are overlapping material groups over the same
+index range. The old single non-indexed geometry shared one vertex-color stream
+across both groups, so outline owner IDs could be drawn during the base material
+pass. After the group-local duplication fix, the default Seed-san owner
 diagnostic keeps the Rust captures on `frontFace = ccw`, matching the shaded
-renderer default, and is dominated by `outline -> base` transitions (`11774`
-pixels for wgpu, `11774` for Bevy before the rejected outline-expansion
-experiment), with only a small `base -> base` residue. The direct wgpu-vs-Bevy
-owner report is mostly same-pass `base -> base`, so the primary mismatch is
-reference-vs-Rust outline ownership rather than a broad Rust backend
-disagreement. A trial that used expanded outline geometry for Rust `owner-id`
-diagnostics improved a few outline owner matches but reduced three-vrm PSNR and
-made wgpu-vs-Bevy much noisier, so `owner-id` remains on the non-shaded
-diagnostic outline geometry path.
+renderer default, and reports wgpu pass transitions `base -> base = 11911`,
+`outline -> outline = 18`, and `outline -> base = 4`. The direct wgpu-vs-Bevy
+owner report remains a backend sanity check, while the old large `outline ->
+base` transition is now classified as a browser-reference diagnostic artifact.
 
 They also include `top_render_policy_transitions`, which groups the same
 mismatched shared-owner pixels by expected pass/material side/front-facing/
-depth-write and actual pass/cull/front-face/front-facing/depth-write. This is
-the preferred first read for cull/facing work because it separates a pass swap
-from a face-policy swap. Recomputing the default CCW Seed-san wgpu report shows
-the main bucket as `outline` / material side `back` / `frontFacing=false` to
-Rust `base` / `cullMode=back` / `frontFace=ccw` / `frontFacing=false`
-(`11770` pixels). The CW diagnostic changes the dominant wgpu bucket to
-`outline` / side `back` / `frontFacing=false` to Rust `outline` /
-`cullMode=front` / `frontFace=cw` / `frontFacing=false` (`11765` pixels). Bevy
-shows the same pass/cull/front-face shape in CW mode, split across
-front-facing metadata buckets (`10882 + 887` pixels), so treat the remaining
-Bevy-vs-wgpu difference as metadata/fill detail unless a later capture shows it
-affects shaded output.
+depth-write and actual pass/cull/front-face/front-facing/depth-write. The
+three-vrm side now also emits effective three.js-style `frontFace`, `cullMode`,
+`gpuFrontFacing`, and `visibleByCullPolicy`, accounting for `BackSide` and
+negative world determinants. Recomputing the default CCW Seed-san wgpu report
+shows the leading policy bucket as
+`base/back/ccw/gpuFrontFacing=true/visibleByCullPolicy=true -> base/back/ccw/gpuFrontFacing=true/visibleByCullPolicy=true`
+(`11911` pixels). Only `18` pixels remain in the same-pass outline bucket and
+`4` in `outline -> base`. The CW diagnostic now worsens, dominated by
+`base -> outline = 11913`, so keep CW as a negative diagnostic rather than a
+candidate renderer default.
 
 The Rust captures now add `gpuFrontFacing` and `visibleByCullPolicy` alongside
 the older `frontFacing` field. `frontFacing` is the shared screen-area label
 used to compare with the three-vrm browser metadata. `gpuFrontFacing` is the
 Rust capture's estimate after applying the selected `frontFace` convention to
 the y-down screen-space winding, and `visibleByCullPolicy` applies the
-primitive cull mode to that estimate. Prefer these two fields when asking
-"should the Rust pipeline have drawn this triangle?" On the default CCW wgpu
-run, the dominant bucket becomes
-`outline/back/frontFacing=false -> base/back/ccw/frontFacing=false/gpuFrontFacing=true/visibleByCullPolicy=true`
-(`11770` pixels). On the CW diagnostic, it becomes
-`outline/back/frontFacing=false -> outline/front/cw/frontFacing=false/gpuFrontFacing=false/visibleByCullPolicy=true`
-(`11765` pixels). That makes the wgpu owner switch internally consistent:
-the winning Rust triangle is visible under its own cull convention. Bevy shows
-the same pass/cull/front-face trend, but has smaller buckets where this
-metadata estimate says not visible. `compare-owner-id-images.rs` also reports
+primitive cull mode to that estimate. Prefer these fields when asking
+"should this pipeline have drawn this triangle?" Bevy still shows buckets where
+the actual-side metadata estimate says not visible. `compare-owner-id-images.rs`
+also reports
 `actual_not_visible_by_cull_policy_shared_nonzero`,
 `actual_not_visible_by_cull_policy_mismatched_shared_nonzero`, and
 `top_actual_cull_visibility` so this split can be read without scanning the
-full policy table. Recomputing the existing Seed-san owner artifacts with
-those fields shows wgpu at `0` actual-not-visible shared owner pixels in both
-default CCW and CW diagnostics. Bevy reports `2436` default CCW pixels and
-`1014` CW pixels in both the shared and mismatched-shared slices, so use wgpu
-as the cleaner winding/facing probe and treat the Bevy split as a separate
-projection/fill, color-decode, or specialization diagnostic until it is
-explained.
+full policy table. With the fixed browser reference, wgpu remains at `0`
+actual-not-visible shared owner pixels in both default CCW and CW diagnostics.
+Bevy reports `2436` default CCW pixels and `1014` CW pixels in both the shared
+and mismatched-shared slices, so use wgpu as the cleaner pass/facing probe and
+treat the Bevy split as a separate projection/fill, color-decode, or
+specialization diagnostic until it is explained.
 The Bevy capture now computes this owner metadata projection through Bevy's own
 `PerspectiveProjection::get_clip_from_view()` path and labels its depth range
 as `bevy-reverse-zero-to-one-ndc`; the split did not change after moving from
@@ -478,16 +470,12 @@ For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
 and records `Front face: cw` in the generated summary/manifest and owner label
-metadata. On the current Seed-san owner-ID run this almost flips the dominant
-pass transition back to the reference outline owner: wgpu reports
-`outline -> outline = 11769`, `base -> base = 707`, `base -> outline = 148`,
-and `outline -> base = 23`; Bevy reports `11773`, `707`, `148`, and `19`.
-The selected owner-ID PSNR rises only slightly to wgpu `16.9160 dB` and Bevy
-`16.9249 dB`. Do not use this as the shaded default: a shaded Seed-san trial
-with CW dropped to wgpu `14.8325 dB`, while the normal CCW real normal-map gate
-continues to pass at Seed-san wgpu `34.6538 dB` / Bevy `34.1163 dB` and
-constraint wgpu `36.2518 dB` / Bevy `36.2349 dB`. Treat the CW recipe as a
-local pass/facing diagnostic before changing material or lighting code.
+metadata. After fixing group-local owner colors in the browser reference, CW is
+a negative diagnostic: Seed-san wgpu reports `base -> outline = 11913`,
+`base -> base = 712`, `outline -> base = 18`, and `outline -> outline = 4`;
+selected owner-ID PSNR drops to wgpu `14.4732 dB` and Bevy `14.4760 dB`.
+Do not use this as the shaded default. Treat the CW recipe as a regression
+guard for front-face experiments before changing material or lighting code.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

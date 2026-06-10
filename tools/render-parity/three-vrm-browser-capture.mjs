@@ -539,6 +539,32 @@ function capturePage(options) {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
   );
 
+  const gpuFrontFacingForFrontFace = (screenSignedArea, frontFace) => (
+    frontFace === 'cw' ? screenSignedArea > 0.0 : screenSignedArea < 0.0
+  );
+
+  const threeCullMode = (material) => (
+    (material?.side ?? THREE.FrontSide) === THREE.DoubleSide ? 'none' : 'back'
+  );
+
+  const threeFrontFace = (mesh, material) => {
+    let flipSided = (material?.side ?? THREE.FrontSide) === THREE.BackSide;
+    if (mesh?.isMesh && mesh.matrixWorld.determinant() < 0.0) {
+      flipSided = !flipSided;
+    }
+    return flipSided ? 'cw' : 'ccw';
+  };
+
+  const visibleByThreeCullPolicy = (mesh, material, screenSignedArea) => {
+    const cullMode = threeCullMode(material);
+    if (cullMode === 'none') return true;
+    const gpuFrontFacing = gpuFrontFacingForFrontFace(
+      screenSignedArea,
+      threeFrontFace(mesh, material),
+    );
+    return cullMode === 'back' ? gpuFrontFacing : !gpuFrontFacing;
+  };
+
   const ownerTriangleProjection = (mesh, indices, viewProjection, target, clip) => {
     const projected = indices
       .map((index) => screenVertex(mesh, index, null, viewProjection, target, clip));
@@ -561,35 +587,60 @@ function capturePage(options) {
     };
   };
 
+  const attributeValue = (attribute, index, component) => {
+    switch (component) {
+      case 0: return attribute.getX(index);
+      case 1: return attribute.getY(index);
+      case 2: return attribute.getZ(index);
+      case 3: return attribute.getW(index);
+      default: return 0;
+    }
+  };
+
+  const duplicateAttribute = (attribute, sourceVertexIndices) => {
+    const array = new attribute.array.constructor(sourceVertexIndices.length * attribute.itemSize);
+    for (let out = 0; out < sourceVertexIndices.length; out += 1) {
+      const source = sourceVertexIndices[out];
+      for (let component = 0; component < attribute.itemSize; component += 1) {
+        array[out * attribute.itemSize + component] = attributeValue(attribute, source, component);
+      }
+    }
+    return new THREE.BufferAttribute(array, attribute.itemSize, attribute.normalized);
+  };
+
   const buildOwnerDiagnosticGeometry = (mesh, viewProjection) => {
     const sourceGeometry = mesh.geometry;
     const sourceIndex = sourceGeometry.index;
-    const diagnosticGeometry = sourceIndex ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
-    const position = diagnosticGeometry.attributes.position;
-    const colors = new Float32Array(position.count * 3);
+    const diagnosticGeometry = new THREE.BufferGeometry();
     const sourcePosition = sourceGeometry.attributes.position;
+    const sourceVertexIndices = [];
+    const colors = [];
     const target = new THREE.Vector3();
     const clip = new THREE.Vector4();
     const groups = sourceGeometry.groups.length > 0
       ? sourceGeometry.groups
       : [{ start: 0, count: sourceIndex ? sourceIndex.count : sourcePosition.count, materialIndex: 0 }];
     for (const group of groups) {
+      const groupVertexStart = sourceVertexIndices.length;
       for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
         const id = nextOwnerId;
         nextOwnerId += 1;
         const color = encodeOwnerId(id);
         const linear = ownerColorToLinearRgb(color);
-        for (let vertex = offset; vertex < offset + 3; vertex += 1) {
-          colors[vertex * 3] = linear[0];
-          colors[vertex * 3 + 1] = linear[1];
-          colors[vertex * 3 + 2] = linear[2];
-        }
         const materialIndex = group.materialIndex ?? 0;
         const material = materialAt(mesh, materialIndex);
         const indices = sourceIndex
           ? [sourceIndex.getX(offset), sourceIndex.getX(offset + 1), sourceIndex.getX(offset + 2)]
           : [offset, offset + 1, offset + 2];
+        for (const index of indices) {
+          sourceVertexIndices.push(index);
+          colors.push(linear[0], linear[1], linear[2]);
+        }
         const projection = ownerTriangleProjection(mesh, indices, viewProjection, target, clip);
+        const frontFace = threeFrontFace(mesh, material);
+        const gpuFrontFacing = projection
+          ? gpuFrontFacingForFrontFace(projection.screenSignedArea, frontFace)
+          : null;
         const record = {
           id,
           drawIndex: ownerIdRecords.length,
@@ -602,6 +653,9 @@ function capturePage(options) {
           pass: materialPass(material),
           materialType: material?.type ?? null,
           side: material?.side ?? null,
+          matrixWorldDeterminant: mesh.matrixWorld.determinant(),
+          frontFace,
+          cullMode: threeCullMode(material),
           transparent: material?.transparent ?? false,
           opacity: material?.opacity ?? 1.0,
           alphaTest: material?.alphaTest ?? 0.0,
@@ -619,13 +673,31 @@ function capturePage(options) {
           depthRange: projection?.depthRange ?? null,
           screenSignedArea: projection?.screenSignedArea ?? null,
           frontFacing: projection?.frontFacing ?? null,
+          gpuFrontFacing,
+          visibleByCullPolicy: projection
+            ? visibleByThreeCullPolicy(mesh, material, projection.screenSignedArea)
+            : null,
         };
         ownerIdRecords.push(record);
         ownerIdByColor.set(ownerColorKey(color), record);
         ownerIdByCandidate.set(ownerCandidateKey(mesh.uuid, materialIndex, record.triangle), record);
       }
+      diagnosticGeometry.addGroup(
+        groupVertexStart,
+        sourceVertexIndices.length - groupVertexStart,
+        group.materialIndex ?? 0,
+      );
     }
-    diagnosticGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) {
+      diagnosticGeometry.setAttribute(name, duplicateAttribute(attribute, sourceVertexIndices));
+    }
+    for (const [name, morphAttributes] of Object.entries(sourceGeometry.morphAttributes)) {
+      diagnosticGeometry.morphAttributes[name] = morphAttributes.map((attribute) => (
+        duplicateAttribute(attribute, sourceVertexIndices)
+      ));
+    }
+    diagnosticGeometry.morphTargetsRelative = sourceGeometry.morphTargetsRelative;
+    diagnosticGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
     return diagnosticGeometry;
   };
 
@@ -637,13 +709,6 @@ function capturePage(options) {
   const uvAttributeForMaterial = (geometry, material) => {
     const channel = material?.map?.channel ?? 0;
     return geometry.attributes[channel === 0 ? 'uv' : \`uv\${channel}\`] ?? geometry.attributes.uv ?? null;
-  };
-
-  const visibleBySide = (side, signedArea) => {
-    if (side === THREE.DoubleSide) return true;
-    const frontFacing = signedArea > 0.0;
-    if (side === THREE.BackSide) return !frontFacing;
-    return frontFacing;
   };
 
   const renderedHotspotOwner = (hotspot, renderedRgba) => {
@@ -759,7 +824,7 @@ function capturePage(options) {
           const c = screenVertex(mesh, ic, uvAttribute, viewProjection, vertex, clip);
           if (!a || !b || !c) continue;
           const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
-          if (!visibleBySide(material?.side ?? THREE.FrontSide, signedArea)) continue;
+          if (!visibleByThreeCullPolicy(mesh, material, signedArea)) continue;
           const materialIndex = group.materialIndex ?? 0;
           const triangle = Math.floor(offset / 3);
           const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
@@ -999,6 +1064,14 @@ function capturePage(options) {
     };
     const diagnosticMaterials = [];
     const diagnosticMeshes = [];
+    const expressions = ${JSON.stringify(options.expressions)};
+    if (expressions.length > 0 && !vrm.expressionManager) {
+      throw new Error('render expressions were requested, but the VRM has no expressionManager');
+    }
+    for (const [name, weight] of expressions) {
+      vrm.expressionManager.setValue(name, weight);
+    }
+    vrm.update?.(${options.mtoonTime});
     camera.updateMatrixWorld(true);
     camera.updateProjectionMatrix();
     vrm.scene.updateMatrixWorld(true);
@@ -1103,14 +1176,6 @@ function capturePage(options) {
       }
     });
     scene.add(vrm.scene);
-    const expressions = ${JSON.stringify(options.expressions)};
-    if (expressions.length > 0 && !vrm.expressionManager) {
-      throw new Error('render expressions were requested, but the VRM has no expressionManager');
-    }
-    for (const [name, weight] of expressions) {
-      vrm.expressionManager.setValue(name, weight);
-    }
-    vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
 

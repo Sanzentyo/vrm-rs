@@ -108,7 +108,11 @@ struct OwnerPassTransition {
 struct OwnerRenderPolicyTransition {
     expected_pass: String,
     expected_side: String,
+    expected_cull_mode: String,
+    expected_front_face: String,
     expected_front_facing: String,
+    expected_gpu_front_facing: String,
+    expected_visible_by_cull_policy: String,
     expected_depth_write: String,
     actual_pass: String,
     actual_cull_mode: String,
@@ -136,7 +140,11 @@ struct OwnerActualCullVisibility {
 struct OwnerRenderPolicyKey {
     expected_pass: String,
     expected_side: String,
+    expected_cull_mode: String,
+    expected_front_face: String,
     expected_front_facing: String,
+    expected_gpu_front_facing: String,
+    expected_visible_by_cull_policy: String,
     expected_depth_write: String,
     actual_pass: String,
     actual_cull_mode: String,
@@ -524,7 +532,11 @@ fn top_render_policy_transitions(
         .map(|(key, count)| OwnerRenderPolicyTransition {
             expected_pass: key.expected_pass,
             expected_side: key.expected_side,
+            expected_cull_mode: key.expected_cull_mode,
+            expected_front_face: key.expected_front_face,
             expected_front_facing: key.expected_front_facing,
+            expected_gpu_front_facing: key.expected_gpu_front_facing,
+            expected_visible_by_cull_policy: key.expected_visible_by_cull_policy,
             expected_depth_write: key.expected_depth_write,
             actual_pass: key.actual_pass,
             actual_cull_mode: key.actual_cull_mode,
@@ -576,7 +588,21 @@ impl OwnerRenderPolicyKey {
                 .and_then(|label| label.material_side)
                 .map(material_side_label)
                 .unwrap_or_else(|| "unknown".to_owned()),
+            expected_cull_mode: expected
+                .and_then(|label| label.cull_mode.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
+            expected_front_face: expected
+                .and_then(|label| label.front_face.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
             expected_front_facing: optional_bool_label(expected.and_then(|label| label.front_facing)),
+            expected_gpu_front_facing: optional_bool_label(
+                expected.and_then(|label| label.gpu_front_facing),
+            ),
+            expected_visible_by_cull_policy: optional_bool_label(
+                expected.and_then(|label| label.visible_by_cull_policy),
+            ),
             expected_depth_write: optional_bool_label(expected.and_then(|label| label.depth_write)),
             actual_pass: pass_label(actual),
             actual_cull_mode: actual
@@ -948,7 +974,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 id: 2,
                 pass: Some("outline".to_owned()),
                 material_side: Some(1),
+                cull_mode: Some("back".to_owned()),
+                front_face: Some("cw".to_owned()),
                 front_facing: Some(false),
+                gpu_front_facing: Some(true),
+                visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
                 ..OwnerLabel::default()
             },
@@ -959,7 +989,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 id: 5,
                 pass: Some("base".to_owned()),
                 material_side: Some(0),
+                cull_mode: Some("back".to_owned()),
+                front_face: Some("ccw".to_owned()),
                 front_facing: Some(true),
+                gpu_front_facing: Some(true),
+                visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
                 ..OwnerLabel::default()
             },
@@ -1030,6 +1064,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     }));
     assert!(report.top_render_policy_transitions.iter().any(|transition| {
         transition.expected_side == "back"
+            && transition.expected_cull_mode == "back"
+            && transition.expected_front_face == "cw"
+            && transition.expected_gpu_front_facing == "true"
+            && transition.expected_visible_by_cull_policy == "true"
             && transition.actual_cull_mode == "back"
             && transition.actual_gpu_front_facing == "true"
             && transition.actual_visible_by_cull_policy == "true"
