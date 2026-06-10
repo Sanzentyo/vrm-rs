@@ -162,6 +162,17 @@ wgpu `51.5385 dB` / Bevy `49.9613 dB`, and max selected-channel delta `7` for
 both renderers. Use `just render-parity-split-ownership-owner-generated` to
 render owner IDs for the same fixture; the expected current result is wgpu/Bevy
 owner agreement with only a three-pixel owner tail against three-vrm.
+Use `just render-parity-subpixel-ownership-generated` for the focused
+source-like same-material subpixel ownership guard. It generates
+`.external-fixtures/generated/subpixel-ownership.vrm.gltf` with material
+`huku_bake`, near-subpixel triangle seams, and a high-contrast embedded base
+texture, then renders `base-color` with outlines disabled. The current guard has
+exact alpha parity and selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`43.8282 dB` / Bevy `43.4195 dB`, with max selected-channel deltas `161` /
+`160`. Its hotspot summaries keep `32/32` hotspots on the same base material
+and `28/32` on the same frontmost triangle, so it is a regression guard for the
+small generated version of the Seed-san `huku_bake` class rather than a full
+reproduction of the real-model gradient floor.
 Use `just render-parity-material-seam-generated` for the focused source-like
 base-material seam guard. It generates
 `.external-fixtures/generated/material-seam.vrm.gltf`, renders `base-factor`
