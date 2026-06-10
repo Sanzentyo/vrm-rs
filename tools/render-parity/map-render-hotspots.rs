@@ -68,7 +68,7 @@ struct Options {
     expressions: Vec<String>,
     #[arg(long, default_value_t = 32)]
     top_pixels: usize,
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 64)]
     candidate_limit: usize,
     #[arg(long, default_value_t = 1)]
     hit_radius: i32,
@@ -97,6 +97,7 @@ struct DeltaPixel {
 
 #[derive(Clone, Debug)]
 struct Surface {
+    draw_index: usize,
     node: usize,
     mesh: usize,
     primitive: usize,
@@ -134,25 +135,29 @@ struct Hotspot {
     expected: [u8; 4],
     actual: [u8; 4],
     delta: [u8; 4],
-    expected_encoded_uv: [f32; 2],
-    actual_encoded_uv: [f32; 2],
+    expected_linear_uv: [f32; 2],
+    actual_linear_uv: [f32; 2],
     max_channel_delta: u8,
     rgb_distance: f64,
     nearest_expected: Option<CandidateMatch>,
     nearest_actual: Option<CandidateMatch>,
     nearest_visible_expected: Option<CandidateMatch>,
     nearest_visible_actual: Option<CandidateMatch>,
+    frontmost_visible: Option<CandidateMatch>,
     candidates: Vec<HitCandidate>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 struct CandidateMatch {
     candidate_index: usize,
+    draw_index: usize,
     base_uv_distance: f32,
     pass: &'static str,
     material: Option<usize>,
     material_name: Option<String>,
     policy: MaterialPolicyReport,
+    sample_offset: [i32; 2],
+    sample_distance: f32,
     triangle: usize,
     depth: f32,
     front_facing: bool,
@@ -173,6 +178,7 @@ struct MaterialPolicyReport {
 
 #[derive(Clone, Debug, Serialize)]
 struct HitCandidate {
+    draw_index: usize,
     node: usize,
     mesh: usize,
     primitive: usize,
@@ -198,6 +204,7 @@ struct ProjectedVertex {
     screen: [f32; 2],
     depth: f32,
     uv: [f32; 2],
+    reciprocal_w: f32,
 }
 
 fn main() {
@@ -222,8 +229,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .iter()
         .take(options.top_pixels)
         .map(|delta| {
-            let expected_encoded_uv = encoded_uv(delta.expected);
-            let actual_encoded_uv = encoded_uv(delta.actual);
+            let expected_linear_uv = diagnostic_linear_uv(delta.expected);
+            let actual_linear_uv = diagnostic_linear_uv(delta.actual);
             let candidates = candidates_for_pixel(
                 delta.x,
                 delta.y,
@@ -241,20 +248,21 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 expected: delta.expected,
                 actual: delta.actual,
                 delta: delta.delta,
-                expected_encoded_uv,
-                actual_encoded_uv,
+                expected_linear_uv,
+                actual_linear_uv,
                 max_channel_delta: delta.max_channel_delta,
                 rgb_distance: delta.rgb_distance,
-                nearest_expected: nearest_candidate_match(&candidates, expected_encoded_uv),
-                nearest_actual: nearest_candidate_match(&candidates, actual_encoded_uv),
+                nearest_expected: nearest_candidate_match(&candidates, expected_linear_uv),
+                nearest_actual: nearest_candidate_match(&candidates, actual_linear_uv),
                 nearest_visible_expected: nearest_visible_candidate_match(
                     &candidates,
-                    expected_encoded_uv,
+                    expected_linear_uv,
                 ),
                 nearest_visible_actual: nearest_visible_candidate_match(
                     &candidates,
-                    actual_encoded_uv,
+                    actual_linear_uv,
                 ),
+                frontmost_visible: frontmost_visible_candidate_match(&candidates),
                 candidates,
             }
         })
@@ -338,6 +346,7 @@ fn build_surfaces(
             let base_uv_transform = uv_transforms.base;
             let base_policy = capture_material_policy(loaded, primitive.material);
             surfaces.push(Surface {
+                draw_index: 0,
                 node: node_index,
                 mesh: mesh_index,
                 primitive: primitive_index,
@@ -383,6 +392,7 @@ fn build_surfaces(
                 vertices.clone()
             };
             surfaces.push(Surface {
+                draw_index: 0,
                 node: node_index,
                 mesh: mesh_index,
                 primitive: primitive_index,
@@ -399,6 +409,10 @@ fn build_surfaces(
 
     if surfaces.is_empty() {
         return Err("no drawable surfaces were found".into());
+    }
+    surfaces.sort_by_key(|surface| surface.policy.render_order);
+    for (draw_index, surface) in surfaces.iter_mut().enumerate() {
+        surface.draw_index = draw_index;
     }
     Ok(surfaces)
 }
@@ -452,23 +466,23 @@ fn candidates_for_pixel(
 
 fn nearest_candidate_match(
     candidates: &[HitCandidate],
-    encoded_uv: [f32; 2],
+    linear_uv: [f32; 2],
 ) -> Option<CandidateMatch> {
-    nearest_candidate_match_by(candidates, encoded_uv, |_| true)
+    nearest_candidate_match_by(candidates, linear_uv, |_| true)
 }
 
 fn nearest_visible_candidate_match(
     candidates: &[HitCandidate],
-    encoded_uv: [f32; 2],
+    linear_uv: [f32; 2],
 ) -> Option<CandidateMatch> {
-    nearest_candidate_match_by(candidates, encoded_uv, |candidate| {
+    nearest_candidate_match_by(candidates, linear_uv, |candidate| {
         candidate.visible_by_policy
     })
 }
 
 fn nearest_candidate_match_by(
     candidates: &[HitCandidate],
-    encoded_uv: [f32; 2],
+    linear_uv: [f32; 2],
     filter: impl Fn(&HitCandidate) -> bool,
 ) -> Option<CandidateMatch> {
     candidates
@@ -477,11 +491,14 @@ fn nearest_candidate_match_by(
         .filter(|(_, candidate)| filter(candidate))
         .map(|(candidate_index, candidate)| CandidateMatch {
             candidate_index,
-            base_uv_distance: uv_distance(candidate.base_uv, encoded_uv),
+            draw_index: candidate.draw_index,
+            base_uv_distance: uv_distance(candidate.base_uv, linear_uv),
             pass: candidate.pass,
             material: candidate.material,
             material_name: candidate.material_name.clone(),
             policy: candidate.policy,
+            sample_offset: candidate.sample_offset,
+            sample_distance: candidate.sample_distance,
             triangle: candidate.triangle,
             depth: candidate.depth,
             front_facing: candidate.front_facing,
@@ -493,6 +510,39 @@ fn nearest_candidate_match_by(
                 .partial_cmp(&right.base_uv_distance)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| left.candidate_index.cmp(&right.candidate_index))
+        })
+}
+
+fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<CandidateMatch> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.sample_offset == [0, 0]
+                && candidate.visible_by_policy
+                && candidate.depth >= -1.0
+        })
+        .map(|(candidate_index, candidate)| CandidateMatch {
+            candidate_index,
+            draw_index: candidate.draw_index,
+            base_uv_distance: 0.0,
+            pass: candidate.pass,
+            material: candidate.material,
+            material_name: candidate.material_name.clone(),
+            policy: candidate.policy,
+            sample_offset: candidate.sample_offset,
+            sample_distance: candidate.sample_distance,
+            triangle: candidate.triangle,
+            depth: candidate.depth,
+            front_facing: candidate.front_facing,
+            visible_by_policy: candidate.visible_by_policy,
+            base_uv: candidate.base_uv,
+        })
+        .min_by(|left, right| {
+            left.depth
+                .partial_cmp(&right.depth)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.draw_index.cmp(&left.draw_index))
         })
 }
 
@@ -529,11 +579,12 @@ fn surface_candidates(
                 height,
             )?;
             let barycentric = barycentric(point, a.screen, b.screen, c.screen)?;
-            let raw_uv = interpolate_uv(barycentric, a.uv, b.uv, c.uv);
+            let raw_uv = interpolate_perspective_correct_uv(barycentric, a, b, c);
             let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
             let signed_area = signed_area(a.screen, b.screen, c.screen);
             let front_facing = signed_area < 0.0;
             Some(HitCandidate {
+                draw_index: surface.draw_index,
                 node: surface.node,
                 mesh: surface.mesh,
                 primitive: surface.primitive,
@@ -659,6 +710,7 @@ fn project(
         ],
         depth: ndc.z,
         uv: vertex.tex_coord_0,
+        reciprocal_w: 1.0 / clip.w,
     })
 }
 
@@ -723,6 +775,27 @@ fn interpolate_uv(barycentric: [f32; 3], a: [f32; 2], b: [f32; 2], c: [f32; 2]) 
     ]
 }
 
+fn interpolate_perspective_correct_uv(
+    barycentric: [f32; 3],
+    a: ProjectedVertex,
+    b: ProjectedVertex,
+    c: ProjectedVertex,
+) -> [f32; 2] {
+    let weights = [
+        barycentric[0] * a.reciprocal_w,
+        barycentric[1] * b.reciprocal_w,
+        barycentric[2] * c.reciprocal_w,
+    ];
+    let denominator = weights[0] + weights[1] + weights[2];
+    if denominator.abs() <= f32::EPSILON {
+        return interpolate_uv(barycentric, a.uv, b.uv, c.uv);
+    }
+    [
+        (weights[0] * a.uv[0] + weights[1] * b.uv[0] + weights[2] * c.uv[0]) / denominator,
+        (weights[0] * a.uv[1] + weights[1] * b.uv[1] + weights[2] * c.uv[1]) / denominator,
+    ]
+}
+
 fn uv_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
     ((left[0] - right[0]).powi(2) + (left[1] - right[1]).powi(2)).sqrt()
 }
@@ -735,8 +808,19 @@ fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
-fn encoded_uv(color: [u8; 4]) -> [f32; 2] {
-    [f32::from(color[0]) / 255.0, f32::from(color[1]) / 255.0]
+fn diagnostic_linear_uv(color: [u8; 4]) -> [f32; 2] {
+    [
+        srgb_to_linear_channel(f32::from(color[0]) / 255.0),
+        srgb_to_linear_channel(f32::from(color[1]) / 255.0),
+    ]
+}
+
+fn srgb_to_linear_channel(value: f32) -> f32 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn display_path(path: &Path) -> String {
