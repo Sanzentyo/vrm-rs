@@ -336,6 +336,11 @@ render-parity-transparent-alpha-modes three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-alpha-modes-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-alpha-modes --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 47 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-alpha-modes.vrm.gltf
 
+# Regenerate texture-alpha MASK/BLEND artifacts for cutoff and partial-alpha parity.
+render-parity-transparent-mask-texture three_vrm_root="D:/git/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-mask-texture-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-mask-texture --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 1 --render-psnr-metric rgb-visible --render-fail-under 51 --render-max-selected-channel-delta 3 --render-max-alpha-delta 1 --render-fixture .external-fixtures/generated/transparent-mask-texture.vrm.gltf
+
 # Regenerate transparent depth-sort artifacts for same-render-order BLEND layers.
 render-parity-transparent-depth-stack three_vrm_root="D:/git/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-depth-fixture.rs

@@ -278,6 +278,12 @@ audits. Generated transparent-material guards currently include
 `just render-parity-transparent-texture-transform`,
 `just render-parity-transparent-queue-matrix`, and
 `just render-parity-transparent-alpha-modes`. Use
+`just render-parity-transparent-mask-texture` for texture-alpha MASK cutoff
+and BLEND partial-alpha parity; it covers `baseColorTexture` alpha combined
+with baseColorFactor alpha, keeps alpha buckets exact across three-vrm/wgpu/Bevy
+(`transparent=40720`, `opaque=13552`, `partial=11264`), allows only 1-LSB alpha
+rounding, and currently reports selected `rgb-visible` PSNR wgpu `55.3599 dB`
+and Bevy `51.2036 dB` with max selected channel delta `<= 3`. Use
 `just render-parity-transparent-lighted` for overlapping transparent layers
 that also exercise MToon direct/shade/rim/emissive accumulation, and use
 `just render-parity-transparent-depth-stack` for same-render-order BLEND layers
