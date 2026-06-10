@@ -287,6 +287,8 @@ hotspot recipe:
 just render-parity-seed-base-color-hotspots-focused
 just render-parity-seed-base-color-three-hotspots
 just render-parity-seed-base-color-three-hotspots D:/git/three-vrm 0.75 0.75
+just render-parity-seed-base-color-owner-hotspots
+just render-parity-seed-base-color-owner-hotspots D:/git/three-vrm 0.75 0.75
 ```
 
 It creates `shared-nonblack-interior1px` delta reports and maps the top 64
@@ -309,6 +311,19 @@ times. At `0.75,0.75`, expected/frontmost improves (`99.28`) while
 actual/frontmost worsens (`74.28`), matching the earlier conclusion that this
 is a local fill/depth/surface ownership issue rather than a global sample-center
 offset.
+
+`render-parity-seed-base-color-owner-hotspots` renders the same three-vrm scene
+with `--diagnostic-render owner-id`. The browser diagnostic replaces each
+diagnostic triangle with a stable RGB owner ID, decodes the WebGL-rendered
+owner at each hotspot pixel, and compares it with the CPU-projected candidate
+set in `reference.renderer.diagnosticHotspots`. On the current Seed-san top-64
+shared-body base-color hotspots, every pixel has a WebGL owner, but that owner
+appears in the CPU center-sample candidate set only `20/64` times at
+`0.5,0.5` and `18/64` times at `0.75,0.75`. Owner/frontmost matches are only
+`14/64` and `17/64`. This is the current strongest evidence that the active
+base-color blocker is a local WebGL fill/raster ownership issue near real
+material/UV boundaries rather than texture binding, global color-space,
+alpha-mask, cull, mip, or sample-center policy.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

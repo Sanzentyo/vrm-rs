@@ -27,6 +27,19 @@
   global sample-center fix. The remaining Seed-san base-color blocker is now
   best classified as local WebGL-vs-CPU surface/depth/fill ownership around
   real material/UV regions.
+- Added a three-vrm browser `owner-id` diagnostic render mode and
+  `just render-parity-seed-base-color-owner-hotspots`. The mode renders each
+  diagnostic triangle with a unique decoded RGB owner ID while keeping the
+  original material cull/depth/alpha policy, then annotates hotspot projection
+  records with the WebGL-rendered owner and its CPU-projected depth rank. On
+  the same Seed-san `shared-nonblack-interior1px` top-64 base-color hotspots,
+  WebGL produced a nonzero owner for every pixel, but that rendered owner was
+  present in the CPU center-sample candidate set only `20/64` times at
+  `0.5,0.5` and `18/64` times at `0.75,0.75`; frontmost owner matches were
+  only `14/64` and `17/64`. This is stronger evidence that the focused
+  base-color residual is a local GPU raster/fill ownership mismatch around
+  real UV/material boundaries, not a hidden broad texture, color, cull, alpha,
+  mip, or sample-center switch.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base

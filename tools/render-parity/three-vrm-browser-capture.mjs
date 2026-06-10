@@ -54,7 +54,7 @@ const expressionWeights = parseExpressionWeights(expressions);
 const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -96,8 +96,8 @@ if (!['opaque-black', 'transparent'].includes(background)) {
   console.error(`invalid background: ${background}; expected opaque-black or transparent`);
   process.exit(2);
 }
-if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'base-color-raw-srgb', 'uv', 'base-uv'].includes(diagnosticRender)) {
-  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, base-color-raw-srgb, uv, or base-uv`);
+if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'base-color-raw-srgb', 'uv', 'base-uv', 'owner-id'].includes(diagnosticRender)) {
+  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, base-color-raw-srgb, uv, base-uv, or owner-id`);
   process.exit(2);
 }
 
@@ -339,6 +339,10 @@ function capturePage(options) {
 
   const hotspotDeltas = ${JSON.stringify(options.hotspotDeltas)};
   const hotspotSampleCenter = ${JSON.stringify(options.hotspotSampleCenter)};
+  const ownerIdRecords = [];
+  const ownerIdByColor = new Map();
+  const ownerIdByCandidate = new Map();
+  let nextOwnerId = 1;
 
   const screenVertex = (mesh, index, uvAttribute, viewProjection, target, clip) => {
     mesh.getVertexPosition(index, target);
@@ -410,6 +414,25 @@ function capturePage(options) {
     const clamped = Math.min(1, Math.max(0, value));
     return clamped <= 0.04045 ? clamped / 12.92 : Math.pow((clamped + 0.055) / 1.055, 2.4);
   };
+
+  const encodeOwnerId = (id) => [
+    id & 0xff,
+    (id >> 8) & 0xff,
+    (id >> 16) & 0xff,
+    255,
+  ];
+
+  const ownerColorKey = (rgba) => \`\${rgba[0]},\${rgba[1]},\${rgba[2]}\`;
+
+  const ownerColorToLinearRgb = (rgba) => [
+    srgbToLinear(rgba[0] / 255),
+    srgbToLinear(rgba[1] / 255),
+    srgbToLinear(rgba[2] / 255),
+  ];
+
+  const ownerCandidateKey = (meshUuid, materialIndex, triangle) => (
+    \`\${meshUuid}:\${materialIndex}:\${triangle}\`
+  );
 
   const texturePixelsCache = new Map();
 
@@ -505,6 +528,56 @@ function capturePage(options) {
     Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
   );
 
+  const buildOwnerDiagnosticGeometry = (mesh) => {
+    const sourceGeometry = mesh.geometry;
+    const sourceIndex = sourceGeometry.index;
+    const diagnosticGeometry = sourceIndex ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+    const position = diagnosticGeometry.attributes.position;
+    const colors = new Float32Array(position.count * 3);
+    const sourcePosition = sourceGeometry.attributes.position;
+    const groups = sourceGeometry.groups.length > 0
+      ? sourceGeometry.groups
+      : [{ start: 0, count: sourceIndex ? sourceIndex.count : sourcePosition.count, materialIndex: 0 }];
+    for (const group of groups) {
+      for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
+        const id = nextOwnerId;
+        nextOwnerId += 1;
+        const color = encodeOwnerId(id);
+        const linear = ownerColorToLinearRgb(color);
+        for (let vertex = offset; vertex < offset + 3; vertex += 1) {
+          colors[vertex * 3] = linear[0];
+          colors[vertex * 3 + 1] = linear[1];
+          colors[vertex * 3 + 2] = linear[2];
+        }
+        const materialIndex = group.materialIndex ?? 0;
+        const material = materialAt(mesh, materialIndex);
+        const record = {
+          id,
+          color,
+          meshName: mesh.name ?? '',
+          meshUuid: mesh.uuid,
+          materialIndex,
+          materialName: material?.name ?? '',
+          materialType: material?.type ?? null,
+          triangle: Math.floor(offset / 3),
+          indices: sourceIndex
+            ? [sourceIndex.getX(offset), sourceIndex.getX(offset + 1), sourceIndex.getX(offset + 2)]
+            : [offset, offset + 1, offset + 2],
+        };
+        ownerIdRecords.push(record);
+        ownerIdByColor.set(ownerColorKey(color), record);
+        ownerIdByCandidate.set(ownerCandidateKey(mesh.uuid, materialIndex, record.triangle), record);
+      }
+    }
+    diagnosticGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return diagnosticGeometry;
+  };
+
+  const ownerIdForCandidate = (mesh, materialIndex, triangle) => {
+    const record = ownerIdByCandidate.get(ownerCandidateKey(mesh.uuid, materialIndex, triangle));
+    return record ? { id: record.id, color: record.color } : null;
+  };
+
   const uvAttributeForMaterial = (geometry, material) => {
     const channel = material?.map?.channel ?? 0;
     return geometry.attributes[channel === 0 ? 'uv' : \`uv\${channel}\`] ?? geometry.attributes.uv ?? null;
@@ -517,7 +590,29 @@ function capturePage(options) {
     return frontFacing;
   };
 
-  const projectHotspots = (root, camera, hotspots, sampleCenter) => {
+  const renderedHotspotOwner = (hotspot, renderedRgba) => {
+    if (!renderedRgba || !Number.isInteger(hotspot?.x) || !Number.isInteger(hotspot?.y)) return null;
+    const index = (hotspot.y * ${options.width} + hotspot.x) * 4;
+    const color = [
+      renderedRgba[index] ?? 0,
+      renderedRgba[index + 1] ?? 0,
+      renderedRgba[index + 2] ?? 0,
+      renderedRgba[index + 3] ?? 0,
+    ];
+    const id = color[0] | (color[1] << 8) | (color[2] << 16);
+    if (id === 0) return { id: null, color, owner: null };
+    return {
+      id,
+      color,
+      owner: ownerIdByColor.get(ownerColorKey(color)) ?? null,
+    };
+  };
+
+  const ownerMatches = (owner, candidate) => (
+    owner?.id != null && candidate?.ownerId != null && owner.id === candidate.ownerId
+  );
+
+  const projectHotspots = (root, camera, hotspots, sampleCenter, renderedRgba = null) => {
     if (!hotspots) return null;
     root.updateMatrixWorld(true);
     camera.updateMatrixWorld(true);
@@ -569,14 +664,19 @@ function capturePage(options) {
                 hotspot.expected?.[3] ?? 255,
               ];
               const baseColor = projectedBaseColor(material, mapUv, hotspot.expected?.[3] ?? 255);
+              const materialIndex = group.materialIndex ?? 0;
+              const triangle = Math.floor(offset / 3);
+              const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
               candidates.push({
                 meshName: mesh.name ?? '',
                 meshUuid: mesh.uuid,
-                materialIndex: group.materialIndex ?? 0,
+                materialIndex,
                 materialName: material?.name ?? '',
                 materialType: material?.type ?? null,
-                triangle: Math.floor(offset / 3),
+                triangle,
                 indices: [ia, ib, ic],
+                ownerId: owner?.id ?? null,
+                ownerIdColor: owner?.color ?? null,
                 depth,
                 barycentric: weights,
                 rawUv,
@@ -593,9 +693,10 @@ function capturePage(options) {
             }
           }
         }
-        const frontmost = candidates
+        const candidatesByDepth = candidates
           .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
-          .sort((left, right) => left.depth - right.depth)[0] ?? null;
+          .sort((left, right) => left.depth - right.depth);
+        const frontmost = candidatesByDepth[0] ?? null;
         const nearestExpected = candidates
           .slice()
           .sort((left, right) => left.expectedRgbDistance - right.expectedRgbDistance || left.depth - right.depth)[0] ?? null;
@@ -608,16 +709,34 @@ function capturePage(options) {
         const nearestActualBaseColor = candidates
           .slice()
           .sort((left, right) => left.projectedBaseColorActualRgbDistance - right.projectedBaseColorActualRgbDistance || left.depth - right.depth)[0] ?? null;
+        const renderedOwner = renderedHotspotOwner(hotspot, renderedRgba);
+        const renderedOwnerCandidate = renderedOwner?.id == null
+          ? null
+          : candidates.find((candidate) => candidate.ownerId === renderedOwner.id) ?? null;
+        const renderedOwnerDepthRank = renderedOwnerCandidate
+          ? candidatesByDepth.findIndex((candidate) => candidate.ownerId === renderedOwnerCandidate.ownerId) + 1
+          : null;
         return {
           x: hotspot.x,
           y: hotspot.y,
           expected: hotspot.expected,
           actual: hotspot.actual,
+          renderedOwner,
           frontmost,
           nearestExpected,
           nearestActual,
           nearestExpectedBaseColor,
           nearestActualBaseColor,
+          renderedOwnerCandidate,
+          renderedOwnerDepthRank: renderedOwnerDepthRank && renderedOwnerDepthRank > 0 ? renderedOwnerDepthRank : null,
+          renderedOwnerDepthDeltaFromFrontmost: renderedOwnerCandidate && frontmost ? renderedOwnerCandidate.depth - frontmost.depth : null,
+          ownerMatch: renderedOwner ? {
+            frontmost: ownerMatches(renderedOwner, frontmost),
+            nearestExpected: ownerMatches(renderedOwner, nearestExpected),
+            nearestActual: ownerMatches(renderedOwner, nearestActual),
+            nearestExpectedBaseColor: ownerMatches(renderedOwner, nearestExpectedBaseColor),
+            nearestActualBaseColor: ownerMatches(renderedOwner, nearestActualBaseColor),
+          } : null,
           candidateCount: candidates.length,
           candidatesByExpected: candidates
             .slice()
@@ -722,9 +841,28 @@ function capturePage(options) {
       }
       if (${JSON.stringify(options.diagnosticRender)} !== 'shaded' && object.isMesh && object.material) {
         diagnosticMeshes.push(geometryReport(object));
+        const mode = ${JSON.stringify(options.diagnosticRender)};
+        if (mode === 'owner-id') {
+          object.geometry = buildOwnerDiagnosticGeometry(object);
+        }
         const diagnosticMaterial = (material, mesh, slot) => {
           diagnosticMaterials.push(materialReport(material, mesh, slot));
-          const mode = ${JSON.stringify(options.diagnosticRender)};
+          if (mode === 'owner-id') {
+            const owner = new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              vertexColors: true,
+              side: material?.side ?? THREE.FrontSide,
+              transparent: material?.transparent ?? false,
+              opacity: material?.opacity ?? 1.0,
+              alphaTest: material?.alphaTest ?? 0.0,
+              depthWrite: material?.depthWrite ?? true,
+              depthTest: material?.depthTest ?? true,
+            });
+            owner.name = (material?.name ?? 'material') + ':vrm-rs-owner-id-diagnostic';
+            owner.blending = material?.blending ?? THREE.NormalBlending;
+            owner.premultipliedAlpha = material?.premultipliedAlpha ?? false;
+            return owner;
+          }
           if (mode === 'uv' || mode === 'base-uv') {
             const uv = new THREE.MeshBasicMaterial({
               color: 0xffffff,
@@ -781,7 +919,6 @@ function capturePage(options) {
     vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
-    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas, hotspotSampleCenter);
 
     const gl = renderer.getContext();
     const readback = new Uint8Array(${options.width} * ${options.height} * 4);
@@ -793,6 +930,7 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
+    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas, hotspotSampleCenter, rgba);
     let imqraw = null;
     if (${options.imqraw}) {
       await initImqraw();
@@ -819,6 +957,7 @@ function capturePage(options) {
         rustOnlyDiagnostic: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' || options.diagnosticRender === 'base-color-raw-srgb' ? options.diagnosticRender : null)},
         diagnosticMaterials,
         diagnosticMeshes,
+        diagnosticOwnerIds: ownerIdRecords,
         diagnosticHotspots,
       },
       expressions,
