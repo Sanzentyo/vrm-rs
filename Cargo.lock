@@ -2246,6 +2246,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "imq"
+version = "0.1.0"
+source = "git+https://github.com/Sanzentyo/imq.git?rev=0fdc5263c0c21bd6d7bc55c194e98b593bf83bff#0fdc5263c0c21bd6d7bc55c194e98b593bf83bff"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4005,6 +4013,7 @@ dependencies = [
  "crossbeam-channel",
  "glam 0.32.1",
  "image",
+ "imq",
  "pollster",
  "serde_json",
  "thiserror 2.0.18",

@@ -184,6 +184,8 @@ The final render parity path should avoid `.rgba.json` for numeric comparison:
 - Rust wgpu/Bevy captures:
   - use the `imq` Rust crate to encode `FrameOwned::packed_tight(...,
     PixelFormat::Rgba8)` records.
+  - Current status: wgpu and Bevy examples accept `--imqraw-out` and local
+    render parity writes those `.imqraw` files beside `.rgba.json`.
 - Local runner:
   - compare tagged reference/candidate records from `imqraw` without PNG or
     decimal JSON conversion.

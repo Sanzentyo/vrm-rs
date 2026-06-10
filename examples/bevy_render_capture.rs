@@ -4,6 +4,8 @@
 //! into an offscreen image and writes the shared RGBA JSON artifact consumed by
 //! `tools/render-parity/compare-psnr.mjs`.
 
+#[path = "common/render_capture_imqraw.rs"]
+mod render_capture_imqraw;
 #[path = "common/render_capture_scene.rs"]
 mod render_capture_scene;
 
@@ -105,6 +107,8 @@ struct CaptureOptions {
     out: PathBuf,
     #[arg(long)]
     png_out: Option<PathBuf>,
+    #[arg(long)]
+    imqraw_out: Option<PathBuf>,
     #[arg(long, default_value_t = 512)]
     width: u32,
     #[arg(long, default_value_t = 512)]
@@ -1510,6 +1514,16 @@ fn write_capture(
     )?;
     if let Some(path) = &options.png_out {
         write_png(path, options.width, options.height, &rgba)?;
+    }
+    if let Some(path) = &options.imqraw_out {
+        render_capture_imqraw::write_imqraw_rgba8(
+            path,
+            "bevy",
+            ["bevy", "candidate"],
+            options.width,
+            options.height,
+            &rgba,
+        )?;
     }
     Ok(())
 }

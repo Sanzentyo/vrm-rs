@@ -24,6 +24,12 @@
   normal-map artifact), but the installed CLI still rejects `rgb-visible` with
   `unknown sample domain`, so the refreshed skill appears ahead of the
   currently available public CLI.
+- Added direct `--imqraw-out` support to the concrete Rust wgpu and Bevy render
+  captures using the `imq` Rust crate. The local render-parity runner now asks
+  both Rust capture examples to write `.frame000.imqraw` beside their
+  `.rgba.json` artifacts. Smoke runs on the generated MToon light fixture
+  verified that both wgpu and Bevy imqraw files decode with `imq bundle-info`
+  and self-compare through `imq image - - --stdin-format imqraw`.
 
 ## 2026-05-31
 

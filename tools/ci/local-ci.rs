@@ -742,6 +742,8 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(path(&fixture.path))
         .arg("--out")
         .arg(path(&render_artifact(options, fixture, "wgpu")))
+        .arg("--imqraw-out")
+        .arg(path(&render_imqraw_artifact(options, fixture, "wgpu")))
         .arg("--width")
         .arg(options.render_width.to_string())
         .arg("--height")
@@ -800,6 +802,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(path(&fixture.path))
         .arg("--out")
         .arg(path(&render_artifact(options, fixture, "bevy")))
+        .arg("--imqraw-out")
+        .arg(path(&render_imqraw_artifact(options, fixture, "bevy")))
         .arg("--width")
         .arg(options.render_width.to_string())
         .arg("--height")
@@ -911,6 +915,13 @@ fn render_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> Pat
         .render_parity_dir
         .join(renderer)
         .join(format!("{}.frame000.png", fixture.stem))
+}
+
+fn render_imqraw_artifact(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join(renderer)
+        .join(format!("{}.frame000.imqraw", fixture.stem))
 }
 
 fn render_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
