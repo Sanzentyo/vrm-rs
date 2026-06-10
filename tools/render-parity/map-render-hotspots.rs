@@ -1,0 +1,551 @@
+#!/usr/bin/env -S cargo +nightly -Zscript
+---cargo
+[package]
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+glam = "0.32.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+vrm-io = { path = "../../crates/vrm-io" }
+vrm-rs = { path = "../.." }
+---
+
+//! Map direct imqraw hotspot pixels back to CPU-projected glTF primitives.
+
+use clap::Parser;
+use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+use vrm_io::{
+    transform_tex_coord_0, GltfExpressionRenderEffects, GltfOutlineScale,
+    GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
+};
+
+#[derive(Clone, Debug, Parser)]
+#[command(
+    name = "map-render-hotspots",
+    about = "Map imqraw delta hotspot pixels to CPU-projected VRM primitive/material candidates"
+)]
+struct Options {
+    #[arg(long)]
+    fixture: PathBuf,
+    #[arg(long)]
+    deltas: PathBuf,
+    #[arg(long)]
+    out: Option<PathBuf>,
+    #[arg(long)]
+    width: Option<usize>,
+    #[arg(long)]
+    height: Option<usize>,
+    #[arg(long, default_value_t = 1.0)]
+    camera_y: f32,
+    #[arg(long, default_value_t = 3.0)]
+    camera_z: f32,
+    #[arg(long, default_value_t = 1.0)]
+    target_y: f32,
+    #[arg(long, default_value_t = 0.0)]
+    mtoon_time: f32,
+    #[arg(long, default_value_t = 1.0)]
+    outline_width_scale: f32,
+    #[arg(long)]
+    disable_outlines: bool,
+    #[arg(long = "expression")]
+    expressions: Vec<String>,
+    #[arg(long, default_value_t = 32)]
+    top_pixels: usize,
+    #[arg(long, default_value_t = 8)]
+    candidate_limit: usize,
+    #[arg(long, default_value_t = 1)]
+    hit_radius: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DeltaReport {
+    width: usize,
+    height: usize,
+    top: Vec<DeltaPixel>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DeltaPixel {
+    x: usize,
+    y: usize,
+    pixel: usize,
+    expected: [u8; 4],
+    actual: [u8; 4],
+    delta: [u8; 4],
+    #[serde(rename = "maxChannelDelta")]
+    max_channel_delta: u8,
+    #[serde(rename = "rgbDistance")]
+    rgb_distance: f64,
+}
+
+#[derive(Clone, Debug)]
+struct Surface {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
+    base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
+    indices: Vec<u32>,
+    vertices: Vec<GltfTransformedVertex>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct HotspotReport {
+    fixture: String,
+    deltas: String,
+    width: usize,
+    height: usize,
+    camera: CameraReport,
+    hotspots: Vec<Hotspot>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct CameraReport {
+    y: f32,
+    z: f32,
+    target_y: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Hotspot {
+    x: usize,
+    y: usize,
+    pixel: usize,
+    expected: [u8; 4],
+    actual: [u8; 4],
+    delta: [u8; 4],
+    expected_encoded_uv: [f32; 2],
+    actual_encoded_uv: [f32; 2],
+    max_channel_delta: u8,
+    rgb_distance: f64,
+    candidates: Vec<HitCandidate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct HitCandidate {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
+    pass: &'static str,
+    triangle: usize,
+    indices: [u32; 3],
+    material: Option<usize>,
+    material_name: Option<String>,
+    sample_offset: [i32; 2],
+    sample_distance: f32,
+    depth: f32,
+    barycentric: [f32; 3],
+    raw_uv: [f32; 2],
+    base_uv: [f32; 2],
+    screen: [[f32; 2]; 3],
+    front_facing: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProjectedVertex {
+    screen: [f32; 2],
+    depth: f32,
+    uv: [f32; 2],
+}
+
+fn main() {
+    if let Err(error) = run(Options::parse_from(script_args())) {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
+}
+
+fn run(options: Options) -> Result<(), Box<dyn Error>> {
+    let delta_report = read_delta_report(&options.deltas)?;
+    let width = options.width.unwrap_or(delta_report.width);
+    let height = options.height.unwrap_or(delta_report.height);
+    let loaded = vrm_io::load_vrm_from_path(&options.fixture)?;
+    let expression_effects =
+        loaded.expression_render_effects(parse_expression_args(&options.expressions)?)?;
+    let surfaces = build_surfaces(&loaded, &expression_effects, &options)?;
+    let view_projection = view_projection(width, height, &options);
+
+    let hotspots = delta_report
+        .top
+        .iter()
+        .take(options.top_pixels)
+        .map(|delta| Hotspot {
+            x: delta.x,
+            y: delta.y,
+            pixel: delta.pixel,
+            expected: delta.expected,
+            actual: delta.actual,
+            delta: delta.delta,
+            expected_encoded_uv: encoded_uv(delta.expected),
+            actual_encoded_uv: encoded_uv(delta.actual),
+            max_channel_delta: delta.max_channel_delta,
+            rgb_distance: delta.rgb_distance,
+            candidates: candidates_for_pixel(
+                delta.x,
+                delta.y,
+                &surfaces,
+                view_projection,
+                width,
+                height,
+                options.candidate_limit,
+                options.hit_radius,
+            ),
+        })
+        .collect();
+
+    let report = HotspotReport {
+        fixture: display_path(&options.fixture),
+        deltas: display_path(&options.deltas),
+        width,
+        height,
+        camera: CameraReport {
+            y: options.camera_y,
+            z: options.camera_z,
+            target_y: options.target_y,
+        },
+        hotspots,
+    };
+    let formatted = format!("{}\n", serde_json::to_string_pretty(&report)?);
+    if let Some(path) = options.out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, formatted)?;
+    } else {
+        print!("{formatted}");
+    }
+    Ok(())
+}
+
+fn read_delta_report(path: &Path) -> Result<DeltaReport, Box<dyn Error>> {
+    let value = serde_json::from_str::<Value>(&fs::read_to_string(path)?)?;
+    Ok(serde_json::from_value(value)?)
+}
+
+fn build_surfaces(
+    loaded: &LoadedVrm,
+    expression_effects: &GltfExpressionRenderEffects,
+    options: &Options,
+) -> Result<Vec<Surface>, Box<dyn Error>> {
+    let world_matrices = vrm_rs::evaluated_world_matrices(loaded)?;
+    let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
+    let mut surfaces = Vec::new();
+
+    for (node_index, node) in loaded.scene.nodes.iter().enumerate() {
+        let Some(mesh_index) = node.mesh else {
+            continue;
+        };
+        let Some(mesh) = loaded.meshes.get(mesh_index) else {
+            continue;
+        };
+        let node_world = world_matrices
+            .get(node_index)
+            .copied()
+            .unwrap_or(node.world_matrix);
+        let world = orientation * node_world;
+        let skin_matrices = node
+            .skin
+            .and_then(|skin| loaded.skins.get(skin))
+            .map(|skin| skin.joint_matrices(&loaded.scene, &world_matrices, orientation));
+        let morph_weights = expression_effects.active_morph_weights(node_index, node, mesh);
+
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            let Some(vertices) =
+                primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
+            else {
+                continue;
+            };
+            let material_name = primitive.material.and_then(|index| {
+                loaded
+                    .model()
+                    .document()
+                    .materials
+                    .get(index)
+                    .and_then(|material| material.name.clone())
+            });
+            let uv_transforms = loaded.expression_material_uv_transforms(
+                primitive.material,
+                options.mtoon_time,
+                expression_effects,
+            );
+            let base_uv_transform = uv_transforms.base;
+            surfaces.push(Surface {
+                node: node_index,
+                mesh: mesh_index,
+                primitive: primitive_index,
+                pass: "base",
+                material: primitive.material,
+                material_name: material_name.clone(),
+                base_uv_transform,
+                indices: primitive_indices(primitive.indices.as_slice(), vertices.len()),
+                vertices,
+            });
+            if options.disable_outlines {
+                continue;
+            }
+            let Some(outline) =
+                loaded.expression_mtoon_outline_plan(primitive.material, expression_effects)
+            else {
+                continue;
+            };
+            let width_texture = loaded.material_outline_width_rgba8_image(primitive.material);
+            let outline_scale = GltfOutlineScale::new(
+                outline.width_mode,
+                camera_view(options),
+                projection_y_scale(),
+            );
+            let Some(outline_vertices) = primitive.outline_vertices(
+                &morph_weights,
+                GltfOutlineVertexSettings {
+                    base_width: outline.width_factor * options.outline_width_scale,
+                    scale: outline_scale,
+                    width_texture: width_texture.as_ref(),
+                    width_transform: uv_transforms.outline_width,
+                    width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+                },
+                world,
+                skin_matrices.as_deref(),
+            ) else {
+                continue;
+            };
+            surfaces.push(Surface {
+                node: node_index,
+                mesh: mesh_index,
+                primitive: primitive_index,
+                pass: "outline",
+                material: primitive.material,
+                material_name,
+                base_uv_transform,
+                indices: primitive_indices(primitive.indices.as_slice(), outline_vertices.len()),
+                vertices: outline_vertices,
+            });
+        }
+    }
+
+    if surfaces.is_empty() {
+        return Err("no drawable surfaces were found".into());
+    }
+    Ok(surfaces)
+}
+
+fn candidates_for_pixel(
+    x: usize,
+    y: usize,
+    surfaces: &[Surface],
+    view_projection: Mat4,
+    width: usize,
+    height: usize,
+    candidate_limit: usize,
+    hit_radius: i32,
+) -> Vec<HitCandidate> {
+    let mut candidates = surfaces
+        .iter()
+        .flat_map(|surface| {
+            (-hit_radius..=hit_radius).flat_map(move |dy| {
+                (-hit_radius..=hit_radius).flat_map(move |dx| {
+                    let point = [x as f32 + 0.5 + dx as f32, y as f32 + 0.5 + dy as f32];
+                    surface_candidates(surface, view_projection, point, [dx, dy], width, height)
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.sample_distance
+            .partial_cmp(&right.sample_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.depth
+                    .partial_cmp(&right.depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.material.cmp(&right.material))
+            .then_with(|| left.node.cmp(&right.node))
+            .then_with(|| left.mesh.cmp(&right.mesh))
+            .then_with(|| left.primitive.cmp(&right.primitive))
+            .then_with(|| left.triangle.cmp(&right.triangle))
+    });
+    candidates.dedup_by(|left, right| {
+        left.node == right.node
+            && left.mesh == right.mesh
+            && left.primitive == right.primitive
+            && left.triangle == right.triangle
+            && left.sample_offset == right.sample_offset
+    });
+    candidates.truncate(candidate_limit);
+    candidates
+}
+
+fn surface_candidates(
+    surface: &Surface,
+    view_projection: Mat4,
+    point: [f32; 2],
+    sample_offset: [i32; 2],
+    width: usize,
+    height: usize,
+) -> Vec<HitCandidate> {
+    surface
+        .indices
+        .chunks_exact(3)
+        .enumerate()
+        .filter_map(|(triangle, indices)| {
+            let [ia, ib, ic] = [indices[0], indices[1], indices[2]];
+            let a = project(
+                surface.vertices.get(ia as usize)?,
+                view_projection,
+                width,
+                height,
+            )?;
+            let b = project(
+                surface.vertices.get(ib as usize)?,
+                view_projection,
+                width,
+                height,
+            )?;
+            let c = project(
+                surface.vertices.get(ic as usize)?,
+                view_projection,
+                width,
+                height,
+            )?;
+            let barycentric = barycentric(point, a.screen, b.screen, c.screen)?;
+            let raw_uv = interpolate_uv(barycentric, a.uv, b.uv, c.uv);
+            let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
+            let signed_area = signed_area(a.screen, b.screen, c.screen);
+            Some(HitCandidate {
+                node: surface.node,
+                mesh: surface.mesh,
+                primitive: surface.primitive,
+                pass: surface.pass,
+                triangle,
+                indices: [ia, ib, ic],
+                material: surface.material,
+                material_name: surface.material_name.clone(),
+                sample_offset,
+                sample_distance: ((sample_offset[0] * sample_offset[0]
+                    + sample_offset[1] * sample_offset[1])
+                    as f32)
+                    .sqrt(),
+                depth: interpolate_scalar(barycentric, a.depth, b.depth, c.depth),
+                barycentric,
+                raw_uv,
+                base_uv,
+                screen: [a.screen, b.screen, c.screen],
+                front_facing: signed_area < 0.0,
+            })
+        })
+        .collect()
+}
+
+fn project(
+    vertex: &GltfTransformedVertex,
+    view_projection: Mat4,
+    width: usize,
+    height: usize,
+) -> Option<ProjectedVertex> {
+    let clip = view_projection * vertex.position.extend(1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    Some(ProjectedVertex {
+        screen: [
+            (ndc.x * 0.5 + 0.5) * width as f32,
+            (0.5 - ndc.y * 0.5) * height as f32,
+        ],
+        depth: ndc.z,
+        uv: vertex.tex_coord_0,
+    })
+}
+
+fn barycentric(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> Option<[f32; 3]> {
+    let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if denominator.abs() <= 1.0e-5 {
+        return None;
+    }
+    let w0 = ((b[1] - c[1]) * (point[0] - c[0]) + (c[0] - b[0]) * (point[1] - c[1])) / denominator;
+    let w1 = ((c[1] - a[1]) * (point[0] - c[0]) + (a[0] - c[0]) * (point[1] - c[1])) / denominator;
+    let w2 = 1.0 - w0 - w1;
+    let epsilon = -1.0e-4;
+    (w0 >= epsilon && w1 >= epsilon && w2 >= epsilon).then_some([w0, w1, w2])
+}
+
+fn view_projection(width: usize, height: usize, options: &Options) -> Mat4 {
+    let view = camera_view(options);
+    let projection = Mat4::perspective_rh(
+        30.0_f32.to_radians(),
+        width as f32 / height as f32,
+        0.1,
+        20.0,
+    );
+    projection * view
+}
+
+fn camera_view(options: &Options) -> Mat4 {
+    let camera_eye = Vec3::new(0.0, options.camera_y, -options.camera_z);
+    Mat4::look_at_rh(camera_eye, Vec3::new(0.0, options.target_y, 0.0), Vec3::Y)
+}
+
+fn projection_y_scale() -> f32 {
+    1.0 / (0.5 * 30.0_f32.to_radians()).tan()
+}
+
+fn primitive_indices(indices: &[u32], vertex_count: usize) -> Vec<u32> {
+    if indices.is_empty() {
+        (0..u32::try_from(vertex_count).unwrap_or(0)).collect()
+    } else {
+        indices.to_vec()
+    }
+}
+
+fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn Error>> {
+    args.iter()
+        .map(|arg| {
+            let Some((name, value)) = arg.split_once('=') else {
+                return Err(format!("invalid expression '{arg}', expected name=weight").into());
+            };
+            let weight = value
+                .parse::<f32>()
+                .map_err(|err| format!("invalid expression weight in '{arg}': {err}"))?;
+            Ok((name.to_owned(), weight))
+        })
+        .collect()
+}
+
+fn interpolate_uv(barycentric: [f32; 3], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> [f32; 2] {
+    [
+        barycentric[0] * a[0] + barycentric[1] * b[0] + barycentric[2] * c[0],
+        barycentric[0] * a[1] + barycentric[1] * b[1] + barycentric[2] * c[1],
+    ]
+}
+
+fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
+    barycentric[0] * a + barycentric[1] * b + barycentric[2] * c
+}
+
+fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn encoded_uv(color: [u8; 4]) -> [f32; 2] {
+    [f32::from(color[0]) / 255.0, f32::from(color[1]) / 255.0]
+}
+
+fn display_path(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
+fn script_args() -> Vec<std::ffi::OsString> {
+    std::env::args_os().filter(|arg| arg != "--").collect()
+}

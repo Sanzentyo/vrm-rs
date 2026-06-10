@@ -237,6 +237,15 @@ imqraw-compare expected actual output metric="rgb-visible":
 imqraw-deltas expected actual output top="32" min_channel_delta="1" domain="all":
     cargo +nightly -Zscript tools/render-parity/inspect-imqraw-deltas.rs --expected "{{ expected }}" --actual "{{ actual }}" --top {{ top }} --min-channel-delta {{ min_channel_delta }} --domain "{{ domain }}" --out "{{ output }}"
 
+# Map direct imqraw hotspot pixels back to CPU-projected VRM primitive/material candidates.
+map-render-hotspots fixture deltas output top="32":
+    cargo +nightly -Zscript tools/render-parity/map-render-hotspots.rs --fixture "{{ fixture }}" --deltas "{{ deltas }}" --out "{{ output }}" --top-pixels {{ top }}
+
+# Map the focused Seed-san transformed-base-UV hotspots to primitive/material candidates.
+render-parity-seed-base-uv-hotspots:
+    just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.json 32
+    just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.hotspots.json 32
+
 # Verify that a renderer imqraw artifact contains exactly the same RGBA bytes as its companion RGBA JSON artifact.
 imqraw-verify imqraw rgba_json:
     cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs --imqraw "{{ imqraw }}" --rgba-json "{{ rgba_json }}"

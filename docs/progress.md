@@ -53,6 +53,18 @@
   is wgpu `30.3816 dB` / Bevy `30.1784 dB`, with exact alpha parity and the same
   shared-domain hotspot counts. This rules out base texture transform or MToon
   UV animation as the focused Seed-san base-texture blocker.
+- Added `tools/render-parity/map-render-hotspots.rs` and
+  `just render-parity-seed-base-uv-hotspots`, a Sans I/O CPU projection
+  diagnostic that reads direct `.imqraw` delta hotspot reports and maps each
+  top pixel back to candidate node/mesh/primitive/material/triangle IDs with
+  raw and transformed base UVs. This turns the Seed-san base-UV residual into a
+  localized material/primitive investigation rather than a whole-avatar guess.
+  Running it on the current Seed-san base-UV reports maps the top 32 wgpu and
+  Bevy hotspots identically: `outline:material_1` accounts for `16`,
+  `outline:material_5` for `12`, `outline:material_6` for `2`, with only two
+  base-pass hits. The next Seed-san slice should therefore prioritize outline
+  UV/coverage and outline diagnostic isolation before revisiting base texture
+  lookup or MToon light accumulation.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the

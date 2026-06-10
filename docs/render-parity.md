@@ -179,6 +179,24 @@ texture sampling UV instead of raw `TEXCOORD_0`. On Seed-san it currently
 matches the raw UV diagnostic exactly, which rules out base texture transform
 and MToon UV animation as the focused base-texture cause for this fixture.
 
+To map those raw delta pixels back to model geometry, run:
+
+```powershell
+just render-parity-seed-base-uv-hotspots
+```
+
+This writes
+`.external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.hotspots.json`.
+`tools/render-parity/map-render-hotspots.rs` reuses the renderer-independent
+`vrm-io` transformed vertex path and the same fixed capture camera to list
+candidate node, mesh, primitive, material, triangle, raw UV, and transformed
+base UV values for each top direct-imqraw hotspot pixel. Use it after
+`just render-parity-seed-base-uv-diagnostic` when the next question is "which
+material/primitive owns this residual?" The mapper defaults to the local
+render-parity runner's camera (`256x256`, `camera-z = 3`); pass `--width`,
+`--height`, or camera options when inspecting artifacts generated with custom
+capture settings.
+
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
 three-vrm/wgpu/Bevy. For a focused check, use:
