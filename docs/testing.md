@@ -131,7 +131,10 @@ Use `just render-parity-constraint-shared-body3-pass-summary` after the
 shared-body3 sweep to regenerate base/outline pass ownership counts for the
 constraint top-64 hotspots; the current diagnostic shows wgpu and Bevy share the
 same pass-level ownership shape, with most hotspots still within a quarter pixel
-of an internal edge.
+of an internal edge. The same report includes frontmost-to-nearest surface
+transition counts, currently showing that the largest constraint residuals are
+base-material seams such as `material_6 -> material_12` rather than outline-only
+ownership.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample

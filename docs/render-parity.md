@@ -543,6 +543,16 @@ constraint score, so that branch is kept out of the renderer path; the remaining
 work is edge/pass ownership and material color selection, not a global outline
 normal sign change.
 
+The hotspot mapper also records frontmost-to-nearest surface transitions. For
+the constraint top-64 run, the dominant transitions are base-material seams, not
+outline ownership: `material_6 -> material_12` (`13` actual / `12` expected),
+`material_12 -> material_4` (`6` / `6`), `material_12 -> material_7` (`4` /
+`6`), `material_9 -> material_12` (`4` / `5`), and `material_12 -> material_3`
+(`4` / `5`). The only top transition involving outline is
+`outline material_0 -> base material_0` at `3` pixels. The next useful
+constraint-sample work is therefore material seam/fill-rule classification
+around those base-material boundaries before more shader tuning.
+
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
 ```powershell

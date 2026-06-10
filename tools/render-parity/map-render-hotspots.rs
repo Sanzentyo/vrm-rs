@@ -149,6 +149,8 @@ struct HotspotSummary {
     frontmost_pass_counts: Vec<PassCount>,
     nearest_visible_actual_pass_counts: Vec<PassCount>,
     nearest_visible_expected_pass_counts: Vec<PassCount>,
+    actual_frontmost_surface_transitions: Vec<SurfaceTransitionCount>,
+    expected_frontmost_surface_transitions: Vec<SurfaceTransitionCount>,
     actual_frontmost_mean_uv_distance: Option<f32>,
     expected_frontmost_mean_uv_distance: Option<f32>,
     actual_frontmost_max_uv_distance: Option<f32>,
@@ -187,6 +189,27 @@ struct EdgeBucketCount {
 struct PassCount {
     pass: &'static str,
     count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SurfaceTransitionCount {
+    from: SurfaceKeyReport,
+    to: SurfaceKeyReport,
+    count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SurfaceKeyReport {
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SurfaceKey {
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -540,6 +563,12 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
                 .iter()
                 .filter_map(|hotspot| hotspot.nearest_visible_expected.as_ref()),
         ),
+        actual_frontmost_surface_transitions: surface_transition_counts(hotspots, |hotspot| {
+            hotspot.nearest_visible_actual.as_ref()
+        }),
+        expected_frontmost_surface_transitions: surface_transition_counts(hotspots, |hotspot| {
+            hotspot.nearest_visible_expected.as_ref()
+        }),
         actual_frontmost_mean_uv_distance: mean_frontmost_uv_distance(hotspots, |hotspot| {
             hotspot.actual_linear_uv
         }),
@@ -632,6 +661,62 @@ fn pass_counts<'a>(candidates: impl Iterator<Item = &'a CandidateMatch>) -> Vec<
         .into_iter()
         .map(|(pass, count)| PassCount { pass, count })
         .collect()
+}
+
+fn surface_transition_counts<'a>(
+    hotspots: &'a [Hotspot],
+    to: impl Fn(&'a Hotspot) -> Option<&'a CandidateMatch>,
+) -> Vec<SurfaceTransitionCount> {
+    let mut counts = BTreeMap::<(SurfaceKey, SurfaceKey), usize>::new();
+    for hotspot in hotspots {
+        let Some(from) = hotspot.frontmost_visible.as_ref() else {
+            continue;
+        };
+        let Some(to) = to(hotspot) else {
+            continue;
+        };
+        *counts
+            .entry((SurfaceKey::from(from), SurfaceKey::from(to)))
+            .or_default() += 1;
+    }
+    let mut transitions = counts
+        .into_iter()
+        .map(|((from, to), count)| SurfaceTransitionCount {
+            from: SurfaceKeyReport::from(from),
+            to: SurfaceKeyReport::from(to),
+            count,
+        })
+        .collect::<Vec<_>>();
+    transitions.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.from.pass.cmp(right.from.pass))
+            .then_with(|| left.to.pass.cmp(right.to.pass))
+            .then_with(|| left.from.material.cmp(&right.from.material))
+            .then_with(|| left.to.material.cmp(&right.to.material))
+    });
+    transitions
+}
+
+impl From<&CandidateMatch> for SurfaceKey {
+    fn from(value: &CandidateMatch) -> Self {
+        Self {
+            pass: value.pass,
+            material: value.material,
+            material_name: value.material_name.clone(),
+        }
+    }
+}
+
+impl From<SurfaceKey> for SurfaceKeyReport {
+    fn from(value: SurfaceKey) -> Self {
+        Self {
+            pass: value.pass,
+            material: value.material,
+            material_name: value.material_name,
+        }
+    }
 }
 
 fn frontmost_edge_neighbor_matches(
