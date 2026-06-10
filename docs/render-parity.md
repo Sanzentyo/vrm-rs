@@ -402,6 +402,29 @@ colors (`32/32`), so simple generated UV seams do not reproduce the Seed-san
 residual. Treat this as a control fixture: the remaining real-model blocker is
 more specific than generic planar UV interpolation or a basic triangle split.
 
+A source-like generated base-texture UV-boundary control is available through:
+
+```powershell
+just render-parity-texture-boundary-generated
+```
+
+It writes `.external-fixtures/generated/texture-boundary.vrm.gltf` and renders
+`base-color` diagnostics into
+`.external-fixtures/render-parity-texture-boundary-generated/` with outlines
+disabled. The fixture reuses the generated UV-boundary topology, adds a small
+embedded PNG base-color texture through a glTF bufferView, and keeps a single
+opaque MToon material so the result isolates base texture sampling over UV
+discontinuities from material assignment and MToon lighting. The current guard
+has exact alpha parity and selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`52.9232 dB` / Bevy `49.5132 dB`, with max selected-channel deltas `7` / `6`.
+The hotspot maps are useful for geometry ownership only on this fixture: top-32
+wgpu/Bevy deltas all agree with the frontmost base-pass triangle and material,
+while the remaining RGB differences are small linear-filtering/rounding deltas
+spread across the textured surface. This rules out a generic embedded PNG,
+sampler, or generated UV-discontinuity failure as the Seed-san base-texture
+cause; the real-model blocker remains more specific to Seed-san's local
+primitive/texture lookup path.
+
 A source-like generated base-material seam control is available through:
 
 ```powershell
