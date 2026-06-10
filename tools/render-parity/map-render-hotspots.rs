@@ -144,6 +144,11 @@ struct HotspotSummary {
     expected_frontmost_triangle_matches: usize,
     actual_frontmost_material_matches: usize,
     expected_frontmost_material_matches: usize,
+    actual_frontmost_pass_matches: usize,
+    expected_frontmost_pass_matches: usize,
+    frontmost_pass_counts: Vec<PassCount>,
+    nearest_visible_actual_pass_counts: Vec<PassCount>,
+    nearest_visible_expected_pass_counts: Vec<PassCount>,
     actual_frontmost_mean_uv_distance: Option<f32>,
     expected_frontmost_mean_uv_distance: Option<f32>,
     actual_frontmost_max_uv_distance: Option<f32>,
@@ -176,6 +181,12 @@ struct EdgeBucketCount {
     edge_indices: [u32; 2],
     count: usize,
     mean_edge_distance_pixels: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PassCount {
+    pass: &'static str,
+    count: usize,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -496,6 +507,39 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
                 )
             })
             .count(),
+        actual_frontmost_pass_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_pass(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_pass_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_pass(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
+        frontmost_pass_counts: pass_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.frontmost_visible.as_ref()),
+        ),
+        nearest_visible_actual_pass_counts: pass_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.nearest_visible_actual.as_ref()),
+        ),
+        nearest_visible_expected_pass_counts: pass_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.nearest_visible_expected.as_ref()),
+        ),
         actual_frontmost_mean_uv_distance: mean_frontmost_uv_distance(hotspots, |hotspot| {
             hotspot.actual_linear_uv
         }),
@@ -573,6 +617,21 @@ fn same_material(left: Option<&CandidateMatch>, right: Option<&CandidateMatch>) 
         (Some(left), Some(right))
             if left.pass == right.pass && left.material == right.material
     )
+}
+
+fn same_pass(left: Option<&CandidateMatch>, right: Option<&CandidateMatch>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if left.pass == right.pass)
+}
+
+fn pass_counts<'a>(candidates: impl Iterator<Item = &'a CandidateMatch>) -> Vec<PassCount> {
+    let mut counts = BTreeMap::<&'static str, usize>::new();
+    for candidate in candidates {
+        *counts.entry(candidate.pass).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(pass, count)| PassCount { pass, count })
+        .collect()
 }
 
 fn frontmost_edge_neighbor_matches(

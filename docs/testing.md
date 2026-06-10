@@ -127,6 +127,11 @@ Use `just render-parity-constraint-shared-body3-diagnostics` when investigating
 that floor: outline-off improves the constraint sample to wgpu `31.0592 dB` /
 Bevy `31.0407 dB`, while normal-map-off stays flat at wgpu `28.6428 dB` /
 Bevy `28.6321 dB`.
+Use `just render-parity-constraint-shared-body3-pass-summary` after the
+shared-body3 sweep to regenerate base/outline pass ownership counts for the
+constraint top-64 hotspots; the current diagnostic shows wgpu and Bevy share the
+same pass-level ownership shape, with most hotspots still within a quarter pixel
+of an internal edge.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample

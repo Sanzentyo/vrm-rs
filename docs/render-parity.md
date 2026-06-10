@@ -530,6 +530,19 @@ and Bevy, mostly on materials `12`, `6`, `7`, `9`, and `3`, with large
 base/outline color swaps near internal edges. This makes real outline
 expansion/color ownership the next constraint-sample parity target.
 
+`just render-parity-constraint-shared-body3-pass-summary` maps the same top-64
+hotspots with expanded outline geometry and base/outline pass ownership counts.
+The current result is identical for wgpu and Bevy at the pass level:
+frontmost visible candidates are `57` base / `7` outline, nearest actual-color
+candidates are `58` base / `6` outline, and nearest expected-color candidates
+are `61` base / `3` outline. Pass matches are `51/64` for actual-vs-frontmost
+and `56/64` for expected-vs-frontmost, while `62-63/64` hotspots are still
+within `0.25px` of the frontmost nearest edge. A trial that inverted outline
+lighting normals for normal-map-disabled outline passes slightly worsened the
+constraint score, so that branch is kept out of the renderer path; the remaining
+work is edge/pass ownership and material color selection, not a global outline
+normal sign change.
+
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
 ```powershell
