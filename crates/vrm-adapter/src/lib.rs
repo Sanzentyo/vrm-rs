@@ -32,6 +32,95 @@ use vrm_runtime::{
     step_spring_joint_parity,
 };
 
+pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
+    const LABEL: &'static str;
+    const MIRRORS_HANDEDNESS: bool;
+
+    fn from_vrm_position(position: Vec3) -> Vec3;
+    fn to_vrm_position(position: Vec3) -> Vec3;
+    fn from_vrm_rotation(rotation: Quat) -> Quat;
+    fn to_vrm_rotation(rotation: Quat) -> Quat;
+
+    fn from_vrm_direction(direction: Vec3) -> Vec3 {
+        Self::from_vrm_position(direction)
+    }
+
+    fn to_vrm_direction(direction: Vec3) -> Vec3 {
+        Self::to_vrm_position(direction)
+    }
+
+    fn from_vrm_transform(transform: Transform) -> Transform {
+        Transform {
+            translation: Self::from_vrm_position(transform.translation),
+            rotation: Self::from_vrm_rotation(transform.rotation),
+            scale: transform.scale,
+        }
+    }
+
+    fn to_vrm_transform(transform: Transform) -> Transform {
+        Transform {
+            translation: Self::to_vrm_position(transform.translation),
+            rotation: Self::to_vrm_rotation(transform.rotation),
+            scale: transform.scale,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VrmCoordinateSpace;
+
+impl CoordinateSpaceMapping for VrmCoordinateSpace {
+    const LABEL: &'static str = "vrm-gltf-right-handed-y-up";
+    const MIRRORS_HANDEDNESS: bool = false;
+
+    fn from_vrm_position(position: Vec3) -> Vec3 {
+        position
+    }
+
+    fn to_vrm_position(position: Vec3) -> Vec3 {
+        position
+    }
+
+    fn from_vrm_rotation(rotation: Quat) -> Quat {
+        rotation
+    }
+
+    fn to_vrm_rotation(rotation: Quat) -> Quat {
+        rotation
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlipZCoordinateSpace;
+
+impl CoordinateSpaceMapping for FlipZCoordinateSpace {
+    const LABEL: &'static str = "flip-z-left-handed-y-up";
+    const MIRRORS_HANDEDNESS: bool = true;
+
+    fn from_vrm_position(position: Vec3) -> Vec3 {
+        Vec3::new(position.x, position.y, -position.z)
+    }
+
+    fn to_vrm_position(position: Vec3) -> Vec3 {
+        Vec3::new(position.x, position.y, -position.z)
+    }
+
+    fn from_vrm_rotation(rotation: Quat) -> Quat {
+        flip_z_rotation(rotation)
+    }
+
+    fn to_vrm_rotation(rotation: Quat) -> Quat {
+        flip_z_rotation(rotation)
+    }
+}
+
+pub type GltfCoordinateSpace = VrmCoordinateSpace;
+pub type LeftHandedZForwardCoordinateSpace = FlipZCoordinateSpace;
+
+fn flip_z_rotation(rotation: Quat) -> Quat {
+    Quat::from_xyzw(-rotation.x, -rotation.y, rotation.z, rotation.w).normalize()
+}
+
 pub trait ClipDepthMapping: Copy + std::fmt::Debug + 'static {
     const DEPTH_RANGE_LABEL: &'static str;
 
@@ -162,6 +251,31 @@ where
 {
     let points =
         positions.map(|position| project_position_to_screen::<D>(position, view_projection, size));
+    project_screen_triangle_from_points::<D>(points, front_face)
+}
+
+pub fn project_vrm_triangle_to_screen<C, D>(
+    positions: [[f32; 3]; 3],
+    view_projection: Mat4,
+    size: ScreenProjectionSize,
+    front_face: RendererFrontFace,
+) -> Option<ScreenTriangleProjection>
+where
+    C: CoordinateSpaceMapping,
+    D: ClipDepthMapping,
+{
+    let points = positions
+        .map(|position| project_vrm_position_to_screen::<C, D>(position, view_projection, size));
+    project_screen_triangle_from_points::<D>(points, front_face)
+}
+
+fn project_screen_triangle_from_points<D>(
+    points: [Option<[f32; 3]>; 3],
+    front_face: RendererFrontFace,
+) -> Option<ScreenTriangleProjection>
+where
+    D: ClipDepthMapping,
+{
     let [Some(a), Some(b), Some(c)] = points else {
         return None;
     };
@@ -180,6 +294,30 @@ where
 }
 
 pub fn project_position_to_screen<D>(
+    position: [f32; 3],
+    view_projection: Mat4,
+    size: ScreenProjectionSize,
+) -> Option<[f32; 3]>
+where
+    D: ClipDepthMapping,
+{
+    project_renderer_position_to_screen::<D>(position, view_projection, size)
+}
+
+pub fn project_vrm_position_to_screen<C, D>(
+    position: [f32; 3],
+    view_projection: Mat4,
+    size: ScreenProjectionSize,
+) -> Option<[f32; 3]>
+where
+    C: CoordinateSpaceMapping,
+    D: ClipDepthMapping,
+{
+    let renderer_position = C::from_vrm_position(Vec3::from_array(position));
+    project_renderer_position_to_screen::<D>(renderer_position.to_array(), view_projection, size)
+}
+
+pub fn project_renderer_position_to_screen<D>(
     position: [f32; 3],
     view_projection: Mat4,
     size: ScreenProjectionSize,
@@ -3023,7 +3161,7 @@ mod tests {
         EmissiveStrength, Expression, ExpressionSet, Feature, FirstPerson,
         FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, Material,
         MtoonMaterial, MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, PoseTransform,
-        RotationTrack, VrmAnimation, VrmDocument,
+        RotationTrack, Transform, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -3054,6 +3192,53 @@ mod tests {
     }
 
     #[test]
+    fn coordinate_space_mapping_preserves_vrm_space() {
+        let transform = Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_rotation_y(0.25),
+            scale: Vec3::new(2.0, 3.0, 4.0),
+        };
+
+        assert_eq!(VrmCoordinateSpace::LABEL, "vrm-gltf-right-handed-y-up");
+        assert!(!coordinate_space_mirrors::<VrmCoordinateSpace>());
+        assert_eq!(VrmCoordinateSpace::from_vrm_transform(transform), transform);
+        assert_eq!(VrmCoordinateSpace::to_vrm_transform(transform), transform);
+    }
+
+    #[test]
+    fn coordinate_space_mapping_can_flip_z_handedness() {
+        let rotation = Quat::from_rotation_x(0.4) * Quat::from_rotation_y(-0.7);
+        let transform = Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation,
+            scale: Vec3::new(2.0, 3.0, 4.0),
+        };
+        let mapped = FlipZCoordinateSpace::from_vrm_transform(transform);
+
+        assert_eq!(FlipZCoordinateSpace::LABEL, "flip-z-left-handed-y-up");
+        assert!(coordinate_space_mirrors::<FlipZCoordinateSpace>());
+        assert_eq!(mapped.translation, Vec3::new(1.0, 2.0, -3.0));
+        assert_eq!(mapped.scale, transform.scale);
+
+        let mirror = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
+        let source_matrix = transform_matrix(transform);
+        let mapped_matrix = transform_matrix(mapped);
+        let expected_matrix = mirror * source_matrix * mirror;
+        assert_matrix_abs_diff_eq(mapped_matrix, expected_matrix, 0.0001);
+
+        let roundtrip = FlipZCoordinateSpace::to_vrm_transform(mapped);
+        assert!(
+            roundtrip
+                .translation
+                .abs_diff_eq(transform.translation, 0.0001)
+        );
+        assert!(
+            roundtrip.rotation.abs_diff_eq(transform.rotation, 0.0001)
+                || roundtrip.rotation.abs_diff_eq(-transform.rotation, 0.0001)
+        );
+    }
+
+    #[test]
     fn screen_projection_maps_triangle_into_y_down_pixels() {
         let projection = project_triangle_to_screen::<ZeroToOneDepth>(
             [[-1.0, -1.0, 0.25], [1.0, -1.0, 0.25], [0.0, 1.0, 0.25]],
@@ -3077,6 +3262,51 @@ mod tests {
         assert!(projection.screen_signed_area < 0.0);
         assert!(!projection.front_facing);
         assert!(projection.gpu_front_facing);
+    }
+
+    #[test]
+    fn vrm_screen_projection_accepts_coordinate_policy() {
+        let projection = project_vrm_triangle_to_screen::<FlipZCoordinateSpace, ZeroToOneDepth>(
+            [[0.0, 0.0, -0.25], [1.0, 0.0, -0.25], [0.0, 1.0, -0.25]],
+            Mat4::IDENTITY,
+            ScreenProjectionSize {
+                width: 100.0,
+                height: 100.0,
+            },
+            RendererFrontFace::Ccw,
+        )
+        .unwrap();
+
+        assert_eq!(projection.ndc_depth, 0.25);
+        assert_eq!(projection.webgl_depth, -0.5);
+    }
+
+    fn transform_matrix(transform: Transform) -> Mat4 {
+        Mat4::from_scale_rotation_translation(
+            transform.scale,
+            transform.rotation,
+            transform.translation,
+        )
+    }
+
+    fn assert_matrix_abs_diff_eq(actual: Mat4, expected: Mat4, tolerance: f32) {
+        for (actual, expected) in actual
+            .to_cols_array()
+            .into_iter()
+            .zip(expected.to_cols_array())
+        {
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "matrix component mismatch: actual={actual} expected={expected}"
+            );
+        }
+    }
+
+    fn coordinate_space_mirrors<C>() -> bool
+    where
+        C: CoordinateSpaceMapping,
+    {
+        C::MIRRORS_HANDEDNESS
     }
 
     #[derive(Default)]
