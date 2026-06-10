@@ -84,6 +84,7 @@ struct OwnerCompareReport {
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_pass_transitions: Vec<OwnerPassTransition>,
     top_owner_geometry_classes: Vec<OwnerGeometryClassTransition>,
+    top_render_phase_order_transitions: Vec<OwnerRenderPhaseOrderTransition>,
     top_draw_order_relation_classes: Vec<OwnerDrawOrderRelationClass>,
     top_draw_order_transitions: Vec<OwnerDrawOrderTransition>,
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
@@ -123,6 +124,16 @@ struct OwnerGeometryClassTransition {
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerRenderPhaseOrderTransition {
+    expected_pass: String,
+    actual_pass: String,
+    expected_render_phase_order: String,
+    actual_render_phase_order: String,
+    render_phase_order_relation: String,
     count: u64,
 }
 
@@ -228,6 +239,15 @@ struct OwnerGeometryClassKey {
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerRenderPhaseOrderKey {
+    expected_pass: String,
+    actual_pass: String,
+    expected_render_phase_order: String,
+    actual_render_phase_order: String,
+    render_phase_order_relation: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -422,6 +442,7 @@ fn compare_owner_images(
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut owner_geometry_classes = BTreeMap::new();
+    let mut render_phase_order_transitions = BTreeMap::new();
     let mut draw_order_relation_classes = BTreeMap::new();
     let mut draw_order_transitions = BTreeMap::new();
     let mut render_policy_transitions = BTreeMap::new();
@@ -518,6 +539,11 @@ fn compare_owner_images(
                         expected_label,
                         actual_label,
                     );
+                    bump_render_phase_order_transition(
+                        &mut render_phase_order_transitions,
+                        expected_label,
+                        actual_label,
+                    );
                     bump_draw_order_transition(
                         &mut draw_order_transitions,
                         expected_label,
@@ -599,6 +625,10 @@ fn compare_owner_images(
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
         top_pass_transitions: top_pass_transitions(pass_transitions, top),
         top_owner_geometry_classes: top_owner_geometry_classes(owner_geometry_classes, top),
+        top_render_phase_order_transitions: top_render_phase_order_transitions(
+            render_phase_order_transitions,
+            top,
+        ),
         top_draw_order_relation_classes: top_draw_order_relation_classes(
             draw_order_relation_classes,
             top,
@@ -717,6 +747,37 @@ fn top_owner_geometry_classes(
             material_relation: key.material_relation,
             triangle_relation: key.triangle_relation,
             projection_relation: key.projection_relation,
+            count,
+        })
+        .collect()
+}
+
+fn bump_render_phase_order_transition(
+    map: &mut BTreeMap<OwnerRenderPhaseOrderKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerRenderPhaseOrderKey::from_labels(
+        expected, actual,
+    ))
+    .or_default() += 1;
+}
+
+fn top_render_phase_order_transitions(
+    map: BTreeMap<OwnerRenderPhaseOrderKey, u64>,
+    top: usize,
+) -> Vec<OwnerRenderPhaseOrderTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerRenderPhaseOrderTransition {
+            expected_pass: key.expected_pass,
+            actual_pass: key.actual_pass,
+            expected_render_phase_order: key.expected_render_phase_order,
+            actual_render_phase_order: key.actual_render_phase_order,
+            render_phase_order_relation: key.render_phase_order_relation,
             count,
         })
         .collect()
@@ -1030,6 +1091,25 @@ impl OwnerGeometryClassKey {
                 "same-triangle" | "adjacent-triangle-index"
             )
             && self.projection_relation == "overlap-depth-close"
+    }
+}
+
+impl OwnerRenderPhaseOrderKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            expected_pass: pass_label(expected),
+            actual_pass: pass_label(actual),
+            expected_render_phase_order: optional_i64_label(
+                expected.and_then(|label| label.render_phase_order),
+            ),
+            actual_render_phase_order: optional_i64_label(
+                actual.and_then(|label| label.render_phase_order),
+            ),
+            render_phase_order_relation: i64_order_relation(
+                expected.and_then(|label| label.render_phase_order),
+                actual.and_then(|label| label.render_phase_order),
+            ),
+        }
     }
 }
 
@@ -1651,6 +1731,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(report.top_expected_to_actual[0].expected, 2);
     assert_eq!(report.top_expected_to_actual[0].actual, 3);
+    assert!(report.top_render_phase_order_transitions.iter().any(|transition| {
+        transition.expected_pass == "outline"
+            && transition.actual_pass == "base"
+            && transition.expected_render_phase_order == "19"
+            && transition.actual_render_phase_order == "19"
+            && transition.render_phase_order_relation == "same"
+            && transition.count == 1
+    }));
     assert!(report.top_draw_order_transitions.iter().any(|transition| {
         transition.expected_pass == "outline"
             && transition.actual_pass == "base"

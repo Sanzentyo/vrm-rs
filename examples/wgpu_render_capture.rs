@@ -187,7 +187,7 @@ struct OwnerSource {
     material: Option<usize>,
     pass: OwnerPass,
     render_order: i32,
-    phase_order: i32,
+    phase_order: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,7 +208,7 @@ struct GpuPrimitive {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct MaterialPolicy {
     render_order: i32,
-    phase_order: i32,
+    phase_order: Option<i32>,
     cull_mode: CaptureCullMode,
     alpha_mode: CaptureAlphaMode,
     depth_write: bool,
@@ -220,7 +220,7 @@ impl Default for MaterialPolicy {
     fn default() -> Self {
         Self {
             render_order: 2000,
-            phase_order: 2000,
+            phase_order: None,
             cull_mode: CaptureCullMode::Back,
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
@@ -687,7 +687,10 @@ fn outline_primitive(
         material_extra: surface.material_extra,
         policy: MaterialPolicy {
             render_order: surface.policy.render_order.saturating_add(1),
-            phase_order: surface.policy.phase_order.saturating_add(1),
+            phase_order: surface
+                .policy
+                .phase_order
+                .map(|phase_order| phase_order.saturating_add(1)),
             cull_mode: CaptureCullMode::Front,
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
@@ -697,7 +700,10 @@ fn outline_primitive(
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: surface.policy.render_order.saturating_add(1),
-            phase_order: surface.policy.phase_order.saturating_add(1),
+            phase_order: surface
+                .policy
+                .phase_order
+                .map(|phase_order| phase_order.saturating_add(1)),
             ..surface.owner_source
         },
         owner_ids: Vec::new(),
@@ -880,7 +886,14 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
     let plan = render_capture_scene::capture_material_plan(loaded, material);
     MaterialPolicy {
         render_order: plan.render_order,
-        phase_order: plan.phase_order,
+        phase_order: material.and_then(|index| {
+            loaded
+                .model()
+                .document()
+                .materials
+                .get(index)
+                .and_then(|material| material.mtoon.is_present().then_some(plan.phase_order))
+        }),
         cull_mode: capture_cull_mode(plan.cull_mode),
         alpha_mode: capture_alpha_mode(plan.alpha_mode),
         depth_write: plan.depth_write,

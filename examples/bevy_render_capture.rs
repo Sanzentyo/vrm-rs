@@ -520,7 +520,7 @@ fn spawn_vrm_meshes(
                 material: primitive.material,
                 pass: OwnerPass::Base,
                 render_order,
-                phase_order,
+                phase_order: material_mtoon_phase_order(loaded, primitive.material),
             };
             let normal_plan =
                 primitive.normal_map_plan(shading.normal_scale, options.normal_map_mode.into());
@@ -1036,7 +1036,8 @@ fn bevy_outline_primitive(
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: material_render_order(loaded, primitive.material).saturating_add(1),
-            phase_order: material_phase_order(loaded, primitive.material).saturating_add(1),
+            phase_order: material_mtoon_phase_order(loaded, primitive.material)
+                .map(|phase_order| phase_order.saturating_add(1)),
             ..owner_source
         },
         owner_ids: Vec::new(),
@@ -1138,7 +1139,7 @@ struct OwnerSource {
     material: Option<usize>,
     pass: OwnerPass,
     render_order: i32,
-    phase_order: i32,
+    phase_order: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1754,6 +1755,21 @@ fn material_render_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
 
 fn material_phase_order(loaded: &LoadedVrm, material: Option<usize>) -> i32 {
     render_capture_scene::capture_material_plan(loaded, material).phase_order
+}
+
+fn material_mtoon_phase_order(loaded: &LoadedVrm, material: Option<usize>) -> Option<i32> {
+    let index = material?;
+    loaded
+        .model()
+        .document()
+        .materials
+        .get(index)
+        .and_then(|material| {
+            material
+                .mtoon
+                .is_present()
+                .then_some(material_phase_order(loaded, Some(index)))
+        })
 }
 
 fn material_depth_write(loaded: &LoadedVrm, material: Option<usize>) -> bool {
