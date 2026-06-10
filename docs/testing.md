@@ -244,6 +244,14 @@ recovery finds `49/64`, all depth-rank `1`, with centers spread across
 `0.25/0.5/0.75` offsets; one-pixel neighbor recovery finds `44/64` with mixed
 offsets. The strongest rendered-owner material bucket is `huku_bake` (`24/64`),
 matching the real-model UV/material-boundary interpretation.
+Use
+`just render-parity-seed-base-color-nearest-diagnostic D:/git/three-vrm` to
+force nearest/no-mip texture sampling in three-vrm, wgpu, and Bevy for the same
+Seed-san base-color outline-off slice. The current nearest run reports
+`rgb-shared-nonblack-interior1px` wgpu `33.5501 dB` and Bevy `33.4815 dB`;
+the gradient-complement diagnostic remains low at wgpu `27.1258 dB` and Bevy
+`27.1208 dB` with max channel delta `220`. Treat this as evidence that the
+remaining high-gradient floor is not explained by a broad mip/filter mismatch.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

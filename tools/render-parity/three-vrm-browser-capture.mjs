@@ -49,12 +49,13 @@ const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
 const disableNormalMaps = args.has('disable-normal-maps');
 const disableTextureMips = args.has('disable-texture-mips');
+const forceNearestTextures = args.has('force-nearest-textures');
 const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
 const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -1061,13 +1062,28 @@ function capturePage(options) {
       texture.minFilter = nearest ? THREE.NearestFilter : THREE.LinearFilter;
       texture.needsUpdate = true;
     };
-    const configureMaterialNoMips = (material) => {
+    const configureTextureNearest = (texture) => {
+      if (!texture?.isTexture) return;
+      texture.generateMipmaps = false;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.needsUpdate = true;
+    };
+    const configureMaterialTextureSampling = (material) => {
       if (!material) return;
       for (const value of Object.values(material)) {
-        configureTextureNoMips(value);
+        if (${forceNearestTextures}) {
+          configureTextureNearest(value);
+        } else {
+          configureTextureNoMips(value);
+        }
       }
       for (const uniform of Object.values(material.uniforms ?? {})) {
-        configureTextureNoMips(uniform?.value);
+        if (${forceNearestTextures}) {
+          configureTextureNearest(uniform?.value);
+        } else {
+          configureTextureNoMips(uniform?.value);
+        }
       }
     };
     const diagnosticMaterials = [];
@@ -1086,9 +1102,9 @@ function capturePage(options) {
     const ownerViewProjection = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
-      if (${options.disableTextureMips} && object.material) {
+      if ((${options.disableTextureMips} || ${forceNearestTextures}) && object.material) {
         const materials = Array.isArray(object.material) ? object.material : [object.material];
-        for (const material of materials) configureMaterialNoMips(material);
+        for (const material of materials) configureMaterialTextureSampling(material);
       }
       if (${disableOutlines} && object.material) {
         const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -1219,6 +1235,7 @@ function capturePage(options) {
         disableOutlines: ${disableOutlines},
         disableNormalMaps: ${disableNormalMaps},
         disableTextureMips: ${options.disableTextureMips},
+        forceNearestTextures: ${forceNearestTextures},
         diagnosticRender: ${JSON.stringify(options.diagnosticRender)},
         diagnosticRenderReference: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' || options.diagnosticRender === 'base-color-raw-srgb' ? 'base-color' : options.diagnosticRender)},
         rustOnlyDiagnostic: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' || options.diagnosticRender === 'base-color-raw-srgb' ? options.diagnosticRender : null)},

@@ -153,6 +153,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long)]
     disable_texture_mips: bool,
+    #[arg(long)]
+    force_nearest_textures: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
     #[arg(long, default_value_t = 1.0)]
@@ -412,8 +414,8 @@ fn spawn_vrm_meshes(
                         bevy_image_with_format(
                             image,
                             TextureFormat::Rgba8UnormSrgb,
-                            texture.sampler,
-                            !options.disable_texture_mips,
+                            effective_sampler_data(texture.sampler, options.force_nearest_textures),
+                            !options.disable_texture_mips && !options.force_nearest_textures,
                         )
                     })
                     .map(|image| images.add(image))
@@ -430,8 +432,8 @@ fn spawn_vrm_meshes(
                         bevy_image_with_format(
                             image,
                             TextureFormat::Rgba8Unorm,
-                            texture.sampler,
-                            !options.disable_texture_mips,
+                            effective_sampler_data(texture.sampler, options.force_nearest_textures),
+                            !options.disable_texture_mips && !options.force_nearest_textures,
                         )
                     })
                     .map(|image| images.add(image))
@@ -449,8 +451,8 @@ fn spawn_vrm_meshes(
                         bevy_image_with_format(
                             image,
                             TextureFormat::Rgba8Unorm,
-                            texture.sampler,
-                            !options.disable_texture_mips,
+                            effective_sampler_data(texture.sampler, options.force_nearest_textures),
+                            !options.disable_texture_mips && !options.force_nearest_textures,
                         )
                     })
                     .map(|image| images.add(image))
@@ -1879,6 +1881,17 @@ fn bevy_image_with_format(
     ))
 }
 
+fn effective_sampler_data(
+    mut sampler: GltfSamplerData,
+    force_nearest_textures: bool,
+) -> GltfSamplerData {
+    if force_nearest_textures {
+        sampler.mag_filter = GltfMagFilter::Nearest;
+        sampler.min_filter = GltfMinFilter::Nearest;
+    }
+    sampler
+}
+
 fn bevy_image_from_rgba(
     width: u32,
     height: u32,
@@ -2236,6 +2249,7 @@ fn write_capture(
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
         "disableTextureMips": options.disable_texture_mips,
+        "forceNearestTextures": options.force_nearest_textures,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),

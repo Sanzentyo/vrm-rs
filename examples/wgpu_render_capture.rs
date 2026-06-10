@@ -133,6 +133,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long)]
     disable_texture_mips: bool,
+    #[arg(long)]
+    force_nearest_textures: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
     #[arg(long, default_value_t = 1.0)]
@@ -963,13 +965,14 @@ fn texture_resources(
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
     use_mips: bool,
+    force_nearest_textures: bool,
 ) -> Result<Vec<TextureResource>, Box<dyn Error>> {
     let mut resources = vec![
         texture_resource(
             device,
             queue,
             format,
-            GltfSamplerData::default(),
+            effective_sampler_data(GltfSamplerData::default(), force_nearest_textures),
             TextureUpload {
                 texture: None,
                 width: 1,
@@ -982,7 +985,7 @@ fn texture_resources(
             device,
             queue,
             format,
-            GltfSamplerData::default(),
+            effective_sampler_data(GltfSamplerData::default(), force_nearest_textures),
             TextureUpload {
                 texture: None,
                 width: 1,
@@ -995,7 +998,7 @@ fn texture_resources(
             device,
             queue,
             format,
-            GltfSamplerData::default(),
+            effective_sampler_data(GltfSamplerData::default(), force_nearest_textures),
             TextureUpload {
                 texture: None,
                 width: 1,
@@ -1014,7 +1017,7 @@ fn texture_resources(
             device,
             queue,
             format,
-            texture.sampler,
+            effective_sampler_data(texture.sampler, force_nearest_textures),
             TextureUpload {
                 texture: Some(index),
                 width: image.width,
@@ -1025,6 +1028,17 @@ fn texture_resources(
         ));
     }
     Ok(resources)
+}
+
+fn effective_sampler_data(
+    mut sampler: GltfSamplerData,
+    force_nearest_textures: bool,
+) -> GltfSamplerData {
+    if force_nearest_textures {
+        sampler.mag_filter = GltfMagFilter::Nearest;
+        sampler.min_filter = GltfMinFilter::Nearest;
+    }
+    sampler
 }
 
 fn texture_resource(
@@ -1737,21 +1751,24 @@ async fn render_capture(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        !options.disable_texture_mips,
+        !options.disable_texture_mips && !options.force_nearest_textures,
+        options.force_nearest_textures,
     )?;
     let raw_color_texture_resources = texture_resources(
         loaded,
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
-        !options.disable_texture_mips,
+        !options.disable_texture_mips && !options.force_nearest_textures,
+        options.force_nearest_textures,
     )?;
     let normal_texture_resources = texture_resources(
         loaded,
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
-        !options.disable_texture_mips,
+        !options.disable_texture_mips && !options.force_nearest_textures,
+        options.force_nearest_textures,
     )?;
     let texture_resource_indices = texture_resource_indices(&color_texture_resources);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2077,6 +2094,7 @@ fn write_rgba_json(
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
         "disableTextureMips": options.disable_texture_mips,
+        "forceNearestTextures": options.force_nearest_textures,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
