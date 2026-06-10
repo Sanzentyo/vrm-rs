@@ -270,6 +270,21 @@ recovered neighbors' base texture colors are close to three-vrm expected
 `378.13`). That is the strongest current sign that the focused residual is
 raster/sample ownership at local UV or material boundaries.
 
+When investigating the actual base-color PSNR gate, prefer the shared-body
+hotspot recipe:
+
+```powershell
+just render-parity-seed-base-color-hotspots-focused
+```
+
+It creates `shared-nonblack-interior1px` delta reports and maps the top 64
+pixels, matching the render-parity metric rather than the all-pixel diagnostic
+domain. The current focused reports have center visible candidates for all
+top-64 pixels, and the CPU-sampled frontmost base texture is closer to Rust
+actual than three-vrm expected. Use that focused report when working on the
+remaining shared-body PSNR floor; use the broader all-pixel report for
+silhouette and raster edge ownership.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

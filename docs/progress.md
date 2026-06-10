@@ -47,6 +47,18 @@
   remaining Seed-san base-color blocker a raster/sample ownership issue around
   local UV/texture boundaries rather than material math, texture binding,
   alpha, cull, or mip behavior.
+- Added `just render-parity-seed-base-color-hotspots-focused`, which computes
+  hotspot deltas in the same `shared-nonblack-interior1px` domain used by the
+  base-color PSNR gate instead of the broader all-pixel delta domain. The
+  focused top-64 reports change the blocker classification: all hotspot pixels
+  have center visible candidates (`64/64` for wgpu and Bevy), so the previous
+  missing-center analysis describes all-domain edge/silhouette pixels, not the
+  shared-body PSNR floor. In the focused shared-body domain, Rust actual colors
+  are closer to the CPU-sampled frontmost base texture than the three-vrm
+  expected colors (wgpu mean RGB distance `46.58` actual vs `116.08` expected;
+  Bevy `47.21` vs `116.43`). The remaining focused blocker is therefore inside
+  body texture/color interpretation around real material/UV regions, not
+  center coverage recovery.
 - Added Seed-san `base-factor` and `base-color` diagnostic render modes across
   the three-vrm browser reference, wgpu capture, Bevy capture, and local
   render-parity runner. The new `rgb-shared-nonblack-interior1px` metric keeps
