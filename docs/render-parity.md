@@ -262,6 +262,23 @@ ownership the strongest explanation; broader interior pixels and lower-amplitude
 deltas still need separate checks before ruling out every sampler or
 interpolation edge case.
 
+A source-like generated UV-boundary control is available through:
+
+```powershell
+just render-parity-uv-boundary-generated
+```
+
+It writes `.external-fixtures/generated/uv-boundary.vrm.gltf` and renders
+`base-uv` diagnostics into `.external-fixtures/render-parity-uv-boundary-generated/`.
+The fixture uses simple planar panels with an intentional UV discontinuity and
+opposing triangle splits, while keeping outlines disabled. The current run
+passes a high guard on `rgb-shared-nonblack-interior1px`: wgpu `66.8378 dB`
+with max selected-channel delta `1`, and Bevy `53.0706 dB` with max delta `2`.
+Its hotspot maps match the frontmost triangle for both expected and actual
+colors (`32/32`), so simple generated UV seams do not reproduce the Seed-san
+residual. Treat this as a control fixture: the remaining real-model blocker is
+more specific than generic planar UV interpolation or a basic triangle split.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
