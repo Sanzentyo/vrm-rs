@@ -147,6 +147,8 @@ struct CaptureOptions {
     outline_width_scale: f32,
     #[arg(long)]
     disable_normal_maps: bool,
+    #[arg(long)]
+    disable_texture_mips: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
     #[arg(long, default_value_t = 1.0)]
@@ -367,7 +369,9 @@ fn spawn_vrm_meshes(
                 loaded
                     .images
                     .get(texture.image)
-                    .and_then(|image| bevy_image(image, texture.sampler))
+                    .and_then(|image| {
+                        bevy_image(image, texture.sampler, !options.disable_texture_mips)
+                    })
                     .map(|image| images.add(image))
             })
             .collect::<Vec<_>>(),
@@ -379,7 +383,12 @@ fn spawn_vrm_meshes(
                     .images
                     .get(texture.image)
                     .and_then(|image| {
-                        bevy_image_with_format(image, TextureFormat::Rgba8Unorm, texture.sampler)
+                        bevy_image_with_format(
+                            image,
+                            TextureFormat::Rgba8Unorm,
+                            texture.sampler,
+                            !options.disable_texture_mips,
+                        )
                     })
                     .map(|image| images.add(image))
             })
@@ -1207,14 +1216,15 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
     }
 }
 
-fn bevy_image(image: &ImageData, sampler: GltfSamplerData) -> Option<Image> {
-    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb, sampler)
+fn bevy_image(image: &ImageData, sampler: GltfSamplerData, use_mips: bool) -> Option<Image> {
+    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb, sampler, use_mips)
 }
 
 fn bevy_image_with_format(
     image: &ImageData,
     format: TextureFormat,
     sampler: GltfSamplerData,
+    use_mips: bool,
 ) -> Option<Image> {
     Some(bevy_image_from_rgba(
         image.width,
@@ -1222,6 +1232,7 @@ fn bevy_image_with_format(
         image_data_to_rgba8(image).ok()?,
         format,
         sampler,
+        use_mips,
     ))
 }
 
@@ -1231,9 +1242,18 @@ fn bevy_image_from_rgba(
     rgba: Vec<u8>,
     format: TextureFormat,
     sampler: GltfSamplerData,
+    use_mips: bool,
 ) -> Image {
-    let levels = generate_rgba_mip_chain(width, height, &rgba)
-        .expect("texture upload RGBA data should match its dimensions");
+    let levels = if use_mips {
+        generate_rgba_mip_chain(width, height, &rgba)
+            .expect("texture upload RGBA data should match its dimensions")
+    } else {
+        vec![vrm_io::RgbaMipLevel {
+            width,
+            height,
+            rgba,
+        }]
+    };
     let mip_level_count = u32::try_from(levels.len()).unwrap_or(1);
     let data = levels
         .into_iter()
@@ -1257,7 +1277,14 @@ fn bevy_image_from_rgba(
 }
 
 fn single_pixel_image(rgba: [u8; 4], format: TextureFormat) -> Image {
-    bevy_image_from_rgba(1, 1, rgba.to_vec(), format, GltfSamplerData::default())
+    bevy_image_from_rgba(
+        1,
+        1,
+        rgba.to_vec(),
+        format,
+        GltfSamplerData::default(),
+        true,
+    )
 }
 
 fn bevy_sampler_descriptor(sampler: GltfSamplerData) -> ImageSamplerDescriptor {
@@ -1559,6 +1586,7 @@ fn write_capture(
         "disableOutlines": options.disable_outlines,
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
+        "disableTextureMips": options.disable_texture_mips,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),

@@ -8,18 +8,25 @@
   focused body-color diagnostics on overlapping nonblack interior pixels. The
   fixed base-factor run now matches the reference in the body region
   (`Infinity` for wgpu, `74.8665 dB` for Bevy, max selected-channel deltas
-  `0`/`1`), while base-color drops to wgpu `28.7633 dB` / Bevy `27.8394 dB`.
+  `0`/`1`), while base-color drops to wgpu `28.7892 dB` / Bevy `27.8626 dB`.
   This narrows the Seed-san body-color blocker to base texture sampling,
   UV/sampler state, texture color-space handling, or texture selection before
   MToon light/normal/rim/shade terms enter the frame.
 - Added two sharper Seed-san base-texture diagnostics. The stricter
   `rgb-shared-nonblack-interior2px` metric raises the base-color diagnostic
-  only modestly to wgpu `29.9442 dB` / Bevy `28.8222 dB`, so the residual is
+  only modestly to wgpu `30.0100 dB` / Bevy `28.8790 dB`, so the residual is
   not explained by a one-pixel silhouette mask. The Rust-only `base-color-flip-v`
   diagnostic worsens to wgpu `10.9506 dB` / Bevy `10.9418 dB`, ruling out a
   simple V-flip mismatch. The remaining base-texture blocker is localized:
   shared body-pixel mean RGB is close, but large deltas remain around thin
   texture/material/UV boundaries.
+- Moved renderer-side generated texture mipmaps to a shared Sans-I/O box
+  downsample in `vrm-io`, replacing the sharper CatmullRom resize. This gives a
+  small Seed-san base-color improvement but does not remove the localized
+  residual. A new `--render-disable-texture-mips` diagnostic disables mipmaps in
+  three-vrm, wgpu, and Bevy; `just render-parity-seed-base-color-no-mip-diagnostic`
+  worsens to wgpu `28.5038 dB` / Bevy `27.6273 dB`, so mip usage itself is not
+  the primary blocker.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the

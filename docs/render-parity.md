@@ -116,6 +116,7 @@ For the next material/shader split, run:
 just render-parity-seed-base-factor-diagnostic
 just render-parity-seed-base-color-diagnostic
 just render-parity-seed-base-color-interior2-diagnostic
+just render-parity-seed-base-color-no-mip-diagnostic
 just render-parity-seed-base-color-flip-v-diagnostic
 ```
 
@@ -133,8 +134,8 @@ The 2026-06-10 Seed-san diagnostic writes
 base-factor selected PSNR `Infinity` for wgpu and `74.8665 dB` for Bevy, with
 max selected-channel deltas `0` and `1`. The matching base-color run writes
 `.external-fixtures/render-parity-seed-base-color-diagnostic/` and reports
-wgpu `28.7633 dB` / Bevy `27.8394 dB`, with max selected-channel deltas `220`
-/ `233`. This confirms that material assignment and base factors match in the
+wgpu `28.7892 dB` / Bevy `27.8626 dB`, with max selected-channel deltas `219`
+/ `232`. This confirms that material assignment and base factors match in the
 model-body overlap region; the remaining Seed-san color blocker starts at
 base-texture sampling, UV/sampler state, texture color-space handling, or a
 texture-selection detail before the MToon lighting stack is applied.
@@ -142,13 +143,16 @@ texture-selection detail before the MToon lighting stack is applied.
 Two follow-up diagnostics keep that blocker narrower. The
 `render-parity-seed-base-color-interior2-diagnostic` recipe uses the stricter
 `rgb-shared-nonblack-interior2px` metric and still only rises to wgpu
-`29.9442 dB` / Bevy `28.8222 dB`, with large worst-case selected-channel
-deltas intact. The `render-parity-seed-base-color-flip-v-diagnostic` recipe
+`30.0100 dB` / Bevy `28.8790 dB`, with large worst-case selected-channel
+deltas intact. The `render-parity-seed-base-color-no-mip-diagnostic` recipe
+disables texture mipmaps in three-vrm, wgpu, and Bevy; it worsens to wgpu
+`28.5038 dB` / Bevy `27.6273 dB`, so mip usage itself is not the primary
+blocker. The `render-parity-seed-base-color-flip-v-diagnostic` recipe
 samples the Rust base texture with flipped V coordinates while leaving the
 three-vrm reference unchanged; it worsens sharply to wgpu `10.9506 dB` / Bevy
 `10.9418 dB`. Together these rule out a simple one-pixel edge mask or global
 V-flip explanation. The current evidence points at localized texture sampling,
-UV discontinuity, sampler/mip selection, or per-primitive texture-selection
+UV discontinuity, sampler state, or per-primitive texture-selection
 behavior. Mean RGB over the shared body pixels remains close, so this is not a
 global color-space bias.
 

@@ -44,11 +44,12 @@ const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
 const disableNormalMaps = args.has('disable-normal-maps');
+const disableTextureMips = args.has('disable-texture-mips');
 const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -133,6 +134,7 @@ const server = http.createServer((request, response) => {
       directionalG,
       directionalB,
       ambientIntensity,
+      disableTextureMips,
       diagnosticRender,
     }));
     return;
@@ -189,6 +191,7 @@ try {
     camera: { y: cameraY, z: cameraZ, targetY },
     disableOutlines,
     disableNormalMaps,
+    disableTextureMips,
     reference: capture.reference,
     mtoonTime,
     expressions: expressionWeights,
@@ -271,8 +274,27 @@ function capturePage(options) {
     const gltf = await new Promise((resolve, reject) => loader.parse(bytes, '', resolve, reject));
     const vrm = gltf.userData.vrm;
     if (!vrm) throw new Error('fixture did not load as VRM');
+    const configureTextureNoMips = (texture) => {
+      if (!texture?.isTexture) return;
+      texture.generateMipmaps = false;
+      texture.minFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+    };
+    const configureMaterialNoMips = (material) => {
+      if (!material) return;
+      for (const value of Object.values(material)) {
+        configureTextureNoMips(value);
+      }
+      for (const uniform of Object.values(material.uniforms ?? {})) {
+        configureTextureNoMips(uniform?.value);
+      }
+    };
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
+      if (${options.disableTextureMips} && object.material) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) configureMaterialNoMips(material);
+      }
       if (${disableOutlines} && object.material) {
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) {
@@ -365,6 +387,7 @@ function capturePage(options) {
         premultipliedAlpha: false,
         disableOutlines: ${disableOutlines},
         disableNormalMaps: ${disableNormalMaps},
+        disableTextureMips: ${options.disableTextureMips},
         diagnosticRender: ${JSON.stringify(options.diagnosticRender)},
       },
       expressions,

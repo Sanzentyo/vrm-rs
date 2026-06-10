@@ -127,6 +127,8 @@ struct CaptureOptions {
     outline_width_scale: f32,
     #[arg(long)]
     disable_normal_maps: bool,
+    #[arg(long)]
+    disable_texture_mips: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
     #[arg(long, default_value_t = 1.0)]
@@ -368,6 +370,7 @@ struct TextureUpload<'a> {
     width: u32,
     height: u32,
     rgba: &'a [u8],
+    use_mips: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -747,6 +750,7 @@ fn texture_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
+    use_mips: bool,
 ) -> Result<Vec<TextureResource>, Box<dyn Error>> {
     let mut resources = vec![
         texture_resource(
@@ -759,6 +763,7 @@ fn texture_resources(
                 width: 1,
                 height: 1,
                 rgba: &[255, 255, 255, 255],
+                use_mips,
             },
         ),
         texture_resource(
@@ -771,6 +776,7 @@ fn texture_resources(
                 width: 1,
                 height: 1,
                 rgba: &[0, 0, 0, 255],
+                use_mips,
             },
         ),
         texture_resource(
@@ -783,6 +789,7 @@ fn texture_resources(
                 width: 1,
                 height: 1,
                 rgba: &[128, 128, 255, 255],
+                use_mips,
             },
         ),
     ];
@@ -801,6 +808,7 @@ fn texture_resources(
                 width: image.width,
                 height: image.height,
                 rgba: &rgba,
+                use_mips,
             },
         ));
     }
@@ -814,8 +822,16 @@ fn texture_resource(
     sampler_data: GltfSamplerData,
     upload: TextureUpload<'_>,
 ) -> TextureResource {
-    let mip_levels = generate_rgba_mip_chain(upload.width, upload.height, upload.rgba)
-        .expect("texture upload RGBA data should match its dimensions");
+    let mip_levels = if upload.use_mips {
+        generate_rgba_mip_chain(upload.width, upload.height, upload.rgba)
+            .expect("texture upload RGBA data should match its dimensions")
+    } else {
+        vec![vrm_io::RgbaMipLevel {
+            width: upload.width,
+            height: upload.height,
+            rgba: upload.rgba.to_vec(),
+        }]
+    };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("render parity material texture"),
         size: wgpu::Extent3d {
@@ -1491,10 +1507,20 @@ async fn render_capture(
                 },
             ],
         });
-    let color_texture_resources =
-        texture_resources(loaded, &device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb)?;
-    let normal_texture_resources =
-        texture_resources(loaded, &device, &queue, wgpu::TextureFormat::Rgba8Unorm)?;
+    let color_texture_resources = texture_resources(
+        loaded,
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        !options.disable_texture_mips,
+    )?;
+    let normal_texture_resources = texture_resources(
+        loaded,
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        !options.disable_texture_mips,
+    )?;
     let texture_resource_indices = texture_resource_indices(&color_texture_resources);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("render parity shader"),
@@ -1734,6 +1760,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "disableOutlines": options.disable_outlines,
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
+        "disableTextureMips": options.disable_texture_mips,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),

@@ -620,17 +620,16 @@ pub fn generate_rgba_mip_chain(
     while current_width > 1 || current_height > 1 {
         let next_width = (current_width / 2).max(1);
         let next_height = (current_height / 2).max(1);
-        let image = image::RgbaImage::from_raw(current_width, current_height, current_rgba)
-            .expect("validated mip level RGBA length should match its dimensions");
-        let next = image::imageops::resize(
-            &image,
+        let next = downsample_rgba_box(
+            current_width,
+            current_height,
+            &current_rgba,
             next_width,
             next_height,
-            image::imageops::FilterType::CatmullRom,
         );
         current_width = next_width;
         current_height = next_height;
-        current_rgba = next.into_raw();
+        current_rgba = next;
         levels.push(RgbaMipLevel {
             width: current_width,
             height: current_height,
@@ -638,6 +637,42 @@ pub fn generate_rgba_mip_chain(
         });
     }
     Ok(levels)
+}
+
+fn downsample_rgba_box(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    next_width: u32,
+    next_height: u32,
+) -> Vec<u8> {
+    let mut next = vec![0; (next_width as usize) * (next_height as usize) * 4];
+    for y in 0..next_height {
+        let source_y0 = (u64::from(y) * u64::from(height) / u64::from(next_height)) as u32;
+        let source_y1 =
+            (u64::from(y + 1) * u64::from(height)).div_ceil(u64::from(next_height)) as u32;
+        for x in 0..next_width {
+            let source_x0 = (u64::from(x) * u64::from(width) / u64::from(next_width)) as u32;
+            let source_x1 =
+                (u64::from(x + 1) * u64::from(width)).div_ceil(u64::from(next_width)) as u32;
+            let mut sum = [0u32; 4];
+            let mut count = 0u32;
+            for source_y in source_y0..source_y1.min(height) {
+                for source_x in source_x0..source_x1.min(width) {
+                    let source = ((source_y * width + source_x) * 4) as usize;
+                    for channel in 0..4 {
+                        sum[channel] += u32::from(rgba[source + channel]);
+                    }
+                    count += 1;
+                }
+            }
+            let destination = ((y * next_width + x) * 4) as usize;
+            for channel in 0..4 {
+                next[destination + channel] = ((sum[channel] + count / 2) / count) as u8;
+            }
+        }
+    }
+    next
 }
 
 fn rgba_len(width: u32, height: u32) -> Result<usize, TextureMipError> {
@@ -3057,9 +3092,19 @@ mod tests {
         assert_eq!((levels[0].width, levels[0].height), (4, 2));
         assert_eq!(levels[0].rgba, rgba);
         assert_eq!((levels[1].width, levels[1].height), (2, 1));
-        assert_eq!(levels[1].rgba.len(), 8);
+        assert_eq!(levels[1].rgba, vec![10, 11, 12, 13, 18, 19, 20, 21]);
         assert_eq!((levels[2].width, levels[2].height), (1, 1));
-        assert_eq!(levels[2].rgba.len(), 4);
+        assert_eq!(levels[2].rgba, vec![14, 15, 16, 17]);
+    }
+
+    #[test]
+    fn generated_rgba_mip_chain_averages_odd_sized_box_regions() {
+        let rgba = vec![0, 10, 20, 30, 30, 40, 50, 60, 60, 70, 80, 90];
+        let levels = generate_rgba_mip_chain(3, 1, &rgba).unwrap();
+
+        assert_eq!(levels.len(), 2);
+        assert_eq!((levels[1].width, levels[1].height), (1, 1));
+        assert_eq!(levels[1].rgba, vec![30, 40, 50, 60]);
     }
 
     #[test]
