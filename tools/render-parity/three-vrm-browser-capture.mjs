@@ -27,6 +27,8 @@ const threeVrmRoot = path.resolve(args.get('three-vrm-root') ?? '../three-vrm');
 const out = args.get('out');
 const pngOut = args.get('png-out');
 const imqrawOut = args.get('imqraw-out');
+const hotspotDeltasPath = args.get('hotspot-deltas');
+const hotspotTop = Number.parseInt(args.get('hotspot-top') ?? '32', 10);
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
@@ -47,13 +49,18 @@ const disableNormalMaps = args.has('disable-normal-maps');
 const disableTextureMips = args.has('disable-texture-mips');
 const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
+const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|uv|base-uv]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|uv|base-uv]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
   console.error(`invalid dimensions: ${width}x${height}`);
+  process.exit(2);
+}
+if (!Number.isInteger(hotspotTop) || hotspotTop <= 0) {
+  console.error(`invalid hotspot-top: ${hotspotTop}`);
   process.exit(2);
 }
 if (
@@ -136,6 +143,7 @@ const server = http.createServer((request, response) => {
       ambientIntensity,
       disableTextureMips,
       diagnosticRender,
+      hotspotDeltas,
     }));
     return;
   }
@@ -321,6 +329,194 @@ function capturePage(options) {
     };
   };
 
+  const hotspotDeltas = ${JSON.stringify(options.hotspotDeltas)};
+
+  const screenVertex = (mesh, index, uvAttribute, viewProjection, target, clip) => {
+    mesh.getVertexPosition(index, target);
+    target.applyMatrix4(mesh.matrixWorld);
+    clip.set(target.x, target.y, target.z, 1.0).applyMatrix4(viewProjection);
+    if (Math.abs(clip.w) <= Number.EPSILON) return null;
+    const ndcX = clip.x / clip.w;
+    const ndcY = clip.y / clip.w;
+    const ndcZ = clip.z / clip.w;
+    return {
+      screen: [
+        (ndcX * 0.5 + 0.5) * ${options.width},
+        (0.5 - ndcY * 0.5) * ${options.height},
+      ],
+      depth: ndcZ,
+      uv: uvAttribute ? [uvAttribute.getX(index), uvAttribute.getY(index)] : [0, 0],
+      reciprocalW: 1.0 / clip.w,
+    };
+  };
+
+  const barycentric = (point, a, b, c) => {
+    const denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if (Math.abs(denominator) <= 1.0e-5) return null;
+    const w0 = ((b[1] - c[1]) * (point[0] - c[0]) + (c[0] - b[0]) * (point[1] - c[1])) / denominator;
+    const w1 = ((c[1] - a[1]) * (point[0] - c[0]) + (a[0] - c[0]) * (point[1] - c[1])) / denominator;
+    const w2 = 1.0 - w0 - w1;
+    return w0 >= -1.0e-4 && w1 >= -1.0e-4 && w2 >= -1.0e-4 ? [w0, w1, w2] : null;
+  };
+
+  const interpolateUv = (weights, a, b, c) => {
+    const perspectiveWeights = [
+      weights[0] * a.reciprocalW,
+      weights[1] * b.reciprocalW,
+      weights[2] * c.reciprocalW,
+    ];
+    const denominator = perspectiveWeights[0] + perspectiveWeights[1] + perspectiveWeights[2];
+    if (Math.abs(denominator) <= Number.EPSILON) {
+      return [
+        weights[0] * a.uv[0] + weights[1] * b.uv[0] + weights[2] * c.uv[0],
+        weights[0] * a.uv[1] + weights[1] * b.uv[1] + weights[2] * c.uv[1],
+      ];
+    }
+    return [
+      (perspectiveWeights[0] * a.uv[0] + perspectiveWeights[1] * b.uv[0] + perspectiveWeights[2] * c.uv[0]) / denominator,
+      (perspectiveWeights[0] * a.uv[1] + perspectiveWeights[1] * b.uv[1] + perspectiveWeights[2] * c.uv[1]) / denominator,
+    ];
+  };
+
+  const transformTextureUv = (uv, texture) => {
+    if (!texture?.isTexture || !texture.matrix?.elements) return uv;
+    if (texture.matrixAutoUpdate && typeof texture.updateMatrix === 'function') {
+      texture.updateMatrix();
+    }
+    const e = texture.matrix.elements;
+    return [
+      e[0] * uv[0] + e[3] * uv[1] + e[6],
+      e[1] * uv[0] + e[4] * uv[1] + e[7],
+    ];
+  };
+
+  const linearToSrgb = (value) => {
+    const clamped = Math.min(1, Math.max(0, value));
+    return clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * Math.pow(clamped, 1.0 / 2.4) - 0.055;
+  };
+
+  const quantize = (value) => Math.round(Math.min(1, Math.max(0, value)) * 255);
+
+  const rgbDistance = (left, right) => {
+    const dr = left[0] - right[0];
+    const dg = left[1] - right[1];
+    const db = left[2] - right[2];
+    return Math.sqrt(dr * dr + dg * dg + db * db);
+  };
+
+  const materialAt = (mesh, materialIndex) => (
+    Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
+  );
+
+  const uvAttributeForMaterial = (geometry, material) => {
+    const channel = material?.map?.channel ?? 0;
+    return geometry.attributes[channel === 0 ? 'uv' : \`uv\${channel}\`] ?? geometry.attributes.uv ?? null;
+  };
+
+  const visibleBySide = (side, signedArea) => {
+    if (side === THREE.DoubleSide) return true;
+    const frontFacing = signedArea > 0.0;
+    if (side === THREE.BackSide) return !frontFacing;
+    return frontFacing;
+  };
+
+  const projectHotspots = (root, camera, hotspots) => {
+    if (!hotspots) return null;
+    root.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    const viewProjection = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const meshes = [];
+    root.traverse((object) => {
+      if (object.isMesh && object.geometry?.attributes?.position) meshes.push(object);
+    });
+    const vertex = new THREE.Vector3();
+    const clip = new THREE.Vector4();
+    return {
+      source: hotspots.source,
+      width: hotspots.width,
+      height: hotspots.height,
+      top: hotspots.top.map((hotspot) => {
+        const point = [hotspot.x + 0.5, hotspot.y + 0.5];
+        const candidates = [];
+        for (const mesh of meshes) {
+          const geometry = mesh.geometry;
+          const position = geometry.attributes.position;
+          const index = geometry.index;
+          const groups = geometry.groups.length > 0
+            ? geometry.groups
+            : [{ start: 0, count: index ? index.count : position.count, materialIndex: 0 }];
+          for (const group of groups) {
+            const material = materialAt(mesh, group.materialIndex);
+            const uvAttribute = uvAttributeForMaterial(geometry, material);
+            for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
+              const ia = index ? index.getX(offset) : offset;
+              const ib = index ? index.getX(offset + 1) : offset + 1;
+              const ic = index ? index.getX(offset + 2) : offset + 2;
+              const a = screenVertex(mesh, ia, uvAttribute, viewProjection, vertex, clip);
+              const b = screenVertex(mesh, ib, uvAttribute, viewProjection, vertex, clip);
+              const c = screenVertex(mesh, ic, uvAttribute, viewProjection, vertex, clip);
+              if (!a || !b || !c) continue;
+              const weights = barycentric(point, a.screen, b.screen, c.screen);
+              if (!weights) continue;
+              const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
+              if (!visibleBySide(material?.side ?? THREE.FrontSide, signedArea)) continue;
+              const depth = weights[0] * a.depth + weights[1] * b.depth + weights[2] * c.depth;
+              if (depth < -1.0 || depth > 1.0) continue;
+              const rawUv = interpolateUv(weights, a, b, c);
+              const mapUv = transformTextureUv(rawUv, material?.map);
+              const color = [
+                quantize(linearToSrgb(mapUv[0])),
+                quantize(linearToSrgb(mapUv[1])),
+                0,
+                hotspot.expected?.[3] ?? 255,
+              ];
+              candidates.push({
+                meshName: mesh.name ?? '',
+                meshUuid: mesh.uuid,
+                materialIndex: group.materialIndex ?? 0,
+                materialName: material?.name ?? '',
+                materialType: material?.type ?? null,
+                triangle: Math.floor(offset / 3),
+                indices: [ia, ib, ic],
+                depth,
+                barycentric: weights,
+                rawUv,
+                mapUv,
+                color,
+                expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
+                actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
+                screen: [a.screen, b.screen, c.screen],
+              });
+            }
+          }
+        }
+        const frontmost = candidates
+          .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
+          .sort((left, right) => left.depth - right.depth)[0] ?? null;
+        const nearestExpected = candidates
+          .slice()
+          .sort((left, right) => left.expectedRgbDistance - right.expectedRgbDistance || left.depth - right.depth)[0] ?? null;
+        const nearestActual = candidates
+          .slice()
+          .sort((left, right) => left.actualRgbDistance - right.actualRgbDistance || left.depth - right.depth)[0] ?? null;
+        return {
+          x: hotspot.x,
+          y: hotspot.y,
+          expected: hotspot.expected,
+          actual: hotspot.actual,
+          frontmost,
+          nearestExpected,
+          nearestActual,
+          candidateCount: candidates.length,
+          candidatesByExpected: candidates
+            .slice()
+            .sort((left, right) => left.expectedRgbDistance - right.expectedRgbDistance || left.depth - right.depth)
+            .slice(0, 8),
+        };
+      }),
+    };
+  };
+
   globalThis.captureVrmFrame = async () => {
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({
@@ -470,6 +666,7 @@ function capturePage(options) {
     vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
+    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas);
 
     const gl = renderer.getContext();
     const readback = new Uint8Array(${options.width} * ${options.height} * 4);
@@ -507,6 +704,7 @@ function capturePage(options) {
         rustOnlyDiagnostic: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' ? 'base-color-flip-v' : null)},
         diagnosticMaterials,
         diagnosticMeshes,
+        diagnosticHotspots,
       },
       expressions,
       lighting: {
@@ -550,6 +748,25 @@ function parseExpressionWeights(values) {
     }
     return [name, weight];
   });
+}
+
+function readHotspotDeltas(file, top) {
+  const resolved = path.resolve(file);
+  if (!fs.existsSync(resolved)) {
+    console.error(`hotspot delta report does not exist: ${resolved}`);
+    process.exit(2);
+  }
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  if (!Array.isArray(parsed.top)) {
+    console.error(`hotspot delta report has no top array: ${resolved}`);
+    process.exit(2);
+  }
+  return {
+    source: resolved,
+    width: parsed.width,
+    height: parsed.height,
+    top: parsed.top.slice(0, top),
+  };
 }
 
 function encodePngRgba(width, height, rgba) {

@@ -325,6 +325,26 @@ The same artifact now records `reference.renderer.diagnosticMeshes`; Seed-san
 reports 21 diagnostic meshes with `uv` present and no populated `uv1`/`uv2`
 attributes, which also weakens a UV-channel mismatch explanation.
 
+For browser-side projection of the same hotspot pixels after three-vrm has
+loaded and updated the avatar, run:
+
+```powershell
+just render-parity-seed-base-uv-three-hotspots
+```
+
+This writes
+`.external-fixtures/render-parity-seed-base-uv-diagnostic/three-vrm/Seed-san.hotspot-projection.rgba.json`
+with `reference.renderer.diagnosticHotspots`. On the 2026-06-10 top-32 pass,
+the three.js CPU projection's frontmost candidate still does not match the
+rendered three-vrm pixel (`0/32` exact; mean RGB distance `76.72`), but the
+nearest same-pixel candidate improves the match (`5/32` exact, `20/32` within
+RGB distance `16`, mean `26.81`). The nearest rendered-color candidates are
+often same-mesh triangles behind the CPU-frontmost candidate by small depth
+deltas, so the current base-UV residual is now most consistent with edge/fill
+rule, sample-position, or rasterization ownership differences rather than
+material texture transforms, UV channel selection, or Rust-side scene
+projection.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell

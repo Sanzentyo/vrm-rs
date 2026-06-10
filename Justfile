@@ -263,6 +263,10 @@ render-parity-seed-base-uv-hotspots:
     just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.json 32
     just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.hotspots.json 32
 
+# Project Seed-san base-UV hotspot pixels inside three.js after VRM load to compare CPU scene candidates against the rendered three-vrm pixels.
+render-parity-seed-base-uv-three-hotspots three_vrm_root="D:/git/three-vrm":
+    node tools/render-parity/three-vrm-browser-capture.mjs --fixture .external-fixtures/official/Seed-san.vrm --three-vrm-root "{{ three_vrm_root }}" --out .external-fixtures/render-parity-seed-base-uv-diagnostic/three-vrm/Seed-san.hotspot-projection.rgba.json --width 256 --height 256 --background opaque-black --camera-z 3 --directional-intensity 3.1415927 --directional-x 1 --directional-y 1 --directional-z 1 --directional-r 1 --directional-g 1 --directional-b 1 --ambient-intensity 0.1 --mtoon-time 0 --diagnostic-render base-uv --hotspot-deltas .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.json --hotspot-top 32
+
 # Map a wider Seed-san transformed-base-UV hotspot band to confirm whether lower-amplitude deltas remain near triangle boundaries.
 render-parity-seed-base-uv-hotspots-wide:
     just imqraw-deltas .external-fixtures/render-parity-seed-base-uv-diagnostic/three-vrm/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/wgpu/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.top256.json 256 1 shared-nonblack-interior1px
