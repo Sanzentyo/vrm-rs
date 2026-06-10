@@ -81,6 +81,9 @@ beside their `.rgba.json` artifacts. Check them with
 same VRM domains as `compare-psnr.mjs`. The render parity runner uses the
 `.imqraw-rust.json` reports as the numeric gate and still writes `.psnr.json`
 reports as `.rgba.json` diagnostics.
+It also runs `tools/render-parity/verify-imqraw-rgba.rs` for each three-vrm,
+wgpu, and Bevy capture, so the numeric-gate `.imqraw` bytes must match the
+`.rgba.json` bytes used for PNGs, diff heatmaps, and diagnostic reports.
 For a PNG-free cross-check of existing RGBA artifacts, use
 `just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
 the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the
@@ -150,9 +153,12 @@ current tangentless normal-map regression guard, which now enforces
 `rgb-interior1px >= 46.5 dB`.
 The local runner writes the three-vrm, wgpu, and Bevy PNGs from
 their RGBA artifacts through the same Rust PNG encoder, so review images match
-the exact buffers compared by PSNR. It decodes each PNG after writing and
-requires a byte-for-byte match with the corresponding RGBA artifact, including
-alpha. It also checks that the wgpu and Bevy alpha masks stay within
+the exact buffers compared by the RGBA JSON diagnostic path. It decodes each
+PNG after writing and requires a byte-for-byte match with the corresponding
+RGBA artifact, including alpha. Before that, it verifies that each renderer's
+direct `.imqraw` artifact matches the same RGBA JSON bytes, so the numeric gate
+and visual-review artifacts cannot silently diverge. It also checks that the
+wgpu and Bevy alpha masks stay within
 `--render-alpha-mismatch-tolerance` pixels of the three-vrm reference. The
 render-parity run recreates its managed output directories first, so stale
 direct-capture smoke PNGs are not mixed into the canonical review set. The

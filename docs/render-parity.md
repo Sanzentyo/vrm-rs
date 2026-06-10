@@ -70,6 +70,18 @@ The pass/fail summary consumes the `.imqraw-rust.json` report. The older
 `.psnr.json` report remains a diagnostic cross-check over the renderer
 `.rgba.json` artifacts and is embedded in `visual-review.html`.
 
+The local runner also verifies every renderer's direct `.imqraw` artifact
+against its companion `.rgba.json` artifact before writing PNGs or comparing
+three-vrm/wgpu/Bevy. For a focused check, use:
+
+```powershell
+cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs `
+  --imqraw .external-fixtures/render-parity/wgpu/Seed-san.frame000.imqraw `
+  --rgba-json .external-fixtures/render-parity/wgpu/Seed-san.frame000.rgba.json
+```
+
+The `just imqraw-verify IMQRAW RGBA_JSON` wrapper runs the same check.
+
 For independent raw-image metric checks that do not pass through PNG encoding
 or decoding, use the `imqraw` TypeScript/WASM pack path:
 
@@ -177,7 +189,9 @@ and Bevy PNG all use the same fully opaque background/alpha contract.
 audits when the goal is to inspect the silhouette or transparent-background
 readback path. This keeps preview PNGs aligned with the exact RGBA buffers used
 for PSNR instead of relying on browser element screenshots or canvas
-compositing. At the start of
+compositing. Since the numeric gate now reads `.imqraw`, the runner first
+checks that each `.imqraw` artifact contains the same RGBA8 pixels as the
+`.rgba.json` artifact used for PNG, diff, and diagnostic output. At the start of
 each render-parity run, the managed `three-vrm`, `wgpu`, `bevy`, `reports`, and
 `diff` directories are recreated so older direct-capture smoke images cannot be
 mistaken for the current canonical comparison set. Each PNG is decoded after

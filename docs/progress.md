@@ -13,6 +13,12 @@
   `.rgba.json` / `compare-psnr.mjs` report is still generated and embedded in
   the visual review page as a diagnostic cross-check, but render pass/fail now
   comes from the lossless direct renderer `imqraw` artifacts.
+- Added `tools/render-parity/verify-imqraw-rgba.rs` and wired it into
+  `tools/ci/local-ci.rs --render-parity` immediately after each three-vrm,
+  wgpu, and Bevy capture. The local runner now fails if a renderer's direct
+  `.imqraw` numeric-gate artifact differs from the companion `.rgba.json`
+  artifact used for PNGs, heatmaps, and diagnostics. A 64x64 Seed-san smoke run
+  verified all three renderer artifacts before computing PSNR.
 
 ## 2026-06-01
 

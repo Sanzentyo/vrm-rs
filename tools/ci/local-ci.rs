@@ -329,10 +329,13 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     let fixtures = render_fixtures(options)?;
     for fixture in &fixtures {
         capture_three_vrm_reference(options, fixture)?;
+        verify_render_imqraw_matches_rgba(options, fixture, "three-vrm")?;
         write_render_png_from_artifact(options, fixture, "three-vrm")?;
         capture_wgpu(options, fixture)?;
+        verify_render_imqraw_matches_rgba(options, fixture, "wgpu")?;
         write_render_png_from_artifact(options, fixture, "wgpu")?;
         capture_bevy(options, fixture)?;
+        verify_render_imqraw_matches_rgba(options, fixture, "bevy")?;
         write_render_png_from_artifact(options, fixture, "bevy")?;
         verify_render_alpha_consistency(options, fixture)?;
         compare_render_imqraw_pair(options, fixture, "wgpu")?;
@@ -924,6 +927,24 @@ fn compare_render_rgba_json_pair(
         path(&render_report(options, fixture, renderer)).as_str(),
         "--metric",
         options.render_psnr_metric.as_cli_value(),
+    ]);
+    run_command(command)
+}
+
+fn verify_render_imqraw_matches_rgba(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command.args([
+        "+nightly",
+        "-Zscript",
+        "tools/render-parity/verify-imqraw-rgba.rs",
+        "--imqraw",
+        path(&render_imqraw_artifact(options, fixture, renderer)).as_str(),
+        "--rgba-json",
+        path(&render_artifact(options, fixture, renderer)).as_str(),
     ]);
     run_command(command)
 }

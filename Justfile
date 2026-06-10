@@ -181,6 +181,10 @@ imqraw-compare-rgba expected actual output metrics="psnr:color,mse:color,mae:col
 imqraw-compare expected actual output metric="rgb-visible":
     cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs --expected "{{ expected }}" --actual "{{ actual }}" --metric "{{ metric }}" --out "{{ output }}"
 
+# Verify that a renderer imqraw artifact contains exactly the same RGBA bytes as its companion RGBA JSON artifact.
+imqraw-verify imqraw rgba_json:
+    cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs --imqraw "{{ imqraw }}" --rgba-json "{{ rgba_json }}"
+
 # Re-measure the current real normal-map Seed-san artifacts through the JS/TS imqraw pack path without PNG conversion.
 render-parity-imqraw-seed-normal:
     just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.imqraw-ts.json
