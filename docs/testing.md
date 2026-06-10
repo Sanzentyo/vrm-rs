@@ -227,7 +227,13 @@ The recipe also maps those gradient deltas through
 match the outline-off shared-body shape: `64/64` frontmost candidates are
 visible, `58/64` are within `0.25px` of a frontmost edge, every top hotspot is
 base pass, and Rust actual is closer than three-vrm expected to the CPU
-frontmost base texture for `44/64` hotspots.
+frontmost base texture for `44/64` hotspots. The compact summary also reports
+same-triangle and nearest-edge-neighbor matches. Current gradient top-64
+hotspots have only `6/64` same-triangle matches and `0/64` edge-neighbor
+matches for both actual and expected, with large base-UV distances from the
+frontmost candidate (wgpu actual/expected mean `0.6707` / `0.5730`, Bevy
+`0.6752` / `0.5780`). Treat this as evidence for real-model high-gradient UV
+island/material ownership rather than a simple adjacent-edge fill-rule issue.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

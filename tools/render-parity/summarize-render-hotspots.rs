@@ -52,12 +52,18 @@ struct ReviewReport {
     expected_frontmost_material_matches: Option<u64>,
     actual_frontmost_triangle_matches: Option<u64>,
     expected_frontmost_triangle_matches: Option<u64>,
+    actual_frontmost_edge_neighbor_matches: Option<u64>,
+    expected_frontmost_edge_neighbor_matches: Option<u64>,
     actual_frontmost_pass_matches: Option<u64>,
     expected_frontmost_pass_matches: Option<u64>,
     actual_frontmost_mean_base_texture_rgb_distance: Option<f64>,
     expected_frontmost_mean_base_texture_rgb_distance: Option<f64>,
     actual_frontmost_max_base_texture_rgb_distance: Option<f64>,
     expected_frontmost_max_base_texture_rgb_distance: Option<f64>,
+    actual_frontmost_mean_uv_distance: Option<f64>,
+    expected_frontmost_mean_uv_distance: Option<f64>,
+    actual_frontmost_max_uv_distance: Option<f64>,
+    expected_frontmost_max_uv_distance: Option<f64>,
     texture_distance_advantage: TextureDistanceAdvantage,
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
@@ -168,6 +174,14 @@ fn summarize_report(
             summary,
             "expected_frontmost_triangle_matches",
         ),
+        actual_frontmost_edge_neighbor_matches: u64_field(
+            summary,
+            "actual_frontmost_edge_neighbor_matches",
+        ),
+        expected_frontmost_edge_neighbor_matches: u64_field(
+            summary,
+            "expected_frontmost_edge_neighbor_matches",
+        ),
         actual_frontmost_pass_matches: u64_field(summary, "actual_frontmost_pass_matches"),
         expected_frontmost_pass_matches: u64_field(summary, "expected_frontmost_pass_matches"),
         actual_frontmost_mean_base_texture_rgb_distance: f64_field(
@@ -185,6 +199,16 @@ fn summarize_report(
         expected_frontmost_max_base_texture_rgb_distance: f64_field(
             summary,
             "expected_frontmost_max_base_texture_rgb_distance",
+        ),
+        actual_frontmost_mean_uv_distance: f64_field(summary, "actual_frontmost_mean_uv_distance"),
+        expected_frontmost_mean_uv_distance: f64_field(
+            summary,
+            "expected_frontmost_mean_uv_distance",
+        ),
+        actual_frontmost_max_uv_distance: f64_field(summary, "actual_frontmost_max_uv_distance"),
+        expected_frontmost_max_uv_distance: f64_field(
+            summary,
+            "expected_frontmost_max_uv_distance",
         ),
         texture_distance_advantage: texture_distance_advantage(hotspots),
         top_actual_surface_transitions: top_array(
@@ -297,9 +321,21 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_u64(report.expected_frontmost_triangle_matches)
     ));
     markdown.push_str(&format!(
+        "- Edge-neighbor matches actual/expected vs frontmost: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_frontmost_edge_neighbor_matches),
+        fmt_opt_u64(report.expected_frontmost_edge_neighbor_matches)
+    ));
+    markdown.push_str(&format!(
         "- Base-texture mean RGB distance actual/expected: `{}` / `{}`\n",
         fmt_opt_f64(report.actual_frontmost_mean_base_texture_rgb_distance),
         fmt_opt_f64(report.expected_frontmost_mean_base_texture_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Base UV mean/max distance actual: `{}` / `{}`; expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_frontmost_mean_uv_distance),
+        fmt_opt_f64(report.actual_frontmost_max_uv_distance),
+        fmt_opt_f64(report.expected_frontmost_mean_uv_distance),
+        fmt_opt_f64(report.expected_frontmost_max_uv_distance)
     ));
     markdown.push_str(&format!(
         "- Base-texture closer actual/expected/tie: `{}` / `{}` / `{}` of `{}`\n\n",
@@ -444,10 +480,16 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "expected_frontmost_material_matches": 0,
             "actual_frontmost_triangle_matches": 1,
             "expected_frontmost_triangle_matches": 0,
+            "actual_frontmost_edge_neighbor_matches": 1,
+            "expected_frontmost_edge_neighbor_matches": 1,
             "actual_frontmost_pass_matches": 1,
             "expected_frontmost_pass_matches": 1,
             "actual_frontmost_mean_base_texture_rgb_distance": 1.0,
             "expected_frontmost_mean_base_texture_rgb_distance": 2.0,
+            "actual_frontmost_mean_uv_distance": 0.1,
+            "expected_frontmost_mean_uv_distance": 0.2,
+            "actual_frontmost_max_uv_distance": 0.3,
+            "expected_frontmost_max_uv_distance": 0.4,
             "actual_frontmost_surface_transitions": [{"count": 1}],
             "expected_frontmost_surface_transitions": [{"count": 1}],
             "frontmost_nearest_edge_counts": [{"count": 1}]
