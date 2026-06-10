@@ -52,6 +52,7 @@ enum PixelDomain {
     SharedNonblackInterior1px,
     SharedNonblackInterior2px,
     SharedNonblackInterior3px,
+    SharedNonblackFlat32Interior1px,
 }
 
 impl PixelDomain {
@@ -64,6 +65,7 @@ impl PixelDomain {
             Self::SharedNonblackInterior1px => "shared-nonblack-interior1px",
             Self::SharedNonblackInterior2px => "shared-nonblack-interior2px",
             Self::SharedNonblackInterior3px => "shared-nonblack-interior3px",
+            Self::SharedNonblackFlat32Interior1px => "shared-nonblack-flat32-interior1px",
         }
     }
 
@@ -80,6 +82,9 @@ impl PixelDomain {
             Self::SharedNonblackInterior3px => is_interior_radius(expected, pixel, 3, |neighbor| {
                 is_shared_nonblack(expected, actual, neighbor)
             }),
+            Self::SharedNonblackFlat32Interior1px => {
+                is_flat_shared_nonblack_interior(expected, actual, pixel, 1, 32)
+            }
         }
     }
 }
@@ -272,6 +277,7 @@ fn domain_breakdown(expected: &RgbaImage, actual: &RgbaImage, deltas: &[PixelDel
         "sharedNonblackInterior1px": count(PixelDomain::SharedNonblackInterior1px),
         "sharedNonblackInterior2px": count(PixelDomain::SharedNonblackInterior2px),
         "sharedNonblackInterior3px": count(PixelDomain::SharedNonblackInterior3px),
+        "sharedNonblackFlat32Interior1px": count(PixelDomain::SharedNonblackFlat32Interior1px),
     })
 }
 
@@ -311,6 +317,9 @@ fn pixel_domain_json(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> 
         "sharedNonblackInterior3px": is_interior_radius(expected, pixel, 3, |neighbor| {
             is_shared_nonblack(expected, actual, neighbor)
         }),
+        "sharedNonblackFlat32Interior1px": is_flat_shared_nonblack_interior(
+            expected, actual, pixel, 1, 32,
+        ),
     })
 }
 
@@ -418,6 +427,27 @@ fn is_actual_only_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usiz
 
 fn is_expected_only_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
     pixel_rgb_nonzero(&expected.rgba, pixel) && !pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_flat_shared_nonblack_interior(
+    expected: &RgbaImage,
+    actual: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    max_channel_delta: u8,
+) -> bool {
+    is_interior_radius(expected, pixel, radius, |neighbor| {
+        is_shared_nonblack(expected, actual, neighbor)
+            && rgb_max_delta(&expected.rgba, pixel, neighbor) <= max_channel_delta
+            && rgb_max_delta(&actual.rgba, pixel, neighbor) <= max_channel_delta
+    })
+}
+
+fn rgb_max_delta(rgba: &[u8], left: usize, right: usize) -> u8 {
+    (0..3)
+        .map(|channel| rgba[left + channel].abs_diff(rgba[right + channel]))
+        .max()
+        .unwrap_or(0)
 }
 
 fn pixel_rgb_nonzero(rgba: &[u8], pixel: usize) -> bool {

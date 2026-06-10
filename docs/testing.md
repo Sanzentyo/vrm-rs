@@ -203,6 +203,20 @@ the current summary keeps the focused blocker readable: `64/64` hotspots have
 frontmost visible candidates, `58/64` are within `0.25px` of an edge, and Rust's
 actual base-texture sample is closer to the CPU frontmost texture than the
 three-vrm rendered expected color for `43/64` hotspots.
+Use
+`just render-parity-seed-base-color-flat32-outline-off-diagnostic D:/git/three-vrm`
+when you need a PNG-free low-gradient interior cross-check for the same focused
+Seed-san base-color slice. It writes direct `.imqraw` reports and delta reports
+under
+`.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/`
+with selected metric `rgb-shared-nonblack-flat32-interior1px`. The domain keeps
+shared non-black one-pixel interiors only when both expected and actual 3x3 RGB
+neighborhoods stay within `32` channel values of the center pixel, so it helps
+separate stable interior material/color parity from local texture/material/fill
+edges. Current values are wgpu `49.7607 dB` and Bevy `47.5483 dB`, while the
+ordinary shared-body outline-off score remains around `32.4 dB`; keep the
+ordinary metric as the compatibility pressure and use flat32 as a diagnostic
+classification signal.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

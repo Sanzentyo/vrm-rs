@@ -57,6 +57,7 @@ enum MetricName {
     RgbSharedNonblackInterior1px,
     RgbSharedNonblackInterior2px,
     RgbSharedNonblackInterior3px,
+    RgbSharedNonblackFlat32Interior1px,
 }
 
 impl std::str::FromStr for MetricName {
@@ -75,8 +76,11 @@ impl std::str::FromStr for MetricName {
             "rgb-shared-nonblack-interior1px" => Ok(Self::RgbSharedNonblackInterior1px),
             "rgb-shared-nonblack-interior2px" => Ok(Self::RgbSharedNonblackInterior2px),
             "rgb-shared-nonblack-interior3px" => Ok(Self::RgbSharedNonblackInterior3px),
+            "rgb-shared-nonblack-flat32-interior1px" => {
+                Ok(Self::RgbSharedNonblackFlat32Interior1px)
+            }
             other => Err(format!(
-                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, rgb-shared-nonblack-interior2px, or rgb-shared-nonblack-interior3px"
+                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, rgb-shared-nonblack-interior2px, rgb-shared-nonblack-interior3px, or rgb-shared-nonblack-flat32-interior1px"
             )),
         }
     }
@@ -96,6 +100,9 @@ impl MetricName {
             Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
             Self::RgbSharedNonblackInterior2px => "rgb-shared-nonblack-interior2px",
             Self::RgbSharedNonblackInterior3px => "rgb-shared-nonblack-interior3px",
+            Self::RgbSharedNonblackFlat32Interior1px => {
+                "rgb-shared-nonblack-flat32-interior1px"
+            }
         }
     }
 }
@@ -213,6 +220,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         }),
         &[0, 1, 2],
     );
+    let shared_nonblack_flat32_interior_rgb = compare_channels(
+        &expected,
+        &actual,
+        |pixel| is_flat_shared_nonblack_interior(&expected, &actual, pixel, 1, 32),
+        &[0, 1, 2],
+    );
     let alpha = alpha_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
@@ -236,6 +249,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             (
                 MetricName::RgbSharedNonblackInterior3px,
                 shared_nonblack_interior_3px_rgb,
+            ),
+            (
+                MetricName::RgbSharedNonblackFlat32Interior1px,
+                shared_nonblack_flat32_interior_rgb,
             ),
         ],
     )?;
@@ -262,6 +279,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "rgbSharedNonblackInterior1px": metric_report(shared_nonblack_interior_rgb),
         "rgbSharedNonblackInterior2px": metric_report(shared_nonblack_interior_2px_rgb),
         "rgbSharedNonblackInterior3px": metric_report(shared_nonblack_interior_3px_rgb),
+        "rgbSharedNonblackFlat32Interior1px": metric_report(shared_nonblack_flat32_interior_rgb),
         "selectedMetric": selected_metric_report(options.metric, selected),
         "pass": pass,
         "thresholds": {
@@ -630,6 +648,27 @@ fn is_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
 
 fn is_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
     pixel_rgb_nonzero(&expected.rgba, pixel) && pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_flat_shared_nonblack_interior(
+    expected: &RgbaImage,
+    actual: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    max_channel_delta: u8,
+) -> bool {
+    is_interior_radius(expected, pixel, radius, |neighbor| {
+        is_shared_nonblack(expected, actual, neighbor)
+            && rgb_max_delta(&expected.rgba, pixel, neighbor) <= max_channel_delta
+            && rgb_max_delta(&actual.rgba, pixel, neighbor) <= max_channel_delta
+    })
+}
+
+fn rgb_max_delta(rgba: &[u8], left: usize, right: usize) -> u8 {
+    (0..3)
+        .map(|channel| rgba[left + channel].abs_diff(rgba[right + channel]))
+        .max()
+        .unwrap_or(0)
 }
 
 fn pixel_rgb_nonzero(rgba: &[u8], pixel: usize) -> bool {
