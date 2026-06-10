@@ -73,6 +73,10 @@ struct Options {
     candidate_limit: usize,
     #[arg(long, default_value_t = 1)]
     hit_radius: i32,
+    #[arg(long, default_value_t = 0.5)]
+    sample_center_x: f32,
+    #[arg(long, default_value_t = 0.5)]
+    sample_center_y: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -118,6 +122,7 @@ struct HotspotReport {
     width: usize,
     height: usize,
     camera: CameraReport,
+    sample_center: [f32; 2],
     summary: HotspotSummary,
     hotspots: Vec<Hotspot>,
 }
@@ -263,6 +268,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 height,
                 options.candidate_limit,
                 options.hit_radius,
+                [options.sample_center_x, options.sample_center_y],
             );
             Hotspot {
                 x: delta.x,
@@ -302,6 +308,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             z: options.camera_z,
             target_y: options.target_y,
         },
+        sample_center: [options.sample_center_x, options.sample_center_y],
         summary,
         hotspots,
     };
@@ -578,13 +585,17 @@ fn candidates_for_pixel(
     height: usize,
     candidate_limit: usize,
     hit_radius: i32,
+    sample_center: [f32; 2],
 ) -> Vec<HitCandidate> {
     let mut candidates = surfaces
         .iter()
         .flat_map(|surface| {
             (-hit_radius..=hit_radius).flat_map(move |dy| {
                 (-hit_radius..=hit_radius).flat_map(move |dx| {
-                    let point = [x as f32 + 0.5 + dx as f32, y as f32 + 0.5 + dy as f32];
+                    let point = [
+                        x as f32 + sample_center[0] + dx as f32,
+                        y as f32 + sample_center[1] + dy as f32,
+                    ];
                     surface_candidates(surface, view_projection, point, [dx, dy], width, height)
                 })
             })

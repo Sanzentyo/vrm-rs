@@ -228,6 +228,21 @@ only `4/32`. The mean frontmost UV distance is tiny for Rust actuals
 (`0.3739`), confirming that the diagnostic is measuring a reference-vs-Rust
 surface-selection difference rather than random texture sampling drift.
 
+For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
+`--sample-center-x` and `--sample-center-y` while leaving the default at the
+normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,
+the default center best explains Rust actuals (`31/32` wgpu and `27/32` Bevy
+actual/frontmost triangle matches). A `0.75,0.50` center best explains the
+three-vrm expected colors in both reports (`16/32` expected/frontmost triangle
+matches, expected mean UV distance `0.15`), and `0.75,0.75` lowers expected
+mean UV distance further to `0.13` with the same `16/32` expected triangle
+matches. This suggests a subpixel raster-alignment component mixed into the
+internal UV seam residual, but not a complete global offset: choosing that
+center worsens Rust actual/frontmost agreement. The next render-side experiment
+should therefore use an explicit diagnostic screen jitter in the Rust capture
+paths and judge it by PSNR, rather than hard-coding a sample-center change from
+the mapper alone.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
