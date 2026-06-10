@@ -186,6 +186,7 @@ enum RenderDiagnosticMode {
     BaseFactor,
     BaseColor,
     BaseColorFlipV,
+    BaseColorRawSrgb,
     Uv,
     BaseUv,
 }
@@ -217,6 +218,7 @@ impl RenderDiagnosticMode {
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
+            Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
         }

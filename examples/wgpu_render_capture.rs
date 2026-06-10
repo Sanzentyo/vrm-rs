@@ -276,6 +276,7 @@ enum DiagnosticRender {
     BaseFactor,
     BaseColor,
     BaseColorFlipV,
+    BaseColorRawSrgb,
     Uv,
     BaseUv,
 }
@@ -288,9 +289,14 @@ impl DiagnosticRender {
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
+            Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
         }
+    }
+
+    fn raw_base_color_filter(self) -> bool {
+        matches!(self, Self::BaseColorRawSrgb)
     }
 }
 
@@ -369,8 +375,10 @@ struct TextureResource {
 #[derive(Clone, Copy)]
 struct TextureResourceTables<'a> {
     color: &'a [TextureResource],
+    raw_color: &'a [TextureResource],
     normal: &'a [TextureResource],
     indices: &'a HashMap<usize, usize>,
+    raw_base_color_filter: bool,
 }
 
 struct TextureUpload<'a> {
@@ -689,6 +697,7 @@ fn material_extra_uniform(
                 DiagnosticRender::BaseFactor => -1.0,
                 DiagnosticRender::BaseColor => 1.0,
                 DiagnosticRender::BaseColorFlipV => 2.0,
+                DiagnosticRender::BaseColorRawSrgb => 1.25,
                 DiagnosticRender::Uv => 3.0,
                 DiagnosticRender::BaseUv => 4.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
@@ -1144,6 +1153,11 @@ fn texture_binding_resources<'a>(
     resources: TextureResourceTables<'a>,
 ) -> (&'a [TextureResource], usize) {
     let selected = match binding.color_space {
+        GltfMaterialTextureColorSpace::Srgb
+            if binding.slot == GltfMaterialTextureSlot::Base && resources.raw_base_color_filter =>
+        {
+            resources.raw_color
+        }
         GltfMaterialTextureColorSpace::Srgb => resources.color,
         GltfMaterialTextureColorSpace::Linear => resources.normal,
     };
@@ -1533,6 +1547,13 @@ async fn render_capture(
         wgpu::TextureFormat::Rgba8UnormSrgb,
         !options.disable_texture_mips,
     )?;
+    let raw_color_texture_resources = texture_resources(
+        loaded,
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        !options.disable_texture_mips,
+    )?;
     let normal_texture_resources = texture_resources(
         loaded,
         &device,
@@ -1569,8 +1590,10 @@ async fn render_capture(
                 &texture_bind_group_layout,
                 TextureResourceTables {
                     color: &color_texture_resources,
+                    raw_color: &raw_color_texture_resources,
                     normal: &normal_texture_resources,
                     indices: &texture_resource_indices,
+                    raw_base_color_filter: options.diagnostic_render.raw_base_color_filter(),
                 },
                 primitive.images,
                 primitive.uv_transforms,
@@ -2069,6 +2092,19 @@ fn linear_to_srgb_channel(value: f32) -> f32 {
     return select(1.055 * pow(x, 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
 }
 
+fn srgb_to_linear_channel(value: f32) -> f32 {
+    let x = clamp(value, 0.0, 1.0);
+    return select(pow((x + 0.055) / 1.055, 2.4), x / 12.92, x <= 0.04045);
+}
+
+fn srgb_to_linear_color(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear_channel(color.r),
+        srgb_to_linear_channel(color.g),
+        srgb_to_linear_channel(color.b),
+    );
+}
+
 fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     return vec4<f32>(
         linear_to_srgb_channel(color.r),
@@ -2207,9 +2243,15 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
         material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5,
     );
-    let texel = textureSample(base_texture, base_sampler, base_sample_uv);
+    let raw_texel = textureSample(base_texture, base_sampler, base_sample_uv);
+    let texel_rgb = select(
+        raw_texel.rgb,
+        srgb_to_linear_color(raw_texel.rgb),
+        material_extra.flags2.w > 1.0 && material_extra.flags2.w < 1.5,
+    );
+    let texel = vec4<f32>(texel_rgb, raw_texel.a);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
-    let alpha = input.color.a * texel.a;
+    let alpha = input.color.a * raw_texel.a;
     if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < input.rim_params.w {
         discard;
     }

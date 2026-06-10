@@ -2,6 +2,18 @@
 
 ## 2026-06-10
 
+- Added a Rust-only `base-color-raw-srgb` diagnostic mode across local CI,
+  the wgpu capture, the Bevy capture, the three-vrm browser harness metadata,
+  and `just render-parity-seed-base-color-raw-srgb-diagnostic`. This mode lets
+  the Rust renderers bind the base texture as raw UNORM and manually apply
+  shader sRGB decode while the three-vrm reference remains the normal
+  `base-color` diagnostic. It is intentionally not the default: the generated
+  texture-boundary and texture-selection guards still pass on the normal
+  sRGB-resource path (`52.9232`/`49.5132 dB` and `58.0021`/`52.5998 dB`), and
+  the current normal Seed-san base-color run is better than the raw experiment
+  (normal wgpu/Bevy `32.4602`/`32.4177 dB`; raw `32.1018`/`32.0621 dB`). This
+  rules out a broad "raw base texture filtering" switch as the parity fix while
+  preserving the experiment for future sampler/color-space slices.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
@@ -65,7 +77,8 @@
   focused body-color diagnostics on overlapping nonblack interior pixels. The
   fixed base-factor run now matches the reference in the body region
   (`Infinity` for wgpu, `74.8665 dB` for Bevy, max selected-channel deltas
-  `0`/`1`), while base-color drops to wgpu `28.7892 dB` / Bevy `27.8626 dB`.
+  `0`/`1`), while the initial base-color slice dropped to wgpu `28.7892 dB`
+  / Bevy `27.8626 dB`.
   This narrows the Seed-san body-color blocker to base texture sampling,
   UV/sampler state, texture color-space handling, or texture selection before
   MToon light/normal/rim/shade terms enter the frame.

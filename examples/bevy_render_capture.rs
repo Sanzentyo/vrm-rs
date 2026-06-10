@@ -229,6 +229,7 @@ enum DiagnosticRender {
     BaseFactor,
     BaseColor,
     BaseColorFlipV,
+    BaseColorRawSrgb,
     Uv,
     BaseUv,
 }
@@ -241,9 +242,14 @@ impl DiagnosticRender {
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
+            Self::BaseColorRawSrgb => "base-color-raw-srgb",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
         }
+    }
+
+    fn raw_base_color_filter(self) -> bool {
+        matches!(self, Self::BaseColorRawSrgb)
     }
 }
 
@@ -377,11 +383,35 @@ fn spawn_vrm_meshes(
                     .images
                     .get(texture.image)
                     .and_then(|image| {
-                        bevy_image(image, texture.sampler, !options.disable_texture_mips)
+                        bevy_image_with_format(
+                            image,
+                            TextureFormat::Rgba8UnormSrgb,
+                            texture.sampler,
+                            !options.disable_texture_mips,
+                        )
                     })
                     .map(|image| images.add(image))
             })
             .collect::<Vec<_>>(),
+        raw_color_images: loaded
+            .textures
+            .iter()
+            .map(|texture| {
+                loaded
+                    .images
+                    .get(texture.image)
+                    .and_then(|image| {
+                        bevy_image_with_format(
+                            image,
+                            TextureFormat::Rgba8Unorm,
+                            texture.sampler,
+                            !options.disable_texture_mips,
+                        )
+                    })
+                    .map(|image| images.add(image))
+            })
+            .collect::<Vec<_>>(),
+        raw_base_color_filter: options.diagnostic_render.raw_base_color_filter(),
         linear_images: loaded
             .textures
             .iter()
@@ -682,7 +712,9 @@ struct BevyMtoonPhaseOrder(i32);
 
 struct BevyImageHandles {
     color_images: Vec<Option<Handle<Image>>>,
+    raw_color_images: Vec<Option<Handle<Image>>>,
     linear_images: Vec<Option<Handle<Image>>>,
+    raw_base_color_filter: bool,
     white: Handle<Image>,
     black: Handle<Image>,
     neutral_normal: Handle<Image>,
@@ -988,6 +1020,7 @@ fn bevy_mtoon_material(
             DiagnosticRender::BaseFactor => -1.0,
             DiagnosticRender::BaseColor => 1.0,
             DiagnosticRender::BaseColorFlipV => 2.0,
+            DiagnosticRender::BaseColorRawSrgb => 1.25,
             DiagnosticRender::Uv => 3.0,
             DiagnosticRender::BaseUv => 4.0,
             DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
@@ -1123,6 +1156,11 @@ fn bevy_texture_handle(
     handles: &BevyImageHandles,
 ) -> Handle<Image> {
     let images = match binding.color_space {
+        GltfMaterialTextureColorSpace::Srgb
+            if binding.slot == GltfMaterialTextureSlot::Base && handles.raw_base_color_filter =>
+        {
+            &handles.raw_color_images
+        }
         GltfMaterialTextureColorSpace::Srgb => &handles.color_images,
         GltfMaterialTextureColorSpace::Linear => &handles.linear_images,
     };
@@ -1275,10 +1313,6 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
         render_capture_scene::CaptureMaterialAlphaMode::Mask => AlphaMode::Mask(plan.alpha_cutoff),
         render_capture_scene::CaptureMaterialAlphaMode::Blend => AlphaMode::Blend,
     }
-}
-
-fn bevy_image(image: &ImageData, sampler: GltfSamplerData, use_mips: bool) -> Option<Image> {
-    bevy_image_with_format(image, TextureFormat::Rgba8UnormSrgb, sampler, use_mips)
 }
 
 fn bevy_image_with_format(

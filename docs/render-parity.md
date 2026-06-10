@@ -124,6 +124,7 @@ For the next material/shader split, run:
 ```powershell
 just render-parity-seed-base-factor-diagnostic
 just render-parity-seed-base-color-diagnostic
+just render-parity-seed-base-color-raw-srgb-diagnostic
 just render-parity-seed-base-color-interior2-diagnostic
 just render-parity-seed-base-color-no-mip-diagnostic
 just render-parity-seed-base-color-flip-v-diagnostic
@@ -145,11 +146,20 @@ The 2026-06-10 Seed-san diagnostic writes
 base-factor selected PSNR `Infinity` for wgpu and `74.8665 dB` for Bevy, with
 max selected-channel deltas `0` and `1`. The matching base-color run writes
 `.external-fixtures/render-parity-seed-base-color-diagnostic/` and reports
-wgpu `28.7892 dB` / Bevy `27.8626 dB`, with max selected-channel deltas `219`
-/ `232`. This confirms that material assignment and base factors match in the
+wgpu `32.4602 dB` / Bevy `32.4177 dB`, with max selected-channel deltas `219`
+/ `218`. This confirms that material assignment and base factors match in the
 model-body overlap region; the remaining Seed-san color blocker starts at
 base-texture sampling, UV/sampler state, texture color-space handling, or a
 texture-selection detail before the MToon lighting stack is applied.
+
+`render-parity-seed-base-color-raw-srgb-diagnostic` is a Rust-only experiment:
+the three-vrm reference still renders its normal `base-color` diagnostic, while
+wgpu/Bevy bind only the base texture as raw `RGBA8Unorm` and manually apply
+shader sRGB decode. The current run reports wgpu `32.1018 dB` / Bevy
+`32.0621 dB`, slightly worse than the normal sRGB-resource path. Because the
+generated texture-boundary and texture-selection guards still pass on the
+normal path, this raw-base experiment should stay diagnostic rather than
+becoming the renderer default.
 
 Two follow-up diagnostics keep that blocker narrower. The
 `render-parity-seed-base-color-interior2-diagnostic` recipe uses the stricter

@@ -89,6 +89,19 @@ fn linear_to_srgb_channel(value: f32) -> f32 {
     return select(1.055 * pow(x, 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
 }
 
+fn srgb_to_linear_channel(value: f32) -> f32 {
+    let x = clamp(value, 0.0, 1.0);
+    return select(pow((x + 0.055) / 1.055, 2.4), x / 12.92, x <= 0.04045);
+}
+
+fn srgb_to_linear_color(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear_channel(color.r),
+        srgb_to_linear_channel(color.g),
+        srgb_to_linear_channel(color.b),
+    );
+}
+
 fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     return vec4<f32>(
         linear_to_srgb_channel(color.r),
@@ -239,10 +252,16 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
         material.material_flags2.w > 1.5 && material.material_flags2.w < 2.5,
     );
-    let texel = textureSample(base_texture, base_sampler, base_sample_uv);
+    let raw_texel = textureSample(base_texture, base_sampler, base_sample_uv);
+    let texel_rgb = select(
+        raw_texel.rgb,
+        srgb_to_linear_color(raw_texel.rgb),
+        material.material_flags2.w > 1.0 && material.material_flags2.w < 1.5,
+    );
+    let texel = vec4<f32>(texel_rgb, raw_texel.a);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     let is_pbr_fallback = material.material_flags.y > 0.5;
-    let alpha = material.base_color.a * texel.a;
+    let alpha = material.base_color.a * raw_texel.a;
     if material.pipeline.x > 0.5 && material.pipeline.x < 1.5 && alpha < material.pipeline.y {
         discard;
     }
