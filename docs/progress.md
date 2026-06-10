@@ -52,6 +52,15 @@
   left/up. This keeps the active blocker classified as local fill/raster
   ownership at real model boundaries rather than a single global subpixel
   convention.
+- Added `tools/render-parity/summarize-owner-hotspots.rs`, a clap-based Rust
+  script that turns three-vrm `owner-id` hotspot projection captures into
+  compact JSON/Markdown summaries. `just render-parity-seed-base-color-owner-hotspots`
+  now writes both the full browser capture and
+  `.external-fixtures/render-parity-seed-base-color-diagnostic/reports/Seed-san.owner-hotspots.*.summary.{json,md}`.
+  The summary preserves rendered-owner counts plus rendered-to-frontmost,
+  rendered-to-best-subpixel, and rendered-to-best-neighbor material/triangle
+  transitions, making the local fill/raster ownership diagnosis repeatable
+  without one-off node snippets.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base

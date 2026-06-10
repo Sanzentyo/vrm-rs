@@ -318,7 +318,13 @@ diagnostic triangle with a stable RGB owner ID, decodes the WebGL-rendered
 owner at each hotspot pixel, and compares it with the CPU-projected candidate
 set in `reference.renderer.diagnosticHotspots`. The report includes a
 `summary` block plus per-pixel `renderedOwnerRecovery` records for a 3x3
-same-pixel subpixel grid and a 3x3 one-pixel-neighborhood grid. On the current
+same-pixel subpixel grid and a 3x3 one-pixel-neighborhood grid. The recipe now
+also runs `tools/render-parity/summarize-owner-hotspots.rs`, writing compact
+JSON/Markdown summaries under
+`.external-fixtures/render-parity-seed-base-color-diagnostic/reports/Seed-san.owner-hotspots.*.summary.{json,md}`.
+Those summaries include rendered-owner material counts and rendered-to-frontmost
+/ rendered-to-recovered material and triangle transitions, so repeated
+diagnostic runs no longer require ad hoc JSON snippets. On the current
 Seed-san top-64
 shared-body base-color hotspots, every pixel has a WebGL owner, but that owner
 appears in the CPU center-sample candidate set only `20/64` times at
