@@ -84,6 +84,8 @@ struct OwnerCompareReport {
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_pass_transitions: Vec<OwnerPassTransition>,
     top_owner_geometry_classes: Vec<OwnerGeometryClassTransition>,
+    top_draw_order_relation_classes: Vec<OwnerDrawOrderRelationClass>,
+    top_draw_order_transitions: Vec<OwnerDrawOrderTransition>,
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
     top_actual_cull_visibility: Vec<OwnerActualCullVisibility>,
     top_actual_metadata_recoveries: Vec<OwnerMetadataRecovery>,
@@ -121,6 +123,28 @@ struct OwnerGeometryClassTransition {
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerDrawOrderTransition {
+    expected_pass: String,
+    actual_pass: String,
+    expected_draw_index: String,
+    actual_draw_index: String,
+    draw_index_relation: String,
+    expected_render_order: String,
+    actual_render_order: String,
+    render_order_relation: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerDrawOrderRelationClass {
+    expected_pass: String,
+    actual_pass: String,
+    draw_index_relation: String,
+    render_order_relation: String,
     count: u64,
 }
 
@@ -200,6 +224,26 @@ struct OwnerGeometryClassKey {
     material_relation: String,
     triangle_relation: String,
     projection_relation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerDrawOrderKey {
+    expected_pass: String,
+    actual_pass: String,
+    expected_draw_index: String,
+    actual_draw_index: String,
+    draw_index_relation: String,
+    expected_render_order: String,
+    actual_render_order: String,
+    render_order_relation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerDrawOrderRelationKey {
+    expected_pass: String,
+    actual_pass: String,
+    draw_index_relation: String,
+    render_order_relation: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -369,6 +413,8 @@ fn compare_owner_images(
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut owner_geometry_classes = BTreeMap::new();
+    let mut draw_order_relation_classes = BTreeMap::new();
+    let mut draw_order_transitions = BTreeMap::new();
     let mut render_policy_transitions = BTreeMap::new();
     let mut actual_cull_visibility = BTreeMap::new();
     let mut actual_metadata_recoveries = BTreeMap::new();
@@ -463,6 +509,16 @@ fn compare_owner_images(
                         expected_label,
                         actual_label,
                     );
+                    bump_draw_order_transition(
+                        &mut draw_order_transitions,
+                        expected_label,
+                        actual_label,
+                    );
+                    bump_draw_order_relation_class(
+                        &mut draw_order_relation_classes,
+                        expected_label,
+                        actual_label,
+                    );
                     bump_render_policy_transition(
                         &mut render_policy_transitions,
                         expected_metadata.get(&left),
@@ -534,6 +590,11 @@ fn compare_owner_images(
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
         top_pass_transitions: top_pass_transitions(pass_transitions, top),
         top_owner_geometry_classes: top_owner_geometry_classes(owner_geometry_classes, top),
+        top_draw_order_relation_classes: top_draw_order_relation_classes(
+            draw_order_relation_classes,
+            top,
+        ),
+        top_draw_order_transitions: top_draw_order_transitions(draw_order_transitions, top),
         top_render_policy_transitions: top_render_policy_transitions(
             render_policy_transitions,
             top,
@@ -647,6 +708,68 @@ fn top_owner_geometry_classes(
             material_relation: key.material_relation,
             triangle_relation: key.triangle_relation,
             projection_relation: key.projection_relation,
+            count,
+        })
+        .collect()
+}
+
+fn bump_draw_order_transition(
+    map: &mut BTreeMap<OwnerDrawOrderKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerDrawOrderKey::from_labels(expected, actual))
+        .or_default() += 1;
+}
+
+fn bump_draw_order_relation_class(
+    map: &mut BTreeMap<OwnerDrawOrderRelationKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerDrawOrderRelationKey::from_labels(
+        expected, actual,
+    ))
+    .or_default() += 1;
+}
+
+fn top_draw_order_relation_classes(
+    map: BTreeMap<OwnerDrawOrderRelationKey, u64>,
+    top: usize,
+) -> Vec<OwnerDrawOrderRelationClass> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerDrawOrderRelationClass {
+            expected_pass: key.expected_pass,
+            actual_pass: key.actual_pass,
+            draw_index_relation: key.draw_index_relation,
+            render_order_relation: key.render_order_relation,
+            count,
+        })
+        .collect()
+}
+
+fn top_draw_order_transitions(
+    map: BTreeMap<OwnerDrawOrderKey, u64>,
+    top: usize,
+) -> Vec<OwnerDrawOrderTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerDrawOrderTransition {
+            expected_pass: key.expected_pass,
+            actual_pass: key.actual_pass,
+            expected_draw_index: key.expected_draw_index,
+            actual_draw_index: key.actual_draw_index,
+            draw_index_relation: key.draw_index_relation,
+            expected_render_order: key.expected_render_order,
+            actual_render_order: key.actual_render_order,
+            render_order_relation: key.render_order_relation,
             count,
         })
         .collect()
@@ -897,6 +1020,46 @@ impl OwnerGeometryClassKey {
     }
 }
 
+impl OwnerDrawOrderKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            expected_pass: pass_label(expected),
+            actual_pass: pass_label(actual),
+            expected_draw_index: optional_u64_label(expected.and_then(|label| label.draw_index)),
+            actual_draw_index: optional_u64_label(actual.and_then(|label| label.draw_index)),
+            draw_index_relation: u64_order_relation(
+                expected.and_then(|label| label.draw_index),
+                actual.and_then(|label| label.draw_index),
+            ),
+            expected_render_order: optional_i64_label(
+                expected.and_then(|label| label.render_order),
+            ),
+            actual_render_order: optional_i64_label(actual.and_then(|label| label.render_order)),
+            render_order_relation: i64_order_relation(
+                expected.and_then(|label| label.render_order),
+                actual.and_then(|label| label.render_order),
+            ),
+        }
+    }
+}
+
+impl OwnerDrawOrderRelationKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            expected_pass: pass_label(expected),
+            actual_pass: pass_label(actual),
+            draw_index_relation: u64_order_relation(
+                expected.and_then(|label| label.draw_index),
+                actual.and_then(|label| label.draw_index),
+            ),
+            render_order_relation: i64_order_relation(
+                expected.and_then(|label| label.render_order),
+                actual.and_then(|label| label.render_order),
+            ),
+        }
+    }
+}
+
 fn relation_label(left: Option<&str>, right: Option<&str>) -> String {
     match (left, right) {
         (Some(left), Some(right)) if left == right => "same".to_owned(),
@@ -1035,6 +1198,32 @@ fn optional_bool_label(value: Option<bool>) -> String {
         Some(true) => "true".to_owned(),
         Some(false) => "false".to_owned(),
         None => "unknown".to_owned(),
+    }
+}
+
+fn optional_u64_label(value: Option<u64>) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
+}
+
+fn optional_i64_label(value: Option<i64>) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
+}
+
+fn u64_order_relation(expected: Option<u64>, actual: Option<u64>) -> String {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) if expected == actual => "same".to_owned(),
+        (Some(expected), Some(actual)) if expected < actual => "expected-before-actual".to_owned(),
+        (Some(_), Some(_)) => "expected-after-actual".to_owned(),
+        _ => "unknown".to_owned(),
+    }
+}
+
+fn i64_order_relation(expected: Option<i64>, actual: Option<i64>) -> String {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) if expected == actual => "same".to_owned(),
+        (Some(expected), Some(actual)) if expected < actual => "expected-before-actual".to_owned(),
+        (Some(_), Some(_)) => "expected-after-actual".to_owned(),
+        _ => "unknown".to_owned(),
     }
 }
 
@@ -1345,6 +1534,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 gpu_front_facing: Some(true),
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
+                render_order: Some(2001),
+                draw_index: Some(7),
                 ..OwnerLabel::default()
             },
         ),
@@ -1360,6 +1551,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 gpu_front_facing: Some(true),
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
+                render_order: Some(2002),
+                draw_index: Some(9),
                 ..OwnerLabel::default()
             },
         ),
@@ -1376,6 +1569,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 gpu_front_facing: Some(true),
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
+                render_order: Some(2001),
+                draw_index: Some(8),
                 ..OwnerLabel::default()
             },
         ),
@@ -1390,6 +1585,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 gpu_front_facing: Some(true),
                 visible_by_cull_policy: Some(false),
                 depth_write: Some(false),
+                render_order: Some(2000),
+                draw_index: Some(4),
                 ..OwnerLabel::default()
             },
         ),
@@ -1422,6 +1619,25 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(report.top_expected_to_actual[0].expected, 2);
     assert_eq!(report.top_expected_to_actual[0].actual, 3);
+    assert!(report.top_draw_order_transitions.iter().any(|transition| {
+        transition.expected_pass == "outline"
+            && transition.actual_pass == "base"
+            && transition.draw_index_relation == "expected-before-actual"
+            && transition.render_order_relation == "same"
+            && transition.count == 1
+    }));
+    assert!(
+        report
+            .top_draw_order_relation_classes
+            .iter()
+            .any(|transition| {
+                transition.expected_pass == "outline"
+                    && transition.actual_pass == "base"
+                    && transition.draw_index_relation == "expected-before-actual"
+                    && transition.render_order_relation == "same"
+                    && transition.count == 1
+            })
+    );
     assert!(report.top_actual_cull_visibility.iter().any(|transition| {
         transition.actual_pass == "outline"
             && transition.actual_cull_mode == "front"
