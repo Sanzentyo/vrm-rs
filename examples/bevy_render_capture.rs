@@ -908,14 +908,7 @@ fn mesh_name(loaded: &LoadedVrm, mesh: usize) -> Option<&str> {
 }
 
 fn material_name(loaded: &LoadedVrm, material: Option<usize>) -> Option<&str> {
-    material.and_then(|index| {
-        loaded
-            .model()
-            .document()
-            .materials
-            .get(index)
-            .and_then(|material| material.name.as_deref())
-    })
+    loaded.material_display_name(material)
 }
 
 fn owner_id_color(id: u32) -> [f32; 4] {

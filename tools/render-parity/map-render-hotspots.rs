@@ -1143,14 +1143,9 @@ fn build_surfaces(
             else {
                 continue;
             };
-            let material_name = primitive.material.and_then(|index| {
-                loaded
-                    .model()
-                    .document()
-                    .materials
-                    .get(index)
-                    .and_then(|material| material.name.clone())
-            });
+            let material_name = loaded
+                .material_display_name(primitive.material)
+                .map(str::to_owned);
             let uv_transforms = loaded.expression_material_uv_transforms(
                 primitive.material,
                 options.mtoon_time,

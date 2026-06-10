@@ -57,6 +57,20 @@ impl LoadedVrm {
         CpuRgba8Image::from_image_data(self.texture_image(texture)?).ok()
     }
 
+    pub fn material_display_name(&self, material: Option<usize>) -> Option<&str> {
+        let index = material?;
+        self.gltf_materials
+            .get(index)
+            .and_then(|material| material.name.as_deref())
+            .or_else(|| {
+                self.model
+                    .document()
+                    .materials
+                    .get(index)
+                    .and_then(|material| material.name.as_deref())
+            })
+    }
+
     pub fn material_base_texture_rgba8_image(
         &self,
         material: Option<usize>,
@@ -1339,8 +1353,9 @@ pub enum GltfWrapMode {
     Repeat,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GltfMaterialData {
+    pub name: Option<String>,
     pub base_color_factor: [f32; 4],
     pub base_color_texture: Option<usize>,
     pub base_color_texture_transform: Option<TextureTransform2d>,
@@ -2152,6 +2167,7 @@ fn extract_gltf_materials(document: &gltf::Document) -> Vec<GltfMaterialData> {
             let occlusion_texture = material.occlusion_texture();
             let emissive_texture = material.emissive_texture();
             GltfMaterialData {
+                name: material.name().map(str::to_owned),
                 base_color_factor: pbr.base_color_factor(),
                 base_color_texture: base_color_texture
                     .as_ref()
@@ -3645,6 +3661,8 @@ mod tests {
         assert_eq!(loaded.texture_image(99), None);
         assert_eq!(loaded.texture_rgba8_image(0).unwrap().rgba.len(), 4);
         assert_eq!(loaded.texture_rgba8_image(99), None);
+        assert_eq!(loaded.material_display_name(Some(0)), Some("mtoon"));
+        assert_eq!(loaded.material_display_name(Some(99)), None);
         assert_eq!(
             loaded
                 .material_outline_width_rgba8_image(Some(0))
@@ -3680,6 +3698,7 @@ mod tests {
         assert_eq!(
             loaded.gltf_materials[0],
             GltfMaterialData {
+                name: Some("mtoon".to_owned()),
                 base_color_factor: [0.25, 0.5, 0.75, 1.0],
                 base_color_texture: Some(0),
                 base_color_texture_transform: Some(TextureTransform2d {
