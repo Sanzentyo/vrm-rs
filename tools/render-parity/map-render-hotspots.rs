@@ -20,6 +20,7 @@ use clap::Parser;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -117,6 +118,7 @@ struct HotspotReport {
     width: usize,
     height: usize,
     camera: CameraReport,
+    summary: HotspotSummary,
     hotspots: Vec<Hotspot>,
 }
 
@@ -125,6 +127,27 @@ struct CameraReport {
     y: f32,
     z: f32,
     target_y: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct HotspotSummary {
+    hotspot_count: usize,
+    actual_frontmost_triangle_matches: usize,
+    expected_frontmost_triangle_matches: usize,
+    actual_frontmost_material_matches: usize,
+    expected_frontmost_material_matches: usize,
+    actual_frontmost_mean_uv_distance: Option<f32>,
+    expected_frontmost_mean_uv_distance: Option<f32>,
+    actual_frontmost_max_uv_distance: Option<f32>,
+    expected_frontmost_max_uv_distance: Option<f32>,
+    actual_visible_sample_offsets: Vec<OffsetCount>,
+    expected_visible_sample_offsets: Vec<OffsetCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OffsetCount {
+    offset: [i32; 2],
+    count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,7 +247,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let surfaces = build_surfaces(&loaded, &expression_effects, &options)?;
     let view_projection = view_projection(width, height, &options);
 
-    let hotspots = delta_report
+    let hotspots: Vec<Hotspot> = delta_report
         .top
         .iter()
         .take(options.top_pixels)
@@ -267,6 +290,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             }
         })
         .collect();
+    let summary = summarize_hotspots(&hotspots);
 
     let report = HotspotReport {
         fixture: display_path(&options.fixture),
@@ -278,6 +302,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             z: options.camera_z,
             target_y: options.target_y,
         },
+        summary,
         hotspots,
     };
     let formatted = format!("{}\n", serde_json::to_string_pretty(&report)?);
@@ -295,6 +320,133 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 fn read_delta_report(path: &Path) -> Result<DeltaReport, Box<dyn Error>> {
     let value = serde_json::from_str::<Value>(&fs::read_to_string(path)?)?;
     Ok(serde_json::from_value(value)?)
+}
+
+fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
+    HotspotSummary {
+        hotspot_count: hotspots.len(),
+        actual_frontmost_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
+        actual_frontmost_material_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_material(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_material_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_material(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
+        actual_frontmost_mean_uv_distance: mean_frontmost_uv_distance(hotspots, |hotspot| {
+            hotspot.actual_linear_uv
+        }),
+        expected_frontmost_mean_uv_distance: mean_frontmost_uv_distance(hotspots, |hotspot| {
+            hotspot.expected_linear_uv
+        }),
+        actual_frontmost_max_uv_distance: max_frontmost_uv_distance(hotspots, |hotspot| {
+            hotspot.actual_linear_uv
+        }),
+        expected_frontmost_max_uv_distance: max_frontmost_uv_distance(hotspots, |hotspot| {
+            hotspot.expected_linear_uv
+        }),
+        actual_visible_sample_offsets: offset_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.nearest_visible_actual.as_ref()),
+        ),
+        expected_visible_sample_offsets: offset_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.nearest_visible_expected.as_ref()),
+        ),
+    }
+}
+
+fn same_surface_triangle(left: Option<&CandidateMatch>, right: Option<&CandidateMatch>) -> bool {
+    matches!(
+        (left, right),
+        (Some(left), Some(right))
+            if left.draw_index == right.draw_index
+                && left.pass == right.pass
+                && left.material == right.material
+                && left.triangle == right.triangle
+    )
+}
+
+fn same_material(left: Option<&CandidateMatch>, right: Option<&CandidateMatch>) -> bool {
+    matches!(
+        (left, right),
+        (Some(left), Some(right))
+            if left.pass == right.pass && left.material == right.material
+    )
+}
+
+fn mean_frontmost_uv_distance(
+    hotspots: &[Hotspot],
+    uv: impl Fn(&Hotspot) -> [f32; 2],
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .map(|frontmost| uv_distance(frontmost.base_uv, uv(hotspot)))
+        })
+        .fold((0.0, 0usize), |(sum, count), distance| {
+            (sum + distance, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn max_frontmost_uv_distance(
+    hotspots: &[Hotspot],
+    uv: impl Fn(&Hotspot) -> [f32; 2],
+) -> Option<f32> {
+    hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .map(|frontmost| uv_distance(frontmost.base_uv, uv(hotspot)))
+        })
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn offset_counts<'a>(candidates: impl Iterator<Item = &'a CandidateMatch>) -> Vec<OffsetCount> {
+    let mut counts = BTreeMap::<[i32; 2], usize>::new();
+    for candidate in candidates {
+        *counts.entry(candidate.sample_offset).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(offset, count)| OffsetCount { offset, count })
+        .collect()
 }
 
 fn build_surfaces(

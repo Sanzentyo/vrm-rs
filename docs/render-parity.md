@@ -219,6 +219,15 @@ three-vrm WebGL path and the Rust CPU-prepared geometry, rather than
 transparent blending, outline expansion, color-space decoding, or texture
 transform state.
 
+The hotspot JSON now carries a `summary` block so this classification can be
+tracked without external PowerShell grouping. The current top-32 summary is:
+wgpu actual/frontmost triangle matches `31/32`, Bevy actual/frontmost triangle
+matches `27/32`, and both renderers have expected/frontmost triangle matches
+only `4/32`. The mean frontmost UV distance is tiny for Rust actuals
+(`0.0017` wgpu, `0.0039` Bevy) but large for the three-vrm expected colors
+(`0.3739`), confirming that the diagnostic is measuring a reference-vs-Rust
+surface-selection difference rather than random texture sampling drift.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
