@@ -234,6 +234,16 @@ matches for both actual and expected, with large base-UV distances from the
 frontmost candidate (wgpu actual/expected mean `0.6707` / `0.5730`, Bevy
 `0.6752` / `0.5780`). Treat this as evidence for real-model high-gradient UV
 island/material ownership rather than a simple adjacent-edge fill-rule issue.
+Use
+`just render-parity-seed-base-color-flat32-gradient-owner-hotspots D:/git/three-vrm`
+to project the same gradient top-64 pixels through three-vrm's rendered
+`owner-id` diagnostic. Current owner projection confirms that the browser
+renders a non-zero owner for `64/64` gradient hotspots, but the rendered owner
+matches the CPU center-sample frontmost candidate for only `27/64`. Subpixel
+recovery finds `49/64`, all depth-rank `1`, with centers spread across
+`0.25/0.5/0.75` offsets; one-pixel neighbor recovery finds `44/64` with mixed
+offsets. The strongest rendered-owner material bucket is `huku_bake` (`24/64`),
+matching the real-model UV/material-boundary interpretation.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use

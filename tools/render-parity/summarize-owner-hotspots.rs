@@ -238,6 +238,11 @@ fn markdown_report(report: &OwnerHotspotReport) -> String {
     output.push_str("\n```\n\n");
     write_top_counts(
         &mut output,
+        "Rendered Owner Materials",
+        &report.rendered_owner_materials,
+    );
+    write_top_counts(
+        &mut output,
         "Rendered To Frontmost Materials",
         &report.rendered_to_frontmost_materials,
     );
