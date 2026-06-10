@@ -67,6 +67,8 @@ struct OwnerCompareReport {
     expected_only: u64,
     actual_only: u64,
     mismatched_shared_nonzero: u64,
+    actual_not_visible_by_cull_policy_shared_nonzero: u64,
+    actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
     exact_owner_match_ratio: f64,
     expected_neighborhood_1px_ratio: f64,
     actual_neighborhood_1px_ratio: f64,
@@ -75,6 +77,7 @@ struct OwnerCompareReport {
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_pass_transitions: Vec<OwnerPassTransition>,
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
+    top_actual_cull_visibility: Vec<OwnerActualCullVisibility>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
@@ -117,12 +120,35 @@ struct OwnerRenderPolicyTransition {
     count: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct OwnerActualCullVisibility {
+    actual_pass: String,
+    actual_cull_mode: String,
+    actual_front_face: String,
+    actual_front_facing: String,
+    actual_gpu_front_facing: String,
+    actual_visible_by_cull_policy: String,
+    actual_depth_write: String,
+    count: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct OwnerRenderPolicyKey {
     expected_pass: String,
     expected_side: String,
     expected_front_facing: String,
     expected_depth_write: String,
+    actual_pass: String,
+    actual_cull_mode: String,
+    actual_front_face: String,
+    actual_front_facing: String,
+    actual_gpu_front_facing: String,
+    actual_visible_by_cull_policy: String,
+    actual_depth_write: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerActualCullVisibilityKey {
     actual_pass: String,
     actual_cull_mode: String,
     actual_front_face: String,
@@ -284,11 +310,14 @@ fn compare_owner_images(
     let mut expected_only = 0;
     let mut actual_only = 0;
     let mut mismatched_shared_nonzero = 0;
+    let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
+    let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
     let mut expected_to_actual = BTreeMap::new();
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut render_policy_transitions = BTreeMap::new();
+    let mut actual_cull_visibility = BTreeMap::new();
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
 
@@ -309,10 +338,21 @@ fn compare_owner_images(
             (_, 0) => expected_only += 1,
             (left, right) => {
                 shared_nonzero += 1;
+                let actual_label = actual_metadata.get(&right);
+                let actual_is_culled = actual_label
+                    .and_then(|label| label.visible_by_cull_policy)
+                    .is_some_and(|visible| !visible);
+                if actual_is_culled {
+                    actual_not_visible_by_cull_policy_shared_nonzero += 1;
+                }
+                bump_actual_cull_visibility(&mut actual_cull_visibility, actual_label);
                 if left == right {
                     exact_owner_matches += 1;
                 } else {
                     mismatched_shared_nonzero += 1;
+                    if actual_is_culled {
+                        actual_not_visible_by_cull_policy_mismatched_shared_nonzero += 1;
+                    }
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
                     bump_transition_pixels(&mut expected_to_actual_pixels, left, right, pixel);
@@ -320,12 +360,12 @@ fn compare_owner_images(
                     bump_pass_transition(
                         &mut pass_transitions,
                         expected_metadata.get(&left),
-                        actual_metadata.get(&right),
+                        actual_label,
                     );
                     bump_render_policy_transition(
                         &mut render_policy_transitions,
                         expected_metadata.get(&left),
-                        actual_metadata.get(&right),
+                        actual_label,
                     );
                     *owner_id_deltas
                         .entry(i64::from(left) - i64::from(right))
@@ -370,6 +410,8 @@ fn compare_owner_images(
         expected_only,
         actual_only,
         mismatched_shared_nonzero,
+        actual_not_visible_by_cull_policy_shared_nonzero,
+        actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
         exact_owner_match_ratio: ratio(exact_owner_matches, shared_nonzero),
         expected_neighborhood_1px_ratio: ratio(
             expected_found_in_actual_neighborhood_1px,
@@ -387,6 +429,7 @@ fn compare_owner_images(
             render_policy_transitions,
             top,
         ),
+        top_actual_cull_visibility: top_actual_cull_visibility(actual_cull_visibility, top),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
         top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
         top_expected_to_actual_details: top_transition_details(
@@ -495,6 +538,36 @@ fn top_render_policy_transitions(
         .collect()
 }
 
+fn bump_actual_cull_visibility(
+    map: &mut BTreeMap<OwnerActualCullVisibilityKey, u64>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerActualCullVisibilityKey::from_label(actual))
+        .or_default() += 1;
+}
+
+fn top_actual_cull_visibility(
+    map: BTreeMap<OwnerActualCullVisibilityKey, u64>,
+    top: usize,
+) -> Vec<OwnerActualCullVisibility> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerActualCullVisibility {
+            actual_pass: key.actual_pass,
+            actual_cull_mode: key.actual_cull_mode,
+            actual_front_face: key.actual_front_face,
+            actual_front_facing: key.actual_front_facing,
+            actual_gpu_front_facing: key.actual_gpu_front_facing,
+            actual_visible_by_cull_policy: key.actual_visible_by_cull_policy,
+            actual_depth_write: key.actual_depth_write,
+            count,
+        })
+        .collect()
+}
+
 impl OwnerRenderPolicyKey {
     fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
         Self {
@@ -505,6 +578,30 @@ impl OwnerRenderPolicyKey {
                 .unwrap_or_else(|| "unknown".to_owned()),
             expected_front_facing: optional_bool_label(expected.and_then(|label| label.front_facing)),
             expected_depth_write: optional_bool_label(expected.and_then(|label| label.depth_write)),
+            actual_pass: pass_label(actual),
+            actual_cull_mode: actual
+                .and_then(|label| label.cull_mode.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
+            actual_front_face: actual
+                .and_then(|label| label.front_face.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
+            actual_front_facing: optional_bool_label(actual.and_then(|label| label.front_facing)),
+            actual_gpu_front_facing: optional_bool_label(
+                actual.and_then(|label| label.gpu_front_facing),
+            ),
+            actual_visible_by_cull_policy: optional_bool_label(
+                actual.and_then(|label| label.visible_by_cull_policy),
+            ),
+            actual_depth_write: optional_bool_label(actual.and_then(|label| label.depth_write)),
+        }
+    }
+}
+
+impl OwnerActualCullVisibilityKey {
+    fn from_label(actual: Option<&OwnerLabel>) -> Self {
+        Self {
             actual_pass: pass_label(actual),
             actual_cull_mode: actual
                 .and_then(|label| label.cull_mode.as_deref())
@@ -831,40 +928,73 @@ fn display_path(path: &Path) -> String {
 
 fn self_test() -> Result<(), Box<dyn Error>> {
     let expected = RgbaImage {
-        width: 3,
+        width: 4,
         height: 1,
-        rgba: vec![1, 0, 0, 255, 2, 0, 0, 255, 0, 0, 0, 255],
+        rgba: vec![
+            1, 0, 0, 255, 2, 0, 0, 255, 5, 0, 0, 255, 0, 0, 0, 255,
+        ],
     };
     let actual = RgbaImage {
-        width: 3,
+        width: 4,
         height: 1,
-        rgba: vec![1, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
+        rgba: vec![
+            1, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255, 6, 0, 0, 255,
+        ],
     };
-    let expected_metadata = HashMap::from([(
-        2,
-        OwnerLabel {
-            id: 2,
-            pass: Some("outline".to_owned()),
-            material_side: Some(1),
-            front_facing: Some(false),
-            depth_write: Some(true),
-            ..OwnerLabel::default()
-        },
-    )]);
-    let actual_metadata = HashMap::from([(
-        3,
-        OwnerLabel {
-            id: 3,
-            pass: Some("base".to_owned()),
-            cull_mode: Some("back".to_owned()),
-            front_face: Some("ccw".to_owned()),
-            front_facing: Some(false),
-            gpu_front_facing: Some(true),
-            visible_by_cull_policy: Some(true),
-            depth_write: Some(true),
-            ..OwnerLabel::default()
-        },
-    )]);
+    let expected_metadata = HashMap::from([
+        (
+            2,
+            OwnerLabel {
+                id: 2,
+                pass: Some("outline".to_owned()),
+                material_side: Some(1),
+                front_facing: Some(false),
+                depth_write: Some(true),
+                ..OwnerLabel::default()
+            },
+        ),
+        (
+            5,
+            OwnerLabel {
+                id: 5,
+                pass: Some("base".to_owned()),
+                material_side: Some(0),
+                front_facing: Some(true),
+                depth_write: Some(true),
+                ..OwnerLabel::default()
+            },
+        ),
+    ]);
+    let actual_metadata = HashMap::from([
+        (
+            3,
+            OwnerLabel {
+                id: 3,
+                pass: Some("base".to_owned()),
+                cull_mode: Some("back".to_owned()),
+                front_face: Some("ccw".to_owned()),
+                front_facing: Some(false),
+                gpu_front_facing: Some(true),
+                visible_by_cull_policy: Some(true),
+                depth_write: Some(true),
+                ..OwnerLabel::default()
+            },
+        ),
+        (
+            4,
+            OwnerLabel {
+                id: 4,
+                pass: Some("outline".to_owned()),
+                cull_mode: Some("front".to_owned()),
+                front_face: Some("cw".to_owned()),
+                front_facing: Some(true),
+                gpu_front_facing: Some(true),
+                visible_by_cull_policy: Some(false),
+                depth_write: Some(false),
+                ..OwnerLabel::default()
+            },
+        ),
+    ]);
     let report = compare_owner_images(
         "expected".to_owned(),
         "actual".to_owned(),
@@ -874,30 +1004,36 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         &actual_metadata,
         8,
     )?;
-    assert_eq!(report.expected_nonzero, 2);
-    assert_eq!(report.actual_nonzero, 3);
-    assert_eq!(report.shared_nonzero, 2);
+    assert_eq!(report.expected_nonzero, 3);
+    assert_eq!(report.actual_nonzero, 4);
+    assert_eq!(report.shared_nonzero, 3);
     assert_eq!(report.exact_owner_matches, 1);
     assert_eq!(report.expected_only, 0);
     assert_eq!(report.actual_only, 1);
-    assert_eq!(report.mismatched_shared_nonzero, 1);
+    assert_eq!(report.mismatched_shared_nonzero, 2);
+    assert_eq!(
+        report.actual_not_visible_by_cull_policy_shared_nonzero,
+        1
+    );
+    assert_eq!(
+        report.actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
+        1
+    );
     assert_eq!(report.top_expected_to_actual[0].expected, 2);
     assert_eq!(report.top_expected_to_actual[0].actual, 3);
-    assert_eq!(
-        report.top_render_policy_transitions[0].expected_side,
-        "back"
-    );
-    assert_eq!(
-        report.top_render_policy_transitions[0].actual_cull_mode,
-        "back"
-    );
-    assert_eq!(
-        report.top_render_policy_transitions[0].actual_gpu_front_facing,
-        "true"
-    );
-    assert_eq!(
-        report.top_render_policy_transitions[0].actual_visible_by_cull_policy,
-        "true"
-    );
+    assert!(report.top_actual_cull_visibility.iter().any(|transition| {
+        transition.actual_pass == "outline"
+            && transition.actual_cull_mode == "front"
+            && transition.actual_front_face == "cw"
+            && transition.actual_visible_by_cull_policy == "false"
+            && transition.count == 1
+    }));
+    assert!(report.top_render_policy_transitions.iter().any(|transition| {
+        transition.expected_side == "back"
+            && transition.actual_cull_mode == "back"
+            && transition.actual_gpu_front_facing == "true"
+            && transition.actual_visible_by_cull_policy == "true"
+            && transition.count == 1
+    }));
     Ok(())
 }

@@ -456,9 +456,17 @@ run, the dominant bucket becomes
 (`11765` pixels). That makes the wgpu owner switch internally consistent:
 the winning Rust triangle is visible under its own cull convention. Bevy shows
 the same pass/cull/front-face trend, but has smaller buckets where this
-metadata estimate says not visible (`2265` default CCW pixels, `887` CW pixels),
-so use wgpu as the cleaner winding/facing probe and treat the Bevy split as a
-separate projection/fill or specialization diagnostic until it is explained.
+metadata estimate says not visible. `compare-owner-id-images.rs` also reports
+`actual_not_visible_by_cull_policy_shared_nonzero`,
+`actual_not_visible_by_cull_policy_mismatched_shared_nonzero`, and
+`top_actual_cull_visibility` so this split can be read without scanning the
+full policy table. Recomputing the existing Seed-san owner artifacts with
+those fields shows wgpu at `0` actual-not-visible shared owner pixels in both
+default CCW and CW diagnostics. Bevy reports `2436` default CCW pixels and
+`1014` CW pixels in both the shared and mismatched-shared slices, so use wgpu
+as the cleaner winding/facing probe and treat the Bevy split as a separate
+projection/fill, color-decode, or specialization diagnostic until it is
+explained.
 The Bevy capture now computes this owner metadata projection through Bevy's own
 `PerspectiveProjection::get_clip_from_view()` path and labels its depth range
 as `bevy-reverse-zero-to-one-ndc`; the split did not change after moving from
