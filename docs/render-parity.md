@@ -197,6 +197,22 @@ render-parity runner's camera (`256x256`, `camera-z = 3`); pass `--width`,
 `--height`, or camera options when inspecting artifacts generated with custom
 capture settings.
 
+The outline-isolated variant is:
+
+```powershell
+just render-parity-seed-base-uv-outline-off-diagnostic
+```
+
+It writes
+`.external-fixtures/render-parity-seed-base-uv-outline-off-diagnostic/`, including
+direct-imqraw reports, hotspot delta reports, and hotspot-to-primitive maps with
+`--disable-outlines`. On the 2026-06-10 Seed-san run, outline-off transformed
+base UV improves to wgpu `38.6925 dB` / Bevy `38.5360 dB` on
+`rgb-shared-nonblack-interior1px`, while the outline-on hotspot map concentrates
+on `outline:material_1`, `outline:material_5`, and `outline:material_6`. Treat
+that as evidence that the largest current Seed-san UV diagnostic residual is
+outline pass coverage/UV behavior, not base texture transform.
+
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
 three-vrm/wgpu/Bevy. For a focused check, use:

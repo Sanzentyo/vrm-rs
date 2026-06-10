@@ -65,6 +65,15 @@
   base-pass hits. The next Seed-san slice should therefore prioritize outline
   UV/coverage and outline diagnostic isolation before revisiting base texture
   lookup or MToon light accumulation.
+- Added `just render-parity-seed-base-uv-outline-off-diagnostic` to separate
+  base-texture UV residuals from outline pass coverage. The first run improves
+  selected `rgb-shared-nonblack-interior1px` from the outline-on base-UV
+  diagnostic's wgpu `30.3816 dB` / Bevy `30.1784 dB` to wgpu `38.6925 dB` /
+  Bevy `38.5360 dB`, with exact alpha parity. Mapping the remaining top 32
+  outline-off hotspots puts `18` on `base:material_1`, then smaller clusters on
+  base materials `5`, `6`, `0`, `2`, and `3`; this leaves two separate follow-up
+  tracks: exact outline UV/coverage first, then lower-amplitude base surface
+  UV/lookup locality.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the
