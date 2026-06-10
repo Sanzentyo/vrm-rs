@@ -70,6 +70,26 @@ The pass/fail summary consumes the `.imqraw-rust.json` report. The older
 `.psnr.json` report remains a diagnostic cross-check over the renderer
 `.rgba.json` artifacts and is embedded in `visual-review.html`.
 
+For direct raw-buffer hotspot inspection, use:
+
+```powershell
+just imqraw-deltas `
+  .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.imqraw `
+  .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.imqraw `
+  .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.deltas.json
+```
+
+`tools/render-parity/inspect-imqraw-deltas.rs` reports the worst per-pixel RGBA
+deltas, changed-pixel bounds, and whether each changed pixel is visible,
+nonblack, or one-pixel-interior. The convenience recipe
+`just render-parity-imqraw-seed-normal-deltas` writes wgpu and Bevy reports for
+the current real normal-map Seed-san artifacts. The 2026-06-10 Seed-san report
+shows no alpha deltas, but max RGB delta `255` inside visible/interior pixels:
+wgpu has `8151` changed pixels with `6791` interior-nonblack, and Bevy has
+`10340` changed pixels with `8855` interior-nonblack. That points the remaining
+Seed-san blocker at model-body material/geometry/pose residuals rather than PNG
+encoding, alpha, or transparent-background handling.
+
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
 three-vrm/wgpu/Bevy. For a focused check, use:

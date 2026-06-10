@@ -185,6 +185,10 @@ imqraw-compare-rgba expected actual output metrics="psnr:color,mse:color,mae:col
 imqraw-compare expected actual output metric="rgb-visible":
     cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs --expected "{{ expected }}" --actual "{{ actual }}" --metric "{{ metric }}" --out "{{ output }}"
 
+# Inspect worst per-pixel deltas in two direct renderer imqraw artifacts.
+imqraw-deltas expected actual output top="32" min_channel_delta="1":
+    cargo +nightly -Zscript tools/render-parity/inspect-imqraw-deltas.rs --expected "{{ expected }}" --actual "{{ actual }}" --top {{ top }} --min-channel-delta {{ min_channel_delta }} --out "{{ output }}"
+
 # Verify that a renderer imqraw artifact contains exactly the same RGBA bytes as its companion RGBA JSON artifact.
 imqraw-verify imqraw rgba_json:
     cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs --imqraw "{{ imqraw }}" --rgba-json "{{ rgba_json }}"
@@ -197,3 +201,8 @@ render-parity-validate manifest=".external-fixtures/render-parity/review-manifes
 render-parity-imqraw-seed-normal:
     just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.imqraw-ts.json
     just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/bevy/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.bevy-vs-three-vrm.imqraw-ts.json
+
+# Inspect current real normal-map Seed-san imqraw deltas without PNG conversion.
+render-parity-imqraw-seed-normal-deltas:
+    just imqraw-deltas .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.imqraw .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.imqraw .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.deltas.json
+    just imqraw-deltas .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.imqraw .external-fixtures/render-parity-real-normal-maps/bevy/Seed-san.frame000.imqraw .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.bevy-vs-three-vrm.deltas.json
