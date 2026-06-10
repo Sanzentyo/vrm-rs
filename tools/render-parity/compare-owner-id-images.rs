@@ -111,6 +111,8 @@ struct OwnerRenderPolicyTransition {
     actual_cull_mode: String,
     actual_front_face: String,
     actual_front_facing: String,
+    actual_gpu_front_facing: String,
+    actual_visible_by_cull_policy: String,
     actual_depth_write: String,
     count: u64,
 }
@@ -125,6 +127,8 @@ struct OwnerRenderPolicyKey {
     actual_cull_mode: String,
     actual_front_face: String,
     actual_front_facing: String,
+    actual_gpu_front_facing: String,
+    actual_visible_by_cull_policy: String,
     actual_depth_write: String,
 }
 
@@ -165,6 +169,8 @@ struct OwnerLabel {
     depth_range: Option<String>,
     screen_signed_area: Option<f64>,
     front_facing: Option<bool>,
+    gpu_front_facing: Option<bool>,
+    visible_by_cull_policy: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -481,6 +487,8 @@ fn top_render_policy_transitions(
             actual_cull_mode: key.actual_cull_mode,
             actual_front_face: key.actual_front_face,
             actual_front_facing: key.actual_front_facing,
+            actual_gpu_front_facing: key.actual_gpu_front_facing,
+            actual_visible_by_cull_policy: key.actual_visible_by_cull_policy,
             actual_depth_write: key.actual_depth_write,
             count,
         })
@@ -507,6 +515,12 @@ impl OwnerRenderPolicyKey {
                 .unwrap_or("unknown")
                 .to_owned(),
             actual_front_facing: optional_bool_label(actual.and_then(|label| label.front_facing)),
+            actual_gpu_front_facing: optional_bool_label(
+                actual.and_then(|label| label.gpu_front_facing),
+            ),
+            actual_visible_by_cull_policy: optional_bool_label(
+                actual.and_then(|label| label.visible_by_cull_policy),
+            ),
             actual_depth_write: optional_bool_label(actual.and_then(|label| label.depth_write)),
         }
     }
@@ -792,6 +806,8 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         depth_range: string_field(value, "depthRange"),
         screen_signed_area: value.get("screenSignedArea").and_then(Value::as_f64),
         front_facing: value.get("frontFacing").and_then(Value::as_bool),
+        gpu_front_facing: value.get("gpuFrontFacing").and_then(Value::as_bool),
+        visible_by_cull_policy: value.get("visibleByCullPolicy").and_then(Value::as_bool),
     })
 }
 
@@ -843,6 +859,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             cull_mode: Some("back".to_owned()),
             front_face: Some("ccw".to_owned()),
             front_facing: Some(false),
+            gpu_front_facing: Some(true),
+            visible_by_cull_policy: Some(true),
             depth_write: Some(true),
             ..OwnerLabel::default()
         },
@@ -872,6 +890,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         report.top_render_policy_transitions[0].actual_cull_mode,
         "back"
+    );
+    assert_eq!(
+        report.top_render_policy_transitions[0].actual_gpu_front_facing,
+        "true"
+    );
+    assert_eq!(
+        report.top_render_policy_transitions[0].actual_visible_by_cull_policy,
+        "true"
     );
     Ok(())
 }

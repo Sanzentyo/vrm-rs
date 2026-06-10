@@ -699,6 +699,11 @@ fn diagnostic_owner_ids(
                     "depthRange": projection.map(|_| "zero-to-one-ndc"),
                     "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
                     "frontFacing": projection.map(|projection| projection.front_facing),
+                    "gpuFrontFacing": projection.map(|projection| projection.gpu_front_facing),
+                    "visibleByCullPolicy": projection.map(|projection| bevy_visible_by_cull_policy(
+                        primitive,
+                        projection.gpu_front_facing
+                    )),
                 })
             })
         })
@@ -777,6 +782,7 @@ struct OwnerProjection {
     webgl_depth: f32,
     screen_signed_area: f32,
     front_facing: bool,
+    gpu_front_facing: bool,
 }
 
 fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
@@ -828,11 +834,29 @@ fn owner_triangle_projection(
         webgl_depth: depth * 2.0 - 1.0,
         screen_signed_area,
         front_facing: screen_signed_area > 0.0,
+        gpu_front_facing: bevy_gpu_front_facing(screen_signed_area, options.front_face),
     })
 }
 
 fn triangle_signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn bevy_gpu_front_facing(screen_signed_area: f32, front_face: CaptureFrontFace) -> bool {
+    match front_face {
+        CaptureFrontFace::Ccw => screen_signed_area < 0.0,
+        CaptureFrontFace::Cw => screen_signed_area > 0.0,
+    }
+}
+
+fn bevy_visible_by_cull_policy(primitive: &BevyPrimitive, gpu_front_facing: bool) -> bool {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => match material.cull_mode {
+            None => true,
+            Some(Face::Front) => !gpu_front_facing,
+            Some(Face::Back) => gpu_front_facing,
+        },
+    }
 }
 
 fn mesh_positions(mesh: &Mesh) -> Option<&[[f32; 3]]> {

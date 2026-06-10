@@ -442,6 +442,24 @@ front-facing metadata buckets (`10882 + 887` pixels), so treat the remaining
 Bevy-vs-wgpu difference as metadata/fill detail unless a later capture shows it
 affects shaded output.
 
+The Rust captures now add `gpuFrontFacing` and `visibleByCullPolicy` alongside
+the older `frontFacing` field. `frontFacing` is the shared screen-area label
+used to compare with the three-vrm browser metadata. `gpuFrontFacing` is the
+Rust capture's estimate after applying the selected `frontFace` convention to
+the y-down screen-space winding, and `visibleByCullPolicy` applies the
+primitive cull mode to that estimate. Prefer these two fields when asking
+"should the Rust pipeline have drawn this triangle?" On the default CCW wgpu
+run, the dominant bucket becomes
+`outline/back/frontFacing=false -> base/back/ccw/frontFacing=false/gpuFrontFacing=true/visibleByCullPolicy=true`
+(`11770` pixels). On the CW diagnostic, it becomes
+`outline/back/frontFacing=false -> outline/front/cw/frontFacing=false/gpuFrontFacing=false/visibleByCullPolicy=true`
+(`11765` pixels). That makes the wgpu owner switch internally consistent:
+the winning Rust triangle is visible under its own cull convention. Bevy shows
+the same pass/cull/front-face trend, but has smaller buckets where this
+metadata estimate says not visible (`2265` default CCW pixels, `887` CW pixels),
+so use wgpu as the cleaner winding/facing probe and treat the Bevy split as a
+separate projection/fill or specialization diagnostic until it is explained.
+
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
