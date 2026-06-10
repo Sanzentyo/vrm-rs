@@ -237,7 +237,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let base_sample_uv = select(
         base_uv,
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
-        material.material_flags2.w > 1.5,
+        material.material_flags2.w > 1.5 && material.material_flags2.w < 2.5,
     );
     let texel = textureSample(base_texture, base_sampler, base_sample_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
@@ -249,6 +249,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 1.5);
     if material.material_flags2.z > 0.5 {
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+    }
+    if material.material_flags2.w > 2.5 {
+        return output_color(vec3<f32>(uv, 0.0), opaque_alpha);
     }
     let diffuse = material.base_color.rgb * texel.rgb;
     if material.material_flags2.w < -0.5 {

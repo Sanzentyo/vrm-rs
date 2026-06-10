@@ -649,16 +649,14 @@ fn downsample_rgba_box(
     let mut next = vec![0; (next_width as usize) * (next_height as usize) * 4];
     for y in 0..next_height {
         let source_y0 = (u64::from(y) * u64::from(height) / u64::from(next_height)) as u32;
-        let source_y1 =
-            (u64::from(y + 1) * u64::from(height)).div_ceil(u64::from(next_height)) as u32;
+        let source_y1 = (u64::from(y + 1) * u64::from(height) / u64::from(next_height)) as u32;
         for x in 0..next_width {
             let source_x0 = (u64::from(x) * u64::from(width) / u64::from(next_width)) as u32;
-            let source_x1 =
-                (u64::from(x + 1) * u64::from(width)).div_ceil(u64::from(next_width)) as u32;
+            let source_x1 = (u64::from(x + 1) * u64::from(width) / u64::from(next_width)) as u32;
             let mut sum = [0u32; 4];
             let mut count = 0u32;
-            for source_y in source_y0..source_y1.min(height) {
-                for source_x in source_x0..source_x1.min(width) {
+            for source_y in source_y0..source_y1.max(source_y0 + 1).min(height) {
+                for source_x in source_x0..source_x1.max(source_x0 + 1).min(width) {
                     let source = ((source_y * width + source_x) * 4) as usize;
                     for channel in 0..4 {
                         sum[channel] += u32::from(rgba[source + channel]);
@@ -3105,6 +3103,17 @@ mod tests {
         assert_eq!(levels.len(), 2);
         assert_eq!((levels[1].width, levels[1].height), (1, 1));
         assert_eq!(levels[1].rgba, vec![30, 40, 50, 60]);
+    }
+
+    #[test]
+    fn generated_rgba_mip_chain_partitions_odd_sized_regions_without_overlap() {
+        let rgba = [
+            0u8, 10, 20, 30, 10, 20, 30, 40, 20, 30, 40, 50, 30, 40, 50, 60, 40, 50, 60, 70,
+        ];
+        let levels = generate_rgba_mip_chain(5, 1, &rgba).unwrap();
+
+        assert_eq!((levels[1].width, levels[1].height), (2, 1));
+        assert_eq!(levels[1].rgba, vec![5, 15, 25, 35, 30, 40, 50, 60]);
     }
 
     #[test]

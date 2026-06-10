@@ -21,12 +21,22 @@
   shared body-pixel mean RGB is close, but large deltas remain around thin
   texture/material/UV boundaries.
 - Moved renderer-side generated texture mipmaps to a shared Sans-I/O box
-  downsample in `vrm-io`, replacing the sharper CatmullRom resize. This gives a
-  small Seed-san base-color improvement but does not remove the localized
-  residual. A new `--render-disable-texture-mips` diagnostic disables mipmaps in
-  three-vrm, wgpu, and Bevy; `just render-parity-seed-base-color-no-mip-diagnostic`
+  downsample in `vrm-io`, replacing the sharper CatmullRom resize. The odd-size
+  downsample partition now has unit coverage to avoid overlapping source
+  pixels. This gives a small Seed-san base-color improvement but does not remove
+  the localized residual. A new `--render-disable-texture-mips` diagnostic
+  disables mipmaps in three-vrm, wgpu, and Bevy while preserving each sampler's
+  nearest-vs-linear minification family; `just render-parity-seed-base-color-no-mip-diagnostic`
   worsens to wgpu `28.5038 dB` / Bevy `27.6273 dB`, so mip usage itself is not
   the primary blocker.
+- Added a Seed-san `uv` diagnostic render mode across the three-vrm browser
+  reference, wgpu capture, Bevy capture, local runner, and Justfile. The
+  diagnostic renders UV coordinates as RGB while keeping the same primitive,
+  skin, morph, alpha, cull, depth, and order path. It reports selected
+  `rgb-shared-nonblack-interior1px` PSNR wgpu `30.3816 dB` / Bevy `30.1784 dB`
+  with max selected-channel deltas `213` / `214`, so the current base-texture
+  blocker includes UV/primitive/coverage or lookup-locality effects and is not
+  explained by mip generation alone.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the
@@ -228,7 +238,7 @@
 - Moved capture image-format normalization out of the concrete wgpu/Bevy
   examples into `vrm-io::image_data_to_rgba8` and
   `vrm-io::image_bytes_to_rgba8`. Texture upload planning now has a Sans I/O
-  path for both source image byte normalization and CatmullRom mip-chain
+  path for both source image byte normalization and shared box mip-chain
   generation, so wgpu/Bevy/ash/custom renderers can share byte-for-byte input
   preparation before touching engine texture APIs. `vrm-io` unit tests cover
   R8/RG/RGB/RGBA conversion, invalid lengths, zero dimensions, and unsupported
@@ -236,7 +246,7 @@
 - Moved capture mip-chain generation out of the concrete wgpu/Bevy examples
   into `vrm-io::generate_rgba_mip_chain`, a renderer-neutral Sans I/O helper
   that validates dimensions and returns explicit `RgbaMipLevel` values. Both
-  render captures now consume the same CatmullRom mip chain, reducing the risk
+  render captures now consume the same shared box mip chain, reducing the risk
   that future wgpu/Bevy/ash parity work drifts by backend. `vrm-io` unit tests
   cover the non-square mip sequence and invalid RGBA input errors.
 - Updated the local Rust CI/render runner to launch cargo commands with dev/test
@@ -500,7 +510,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-01: workspace line coverage is 84.95%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-10: workspace line coverage is 85.01%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.

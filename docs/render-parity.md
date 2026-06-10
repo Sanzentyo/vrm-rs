@@ -118,6 +118,7 @@ just render-parity-seed-base-color-diagnostic
 just render-parity-seed-base-color-interior2-diagnostic
 just render-parity-seed-base-color-no-mip-diagnostic
 just render-parity-seed-base-color-flip-v-diagnostic
+just render-parity-seed-uv-diagnostic
 ```
 
 `base-factor` keeps the same alpha/cull/depth/order policy and paints fragments
@@ -155,6 +156,15 @@ V-flip explanation. The current evidence points at localized texture sampling,
 UV discontinuity, sampler state, or per-primitive texture-selection
 behavior. Mean RGB over the shared body pixels remains close, so this is not a
 global color-space bias.
+
+The `render-parity-seed-uv-diagnostic` recipe renders UV coordinates as color
+using the same primitive, skin, morph, alpha, cull, depth, and order path. It
+reports selected `rgb-shared-nonblack-interior1px` PSNR wgpu `30.3816 dB` /
+Bevy `30.1784 dB`, with max selected-channel deltas `213` / `214`. This is
+better than the textured base-color diagnostic, but still in the same localized
+residual band, so the next Seed-san slice should inspect UV interpolation,
+primitive coverage, sampler state, and texture lookup locality before returning
+to MToon light/color accumulation.
 
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
@@ -928,9 +938,7 @@ each material texture slot, while Bevy carries the sampler through each image
 asset. CPU-generated mip chains use the shared
 `vrm-io::image_data_to_rgba8` / `vrm-io::image_bytes_to_rgba8` helpers for
 source image normalization and `vrm-io::generate_rgba_mip_chain` with
-CatmullRom downsampling for the current capture path, which tracks the WebGL
-generated-mipmap reference better than the previous triangle filter on the
-official UV-animation and Seed/constraint fixtures. Renderer-facing glTF
+shared box downsampling for the current capture path. Renderer-facing glTF
 material data also exposes
 `KHR_materials_unlit`
 for non-MToon/PBR fallback materials; when a material has
@@ -1229,7 +1237,7 @@ materials, the all-MToon constraint sample improves to wgpu/Bevy `34.3346 dB`
 while Seed-san remains wgpu `28.4228 dB` and Bevy `28.2468 dB`. The current
 opaque-black six-fixture sample sweep reports `transparent/opaque/partial =
 0/65536/0` for three-vrm, wgpu, and Bevy on every fixture, with alpha
-mismatches `0`. The capture paths now use CatmullRom mip-chain downsampling for
+mismatches `0`. The capture paths now use shared box mip-chain downsampling for
 the generated mip levels, and extract `KHR_materials_unlit` for glTF PBR
 fallback materials while keeping VRMC MToon materials on the MToon branch when
 both extensions are present. The selected `rgb-visible` metric for the same

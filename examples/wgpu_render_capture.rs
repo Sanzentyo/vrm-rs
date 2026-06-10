@@ -272,6 +272,7 @@ enum DiagnosticRender {
     BaseFactor,
     BaseColor,
     BaseColorFlipV,
+    Uv,
 }
 
 impl DiagnosticRender {
@@ -282,6 +283,7 @@ impl DiagnosticRender {
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
+            Self::Uv => "uv",
         }
     }
 }
@@ -672,6 +674,7 @@ fn material_extra_uniform(
                 DiagnosticRender::BaseFactor => -1.0,
                 DiagnosticRender::BaseColor => 1.0,
                 DiagnosticRender::BaseColorFlipV => 2.0,
+                DiagnosticRender::Uv => 3.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
             },
         ],
@@ -2106,7 +2109,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let base_sample_uv = select(
         base_uv,
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
-        material_extra.flags2.w > 1.5,
+        material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5,
     );
     let texel = textureSample(base_texture, base_sampler, base_sample_uv);
     let emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
@@ -2117,6 +2120,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     if material_extra.flags2.z > 0.5 {
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+    }
+    if material_extra.flags2.w > 2.5 {
+        return output_color(vec3<f32>(input.tex_coord, 0.0), opaque_alpha);
     }
     let diffuse = input.color.rgb * texel.rgb;
     if material_extra.flags2.w < -0.5 {

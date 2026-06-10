@@ -181,6 +181,7 @@ enum RenderDiagnosticMode {
     BaseFactor,
     BaseColor,
     BaseColorFlipV,
+    Uv,
 }
 
 impl RenderMtoonLightAccumulation {
@@ -210,6 +211,7 @@ impl RenderDiagnosticMode {
             Self::BaseFactor => "base-factor",
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
+            Self::Uv => "uv",
         }
     }
 }
