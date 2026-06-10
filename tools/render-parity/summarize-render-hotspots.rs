@@ -64,6 +64,11 @@ struct ReviewReport {
     expected_frontmost_mean_uv_distance: Option<f64>,
     actual_frontmost_max_uv_distance: Option<f64>,
     expected_frontmost_max_uv_distance: Option<f64>,
+    frontmost_mean_base_texture_local_rgb_gradient: Option<f64>,
+    frontmost_max_base_texture_local_rgb_gradient: Option<f64>,
+    frontmost_base_texture_local_rgb_gradient_gte_32: Option<u64>,
+    frontmost_base_texture_local_rgb_gradient_gte_64: Option<u64>,
+    frontmost_base_texture_local_rgb_gradient_gte_96: Option<u64>,
     texture_distance_advantage: TextureDistanceAdvantage,
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
@@ -91,6 +96,7 @@ struct HotspotLine {
     frontmost: Option<SurfaceLine>,
     actual_frontmost_base_texture_rgb_distance: Option<f64>,
     expected_frontmost_base_texture_rgb_distance: Option<f64>,
+    frontmost_base_texture_local_rgb_gradient: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -210,6 +216,26 @@ fn summarize_report(
             summary,
             "expected_frontmost_max_uv_distance",
         ),
+        frontmost_mean_base_texture_local_rgb_gradient: f64_field(
+            summary,
+            "frontmost_mean_base_texture_local_rgb_gradient",
+        ),
+        frontmost_max_base_texture_local_rgb_gradient: f64_field(
+            summary,
+            "frontmost_max_base_texture_local_rgb_gradient",
+        ),
+        frontmost_base_texture_local_rgb_gradient_gte_32: u64_field(
+            summary,
+            "frontmost_base_texture_local_rgb_gradient_gte_32",
+        ),
+        frontmost_base_texture_local_rgb_gradient_gte_64: u64_field(
+            summary,
+            "frontmost_base_texture_local_rgb_gradient_gte_64",
+        ),
+        frontmost_base_texture_local_rgb_gradient_gte_96: u64_field(
+            summary,
+            "frontmost_base_texture_local_rgb_gradient_gte_96",
+        ),
         texture_distance_advantage: texture_distance_advantage(hotspots),
         top_actual_surface_transitions: top_array(
             summary,
@@ -272,6 +298,12 @@ fn top_hotspots(hotspots: &[Value], top: usize) -> Vec<HotspotLine> {
                 hotspot,
                 "frontmost_base_texture_expected_rgb_distance",
             ),
+            frontmost_base_texture_local_rgb_gradient: hotspot
+                .get("frontmost_visible")
+                .or_else(|| hotspot.get("frontmost_alpha_visible"))
+                .and_then(|frontmost| {
+                    f64_field(frontmost, "base_texture_local_rgb_gradient")
+                }),
         })
         .collect()
 }
@@ -338,6 +370,14 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_f64(report.expected_frontmost_max_uv_distance)
     ));
     markdown.push_str(&format!(
+        "- Base-texture local RGB gradient mean/max: `{}` / `{}`; >=32/64/96: `{}` / `{}` / `{}`\n",
+        fmt_opt_f64(report.frontmost_mean_base_texture_local_rgb_gradient),
+        fmt_opt_f64(report.frontmost_max_base_texture_local_rgb_gradient),
+        fmt_opt_u64(report.frontmost_base_texture_local_rgb_gradient_gte_32),
+        fmt_opt_u64(report.frontmost_base_texture_local_rgb_gradient_gte_64),
+        fmt_opt_u64(report.frontmost_base_texture_local_rgb_gradient_gte_96)
+    ));
+    markdown.push_str(&format!(
         "- Base-texture closer actual/expected/tie: `{}` / `{}` / `{}` of `{}`\n\n",
         report.texture_distance_advantage.actual_closer,
         report.texture_distance_advantage.expected_closer,
@@ -345,11 +385,11 @@ fn markdown_report(report: &ReviewReport) -> String {
         report.texture_distance_advantage.compared
     ));
     markdown.push_str("## Top Hotspots\n\n");
-    markdown.push_str("| Pixel | Max Delta | Actual | Expected | Frontmost | Base Texture Distance A/E |\n");
-    markdown.push_str("| --- | ---: | --- | --- | --- | ---: |\n");
+    markdown.push_str("| Pixel | Max Delta | Actual | Expected | Frontmost | Base Texture Distance A/E | Local Gradient |\n");
+    markdown.push_str("| --- | ---: | --- | --- | --- | ---: | ---: |\n");
     for hotspot in &report.top_hotspots {
         markdown.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} / {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} / {} | {} |\n",
             fmt_opt_u64(hotspot.x),
             fmt_opt_u64(hotspot.y),
             fmt_opt_u64(hotspot.max_channel_delta),
@@ -357,7 +397,8 @@ fn markdown_report(report: &ReviewReport) -> String {
             fmt_rgba(hotspot.expected),
             fmt_surface(hotspot.frontmost.as_ref()),
             fmt_opt_f64(hotspot.actual_frontmost_base_texture_rgb_distance),
-            fmt_opt_f64(hotspot.expected_frontmost_base_texture_rgb_distance)
+            fmt_opt_f64(hotspot.expected_frontmost_base_texture_rgb_distance),
+            fmt_opt_f64(hotspot.frontmost_base_texture_local_rgb_gradient)
         ));
     }
     markdown.push('\n');
@@ -490,6 +531,11 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "expected_frontmost_mean_uv_distance": 0.2,
             "actual_frontmost_max_uv_distance": 0.3,
             "expected_frontmost_max_uv_distance": 0.4,
+            "frontmost_mean_base_texture_local_rgb_gradient": 10.0,
+            "frontmost_max_base_texture_local_rgb_gradient": 12.0,
+            "frontmost_base_texture_local_rgb_gradient_gte_32": 0,
+            "frontmost_base_texture_local_rgb_gradient_gte_64": 0,
+            "frontmost_base_texture_local_rgb_gradient_gte_96": 0,
             "actual_frontmost_surface_transitions": [{"count": 1}],
             "expected_frontmost_surface_transitions": [{"count": 1}],
             "frontmost_nearest_edge_counts": [{"count": 1}]
@@ -511,7 +557,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "primitive": 0,
                 "triangle": 0,
                 "edge_distance_pixels": 0.1,
-                "nearest_edge": 2
+                "nearest_edge": 2,
+                "base_texture_local_rgb_gradient": 10.0
             }
         }]
     });

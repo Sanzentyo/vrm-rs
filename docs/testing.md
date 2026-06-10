@@ -243,8 +243,12 @@ same-triangle and nearest-edge-neighbor matches. Current gradient top-64
 hotspots have only `6/64` same-triangle matches and `0/64` edge-neighbor
 matches for both actual and expected, with large base-UV distances from the
 frontmost candidate (wgpu actual/expected mean `0.6707` / `0.5730`, Bevy
-`0.6752` / `0.5780`). Treat this as evidence for real-model high-gradient UV
-island/material ownership rather than a simple adjacent-edge fill-rule issue.
+`0.6752` / `0.5780`). The hotspot mapper now also reports CPU frontmost
+base-texture local RGB gradient. The same top-64 gradient summaries show low
+frontmost texture gradients, with mean/max wgpu `4.7577` / `25.4951` and Bevy
+`4.6618` / `25.4951`, and `0/64` hotspots at `>=32`. Treat this as evidence
+for real-model high-gradient UV island/material ownership rather than a simple
+same-surface high-frequency texture sampling or adjacent-edge fill-rule issue.
 Use
 `just render-parity-seed-base-color-flat32-gradient-owner-hotspots D:/git/three-vrm`
 to project the same gradient top-64 pixels through three-vrm's rendered

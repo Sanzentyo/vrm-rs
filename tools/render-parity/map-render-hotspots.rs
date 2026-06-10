@@ -187,6 +187,11 @@ struct HotspotSummary {
     expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f32>,
     actual_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
     expected_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
+    frontmost_mean_base_texture_local_rgb_gradient: Option<f32>,
+    frontmost_max_base_texture_local_rgb_gradient: Option<f32>,
+    frontmost_base_texture_local_rgb_gradient_gte_32: usize,
+    frontmost_base_texture_local_rgb_gradient_gte_64: usize,
+    frontmost_base_texture_local_rgb_gradient_gte_96: usize,
     frontmost_mean_edge_distance_pixels: Option<f32>,
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
@@ -323,6 +328,7 @@ struct CandidateMatch {
     visible_by_policy: bool,
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    base_texture_local_rgb_gradient: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -360,6 +366,7 @@ struct HitCandidate {
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    base_texture_local_rgb_gradient: Option<f32>,
     screen: [[f32; 2]; 3],
     front_facing: bool,
     alpha: f32,
@@ -791,6 +798,17 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             max_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
                 hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
             }),
+        frontmost_mean_base_texture_local_rgb_gradient: mean_frontmost_texture_gradient(hotspots),
+        frontmost_max_base_texture_local_rgb_gradient: max_frontmost_texture_gradient(hotspots),
+        frontmost_base_texture_local_rgb_gradient_gte_32: frontmost_texture_gradient_gte(
+            hotspots, 32.0,
+        ),
+        frontmost_base_texture_local_rgb_gradient_gte_64: frontmost_texture_gradient_gte(
+            hotspots, 64.0,
+        ),
+        frontmost_base_texture_local_rgb_gradient_gte_96: frontmost_texture_gradient_gte(
+            hotspots, 96.0,
+        ),
         frontmost_mean_edge_distance_pixels: mean_frontmost_edge_distance(hotspots),
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
         frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
@@ -1024,6 +1042,46 @@ fn max_missing_center_nearest_rgb_distance(
         .filter(|hotspot| hotspot.frontmost_visible.is_none())
         .filter_map(distance)
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn mean_frontmost_texture_gradient(hotspots: &[Hotspot]) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .and_then(|frontmost| frontmost.base_texture_local_rgb_gradient)
+        })
+        .fold((0.0, 0usize), |(sum, count), gradient| {
+            (sum + gradient, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn max_frontmost_texture_gradient(hotspots: &[Hotspot]) -> Option<f32> {
+    hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .and_then(|frontmost| frontmost.base_texture_local_rgb_gradient)
+        })
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn frontmost_texture_gradient_gte(hotspots: &[Hotspot], threshold: f32) -> usize {
+    hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .and_then(|frontmost| frontmost.base_texture_local_rgb_gradient)
+        })
+        .filter(|gradient| *gradient >= threshold)
+        .count()
 }
 
 fn mean_frontmost_edge_distance(hotspots: &[Hotspot]) -> Option<f32> {
@@ -1430,6 +1488,7 @@ fn candidate_match(
         visible_by_policy: candidate.visible_by_policy,
         base_uv: candidate.base_uv,
         base_texture_rgba: candidate.base_texture_rgba,
+        base_texture_local_rgb_gradient: candidate.base_texture_local_rgb_gradient,
     }
 }
 
@@ -1473,6 +1532,10 @@ fn surface_candidates(
                 .as_ref()
                 .map(|texture| texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft));
             let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
+            let base_texture_local_rgb_gradient = surface
+                .base_texture
+                .as_ref()
+                .map(|texture| base_texture_local_rgb_gradient(texture, base_uv));
             let vertex_alpha = if surface.pbr_fallback {
                 interpolate_vertex_color_alpha(
                     barycentric,
@@ -1522,6 +1585,7 @@ fn surface_candidates(
                 raw_uv,
                 base_uv,
                 base_texture_rgba,
+                base_texture_local_rgb_gradient,
                 screen: [a.screen, b.screen, c.screen],
                 front_facing,
                 alpha,
@@ -1765,6 +1829,22 @@ fn interpolate_perspective_correct_uv(
 
 fn uv_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
     ((left[0] - right[0]).powi(2) + (left[1] - right[1]).powi(2)).sqrt()
+}
+
+fn base_texture_local_rgb_gradient(texture: &CpuRgba8Image, uv: [f32; 2]) -> f32 {
+    let center = texture.sample_rgba8_repeat_linear(uv, Rgba8SamplingOrigin::TopLeft);
+    let du = 1.0 / texture.width.max(1) as f32;
+    let dv = 1.0 / texture.height.max(1) as f32;
+    [[du, 0.0], [-du, 0.0], [0.0, dv], [0.0, -dv]]
+        .into_iter()
+        .map(|offset| {
+            texture.sample_rgba8_repeat_linear(
+                [uv[0] + offset[0], uv[1] + offset[1]],
+                Rgba8SamplingOrigin::TopLeft,
+            )
+        })
+        .map(|sample| rgb_distance(center, sample))
+        .fold(0.0, f32::max)
 }
 
 fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
