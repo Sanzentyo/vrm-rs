@@ -340,15 +340,19 @@ near real material/UV boundaries rather than texture binding, global
 color-space, alpha-mask, cull, mip, or sample-center policy.
 
 `render-parity-seed-owner-id-diagnostic` renders owner IDs through the normal
-three-vrm/wgpu/Bevy local render-parity runner. The three-vrm reference still
-uses per-triangle owner IDs from the browser diagnostic, while the concrete
-Rust captures currently emit draw-order-stable per-primitive/pass owner IDs
-after material sorting. Therefore the three-vrm-vs-Rust PSNR is only a
-diagnostic shape, not a compatibility threshold. The useful current invariant
-is that wgpu and Bevy owner-ID captures match byte-for-byte on Seed-san
-(`rgb-visible = Infinity`, max channel delta `0`, alpha mismatches `0`), so
-the concrete renderer paths agree on primitive/pass ownership before the
-remaining three-vrm per-triangle ownership alignment work.
+three-vrm/wgpu/Bevy local render-parity runner. The three-vrm reference and
+concrete Rust captures now both use per-triangle owner IDs for this diagnostic.
+The Rust captures de-index triangle lists only in `owner-id` mode and carry the
+diagnostic color through vertex color attributes, leaving the normal shaded
+paths unchanged. Therefore the three-vrm-vs-Rust PSNR is still a diagnostic
+shape, not a compatibility threshold, but it now isolates draw-order and local
+triangle ownership rather than a coarse primitive/pass ID mismatch. On the
+2026-06-10 Seed-san run, three-vrm-vs-wgpu reports selected `rgb-visible`
+`16.6869 dB` and three-vrm-vs-Bevy reports `16.7007 dB`, both with alpha
+mismatches `0`. wgpu-vs-Bevy is no longer byte-identical because triangle-edge
+ownership is visible, but remains close at `62.1850 dB` with max channel delta
+`2`; use that as the renderer-internal sanity check while investigating the
+remaining WebGL-vs-Rust per-triangle ownership mapping.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

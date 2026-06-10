@@ -520,7 +520,11 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
-    assign_owner_id_colors(&mut primitives);
+    if options.diagnostic_render == DiagnosticRender::OwnerId {
+        assign_owner_id_triangles(&mut primitives);
+    } else {
+        assign_owner_id_colors(&mut primitives);
+    }
 
     for primitive in primitives {
         let mesh = meshes.add(primitive.mesh);
@@ -544,6 +548,35 @@ fn assign_owner_id_colors(primitives: &mut [BevyPrimitive]) {
             BevyPrimitiveMaterial::Mtoon(material) => {
                 material.owner_color =
                     BVec4::from_array(owner_id_color(u32::try_from(index + 1).unwrap_or(0)));
+            }
+        }
+    }
+}
+
+fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
+    let mut next_id = 1;
+    for primitive in primitives {
+        primitive
+            .mesh
+            .try_duplicate_vertices()
+            .expect("owner-id diagnostic mesh should be writable before render extraction");
+        let vertex_count = primitive.mesh.count_vertices();
+        let mut colors = Vec::with_capacity(vertex_count);
+        let mut remaining = vertex_count;
+        while remaining > 0 {
+            let color = owner_id_color(next_id);
+            next_id += 1;
+            for _ in 0..remaining.min(3) {
+                colors.push(color);
+            }
+            remaining = remaining.saturating_sub(3);
+        }
+        primitive
+            .mesh
+            .insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        match &mut primitive.material {
+            BevyPrimitiveMaterial::Mtoon(material) => {
+                material.owner_color = BVec4::ZERO;
             }
         }
     }
@@ -1005,6 +1038,12 @@ impl Material for BevyMtoonMaterial {
             descriptor.vertex.shader_defs.push("VERTEX_TANGENTS".into());
             if let Some(fragment) = &mut descriptor.fragment {
                 fragment.shader_defs.push("VERTEX_TANGENTS".into());
+            }
+        }
+        if layout.0.contains(Mesh::ATTRIBUTE_COLOR) {
+            descriptor.vertex.shader_defs.push("VERTEX_COLORS".into());
+            if let Some(fragment) = &mut descriptor.fragment {
+                fragment.shader_defs.push("VERTEX_COLORS".into());
             }
         }
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {

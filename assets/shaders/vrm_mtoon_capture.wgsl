@@ -271,7 +271,11 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     if material.material_flags2.w > 4.5 && material.material_flags2.w < 5.5 {
+#ifdef VERTEX_COLORS
+        return output_color(input.color.rgb, opaque_alpha);
+#else
         return output_color(material.owner_color.rgb, opaque_alpha);
+#endif
     }
     if material.material_flags2.w > 2.5 {
         if material.material_flags2.w > 3.5 {

@@ -463,7 +463,11 @@ fn mesh_draw_data(
         return Err("no drawable mesh primitives were found".into());
     }
     primitives.sort_by_key(|primitive| primitive.policy.render_order);
-    assign_owner_id_colors(&mut primitives);
+    if options.diagnostic_render == DiagnosticRender::OwnerId {
+        assign_owner_id_triangles(&mut primitives);
+    } else {
+        assign_owner_id_colors(&mut primitives);
+    }
     Ok(MeshDrawData { primitives })
 }
 
@@ -471,6 +475,30 @@ fn assign_owner_id_colors(primitives: &mut [DrawPrimitive]) {
     for (index, primitive) in primitives.iter_mut().enumerate() {
         primitive.material_extra.owner_color =
             owner_id_color(u32::try_from(index + 1).unwrap_or(0));
+    }
+}
+
+fn assign_owner_id_triangles(primitives: &mut [DrawPrimitive]) {
+    let mut next_id = 1;
+    for primitive in primitives {
+        let mut vertices = Vec::with_capacity(primitive.indices.len());
+        for triangle in primitive.indices.chunks_exact(3) {
+            let color = owner_id_color(next_id);
+            next_id += 1;
+            vertices.extend(
+                triangle
+                    .iter()
+                    .filter_map(|index| primitive.vertices.get(*index as usize))
+                    .map(|vertex| {
+                        let mut vertex = *vertex;
+                        vertex.color = color;
+                        vertex
+                    }),
+            );
+        }
+        primitive.indices = (0..u32::try_from(vertices.len()).unwrap_or(0)).collect();
+        primitive.vertices = vertices;
+        primitive.material_extra.owner_color = [0.0, 0.0, 0.0, 1.0];
     }
 }
 
@@ -2292,7 +2320,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     if material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5 {
-        return output_color(material_extra.owner_color.rgb, opaque_alpha);
+        return output_color(input.color.rgb, opaque_alpha);
     }
     if material_extra.flags2.w > 2.5 {
         if material_extra.flags2.w > 3.5 {

@@ -64,15 +64,29 @@
 - Added `owner-id` diagnostic render support to the concrete wgpu and Bevy
   capture paths. Both renderers now assign draw-order-stable primitive/pass
   owner colors after material-order sorting and expose them through their
-  MToon capture uniforms. `just render-parity-seed-owner-id-diagnostic` renders
-  three-vrm, wgpu, and Bevy owner-ID artifacts, validates their direct imqraw
-  buffers, and writes a wgpu-vs-Bevy raw comparison. On the current Seed-san
+  MToon capture uniforms. The initial
+  `just render-parity-seed-owner-id-diagnostic` run rendered three-vrm, wgpu,
+  and Bevy owner-ID artifacts, validated their direct imqraw buffers, and
+  wrote a wgpu-vs-Bevy raw comparison. On that Seed-san
   run, wgpu and Bevy owner-ID captures are byte-identical
   (`rgb-visible = Infinity`, max channel delta `0`, alpha mismatches `0`),
   while both score `15.4666 dB` against three-vrm because three-vrm still uses
   per-triangle owner IDs and Rust currently uses per-primitive/pass IDs. This
   separates Rust renderer parity from the remaining three-vrm ownership
   alignment problem.
+- Tightened the concrete wgpu and Bevy `owner-id` diagnostic from
+  per-primitive/pass uniform colors to per-triangle vertex colors in diagnostic
+  mode. The renderers now de-index triangle lists only for `owner-id`, keep the
+  normal shaded paths unchanged, and route the diagnostic color through the
+  same vertex stream that carries material base color. Re-running
+  `just render-parity-seed-owner-id-diagnostic` improves the Seed-san
+  three-vrm comparison from the old `15.4666 dB` shape mismatch to wgpu
+  `16.6869 dB` and Bevy `16.7007 dB` on `rgb-visible`, with alpha mismatches
+  still `0`. wgpu-vs-Bevy is no longer byte-identical because triangle-edge
+  ownership is now visible, but remains very close (`62.1850 dB`, max channel
+  delta `2`). The remaining owner-ID gap is now sharper: per-triangle draw
+  ordering / WebGL-vs-Rust triangle ownership, not primitive/pass-level Rust
+  renderer disagreement.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
