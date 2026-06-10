@@ -325,6 +325,24 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/compare-imqraw.rs",
+            "--help",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
+            "tools/render-parity/inspect-imqraw-deltas.rs",
+            "--help",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/map-render-hotspots.rs",
             "--",
             "--self-test",

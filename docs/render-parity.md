@@ -85,10 +85,12 @@ just imqraw-deltas `
 `tools/render-parity/inspect-imqraw-deltas.rs` reports the worst per-pixel RGBA
 deltas, changed-pixel bounds, and whether each changed pixel is visible,
 nonblack, one-pixel-interior, actual-only, expected-only, or shared-nonblack
-inside a one/two-pixel body mask. Use `actual-only` / `expected-only` for
+inside a one/two/three-pixel body mask. Use `actual-only` / `expected-only` for
 coverage-only pixels and `shared-nonblack-interior1px` or
 `shared-nonblack-interior2px` for material/UV/body-color deltas that should
-ignore silhouette and background classification noise. The convenience recipe
+ignore silhouette and background classification noise. Use
+`shared-nonblack-interior3px` for the stricter Seed-san base-UV residual slice
+after edge ownership has already been identified. The convenience recipe
 `just render-parity-imqraw-seed-normal-deltas` writes wgpu and Bevy reports for
 the current real normal-map Seed-san artifacts. The 2026-06-10 Seed-san report
 shows no alpha deltas, but max RGB delta `255` inside visible/interior pixels:
@@ -369,6 +371,19 @@ The improvement confirms that the dominant base-UV diagnostic error is near
 shared-edge ownership. The maximum selected channel delta remains `166`, so
 there are still a few strong localized residuals to inspect before treating
 this diagnostic as exhausted.
+
+`just render-parity-seed-base-uv-hotspots-interior3` extracts and maps the
+remaining 3px shared-body hotspots. On the current Seed-san run, wgpu has `676`
+changed pixels in this domain and Bevy has `5889`. For the top 32 hotspots,
+both renderers still match the Rust CPU-projected frontmost diagnostic color
+closely while the three-vrm/reference pixel is far away: wgpu actual/reference
+frontmost mean RGB distance is `0.0754` / `49.1641`, and Bevy is `0.9047` /
+`49.0316`. The top hotspot geometry is still concentrated on the same face
+region, with repeated buckets on node `145`, mesh `4`, primitive `3`, material
+`1`, triangles `160`, `164`, `171`, `156`, and `179`. The frontmost mean edge
+distance is only about `0.063px`, and `30/32` hotspots are within `0.25px` of
+the nearest edge for both wgpu and Bevy. This keeps the base-UV residual
+classified as local shared-edge/raster ownership even after the 3px body mask.
 
 A source-like generated UV-boundary control is available through:
 

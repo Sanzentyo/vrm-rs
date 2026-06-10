@@ -51,6 +51,7 @@ enum PixelDomain {
     SharedNonblack,
     SharedNonblackInterior1px,
     SharedNonblackInterior2px,
+    SharedNonblackInterior3px,
 }
 
 impl PixelDomain {
@@ -62,6 +63,7 @@ impl PixelDomain {
             Self::SharedNonblack => "shared-nonblack",
             Self::SharedNonblackInterior1px => "shared-nonblack-interior1px",
             Self::SharedNonblackInterior2px => "shared-nonblack-interior2px",
+            Self::SharedNonblackInterior3px => "shared-nonblack-interior3px",
         }
     }
 
@@ -73,6 +75,9 @@ impl PixelDomain {
             Self::SharedNonblack => is_shared_nonblack(expected, actual, pixel),
             Self::SharedNonblackInterior1px => is_interior_shared_nonblack(expected, actual, pixel),
             Self::SharedNonblackInterior2px => is_interior_radius(expected, pixel, 2, |neighbor| {
+                is_shared_nonblack(expected, actual, neighbor)
+            }),
+            Self::SharedNonblackInterior3px => is_interior_radius(expected, pixel, 3, |neighbor| {
                 is_shared_nonblack(expected, actual, neighbor)
             }),
         }
@@ -266,6 +271,7 @@ fn domain_breakdown(expected: &RgbaImage, actual: &RgbaImage, deltas: &[PixelDel
         "sharedNonblack": count(PixelDomain::SharedNonblack),
         "sharedNonblackInterior1px": count(PixelDomain::SharedNonblackInterior1px),
         "sharedNonblackInterior2px": count(PixelDomain::SharedNonblackInterior2px),
+        "sharedNonblackInterior3px": count(PixelDomain::SharedNonblackInterior3px),
     })
 }
 
@@ -300,6 +306,9 @@ fn pixel_domain_json(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> 
         "sharedNonblack": is_shared_nonblack(expected, actual, pixel),
         "sharedNonblackInterior1px": is_interior_shared_nonblack(expected, actual, pixel),
         "sharedNonblackInterior2px": is_interior_radius(expected, pixel, 2, |neighbor| {
+            is_shared_nonblack(expected, actual, neighbor)
+        }),
+        "sharedNonblackInterior3px": is_interior_radius(expected, pixel, 3, |neighbor| {
             is_shared_nonblack(expected, actual, neighbor)
         }),
     })
