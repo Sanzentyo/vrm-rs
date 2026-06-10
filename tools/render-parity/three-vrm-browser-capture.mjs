@@ -239,6 +239,49 @@ function capturePage(options) {
   import { VRMLoaderPlugin } from '/three-vrm/lib/three-vrm.module.js';
   ${options.imqraw ? "import { init as initImqraw, encodeRgba8 } from 'https://sanzentyo.github.io/imq/imqraw/v0.1.0/imqraw.js';" : ''}
 
+  const textureReport = (texture) => {
+    if (!texture?.isTexture) return null;
+    if (texture.matrixAutoUpdate && typeof texture.updateMatrix === 'function') {
+      texture.updateMatrix();
+    }
+    return {
+      uuid: texture.uuid,
+      name: texture.name,
+      channel: texture.channel ?? 0,
+      flipY: texture.flipY,
+      colorSpace: texture.colorSpace,
+      wrapS: texture.wrapS,
+      wrapT: texture.wrapT,
+      minFilter: texture.minFilter,
+      magFilter: texture.magFilter,
+      generateMipmaps: texture.generateMipmaps,
+      matrixAutoUpdate: texture.matrixAutoUpdate,
+      offset: texture.offset?.toArray?.() ?? null,
+      repeat: texture.repeat?.toArray?.() ?? null,
+      rotation: texture.rotation ?? 0,
+      center: texture.center?.toArray?.() ?? null,
+      matrix: texture.matrix?.elements ? Array.from(texture.matrix.elements) : null,
+    };
+  };
+
+  const materialReport = (material, mesh, slot) => ({
+    meshName: mesh?.name ?? '',
+    meshUuid: mesh?.uuid ?? null,
+    materialSlot: slot,
+    materialName: material?.name ?? '',
+    materialUuid: material?.uuid ?? null,
+    materialType: material?.type ?? null,
+    side: material?.side ?? null,
+    transparent: material?.transparent ?? false,
+    opacity: material?.opacity ?? 1.0,
+    alphaTest: material?.alphaTest ?? 0.0,
+    depthWrite: material?.depthWrite ?? true,
+    depthTest: material?.depthTest ?? true,
+    blending: material?.blending ?? null,
+    premultipliedAlpha: material?.premultipliedAlpha ?? false,
+    map: textureReport(material?.map),
+  });
+
   globalThis.captureVrmFrame = async () => {
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({
@@ -295,6 +338,7 @@ function capturePage(options) {
         configureTextureNoMips(uniform?.value);
       }
     };
+    const diagnosticMaterials = [];
     vrm.scene.traverse((object) => {
       object.frustumCulled = false;
       if (${options.disableTextureMips} && object.material) {
@@ -326,7 +370,8 @@ function capturePage(options) {
         }
       }
       if (${JSON.stringify(options.diagnosticRender)} !== 'shaded' && object.isMesh && object.material) {
-        const diagnosticMaterial = (material, mesh) => {
+        const diagnosticMaterial = (material, mesh, slot) => {
+          diagnosticMaterials.push(materialReport(material, mesh, slot));
           const mode = ${JSON.stringify(options.diagnosticRender)};
           if (mode === 'uv' || mode === 'base-uv') {
             const uv = new THREE.MeshBasicMaterial({
@@ -369,8 +414,8 @@ function capturePage(options) {
           return flat;
         };
         object.material = Array.isArray(object.material)
-          ? object.material.map((material) => diagnosticMaterial(material, object))
-          : diagnosticMaterial(object.material, object);
+          ? object.material.map((material, slot) => diagnosticMaterial(material, object, slot))
+          : diagnosticMaterial(object.material, object, 0);
       }
     });
     scene.add(vrm.scene);
@@ -419,6 +464,7 @@ function capturePage(options) {
         diagnosticRender: ${JSON.stringify(options.diagnosticRender)},
         diagnosticRenderReference: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' ? 'base-color' : options.diagnosticRender)},
         rustOnlyDiagnostic: ${JSON.stringify(options.diagnosticRender === 'base-color-flip-v' ? 'base-color-flip-v' : null)},
+        diagnosticMaterials,
       },
       expressions,
       lighting: {

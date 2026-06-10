@@ -313,6 +313,15 @@ the worst pixels. The next high-value target is to inspect or reproduce
 three.js `vMapUv` generation for the affected materials, including map matrix,
 UV channel, and derivative/sample-position behavior.
 
+`three-vrm-browser-capture.mjs` records per-material diagnostic map metadata in
+`reference.renderer.diagnosticMaterials`. Re-running the Seed-san base-UV
+diagnostic on 2026-06-10 showed 29 mapped diagnostic materials with identity
+map transforms: offset `0,0`, repeat `1,1`, rotation `0`, center `0,0`,
+channel `0`, `flipY=false`, and identity texture matrix; two entries have no
+map. That rules out a normal KHR/three.js texture-transform mismatch for the
+current worst pixels and pushes the remaining investigation toward UV attribute
+selection, shader varying behavior, or sample-position/rasterization details.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell

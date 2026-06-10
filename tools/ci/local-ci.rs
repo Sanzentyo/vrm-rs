@@ -315,6 +315,10 @@ fn run_example_unit_tests() -> Result<(), String> {
 
 fn run_render_tool_self_tests() -> Result<(), String> {
     run_cmd(
+        "node",
+        ["--check", "tools/render-parity/three-vrm-browser-capture.mjs"],
+    )?;
+    run_cmd(
         "cargo",
         [
             "+nightly",
