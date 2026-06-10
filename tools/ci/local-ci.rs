@@ -374,6 +374,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/generate-split-ownership-fixture.rs",
+            "--help",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/compare-owner-id-images.rs",
             "--self-test",
         ],

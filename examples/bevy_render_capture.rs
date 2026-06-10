@@ -30,10 +30,10 @@ use bevy::render::render_graph::{
 };
 use bevy::render::render_phase::ViewSortedRenderPhases;
 use bevy::render::render_resource::{
-    AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face,
-    FrontFace, MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
-    SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureDataOrder,
-    TextureFormat, TextureUsages,
+    AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, CompareFunction,
+    Extent3d, Face, FrontFace, MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor,
+    ShaderType, SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout,
+    TextureDataOrder, TextureFormat, TextureUsages,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::shader::ShaderRef;
@@ -531,18 +531,19 @@ fn spawn_vrm_meshes(
                 skin_matrices.as_deref(),
                 normal_plan.should_generate_tangents(),
             );
+            let material = BevyPrimitiveMaterial::Mtoon(bevy_mtoon_material(
+                loaded,
+                primitive,
+                shading,
+                &primitive_context,
+                render_depth_bias(render_order),
+                BevyNormalMapMaterialPlan::from_normal_plan(normal_plan, has_tangents),
+            ));
             let surface = BevyPrimitive {
                 mesh,
-                material: BevyPrimitiveMaterial::Mtoon(bevy_mtoon_material(
-                    loaded,
-                    primitive,
-                    shading,
-                    &primitive_context,
-                    render_depth_bias(render_order),
-                    BevyNormalMapMaterialPlan::from_normal_plan(normal_plan, has_tangents),
-                )),
+                transparent_order_offset: bevy_source_order_offset(&material, phase_order, 0),
+                material,
                 render_order,
-                phase_order,
                 owner_source,
                 owner_ids: Vec::new(),
             };
@@ -561,6 +562,12 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
+    for (draw_order, primitive) in primitives.iter_mut().enumerate() {
+        if primitive.needs_source_order_offset() {
+            primitive.transparent_order_offset +=
+                i32::try_from(draw_order).unwrap_or(i32::MAX) as f32 * 0.0001;
+        }
+    }
     if options.diagnostic_render == DiagnosticRender::OwnerId {
         assign_owner_id_triangles(&mut primitives);
     } else {
@@ -577,7 +584,7 @@ fn spawn_vrm_meshes(
                 commands.spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mtoon_materials.add(material)),
-                    BevyMtoonPhaseOrder(primitive.phase_order),
+                    BevyMtoonPhaseOrder(primitive.transparent_order_offset),
                     Transform::IDENTITY,
                 ));
             }
@@ -715,19 +722,19 @@ fn diagnostic_owner_ids(
 
 fn bevy_primitive_alpha_mode(primitive: &BevyPrimitive) -> &'static str {
     match &primitive.material {
-        BevyPrimitiveMaterial::Mtoon(material) => alpha_mode_name(material.alpha_mode),
+        BevyPrimitiveMaterial::Mtoon(material) => alpha_mode_name(material.shader_alpha_mode),
     }
 }
 
 fn bevy_primitive_alpha_cutoff(primitive: &BevyPrimitive) -> f32 {
     match &primitive.material {
-        BevyPrimitiveMaterial::Mtoon(material) => alpha_cutoff(material.alpha_mode),
+        BevyPrimitiveMaterial::Mtoon(material) => alpha_cutoff(material.shader_alpha_mode),
     }
 }
 
 fn bevy_primitive_blend(primitive: &BevyPrimitive) -> bool {
     match &primitive.material {
-        BevyPrimitiveMaterial::Mtoon(material) => material.alpha_mode != AlphaMode::Opaque,
+        BevyPrimitiveMaterial::Mtoon(material) => material.shader_alpha_mode != AlphaMode::Opaque,
     }
 }
 
@@ -1018,14 +1025,19 @@ fn bevy_outline_primitive(
         BevyNormalMapMaterialPlan::disabled(),
     );
     material.outline_color = BVec4::from_array(outline.color);
-    material.alpha_mode = AlphaMode::Opaque;
+    material.shader_alpha_mode = AlphaMode::Opaque;
     material.cull_mode = Some(Face::Front);
     material.pipeline.w = 0.0;
+    let material = BevyPrimitiveMaterial::Mtoon(material);
     Some(BevyPrimitive {
         mesh,
-        material: BevyPrimitiveMaterial::Mtoon(material),
+        transparent_order_offset: bevy_source_order_offset(
+            &material,
+            material_phase_order(loaded, primitive.material).saturating_add(1),
+            0,
+        ),
+        material,
         render_order: material_render_order(loaded, primitive.material).saturating_add(1),
-        phase_order: material_phase_order(loaded, primitive.material).saturating_add(1),
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: material_render_order(loaded, primitive.material).saturating_add(1),
@@ -1104,9 +1116,15 @@ struct BevyPrimitive {
     mesh: Mesh,
     material: BevyPrimitiveMaterial,
     render_order: i32,
-    phase_order: i32,
+    transparent_order_offset: f32,
     owner_source: OwnerSource,
     owner_ids: Vec<OwnerTriangle>,
+}
+
+impl BevyPrimitive {
+    fn needs_source_order_offset(&self) -> bool {
+        self.material.needs_source_order_offset()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1151,8 +1169,16 @@ enum BevyPrimitiveMaterial {
     Mtoon(BevyMtoonMaterial),
 }
 
+impl BevyPrimitiveMaterial {
+    fn needs_source_order_offset(&self) -> bool {
+        match self {
+            Self::Mtoon(material) => material.needs_source_order_offset(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Component, Debug, ExtractComponent)]
-struct BevyMtoonPhaseOrder(i32);
+struct BevyMtoonPhaseOrder(f32);
 
 struct BevyImageHandles {
     color_images: Vec<Option<Handle<Image>>>,
@@ -1303,11 +1329,18 @@ struct BevyMtoonMaterial {
     #[texture(17)]
     #[sampler(18)]
     occlusion_texture: Handle<Image>,
-    alpha_mode: AlphaMode,
+    shader_alpha_mode: AlphaMode,
+    render_alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
     depth_write: bool,
     front_face: CaptureFrontFace,
     depth_bias: f32,
+}
+
+impl BevyMtoonMaterial {
+    fn needs_source_order_offset(&self) -> bool {
+        self.shader_alpha_mode == AlphaMode::Opaque && self.render_alpha_mode == AlphaMode::Blend
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -1398,7 +1431,7 @@ impl Material for BevyMtoonMaterial {
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        self.alpha_mode
+        self.render_alpha_mode
     }
 
     fn depth_bias(&self) -> f32 {
@@ -1431,6 +1464,7 @@ impl Material for BevyMtoonMaterial {
         }
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
+            depth_stencil.depth_compare = CompareFunction::GreaterEqual;
         }
         Ok(())
     }
@@ -1592,7 +1626,8 @@ fn bevy_mtoon_material(
             GltfMaterialTextureSlot::Occlusion,
             image_handles,
         ),
-        alpha_mode,
+        shader_alpha_mode: alpha_mode,
+        render_alpha_mode: bevy_render_alpha_mode(alpha_mode, context.options.diagnostic_render),
         cull_mode,
         depth_write,
         front_face: context.options.front_face,
@@ -1765,6 +1800,22 @@ fn material_mtoon_phase_order(loaded: &LoadedVrm, material: Option<usize>) -> Op
         })
 }
 
+fn material_transparent_order_offset(phase_order: i32, draw_order: i32) -> f32 {
+    phase_order as f32 * 0.000001 + draw_order as f32 * 0.000001
+}
+
+fn bevy_source_order_offset(
+    material: &BevyPrimitiveMaterial,
+    phase_order: i32,
+    draw_order: i32,
+) -> f32 {
+    if material.needs_source_order_offset() {
+        material_transparent_order_offset(phase_order, draw_order)
+    } else {
+        0.0
+    }
+}
+
 fn material_depth_write(loaded: &LoadedVrm, material: Option<usize>) -> bool {
     render_capture_scene::capture_material_plan(loaded, material).depth_write
 }
@@ -1788,6 +1839,28 @@ fn material_alpha_mode(loaded: &LoadedVrm, material: Option<usize>) -> AlphaMode
         render_capture_scene::CaptureMaterialAlphaMode::Mask => AlphaMode::Mask(plan.alpha_cutoff),
         render_capture_scene::CaptureMaterialAlphaMode::Blend => AlphaMode::Blend,
     }
+}
+
+fn bevy_render_alpha_mode(alpha_mode: AlphaMode, diagnostic_render: DiagnosticRender) -> AlphaMode {
+    if alpha_mode == AlphaMode::Opaque && diagnostic_prefers_source_order(diagnostic_render) {
+        AlphaMode::Blend
+    } else {
+        alpha_mode
+    }
+}
+
+fn diagnostic_prefers_source_order(diagnostic_render: DiagnosticRender) -> bool {
+    matches!(
+        diagnostic_render,
+        DiagnosticRender::Flat
+            | DiagnosticRender::BaseFactor
+            | DiagnosticRender::BaseColor
+            | DiagnosticRender::BaseColorFlipV
+            | DiagnosticRender::BaseColorRawSrgb
+            | DiagnosticRender::Uv
+            | DiagnosticRender::BaseUv
+            | DiagnosticRender::OwnerId
+    )
 }
 
 fn bevy_image_with_format(
@@ -1953,7 +2026,7 @@ fn apply_mtoon_phase_order(
     for phase in phases.values_mut() {
         for item in &mut phase.items {
             if let Ok(order) = orders.get(item.entity.0) {
-                item.distance += order.0 as f32 * 0.000001;
+                item.distance += order.0;
             }
         }
     }
