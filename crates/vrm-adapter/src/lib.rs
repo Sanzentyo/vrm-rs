@@ -32,6 +32,68 @@ use vrm_runtime::{
     step_spring_joint_parity,
 };
 
+pub trait ClipDepthMapping: Copy + std::fmt::Debug + 'static {
+    const DEPTH_RANGE_LABEL: &'static str;
+
+    fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ZeroToOneDepth;
+
+impl ClipDepthMapping for ZeroToOneDepth {
+    const DEPTH_RANGE_LABEL: &'static str = "zero-to-one-ndc";
+
+    fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
+        ndc_z * 2.0 - 1.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReverseZeroToOneDepth;
+
+impl ClipDepthMapping for ReverseZeroToOneDepth {
+    const DEPTH_RANGE_LABEL: &'static str = "reverse-zero-to-one-ndc";
+
+    fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
+        (1.0 - ndc_z) * 2.0 - 1.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NegativeOneToOneDepth;
+
+impl ClipDepthMapping for NegativeOneToOneDepth {
+    const DEPTH_RANGE_LABEL: &'static str = "negative-one-to-one-ndc";
+
+    fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
+        ndc_z
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RendererFrontFace {
+    #[default]
+    Ccw,
+    Cw,
+}
+
+impl RendererFrontFace {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ccw => "ccw",
+            Self::Cw => "cw",
+        }
+    }
+
+    pub fn is_gpu_front_facing(self, y_down_screen_signed_area: f32) -> bool {
+        match self {
+            Self::Ccw => y_down_screen_signed_area < 0.0,
+            Self::Cw => y_down_screen_signed_area > 0.0,
+        }
+    }
+}
+
 pub trait SceneGraph {
     type Error;
 
@@ -2850,6 +2912,32 @@ mod tests {
         RotationTrack, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
+
+    #[test]
+    fn clip_depth_mappings_convert_to_webgl_reference_depth() {
+        assert_eq!(ZeroToOneDepth::DEPTH_RANGE_LABEL, "zero-to-one-ndc");
+        assert_eq!(ZeroToOneDepth::webgl_depth_from_ndc_z(0.25), -0.5);
+        assert_eq!(
+            ReverseZeroToOneDepth::DEPTH_RANGE_LABEL,
+            "reverse-zero-to-one-ndc"
+        );
+        assert_eq!(ReverseZeroToOneDepth::webgl_depth_from_ndc_z(0.25), 0.5);
+        assert_eq!(
+            NegativeOneToOneDepth::DEPTH_RANGE_LABEL,
+            "negative-one-to-one-ndc"
+        );
+        assert_eq!(NegativeOneToOneDepth::webgl_depth_from_ndc_z(0.25), 0.25);
+    }
+
+    #[test]
+    fn renderer_front_face_uses_y_down_screen_area() {
+        assert_eq!(RendererFrontFace::Ccw.as_str(), "ccw");
+        assert_eq!(RendererFrontFace::Cw.as_str(), "cw");
+        assert!(RendererFrontFace::Ccw.is_gpu_front_facing(-1.0));
+        assert!(!RendererFrontFace::Ccw.is_gpu_front_facing(1.0));
+        assert!(RendererFrontFace::Cw.is_gpu_front_facing(1.0));
+        assert!(!RendererFrontFace::Cw.is_gpu_front_facing(-1.0));
+    }
 
     #[derive(Default)]
     struct Mock {

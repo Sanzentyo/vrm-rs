@@ -94,6 +94,7 @@ struct OwnerCompareReport {
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
     top_actual_to_expected_details: Vec<OwnerTransitionDetail>,
+    unexplained_projection_gap_summary: OwnerProjectionGapSummary,
     top_unexplained_material_transitions: Vec<OwnerMaterialTransition>,
     top_unexplained_expected_to_actual_details: Vec<OwnerTransitionDetail>,
 }
@@ -353,6 +354,36 @@ struct OwnerTransitionDetail {
     sample_pixels: Vec<OwnerPixel>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+struct OwnerProjectionGapSummary {
+    count: u64,
+    with_screen_bounds: u64,
+    overlapping_screen_bounds_1px: u64,
+    disjoint_screen_bounds_1px: u64,
+    with_depth: u64,
+    mean_center_distance_pixels: Option<f64>,
+    max_center_distance_pixels: Option<f64>,
+    mean_area_ratio: Option<f64>,
+    max_area_ratio: Option<f64>,
+    mean_abs_webgl_depth_delta: Option<f64>,
+    max_abs_webgl_depth_delta: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct OwnerProjectionGapAccumulator {
+    count: u64,
+    with_screen_bounds: u64,
+    overlapping_screen_bounds_1px: u64,
+    disjoint_screen_bounds_1px: u64,
+    with_depth: u64,
+    center_distance_sum: f64,
+    center_distance_max: f64,
+    area_ratio_sum: f64,
+    area_ratio_max: f64,
+    depth_delta_sum: f64,
+    depth_delta_max: f64,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 struct OwnerPixel {
     x: usize,
@@ -480,6 +511,7 @@ fn compare_owner_images(
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
     let mut unexplained_expected_to_actual_pixels = BTreeMap::new();
+    let mut unexplained_projection_gaps = OwnerProjectionGapAccumulator::default();
 
     for (index, (&expected_id, &actual_id)) in expected_ids.iter().zip(&actual_ids).enumerate() {
         let pixel = OwnerPixel {
@@ -546,6 +578,7 @@ fn compare_owner_images(
                     }
                     if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
+                        unexplained_projection_gaps.add(expected_label, actual_label);
                         bump_owner_material_transition(
                             &mut unexplained_material_transitions,
                             expected_label,
@@ -693,6 +726,7 @@ fn compare_owner_images(
             expected_metadata,
             top,
         ),
+        unexplained_projection_gap_summary: unexplained_projection_gaps.into_summary(),
         top_unexplained_material_transitions: top_owner_material_transitions(
             unexplained_material_transitions,
             top,
@@ -1387,11 +1421,45 @@ fn screen_bounds_overlap(left: OwnerScreenBounds, right: OwnerScreenBounds, pad:
         && left.max_y + pad >= right.min_y
 }
 
+fn screen_bounds_center_distance(left: OwnerScreenBounds, right: OwnerScreenBounds) -> f64 {
+    let left_center_x = (left.min_x + left.max_x) * 0.5;
+    let left_center_y = (left.min_y + left.max_y) * 0.5;
+    let right_center_x = (right.min_x + right.max_x) * 0.5;
+    let right_center_y = (right.min_y + right.max_y) * 0.5;
+    (left_center_x - right_center_x).hypot(left_center_y - right_center_y)
+}
+
+fn screen_bounds_area_ratio(left: OwnerScreenBounds, right: OwnerScreenBounds) -> f64 {
+    let left_area = screen_bounds_area(left);
+    let right_area = screen_bounds_area(right);
+    if left_area <= f64::EPSILON || right_area <= f64::EPSILON {
+        1.0
+    } else {
+        left_area.max(right_area) / left_area.min(right_area)
+    }
+}
+
+fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
+    ((bounds.max_x - bounds.min_x).max(0.0)) * ((bounds.max_y - bounds.min_y).max(0.0))
+}
+
 fn same_webgl_depth(expected: &OwnerLabel, actual: &OwnerLabel, tolerance: f64) -> bool {
-    match (expected.webgl_depth.or(expected.depth), actual.webgl_depth.or(actual.depth)) {
+    match (owner_depth(expected), owner_depth(actual)) {
         (Some(left), Some(right)) => (left - right).abs() <= tolerance,
         _ => false,
     }
+}
+
+fn owner_depth(label: &OwnerLabel) -> Option<f64> {
+    label.webgl_depth.or(label.depth)
+}
+
+fn mean(sum: f64, count: u64) -> Option<f64> {
+    (count > 0).then_some(sum / count as f64)
+}
+
+fn some_if_count(value: f64, count: u64) -> Option<f64> {
+    (count > 0).then_some(value)
 }
 
 fn pass_label(label: Option<&OwnerLabel>) -> String {
@@ -1475,6 +1543,58 @@ impl OwnerTransitionPixels {
         self.bounds.max_y = self.bounds.max_y.max(pixel.y);
         if self.sample_pixels.len() < 8 {
             self.sample_pixels.push(pixel);
+        }
+    }
+}
+
+impl OwnerProjectionGapAccumulator {
+    fn add(&mut self, expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) {
+        self.count += 1;
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            return;
+        };
+        if let (Some(expected_bounds), Some(actual_bounds)) =
+            (expected.screen_bounds, actual.screen_bounds)
+        {
+            self.with_screen_bounds += 1;
+            if screen_bounds_overlap(expected_bounds, actual_bounds, 1.0) {
+                self.overlapping_screen_bounds_1px += 1;
+            } else {
+                self.disjoint_screen_bounds_1px += 1;
+            }
+            let center_distance = screen_bounds_center_distance(expected_bounds, actual_bounds);
+            self.center_distance_sum += center_distance;
+            self.center_distance_max = self.center_distance_max.max(center_distance);
+            let area_ratio = screen_bounds_area_ratio(expected_bounds, actual_bounds);
+            self.area_ratio_sum += area_ratio;
+            self.area_ratio_max = self.area_ratio_max.max(area_ratio);
+        }
+        if let (Some(expected_depth), Some(actual_depth)) =
+            (owner_depth(expected), owner_depth(actual))
+        {
+            self.with_depth += 1;
+            let delta = (expected_depth - actual_depth).abs();
+            self.depth_delta_sum += delta;
+            self.depth_delta_max = self.depth_delta_max.max(delta);
+        }
+    }
+
+    fn into_summary(self) -> OwnerProjectionGapSummary {
+        OwnerProjectionGapSummary {
+            count: self.count,
+            with_screen_bounds: self.with_screen_bounds,
+            overlapping_screen_bounds_1px: self.overlapping_screen_bounds_1px,
+            disjoint_screen_bounds_1px: self.disjoint_screen_bounds_1px,
+            with_depth: self.with_depth,
+            mean_center_distance_pixels: mean(
+                self.center_distance_sum,
+                self.with_screen_bounds,
+            ),
+            max_center_distance_pixels: some_if_count(self.center_distance_max, self.with_screen_bounds),
+            mean_area_ratio: mean(self.area_ratio_sum, self.with_screen_bounds),
+            max_area_ratio: some_if_count(self.area_ratio_max, self.with_screen_bounds),
+            mean_abs_webgl_depth_delta: mean(self.depth_delta_sum, self.with_depth),
+            max_abs_webgl_depth_delta: some_if_count(self.depth_delta_max, self.with_depth),
         }
     }
 }
@@ -1757,6 +1877,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 render_order: Some(2001),
                 render_phase_order: Some(19),
                 draw_index: Some(7),
+                screen_bounds: Some(OwnerScreenBounds {
+                    min_x: 0.0,
+                    min_y: 0.0,
+                    max_x: 2.0,
+                    max_y: 2.0,
+                }),
+                webgl_depth: Some(0.5),
                 ..OwnerLabel::default()
             },
         ),
@@ -1765,6 +1892,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             OwnerLabel {
                 id: 5,
                 pass: Some("base".to_owned()),
+                screen_bounds: Some(OwnerScreenBounds {
+                    min_x: 8.0,
+                    min_y: 0.0,
+                    max_x: 10.0,
+                    max_y: 2.0,
+                }),
+                webgl_depth: Some(0.7),
                 material_side: Some(0),
                 cull_mode: Some("back".to_owned()),
                 front_face: Some("ccw".to_owned()),
@@ -1796,6 +1930,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 render_order: Some(2001),
                 render_phase_order: Some(19),
                 draw_index: Some(8),
+                screen_bounds: Some(OwnerScreenBounds {
+                    min_x: 1.0,
+                    min_y: 0.0,
+                    max_x: 3.0,
+                    max_y: 2.0,
+                }),
+                webgl_depth: Some(0.5005),
                 ..OwnerLabel::default()
             },
         ),
@@ -1813,6 +1954,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 render_order: Some(2000),
                 render_phase_order: Some(18),
                 draw_index: Some(4),
+                screen_bounds: Some(OwnerScreenBounds {
+                    min_x: 2.0,
+                    min_y: 0.0,
+                    max_x: 4.0,
+                    max_y: 2.0,
+                }),
+                webgl_depth: Some(0.9),
                 ..OwnerLabel::default()
             },
         ),
@@ -1834,6 +1982,32 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.actual_only, 1);
     assert_eq!(report.mismatched_shared_nonzero, 2);
     assert_eq!(report.unexplained_owner_tail_mismatched_shared_nonzero, 2);
+    assert_eq!(report.unexplained_projection_gap_summary.count, 2);
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .with_screen_bounds,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .overlapping_screen_bounds_1px,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .disjoint_screen_bounds_1px,
+        1
+    );
+    assert_eq!(report.unexplained_projection_gap_summary.with_depth, 2);
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .mean_center_distance_pixels,
+        Some(3.5)
+    );
     assert_eq!(report.top_unexplained_expected_to_actual_details.len(), 2);
     assert_eq!(
         report.actual_not_visible_by_cull_policy_shared_nonzero,

@@ -51,7 +51,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use vrm_adapter::{MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig};
+use vrm_adapter::{
+    ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
+    RendererFrontFace, ReverseZeroToOneDepth,
+};
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -207,9 +210,13 @@ enum CaptureFrontFace {
 
 impl CaptureFrontFace {
     fn as_str(self) -> &'static str {
+        self.renderer_policy().as_str()
+    }
+
+    fn renderer_policy(self) -> RendererFrontFace {
         match self {
-            Self::Ccw => "ccw",
-            Self::Cw => "cw",
+            Self::Ccw => RendererFrontFace::Ccw,
+            Self::Cw => RendererFrontFace::Cw,
         }
     }
 
@@ -668,7 +675,7 @@ fn diagnostic_owner_ids(
         .flat_map(|(draw_index, primitive)| {
             primitive.owner_ids.iter().map(move |owner| {
                 let source = primitive.owner_source;
-                let projection = owner_triangle_projection(
+                let projection = owner_triangle_projection::<ReverseZeroToOneDepth>(
                     &primitive.mesh,
                     owner.triangle,
                     view_projection,
@@ -708,7 +715,7 @@ fn diagnostic_owner_ids(
                     })),
                     "depth": projection.map(|projection| projection.depth),
                     "webglDepth": projection.map(|projection| projection.webgl_depth),
-                    "depthRange": projection.map(|_| "bevy-reverse-zero-to-one-ndc"),
+                    "depthRange": projection.map(|_| ReverseZeroToOneDepth::DEPTH_RANGE_LABEL),
                     "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
                     "frontFacing": projection.map(|projection| projection.front_facing),
                     "gpuFrontFacing": projection.map(|projection| projection.gpu_front_facing),
@@ -809,12 +816,15 @@ fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
     Mat4::from_cols_array(&projection.to_cols_array()) * camera_view(options)
 }
 
-fn owner_triangle_projection(
+fn owner_triangle_projection<D>(
     mesh: &Mesh,
     triangle: usize,
     view_projection: Mat4,
     options: &CaptureOptions,
-) -> Option<OwnerProjection> {
+) -> Option<OwnerProjection>
+where
+    D: ClipDepthMapping,
+{
     let positions = mesh_positions(mesh)?;
     let start = triangle.checked_mul(3)?;
     let points = [
@@ -846,22 +856,18 @@ fn owner_triangle_projection(
                 .fold(f32::NEG_INFINITY, f32::max),
         },
         depth,
-        webgl_depth: depth * 2.0 - 1.0,
+        webgl_depth: D::webgl_depth_from_ndc_z(depth),
         screen_signed_area,
         front_facing: screen_signed_area > 0.0,
-        gpu_front_facing: bevy_gpu_front_facing(screen_signed_area, options.front_face),
+        gpu_front_facing: options
+            .front_face
+            .renderer_policy()
+            .is_gpu_front_facing(screen_signed_area),
     })
 }
 
 fn triangle_signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-}
-
-fn bevy_gpu_front_facing(screen_signed_area: f32, front_face: CaptureFrontFace) -> bool {
-    match front_face {
-        CaptureFrontFace::Ccw => screen_signed_area < 0.0,
-        CaptureFrontFace::Cw => screen_signed_area > 0.0,
-    }
 }
 
 fn bevy_visible_by_cull_policy(primitive: &BevyPrimitive, gpu_front_facing: bool) -> bool {
