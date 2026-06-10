@@ -59,7 +59,7 @@ use vrm_io::{
     GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
     GltfMaterialTextureSlot, GltfMinFilter, GltfMtoonLightAccumulation as GltfLightAccumulation,
     GltfNormalMapMode, GltfOutlineScale, GltfOutlineVertexSettings, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin,
+    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, fallback_tangent,
     generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
     load_vrm_from_path,
 };
@@ -691,7 +691,16 @@ fn bevy_mesh(
             &primitive.tex_coords_0_or_defaults(),
             &primitive.indices,
         )
-        .and_then(|tangents| tangents.all_tangents())
+        .map(|generated| {
+            generated
+                .tangents
+                .into_iter()
+                .zip(normals.iter())
+                .map(|(tangent, normal)| {
+                    tangent.unwrap_or_else(|| fallback_tangent(GVec3::from_array(*normal)))
+                })
+                .collect::<Vec<_>>()
+        })
     } else {
         None
     };

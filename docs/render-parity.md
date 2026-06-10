@@ -257,9 +257,11 @@ covers the unique official/local fixtures reported by `inspect-mtoon-fixtures`:
 `Seed-san.vrm` has `6` normal-mapped primitives without tangents, and
 `VRM1_Constraint_Twist_Sample.vrm` has `3`. The run uses the canonical
 opaque-black review background, selected `rgb-visible`, exact alpha parity, and
-`--render-fail-under 34`. Current selected PSNR is Seed-san wgpu `34.5647 dB` /
-Bevy `34.0434 dB`, and constraint sample wgpu `36.2028 dB` / Bevy
-`36.1877 dB`, all with alpha mismatches `0`. Review
+`--render-fail-under 34`. Current selected PSNR is Seed-san wgpu `34.6181 dB` /
+Bevy `34.0835 dB`, and constraint sample wgpu `36.2443 dB` / Bevy
+`36.2352 dB`, all with alpha mismatches `0`. The Bevy capture fills missing
+generated tangent vertices with `vrm-io::fallback_tangent`, so one degenerate
+vertex no longer disables normal maps for the whole primitive. Review
 `.external-fixtures/render-parity-real-normal-maps/visual-review.html` and the
 diff heatmaps when changing tangent generation, normal sampling, back-face TBN
 handling, or MToon light/color accumulation.
