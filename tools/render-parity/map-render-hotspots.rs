@@ -54,6 +54,8 @@ struct Options {
     outline_width_scale: f32,
     #[arg(long)]
     disable_outlines: bool,
+    #[arg(long)]
+    expand_outlines: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
     #[arg(long, default_value_t = 32)]
@@ -287,7 +289,7 @@ fn build_surfaces(
                 material_name: material_name.clone(),
                 base_uv_transform,
                 indices: primitive_indices(primitive.indices.as_slice(), vertices.len()),
-                vertices,
+                vertices: vertices.clone(),
             });
             if options.disable_outlines {
                 continue;
@@ -303,19 +305,24 @@ fn build_surfaces(
                 camera_view(options),
                 projection_y_scale(),
             );
-            let Some(outline_vertices) = primitive.outline_vertices(
-                &morph_weights,
-                GltfOutlineVertexSettings {
-                    base_width: outline.width_factor * options.outline_width_scale,
-                    scale: outline_scale,
-                    width_texture: width_texture.as_ref(),
-                    width_transform: uv_transforms.outline_width,
-                    width_texture_origin: Rgba8SamplingOrigin::TopLeft,
-                },
-                world,
-                skin_matrices.as_deref(),
-            ) else {
-                continue;
+            let outline_vertices = if options.expand_outlines {
+                let Some(outline_vertices) = primitive.outline_vertices(
+                    &morph_weights,
+                    GltfOutlineVertexSettings {
+                        base_width: outline.width_factor * options.outline_width_scale,
+                        scale: outline_scale,
+                        width_texture: width_texture.as_ref(),
+                        width_transform: uv_transforms.outline_width,
+                        width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+                    },
+                    world,
+                    skin_matrices.as_deref(),
+                ) else {
+                    continue;
+                };
+                outline_vertices
+            } else {
+                vertices.clone()
             };
             surfaces.push(Surface {
                 node: node_index,

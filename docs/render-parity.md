@@ -193,7 +193,9 @@ candidate node, mesh, primitive, material, triangle, raw UV, and transformed
 base UV values for each top direct-imqraw hotspot pixel. Use it after
 `just render-parity-seed-base-uv-diagnostic` when the next question is "which
 material/primitive owns this residual?" The mapper defaults to the local
-render-parity runner's camera (`256x256`, `camera-z = 3`); pass `--width`,
+render-parity runner's camera (`256x256`, `camera-z = 3`) and to non-expanded
+diagnostic outlines, matching three-vrm's diagnostic material replacement. Pass
+`--expand-outlines` when mapping normal shaded artifacts, and pass `--width`,
 `--height`, or camera options when inspecting artifacts generated with custom
 capture settings.
 
@@ -206,12 +208,11 @@ just render-parity-seed-base-uv-outline-off-diagnostic
 It writes
 `.external-fixtures/render-parity-seed-base-uv-outline-off-diagnostic/`, including
 direct-imqraw reports, hotspot delta reports, and hotspot-to-primitive maps with
-`--disable-outlines`. On the 2026-06-10 Seed-san run, outline-off transformed
-base UV improves to wgpu `38.6925 dB` / Bevy `38.5360 dB` on
-`rgb-shared-nonblack-interior1px`, while the outline-on hotspot map concentrates
-on `outline:material_1`, `outline:material_5`, and `outline:material_6`. Treat
-that as evidence that the largest current Seed-san UV diagnostic residual is
-outline pass coverage/UV behavior, not base texture transform.
+`--disable-outlines`. On the 2026-06-10 Seed-san run, fixing Rust diagnostic
+outline handling makes the normal base-UV diagnostic and this outline-off
+variant agree at wgpu `38.6925 dB` / Bevy `38.5360 dB` on
+`rgb-shared-nonblack-interior1px`. Treat the remaining hotspots as base surface
+UV/lookup-locality work rather than outline expansion work.
 
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing

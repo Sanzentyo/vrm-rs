@@ -476,25 +476,34 @@ fn outline_primitive(
         camera_view(context.options),
         projection_y_scale(),
     );
-    let outline_vertices = primitive.outline_vertices(
-        morph_weights,
-        GltfOutlineVertexSettings {
-            base_width: width,
-            scale: outline_scale,
-            width_texture: width_texture.as_ref(),
-            width_transform: uv_transforms.outline_width,
-            width_texture_origin: Rgba8SamplingOrigin::TopLeft,
-        },
-        context.world,
-        context.skin_matrices,
-    )?;
+    let outline_vertices = (context.options.diagnostic_render == DiagnosticRender::Shaded)
+        .then(|| {
+            primitive.outline_vertices(
+                morph_weights,
+                GltfOutlineVertexSettings {
+                    base_width: width,
+                    scale: outline_scale,
+                    width_texture: width_texture.as_ref(),
+                    width_transform: uv_transforms.outline_width,
+                    width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+                },
+                context.world,
+                context.skin_matrices,
+            )
+        })
+        .flatten();
     let vertices = surface
         .vertices
         .iter()
-        .zip(outline_vertices)
-        .map(|(vertex, outline_vertex)| {
+        .enumerate()
+        .map(|(index, vertex)| {
             let mut vertex = *vertex;
-            vertex.position = outline_vertex.position.to_array();
+            if let Some(outline_vertex) = outline_vertices
+                .as_ref()
+                .and_then(|outline_vertices| outline_vertices.get(index))
+            {
+                vertex.position = outline_vertex.position.to_array();
+            }
             vertex.outline_color = outline.color;
             vertex.alpha_mode = alpha_mode_code(CaptureAlphaMode::Opaque);
             vertex.double_sided = 0.0;

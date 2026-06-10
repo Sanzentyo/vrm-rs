@@ -550,19 +550,30 @@ fn bevy_outline_primitive(
         context.options.mtoon_time,
         context.expression_effects,
     );
-    let mesh = bevy_outline_mesh(
-        primitive,
-        morph_weights,
-        context.world,
-        context.skin_matrices,
-        BevyOutlineMeshSettings {
-            width: outline.width_factor * context.options.outline_width_scale,
-            width_mode: outline.width_mode,
-            capture: context.options,
-            width_texture: width_texture.as_ref(),
-            width_transform: uv_transforms.outline_width,
-        },
-    );
+    let mesh = if context.options.diagnostic_render == DiagnosticRender::Shaded {
+        bevy_outline_mesh(
+            primitive,
+            morph_weights,
+            context.world,
+            context.skin_matrices,
+            BevyOutlineMeshSettings {
+                width: outline.width_factor * context.options.outline_width_scale,
+                width_mode: outline.width_mode,
+                capture: context.options,
+                width_texture: width_texture.as_ref(),
+                width_transform: uv_transforms.outline_width,
+            },
+        )
+    } else {
+        bevy_mesh(
+            primitive,
+            morph_weights,
+            context.world,
+            context.skin_matrices,
+            false,
+        )
+        .0
+    };
     let mut material = bevy_mtoon_material(
         loaded,
         primitive,

@@ -59,21 +59,22 @@
   top pixel back to candidate node/mesh/primitive/material/triangle IDs with
   raw and transformed base UVs. This turns the Seed-san base-UV residual into a
   localized material/primitive investigation rather than a whole-avatar guess.
-  Running it on the current Seed-san base-UV reports maps the top 32 wgpu and
-  Bevy hotspots identically: `outline:material_1` accounts for `16`,
-  `outline:material_5` for `12`, `outline:material_6` for `2`, with only two
-  base-pass hits. The next Seed-san slice should therefore prioritize outline
-  UV/coverage and outline diagnostic isolation before revisiting base texture
-  lookup or MToon light accumulation.
+  The first run exposed that the Rust diagnostic renderers were still expanding
+  MToon outline vertices, while three-vrm's diagnostic material replacement
+  turns outline materials into unexpanded `MeshBasicMaterial` back-face groups.
+  The wgpu and Bevy captures now keep outline expansion only for normal shaded
+  rendering and use unexpanded outline geometry for non-shaded diagnostic
+  modes.
 - Added `just render-parity-seed-base-uv-outline-off-diagnostic` to separate
-  base-texture UV residuals from outline pass coverage. The first run improves
-  selected `rgb-shared-nonblack-interior1px` from the outline-on base-UV
-  diagnostic's wgpu `30.3816 dB` / Bevy `30.1784 dB` to wgpu `38.6925 dB` /
-  Bevy `38.5360 dB`, with exact alpha parity. Mapping the remaining top 32
-  outline-off hotspots puts `18` on `base:material_1`, then smaller clusters on
-  base materials `5`, `6`, `0`, `2`, and `3`; this leaves two separate follow-up
-  tracks: exact outline UV/coverage first, then lower-amplitude base surface
-  UV/lookup locality.
+  base-texture UV residuals from outline pass coverage. After matching
+  three-vrm's diagnostic outline behavior, the regular base-UV diagnostic and
+  the outline-off variant agree at selected `rgb-shared-nonblack-interior1px`
+  wgpu `38.6925 dB` / Bevy `38.5360 dB`, with exact alpha parity. Re-running
+  the base-color diagnostic improves to wgpu `32.4602 dB` / Bevy `32.4177 dB`.
+  Mapping the remaining top 32 base-UV hotspots now puts `18` on
+  `base:material_1`, then smaller clusters on base materials `5`, `6`, `0`,
+  `2`, and `3`; the next Seed-san slice should target lower-amplitude base
+  surface UV/lookup locality rather than outline expansion.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the
