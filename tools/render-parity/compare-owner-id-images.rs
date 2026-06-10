@@ -74,6 +74,7 @@ struct OwnerCompareReport {
     max_actual_owner: u32,
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_pass_transitions: Vec<OwnerPassTransition>,
+    top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
@@ -98,6 +99,33 @@ struct OwnerPassTransition {
     expected_pass: String,
     actual_pass: String,
     count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerRenderPolicyTransition {
+    expected_pass: String,
+    expected_side: String,
+    expected_front_facing: String,
+    expected_depth_write: String,
+    actual_pass: String,
+    actual_cull_mode: String,
+    actual_front_face: String,
+    actual_front_facing: String,
+    actual_depth_write: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerRenderPolicyKey {
+    expected_pass: String,
+    expected_side: String,
+    expected_front_facing: String,
+    expected_depth_write: String,
+    actual_pass: String,
+    actual_cull_mode: String,
+    actual_front_face: String,
+    actual_front_facing: String,
+    actual_depth_write: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -254,6 +282,7 @@ fn compare_owner_images(
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
+    let mut render_policy_transitions = BTreeMap::new();
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
 
@@ -284,6 +313,11 @@ fn compare_owner_images(
                     bump_transition_pixels(&mut actual_to_expected_pixels, right, left, pixel);
                     bump_pass_transition(
                         &mut pass_transitions,
+                        expected_metadata.get(&left),
+                        actual_metadata.get(&right),
+                    );
+                    bump_render_policy_transition(
+                        &mut render_policy_transitions,
                         expected_metadata.get(&left),
                         actual_metadata.get(&right),
                     );
@@ -343,6 +377,10 @@ fn compare_owner_images(
         max_actual_owner: actual_ids.iter().copied().max().unwrap_or(0),
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
         top_pass_transitions: top_pass_transitions(pass_transitions, top),
+        top_render_policy_transitions: top_render_policy_transitions(
+            render_policy_transitions,
+            top,
+        ),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
         top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
         top_expected_to_actual_details: top_transition_details(
@@ -414,6 +452,88 @@ fn top_pass_transitions(
             count,
         })
         .collect()
+}
+
+fn bump_render_policy_transition(
+    map: &mut BTreeMap<OwnerRenderPolicyKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerRenderPolicyKey::from_labels(expected, actual))
+        .or_default() += 1;
+}
+
+fn top_render_policy_transitions(
+    map: BTreeMap<OwnerRenderPolicyKey, u64>,
+    top: usize,
+) -> Vec<OwnerRenderPolicyTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerRenderPolicyTransition {
+            expected_pass: key.expected_pass,
+            expected_side: key.expected_side,
+            expected_front_facing: key.expected_front_facing,
+            expected_depth_write: key.expected_depth_write,
+            actual_pass: key.actual_pass,
+            actual_cull_mode: key.actual_cull_mode,
+            actual_front_face: key.actual_front_face,
+            actual_front_facing: key.actual_front_facing,
+            actual_depth_write: key.actual_depth_write,
+            count,
+        })
+        .collect()
+}
+
+impl OwnerRenderPolicyKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            expected_pass: pass_label(expected),
+            expected_side: expected
+                .and_then(|label| label.material_side)
+                .map(material_side_label)
+                .unwrap_or_else(|| "unknown".to_owned()),
+            expected_front_facing: optional_bool_label(expected.and_then(|label| label.front_facing)),
+            expected_depth_write: optional_bool_label(expected.and_then(|label| label.depth_write)),
+            actual_pass: pass_label(actual),
+            actual_cull_mode: actual
+                .and_then(|label| label.cull_mode.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
+            actual_front_face: actual
+                .and_then(|label| label.front_face.as_deref())
+                .unwrap_or("unknown")
+                .to_owned(),
+            actual_front_facing: optional_bool_label(actual.and_then(|label| label.front_facing)),
+            actual_depth_write: optional_bool_label(actual.and_then(|label| label.depth_write)),
+        }
+    }
+}
+
+fn pass_label(label: Option<&OwnerLabel>) -> String {
+    label
+        .and_then(|label| label.pass.as_deref())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn material_side_label(side: i64) -> String {
+    match side {
+        0 => "front".to_owned(),
+        1 => "back".to_owned(),
+        2 => "double".to_owned(),
+        value => format!("side:{value}"),
+    }
+}
+
+fn optional_bool_label(value: Option<bool>) -> String {
+    match value {
+        Some(true) => "true".to_owned(),
+        Some(false) => "false".to_owned(),
+        None => "unknown".to_owned(),
+    }
 }
 
 fn bump_transition_pixels(
@@ -704,13 +824,36 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         height: 1,
         rgba: vec![1, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
     };
+    let expected_metadata = HashMap::from([(
+        2,
+        OwnerLabel {
+            id: 2,
+            pass: Some("outline".to_owned()),
+            material_side: Some(1),
+            front_facing: Some(false),
+            depth_write: Some(true),
+            ..OwnerLabel::default()
+        },
+    )]);
+    let actual_metadata = HashMap::from([(
+        3,
+        OwnerLabel {
+            id: 3,
+            pass: Some("base".to_owned()),
+            cull_mode: Some("back".to_owned()),
+            front_face: Some("ccw".to_owned()),
+            front_facing: Some(false),
+            depth_write: Some(true),
+            ..OwnerLabel::default()
+        },
+    )]);
     let report = compare_owner_images(
         "expected".to_owned(),
         "actual".to_owned(),
         &expected,
         &actual,
-        &HashMap::new(),
-        &HashMap::new(),
+        &expected_metadata,
+        &actual_metadata,
         8,
     )?;
     assert_eq!(report.expected_nonzero, 2);
@@ -722,5 +865,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.mismatched_shared_nonzero, 1);
     assert_eq!(report.top_expected_to_actual[0].expected, 2);
     assert_eq!(report.top_expected_to_actual[0].actual, 3);
+    assert_eq!(
+        report.top_render_policy_transitions[0].expected_side,
+        "back"
+    );
+    assert_eq!(
+        report.top_render_policy_transitions[0].actual_cull_mode,
+        "back"
+    );
     Ok(())
 }

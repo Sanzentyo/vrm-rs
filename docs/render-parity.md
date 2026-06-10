@@ -427,6 +427,21 @@ diagnostics improved a few outline owner matches but reduced three-vrm PSNR and
 made wgpu-vs-Bevy much noisier, so `owner-id` remains on the non-shaded
 diagnostic outline geometry path.
 
+They also include `top_render_policy_transitions`, which groups the same
+mismatched shared-owner pixels by expected pass/material side/front-facing/
+depth-write and actual pass/cull/front-face/front-facing/depth-write. This is
+the preferred first read for cull/facing work because it separates a pass swap
+from a face-policy swap. Recomputing the default CCW Seed-san wgpu report shows
+the main bucket as `outline` / material side `back` / `frontFacing=false` to
+Rust `base` / `cullMode=back` / `frontFace=ccw` / `frontFacing=false`
+(`11770` pixels). The CW diagnostic changes the dominant wgpu bucket to
+`outline` / side `back` / `frontFacing=false` to Rust `outline` /
+`cullMode=front` / `frontFace=cw` / `frontFacing=false` (`11765` pixels). Bevy
+shows the same pass/cull/front-face shape in CW mode, split across
+front-facing metadata buckets (`10882 + 887` pixels), so treat the remaining
+Bevy-vs-wgpu difference as metadata/fill detail unless a later capture shows it
+affects shaded output.
+
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
