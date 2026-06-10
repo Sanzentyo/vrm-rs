@@ -136,6 +136,9 @@ struct OwnerDrawOrderTransition {
     expected_render_order: String,
     actual_render_order: String,
     render_order_relation: String,
+    expected_render_phase_order: String,
+    actual_render_phase_order: String,
+    render_phase_order_relation: String,
     count: u64,
 }
 
@@ -145,6 +148,7 @@ struct OwnerDrawOrderRelationClass {
     actual_pass: String,
     draw_index_relation: String,
     render_order_relation: String,
+    render_phase_order_relation: String,
     count: u64,
 }
 
@@ -236,6 +240,9 @@ struct OwnerDrawOrderKey {
     expected_render_order: String,
     actual_render_order: String,
     render_order_relation: String,
+    expected_render_phase_order: String,
+    actual_render_phase_order: String,
+    render_phase_order_relation: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -244,6 +251,7 @@ struct OwnerDrawOrderRelationKey {
     actual_pass: String,
     draw_index_relation: String,
     render_order_relation: String,
+    render_phase_order_relation: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -260,6 +268,7 @@ struct OwnerLabel {
     material_slot: Option<u64>,
     triangle: Option<u64>,
     render_order: Option<i64>,
+    render_phase_order: Option<i64>,
     draw_index: Option<u64>,
     material_type: Option<String>,
     front_face: Option<String>,
@@ -747,6 +756,7 @@ fn top_draw_order_relation_classes(
             actual_pass: key.actual_pass,
             draw_index_relation: key.draw_index_relation,
             render_order_relation: key.render_order_relation,
+            render_phase_order_relation: key.render_phase_order_relation,
             count,
         })
         .collect()
@@ -770,6 +780,9 @@ fn top_draw_order_transitions(
             expected_render_order: key.expected_render_order,
             actual_render_order: key.actual_render_order,
             render_order_relation: key.render_order_relation,
+            expected_render_phase_order: key.expected_render_phase_order,
+            actual_render_phase_order: key.actual_render_phase_order,
+            render_phase_order_relation: key.render_phase_order_relation,
             count,
         })
         .collect()
@@ -1039,6 +1052,16 @@ impl OwnerDrawOrderKey {
                 expected.and_then(|label| label.render_order),
                 actual.and_then(|label| label.render_order),
             ),
+            expected_render_phase_order: optional_i64_label(
+                expected.and_then(|label| label.render_phase_order),
+            ),
+            actual_render_phase_order: optional_i64_label(
+                actual.and_then(|label| label.render_phase_order),
+            ),
+            render_phase_order_relation: i64_order_relation(
+                expected.and_then(|label| label.render_phase_order),
+                actual.and_then(|label| label.render_phase_order),
+            ),
         }
     }
 }
@@ -1055,6 +1078,10 @@ impl OwnerDrawOrderRelationKey {
             render_order_relation: i64_order_relation(
                 expected.and_then(|label| label.render_order),
                 actual.and_then(|label| label.render_order),
+            ),
+            render_phase_order_relation: i64_order_relation(
+                expected.and_then(|label| label.render_phase_order),
+                actual.and_then(|label| label.render_phase_order),
             ),
         }
     }
@@ -1460,6 +1487,7 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         material_slot: value.get("materialSlot").and_then(Value::as_u64),
         triangle: value.get("triangle").and_then(Value::as_u64),
         render_order: value.get("renderOrder").and_then(Value::as_i64),
+        render_phase_order: value.get("renderPhaseOrder").and_then(Value::as_i64),
         draw_index: value.get("drawIndex").and_then(Value::as_u64),
         material_type: string_field(value, "materialType"),
         front_face: string_field(value, "frontFace"),
@@ -1535,6 +1563,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
                 render_order: Some(2001),
+                render_phase_order: Some(19),
                 draw_index: Some(7),
                 ..OwnerLabel::default()
             },
@@ -1552,6 +1581,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
                 render_order: Some(2002),
+                render_phase_order: Some(20),
                 draw_index: Some(9),
                 ..OwnerLabel::default()
             },
@@ -1570,6 +1600,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 visible_by_cull_policy: Some(true),
                 depth_write: Some(true),
                 render_order: Some(2001),
+                render_phase_order: Some(19),
                 draw_index: Some(8),
                 ..OwnerLabel::default()
             },
@@ -1586,6 +1617,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 visible_by_cull_policy: Some(false),
                 depth_write: Some(false),
                 render_order: Some(2000),
+                render_phase_order: Some(18),
                 draw_index: Some(4),
                 ..OwnerLabel::default()
             },
@@ -1624,6 +1656,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             && transition.actual_pass == "base"
             && transition.draw_index_relation == "expected-before-actual"
             && transition.render_order_relation == "same"
+            && transition.render_phase_order_relation == "same"
             && transition.count == 1
     }));
     assert!(
@@ -1635,6 +1668,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     && transition.actual_pass == "base"
                     && transition.draw_index_relation == "expected-before-actual"
                     && transition.render_order_relation == "same"
+                    && transition.render_phase_order_relation == "same"
                     && transition.count == 1
             })
     );

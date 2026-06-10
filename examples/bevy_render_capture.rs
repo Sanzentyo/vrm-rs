@@ -512,6 +512,7 @@ fn spawn_vrm_meshes(
                 shading.normal_scale *= options.normal_map_scale;
             }
             let render_order = material_render_order(loaded, primitive.material);
+            let phase_order = material_phase_order(loaded, primitive.material);
             let owner_source = OwnerSource {
                 node_index,
                 mesh_index,
@@ -519,6 +520,7 @@ fn spawn_vrm_meshes(
                 material: primitive.material,
                 pass: OwnerPass::Base,
                 render_order,
+                phase_order,
             };
             let normal_plan =
                 primitive.normal_map_plan(shading.normal_scale, options.normal_map_mode.into());
@@ -540,7 +542,7 @@ fn spawn_vrm_meshes(
                     BevyNormalMapMaterialPlan::from_normal_plan(normal_plan, has_tangents),
                 )),
                 render_order,
-                phase_order: material_phase_order(loaded, primitive.material),
+                phase_order,
                 owner_source,
                 owner_ids: Vec::new(),
             };
@@ -675,6 +677,7 @@ fn diagnostic_owner_ids(
                     "materialName": material_name(loaded, source.material),
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
+                    "renderPhaseOrder": source.phase_order,
                     "drawIndex": draw_index,
                     "frontFace": options.front_face.as_str(),
                     "cullMode": bevy_primitive_cull_mode(primitive),
@@ -1033,6 +1036,7 @@ fn bevy_outline_primitive(
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: material_render_order(loaded, primitive.material).saturating_add(1),
+            phase_order: material_phase_order(loaded, primitive.material).saturating_add(1),
             ..owner_source
         },
         owner_ids: Vec::new(),
@@ -1134,6 +1138,7 @@ struct OwnerSource {
     material: Option<usize>,
     pass: OwnerPass,
     render_order: i32,
+    phase_order: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

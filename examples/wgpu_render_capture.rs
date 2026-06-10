@@ -187,6 +187,7 @@ struct OwnerSource {
     material: Option<usize>,
     pass: OwnerPass,
     render_order: i32,
+    phase_order: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,6 +208,7 @@ struct GpuPrimitive {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct MaterialPolicy {
     render_order: i32,
+    phase_order: i32,
     cull_mode: CaptureCullMode,
     alpha_mode: CaptureAlphaMode,
     depth_write: bool,
@@ -218,6 +220,7 @@ impl Default for MaterialPolicy {
     fn default() -> Self {
         Self {
             render_order: 2000,
+            phase_order: 2000,
             cull_mode: CaptureCullMode::Back,
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
@@ -527,13 +530,15 @@ fn mesh_draw_data(
             options,
         };
         for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            let policy = material_policy(loaded, primitive.material);
             let source = OwnerSource {
                 node_index,
                 mesh_index,
                 primitive_index,
                 material: primitive.material,
                 pass: OwnerPass::Base,
-                render_order: material_policy(loaded, primitive.material).render_order,
+                render_order: policy.render_order,
+                phase_order: policy.phase_order,
             };
             let surface = draw_primitive(loaded, primitive, &morph_weights, &draw_context, source)?;
             primitives.push(surface.clone());
@@ -682,6 +687,7 @@ fn outline_primitive(
         material_extra: surface.material_extra,
         policy: MaterialPolicy {
             render_order: surface.policy.render_order.saturating_add(1),
+            phase_order: surface.policy.phase_order.saturating_add(1),
             cull_mode: CaptureCullMode::Front,
             alpha_mode: CaptureAlphaMode::Opaque,
             depth_write: true,
@@ -691,6 +697,7 @@ fn outline_primitive(
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: surface.policy.render_order.saturating_add(1),
+            phase_order: surface.policy.phase_order.saturating_add(1),
             ..surface.owner_source
         },
         owner_ids: Vec::new(),
@@ -873,6 +880,7 @@ fn material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolic
     let plan = render_capture_scene::capture_material_plan(loaded, material);
     MaterialPolicy {
         render_order: plan.render_order,
+        phase_order: plan.phase_order,
         cull_mode: capture_cull_mode(plan.cull_mode),
         alpha_mode: capture_alpha_mode(plan.alpha_mode),
         depth_write: plan.depth_write,
@@ -2150,6 +2158,7 @@ fn diagnostic_owner_ids(
                     "materialName": material_name(loaded, source.material),
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
+                    "renderPhaseOrder": source.phase_order,
                     "drawIndex": draw_index,
                     "frontFace": options.front_face.as_str(),
                     "cullMode": primitive.policy.cull_mode.as_str(),

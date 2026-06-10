@@ -664,6 +664,7 @@ function capturePage(options) {
           blending: material?.blending ?? null,
           premultipliedAlpha: material?.premultipliedAlpha ?? false,
           renderOrder: mesh.renderOrder ?? 0,
+          renderPhaseOrder: mesh.renderOrder ?? 0,
           triangle: Math.floor(offset / 3),
           indices,
           screen: projection?.screen ?? null,
