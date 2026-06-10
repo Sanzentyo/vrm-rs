@@ -354,6 +354,27 @@ ownership is visible, but remains close at `62.1850 dB` with max channel delta
 `2`; use that as the renderer-internal sanity check while investigating the
 remaining WebGL-vs-Rust per-triangle ownership mapping.
 
+The same recipe also writes owner-specific direct raw reports with
+`tools/render-parity/compare-owner-id-images.rs`:
+
+```powershell
+.external-fixtures/render-parity-seed-owner-id-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.owner-ids.json
+.external-fixtures/render-parity-seed-owner-id-diagnostic/reports/Seed-san.bevy-vs-three-vrm.owner-ids.json
+.external-fixtures/render-parity-seed-owner-id-diagnostic/reports/Seed-san.bevy-vs-wgpu.owner-ids.json
+```
+
+These reports decode the diagnostic RGB values into owner IDs and summarize
+same-pixel matches, one-pixel-neighborhood recovery, top owner transitions, and
+top `expected - actual` ID offset clusters. The current three-vrm-vs-Rust
+reports have `0` exact owner matches because the owner streams are assigned
+independently, but the dominant offsets are now explicit: wgpu has a `+36404`
+cluster for `6966` shared-nonzero pixels, while Bevy has `+36404` for `3138`
+and `+36660` for `1779`. The wgpu-vs-Bevy report is the tighter renderer
+sanity check: `12665` shared nonzero pixels, `6341` exact owner matches, and
+the largest residual offsets are `+256`, `+1`, and `-1`. Use this before
+changing triangle generation/order; a useful change should shrink those offset
+clusters or make their cause obvious.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

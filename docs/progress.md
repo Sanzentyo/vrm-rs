@@ -87,6 +87,19 @@
   delta `2`). The remaining owner-ID gap is now sharper: per-triangle draw
   ordering / WebGL-vs-Rust triangle ownership, not primitive/pass-level Rust
   renderer disagreement.
+- Added `tools/render-parity/compare-owner-id-images.rs`, a direct `.imqraw`
+  owner-ID comparator. It decodes diagnostic RGB owner IDs, reports exact
+  same-pixel matches, one-pixel-neighborhood recovery, nonzero mask drift, top
+  owner transitions, and top `expected - actual` ID-delta clusters. The Seed-san
+  owner diagnostic now writes `*.owner-ids.json` reports for three-vrm-vs-wgpu,
+  three-vrm-vs-Bevy, and wgpu-vs-Bevy. Current three-vrm-vs-Rust exact owner
+  matches are intentionally `0` because the two implementations assign
+  independent per-triangle ID streams, but the top offset clusters are now
+  visible (`+36404` for `6966` wgpu pixels; `+36404` for `3138` and `+36660`
+  for `1779` Bevy pixels). wgpu-vs-Bevy shares `12665` nonzero pixels with
+  `6341` exact owner matches, and the largest residual clusters are `+256`
+  (`2023` pixels), `+1` (`1573`), and `-1` (`1039`), which makes concrete
+  renderer divergence much narrower than the three-vrm mapping gap.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
