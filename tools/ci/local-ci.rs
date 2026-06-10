@@ -336,7 +336,9 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         write_render_png_from_artifact(options, fixture, "bevy")?;
         verify_render_alpha_consistency(options, fixture)?;
         compare_render_pair(options, fixture, "wgpu")?;
+        compare_render_imqraw_pair(options, fixture, "wgpu")?;
         compare_render_pair(options, fixture, "bevy")?;
+        compare_render_imqraw_pair(options, fixture, "bevy")?;
         write_render_diff_image(options, fixture, "wgpu")?;
         write_render_diff_image(options, fixture, "bevy")?;
     }
@@ -909,6 +911,40 @@ fn compare_render_pair(
     run_command(command)
 }
 
+fn compare_render_imqraw_pair(
+    options: &Options,
+    fixture: &RenderFixture,
+    renderer: &str,
+) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command.args([
+        "+nightly",
+        "-Zscript",
+        "tools/render-parity/compare-imqraw.rs",
+        "--expected",
+        path(&render_imqraw_artifact(options, fixture, "three-vrm")).as_str(),
+        "--actual",
+        path(&render_imqraw_artifact(options, fixture, renderer)).as_str(),
+        "--out",
+        path(&render_imqraw_report(options, fixture, renderer)).as_str(),
+        "--metric",
+        options.render_psnr_metric.as_cli_value(),
+    ]);
+    if let Some(fail_under) = options.render_fail_under {
+        command.args(["--fail-under", fail_under.to_string().as_str()]);
+    }
+    if let Some(max_delta) = options.render_max_selected_channel_delta {
+        command.args([
+            "--max-selected-channel-delta",
+            max_delta.to_string().as_str(),
+        ]);
+    }
+    if let Some(max_delta) = options.render_max_alpha_delta {
+        command.args(["--max-alpha-delta", max_delta.to_string().as_str()]);
+    }
+    run_command(command)
+}
+
 fn render_artifact(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
     options
         .render_parity_dir
@@ -935,6 +971,16 @@ fn render_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> 
         .render_parity_dir
         .join("reports")
         .join(format!("{}.{renderer}-vs-three-vrm.psnr.json", fixture.stem))
+}
+
+fn render_imqraw_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
+    options
+        .render_parity_dir
+        .join("reports")
+        .join(format!(
+            "{}.{renderer}-vs-three-vrm.imqraw-rust.json",
+            fixture.stem
+        ))
 }
 
 fn render_diff_png(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {

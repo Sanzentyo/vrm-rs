@@ -52,6 +52,22 @@ emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
 `imq image` CLI reads those files through `--stdin-format imqraw`; direct path
 arguments with `.imqraw` are not yet auto-detected by the installed CLI.
 
+For direct renderer raw-buffer checks with the same VRM-specific metric domains
+as `compare-psnr.mjs`, use the Rust imqraw comparator:
+
+```powershell
+cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs `
+  --expected .external-fixtures/render-parity/three-vrm/Seed-san.frame000.imqraw `
+  --actual .external-fixtures/render-parity/wgpu/Seed-san.frame000.imqraw `
+  --metric rgb-visible `
+  --out .external-fixtures/render-parity/reports/Seed-san.wgpu-vs-three-vrm.imqraw-rust.json
+```
+
+`tools/ci/local-ci.rs --render-parity` writes this direct-imqraw report beside
+the existing `.psnr.json` report as `<fixture>.<renderer>-vs-three-vrm.imqraw-rust.json`.
+The pass/fail summary still consumes `.psnr.json` until the installed public
+`imq` CLI exposes the same VRM render-parity domains and gates.
+
 For independent raw-image metric checks that do not pass through PNG encoding
 or decoding, use the `imqraw` TypeScript/WASM pack path:
 
@@ -135,6 +151,7 @@ set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 - `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json`
+- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.imqraw-rust.json`
 - `.external-fixtures/render-parity/diff/<fixture>.{wgpu,bevy}-vs-three-vrm.diff.png`
 - `.external-fixtures/render-parity/summary.md`
 - `.external-fixtures/render-parity/visual-review.html`

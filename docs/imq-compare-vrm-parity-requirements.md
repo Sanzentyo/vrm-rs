@@ -192,6 +192,11 @@ The final render parity path should avoid `.rgba.json` for numeric comparison:
 - Local runner:
   - compare tagged reference/candidate records from `imqraw` without PNG or
     decimal JSON conversion.
+  - Current status: `tools/render-parity/compare-imqraw.rs` already compares
+    direct single-image renderer `.imqraw` bundles and emits
+    `.imqraw-rust.json` reports with the same local VRM domains as
+    `compare-psnr.mjs`. The main pass/fail gate still uses `.psnr.json` until
+    public `imq` exposes those domains and thresholds directly.
 
 PNG and HTML artifacts should remain review artifacts only. Numeric parity
 should operate on raw RGBA8 data.

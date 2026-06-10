@@ -177,6 +177,10 @@ coverage:
 imqraw-compare-rgba expected actual output metrics="psnr:color,mse:color,mae:color,maxae:color,psnr:all,mse:all":
     deno run --allow-import=sanzentyo.github.io --allow-net=sanzentyo.github.io --allow-read --allow-run=imq --allow-write tools/render-parity/imqraw-compare-rgba-json.ts --expected "{{ expected }}" --actual "{{ actual }}" --metrics "{{ metrics }}" --output "{{ output }}"
 
+# Compare two direct renderer imqraw artifacts with the same VRM render-parity domains as compare-psnr.mjs.
+imqraw-compare expected actual output metric="rgb-visible":
+    cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs --expected "{{ expected }}" --actual "{{ actual }}" --metric "{{ metric }}" --out "{{ output }}"
+
 # Re-measure the current real normal-map Seed-san artifacts through the JS/TS imqraw pack path without PNG conversion.
 render-parity-imqraw-seed-normal:
     just imqraw-compare-rgba .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.rgba.json .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.imqraw-ts.json

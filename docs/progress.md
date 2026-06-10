@@ -41,6 +41,13 @@
   constraint, emissive, material color, and MToon pipeline writes into
   engine-owned node/material tables. The local CI example smoke list now runs
   this example alongside the wgpu/ash-like and Bevy materialization examples.
+- Added `tools/render-parity/compare-imqraw.rs`, a Rust script comparator that
+  decodes direct renderer `.imqraw` RGBA8 bundles through the `imq` crate and
+  emits the same VRM render-parity metric domains and JSON shape as
+  `compare-psnr.mjs`. The local render-parity runner now writes
+  `.imqraw-rust.json` reports beside the existing `.psnr.json` reports, while
+  keeping the existing summary gate on `.psnr.json` until the public `imq` CLI
+  exposes those domains natively.
 
 ## 2026-05-31
 

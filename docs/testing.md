@@ -77,6 +77,9 @@ beside their `.rgba.json` artifacts. Check them with
 `imq bundle-info PATH --format json` or pipe the bundle into
 `imq image - - --stdin-format imqraw` until the installed CLI auto-detects
 `.imqraw` path arguments.
+`tools/render-parity/compare-imqraw.rs` compares those direct bundles with the
+same VRM domains as `compare-psnr.mjs`, and the render parity runner writes
+`.imqraw-rust.json` reports beside the main `.psnr.json` reports.
 For a PNG-free cross-check of existing RGBA artifacts, use
 `just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
 the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the
