@@ -67,6 +67,8 @@ struct OwnerCompareReport {
     expected_only: u64,
     actual_only: u64,
     mismatched_shared_nonzero: u64,
+    same_projected_triangle_mismatched_shared_nonzero: u64,
+    same_projected_or_adjacent_triangle_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
     actual_metadata_bounds_miss_shared_nonzero: u64,
@@ -80,6 +82,7 @@ struct OwnerCompareReport {
     max_actual_owner: u32,
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_pass_transitions: Vec<OwnerPassTransition>,
+    top_owner_geometry_classes: Vec<OwnerGeometryClassTransition>,
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
     top_actual_cull_visibility: Vec<OwnerActualCullVisibility>,
     top_actual_metadata_recoveries: Vec<OwnerMetadataRecovery>,
@@ -106,6 +109,16 @@ struct OwnerIdDelta {
 struct OwnerPassTransition {
     expected_pass: String,
     actual_pass: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerGeometryClassTransition {
+    pass_relation: String,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
     count: u64,
 }
 
@@ -176,6 +189,15 @@ struct OwnerActualCullVisibilityKey {
     actual_gpu_front_facing: String,
     actual_visible_by_cull_policy: String,
     actual_depth_write: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerGeometryClassKey {
+    pass_relation: String,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -330,6 +352,8 @@ fn compare_owner_images(
     let mut expected_only = 0;
     let mut actual_only = 0;
     let mut mismatched_shared_nonzero = 0;
+    let mut same_projected_triangle_mismatched_shared_nonzero = 0;
+    let mut same_projected_or_adjacent_triangle_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
     let mut actual_metadata_bounds_miss_shared_nonzero = 0;
@@ -340,6 +364,7 @@ fn compare_owner_images(
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
+    let mut owner_geometry_classes = BTreeMap::new();
     let mut render_policy_transitions = BTreeMap::new();
     let mut actual_cull_visibility = BTreeMap::new();
     let mut actual_metadata_recoveries = BTreeMap::new();
@@ -398,6 +423,15 @@ fn compare_owner_images(
                             actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero += 1;
                         }
                     }
+                    let expected_label = expected_metadata.get(&left);
+                    let geometry_class =
+                        OwnerGeometryClassKey::from_labels(expected_label, actual_label);
+                    if geometry_class.is_same_projected_triangle() {
+                        same_projected_triangle_mismatched_shared_nonzero += 1;
+                    }
+                    if geometry_class.is_same_projected_or_adjacent_triangle() {
+                        same_projected_or_adjacent_triangle_mismatched_shared_nonzero += 1;
+                    }
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
                     bump_transition_pixels(&mut expected_to_actual_pixels, left, right, pixel);
@@ -405,6 +439,11 @@ fn compare_owner_images(
                     bump_pass_transition(
                         &mut pass_transitions,
                         expected_metadata.get(&left),
+                        actual_label,
+                    );
+                    bump_owner_geometry_class(
+                        &mut owner_geometry_classes,
+                        expected_label,
                         actual_label,
                     );
                     bump_render_policy_transition(
@@ -455,6 +494,8 @@ fn compare_owner_images(
         expected_only,
         actual_only,
         mismatched_shared_nonzero,
+        same_projected_triangle_mismatched_shared_nonzero,
+        same_projected_or_adjacent_triangle_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
         actual_metadata_bounds_miss_shared_nonzero,
@@ -474,6 +515,7 @@ fn compare_owner_images(
         max_actual_owner: actual_ids.iter().copied().max().unwrap_or(0),
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
         top_pass_transitions: top_pass_transitions(pass_transitions, top),
+        top_owner_geometry_classes: top_owner_geometry_classes(owner_geometry_classes, top),
         top_render_policy_transitions: top_render_policy_transitions(
             render_policy_transitions,
             top,
@@ -551,6 +593,35 @@ fn top_pass_transitions(
         .map(|((expected_pass, actual_pass), count)| OwnerPassTransition {
             expected_pass,
             actual_pass,
+            count,
+        })
+        .collect()
+}
+
+fn bump_owner_geometry_class(
+    map: &mut BTreeMap<OwnerGeometryClassKey, u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    *map.entry(OwnerGeometryClassKey::from_labels(expected, actual))
+        .or_default() += 1;
+}
+
+fn top_owner_geometry_classes(
+    map: BTreeMap<OwnerGeometryClassKey, u64>,
+    top: usize,
+) -> Vec<OwnerGeometryClassTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| OwnerGeometryClassTransition {
+            pass_relation: key.pass_relation,
+            mesh_relation: key.mesh_relation,
+            material_relation: key.material_relation,
+            triangle_relation: key.triangle_relation,
+            projection_relation: key.projection_relation,
             count,
         })
         .collect()
@@ -766,6 +837,155 @@ impl OwnerActualCullVisibilityKey {
             ),
             actual_depth_write: optional_bool_label(actual.and_then(|label| label.depth_write)),
         }
+    }
+}
+
+impl OwnerGeometryClassKey {
+    fn from_labels(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> Self {
+        Self {
+            pass_relation: relation_label(
+                expected.and_then(|label| label.pass.as_deref()),
+                actual.and_then(|label| label.pass.as_deref()),
+            ),
+            mesh_relation: mesh_relation(expected, actual),
+            material_relation: material_relation(expected, actual),
+            triangle_relation: triangle_relation(expected, actual),
+            projection_relation: projection_relation(expected, actual),
+        }
+    }
+
+    fn is_same_projected_triangle(&self) -> bool {
+        self.pass_relation == "same"
+            && self.mesh_relation != "different"
+            && self.triangle_relation == "same-triangle"
+            && self.projection_relation == "overlap-depth-close"
+    }
+
+    fn is_same_projected_or_adjacent_triangle(&self) -> bool {
+        self.pass_relation == "same"
+            && self.mesh_relation != "different"
+            && matches!(
+                self.triangle_relation.as_str(),
+                "same-triangle" | "adjacent-triangle-index"
+            )
+            && self.projection_relation == "overlap-depth-close"
+    }
+}
+
+fn relation_label(left: Option<&str>, right: Option<&str>) -> String {
+    match (left, right) {
+        (Some(left), Some(right)) if left == right => "same".to_owned(),
+        (Some(_), Some(_)) => "different".to_owned(),
+        _ => "unknown".to_owned(),
+    }
+}
+
+fn mesh_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) => {
+            if same_optional_u64(expected.mesh_index, actual.mesh_index) {
+                "same-index".to_owned()
+            } else if same_optional_str(expected.mesh_name.as_deref(), actual.mesh_name.as_deref())
+            {
+                "same-name".to_owned()
+            } else if normalized_mesh_name(expected.mesh_name.as_deref())
+                == normalized_mesh_name(actual.mesh_name.as_deref())
+            {
+                "same-normalized-name".to_owned()
+            } else {
+                "different".to_owned()
+            }
+        }
+        _ => "unknown".to_owned(),
+    }
+}
+
+fn material_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) => {
+            if same_optional_i64(expected.material_index, actual.material_index) {
+                "same-index".to_owned()
+            } else if same_optional_u64(expected.material_slot, actual.material_slot) {
+                "same-slot".to_owned()
+            } else if same_optional_str(
+                expected.material_name.as_deref(),
+                actual.material_name.as_deref(),
+            ) {
+                "same-name".to_owned()
+            } else {
+                "different".to_owned()
+            }
+        }
+        _ => "unknown".to_owned(),
+    }
+}
+
+fn triangle_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
+    match (expected.and_then(|label| label.triangle), actual.and_then(|label| label.triangle)) {
+        (Some(left), Some(right)) if left == right => "same-triangle".to_owned(),
+        (Some(left), Some(right)) if left.abs_diff(right) == 1 => "adjacent-triangle-index".to_owned(),
+        (Some(_), Some(_)) => "different-triangle".to_owned(),
+        _ => "unknown".to_owned(),
+    }
+}
+
+fn projection_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) -> String {
+    let Some(expected) = expected else {
+        return "unknown".to_owned();
+    };
+    let Some(actual) = actual else {
+        return "unknown".to_owned();
+    };
+    let Some(expected_bounds) = expected.screen_bounds else {
+        return "unknown".to_owned();
+    };
+    let Some(actual_bounds) = actual.screen_bounds else {
+        return "unknown".to_owned();
+    };
+    if !screen_bounds_overlap(expected_bounds, actual_bounds, 1.0) {
+        return "disjoint-screen-bounds".to_owned();
+    }
+    if same_webgl_depth(expected, actual, 0.001) {
+        "overlap-depth-close".to_owned()
+    } else {
+        "overlap-depth-different".to_owned()
+    }
+}
+
+fn same_optional_str(left: Option<&str>, right: Option<&str>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if !left.is_empty() && left == right)
+}
+
+fn same_optional_u64(left: Option<u64>, right: Option<u64>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if left == right)
+}
+
+fn same_optional_i64(left: Option<i64>, right: Option<i64>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if left == right)
+}
+
+fn normalized_mesh_name(name: Option<&str>) -> Option<String> {
+    let raw = name?;
+    let name = raw.strip_suffix("_primitive").unwrap_or(raw);
+    Some(
+        name.rsplit_once('_')
+            .and_then(|(prefix, suffix)| suffix.parse::<u32>().ok().map(|_| prefix))
+            .unwrap_or(name)
+            .to_owned(),
+    )
+}
+
+fn screen_bounds_overlap(left: OwnerScreenBounds, right: OwnerScreenBounds, pad: f64) -> bool {
+    left.min_x <= right.max_x + pad
+        && left.max_x + pad >= right.min_x
+        && left.min_y <= right.max_y + pad
+        && left.max_y + pad >= right.min_y
+}
+
+fn same_webgl_depth(expected: &OwnerLabel, actual: &OwnerLabel, tolerance: f64) -> bool {
+    match (expected.webgl_depth.or(expected.depth), actual.webgl_depth.or(actual.depth)) {
+        (Some(left), Some(right)) => (left - right).abs() <= tolerance,
+        _ => false,
     }
 }
 

@@ -480,6 +480,22 @@ diagnostic-ID/fill ownership artifact, not as evidence that Bevy drew culled
 triangles. The three-vrm-vs-wgpu report remains the cleaner signal for the
 remaining pass/material/fill parity work.
 
+For the clean wgpu probe, prefer the geometry-class fields before reading raw
+owner-ID PSNR. `compare-owner-id-images.rs` reports
+`same_projected_triangle_mismatched_shared_nonzero`,
+`same_projected_or_adjacent_triangle_mismatched_shared_nonzero`, and
+`top_owner_geometry_classes`. These classify mismatched owner pixels by pass
+relation, normalized mesh-name relation, material relation, triangle relation,
+and projected screen/depth relation. On the current default CCW Seed-san run,
+`11649/11933` wgpu-vs-three-vrm mismatched shared pixels are still the same
+projected triangle, and `11742/11933` are the same or adjacent projected
+triangle. The largest bucket is same pass / same normalized mesh / different
+material label / same triangle / depth-close projection (`11590` pixels),
+which mainly reflects owner-numbering and three.js clone/material naming
+differences. The useful remaining owner work is therefore the small
+non-overlap, different-triangle, or different-pass tail rather than the whole
+owner-ID PSNR delta.
+
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
