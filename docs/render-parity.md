@@ -345,6 +345,16 @@ rule, sample-position, or rasterization ownership differences rather than
 material texture transforms, UV channel selection, or Rust-side scene
 projection.
 
+The projection diagnostic accepts `sample_x` / `sample_y` just parameters, which
+are passed as `--hotspot-sample-center-x/y`. A 3x3 sweep over `0.25`, `0.5`,
+and `0.75` found `0.75,0.75` as the best hotspot-projection center: nearest
+candidate mean RGB distance improved from `26.81` at `0.5,0.5` to `11.77`, and
+nearest candidates within RGB distance `16` improved from `20/32` to `26/32`.
+However, actually jittering Rust rendering by `+0.25,+0.25` pixels worsens the
+full base-UV PSNR from wgpu/Bevy `38.14/38.12 dB` to `27.01/27.45 dB`. So the
+remaining issue is not a global camera offset; it is local triangle fill /
+raster ownership near boundaries.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell

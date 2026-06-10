@@ -29,6 +29,8 @@ const pngOut = args.get('png-out');
 const imqrawOut = args.get('imqraw-out');
 const hotspotDeltasPath = args.get('hotspot-deltas');
 const hotspotTop = Number.parseInt(args.get('hotspot-top') ?? '32', 10);
+const hotspotSampleCenterX = Number(args.get('hotspot-sample-center-x') ?? '0.5');
+const hotspotSampleCenterY = Number(args.get('hotspot-sample-center-y') ?? '0.5');
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
@@ -61,6 +63,10 @@ if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
 }
 if (!Number.isInteger(hotspotTop) || hotspotTop <= 0) {
   console.error(`invalid hotspot-top: ${hotspotTop}`);
+  process.exit(2);
+}
+if (![hotspotSampleCenterX, hotspotSampleCenterY].every(Number.isFinite)) {
+  console.error('hotspot sample center values must be finite numbers');
   process.exit(2);
 }
 if (
@@ -144,6 +150,7 @@ const server = http.createServer((request, response) => {
       disableTextureMips,
       diagnosticRender,
       hotspotDeltas,
+      hotspotSampleCenter: [hotspotSampleCenterX, hotspotSampleCenterY],
     }));
     return;
   }
@@ -330,6 +337,7 @@ function capturePage(options) {
   };
 
   const hotspotDeltas = ${JSON.stringify(options.hotspotDeltas)};
+  const hotspotSampleCenter = ${JSON.stringify(options.hotspotSampleCenter)};
 
   const screenVertex = (mesh, index, uvAttribute, viewProjection, target, clip) => {
     mesh.getVertexPosition(index, target);
@@ -420,7 +428,7 @@ function capturePage(options) {
     return frontFacing;
   };
 
-  const projectHotspots = (root, camera, hotspots) => {
+  const projectHotspots = (root, camera, hotspots, sampleCenter) => {
     if (!hotspots) return null;
     root.updateMatrixWorld(true);
     camera.updateMatrixWorld(true);
@@ -435,8 +443,9 @@ function capturePage(options) {
       source: hotspots.source,
       width: hotspots.width,
       height: hotspots.height,
+      sampleCenter,
       top: hotspots.top.map((hotspot) => {
-        const point = [hotspot.x + 0.5, hotspot.y + 0.5];
+        const point = [hotspot.x + sampleCenter[0], hotspot.y + sampleCenter[1]];
         const candidates = [];
         for (const mesh of meshes) {
           const geometry = mesh.geometry;
@@ -666,7 +675,7 @@ function capturePage(options) {
     vrm.update?.(${options.mtoonTime});
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
-    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas);
+    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas, hotspotSampleCenter);
 
     const gl = renderer.getContext();
     const readback = new Uint8Array(${options.width} * ${options.height} * 4);
