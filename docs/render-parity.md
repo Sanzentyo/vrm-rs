@@ -250,6 +250,15 @@ candidates rejected by cull policy and `0` rejected by alpha policy. That rules
 out alpha-mask discard as the focused hotspot cause and points the next slice at
 cull/coverage/surface ownership.
 
+For cull-specific checks, the report also includes `frontmost_any` and
+`frontmost_alpha_visible` next to `frontmost_visible`. These use the same center
+sample and depth ordering while ignoring cull, or ignoring cull but preserving
+alpha-mask discard. On the current Seed-san base-color top-32 reports, all
+three counts are `20/32` and `frontmost_any_cull_rejected_count` is `0`, so the
+missing `12/32` frontmost pixels are not recovered by disabling cull. Treat the
+remaining focused blocker as center coverage / primitive ownership / diagnostic
+surface ownership around real model UV boundaries.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

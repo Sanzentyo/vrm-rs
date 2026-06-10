@@ -144,9 +144,16 @@ struct CameraReport {
 #[derive(Clone, Debug, Serialize)]
 struct HotspotSummary {
     hotspot_count: usize,
+    frontmost_any_count: usize,
+    frontmost_alpha_visible_count: usize,
     frontmost_visible_count: usize,
+    frontmost_any_cull_rejected_count: usize,
     cull_policy_rejected_candidate_count: usize,
     alpha_policy_rejected_candidate_count: usize,
+    actual_frontmost_any_triangle_matches: usize,
+    expected_frontmost_any_triangle_matches: usize,
+    actual_frontmost_alpha_visible_triangle_matches: usize,
+    expected_frontmost_alpha_visible_triangle_matches: usize,
     actual_frontmost_triangle_matches: usize,
     expected_frontmost_triangle_matches: usize,
     actual_frontmost_material_matches: usize,
@@ -258,6 +265,8 @@ struct Hotspot {
     nearest_actual: Option<CandidateMatch>,
     nearest_visible_expected: Option<CandidateMatch>,
     nearest_visible_actual: Option<CandidateMatch>,
+    frontmost_any: Option<CandidateMatch>,
+    frontmost_alpha_visible: Option<CandidateMatch>,
     frontmost_visible: Option<CandidateMatch>,
     frontmost_base_uv_srgb: Option<[u8; 4]>,
     frontmost_base_texture_rgba: Option<[u8; 4]>,
@@ -403,6 +412,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 options.hit_radius,
                 [options.sample_center_x, options.sample_center_y],
             );
+            let frontmost_any = frontmost_any_candidate_match(&candidates);
+            let frontmost_alpha_visible = frontmost_alpha_visible_candidate_match(&candidates);
             let frontmost_visible = frontmost_visible_candidate_match(&candidates);
             let frontmost_base_uv_srgb =
                 frontmost_visible.as_ref().map(|frontmost| {
@@ -432,6 +443,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     &candidates,
                     actual_linear_uv,
                 ),
+                frontmost_any,
+                frontmost_alpha_visible,
                 frontmost_visible,
                 frontmost_base_uv_srgb,
                 frontmost_base_texture_rgba,
@@ -524,9 +537,22 @@ fn read_delta_report(path: &Path) -> Result<DeltaReport, Box<dyn Error>> {
 fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
     HotspotSummary {
         hotspot_count: hotspots.len(),
+        frontmost_any_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.frontmost_any.is_some())
+            .count(),
+        frontmost_alpha_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.frontmost_alpha_visible.is_some())
+            .count(),
         frontmost_visible_count: hotspots
             .iter()
             .filter(|hotspot| hotspot.frontmost_visible.is_some())
+            .count(),
+        frontmost_any_cull_rejected_count: hotspots
+            .iter()
+            .filter_map(|hotspot| hotspot.frontmost_any.as_ref())
+            .filter(|frontmost| !frontmost.visible_by_cull_policy)
             .count(),
         cull_policy_rejected_candidate_count: hotspots
             .iter()
@@ -537,6 +563,42 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             .iter()
             .flat_map(|hotspot| hotspot.candidates.iter())
             .filter(|candidate| candidate.visible_by_cull_policy && !candidate.visible_by_alpha_policy)
+            .count(),
+        actual_frontmost_any_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_any.as_ref(),
+                    hotspot.nearest_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_any_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_any.as_ref(),
+                    hotspot.nearest_expected.as_ref(),
+                )
+            })
+            .count(),
+        actual_frontmost_alpha_visible_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_alpha_visible.as_ref(),
+                    hotspot.nearest_actual.as_ref(),
+                )
+            })
+            .count(),
+        expected_frontmost_alpha_visible_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_alpha_visible.as_ref(),
+                    hotspot.nearest_expected.as_ref(),
+                )
+            })
             .count(),
         actual_frontmost_triangle_matches: hotspots
             .iter()
@@ -1145,34 +1207,12 @@ fn nearest_candidate_match_by(
         .iter()
         .enumerate()
         .filter(|(_, candidate)| filter(candidate))
-        .map(|(candidate_index, candidate)| CandidateMatch {
-            candidate_index,
-            draw_index: candidate.draw_index,
-            base_uv_distance: uv_distance(candidate.base_uv, linear_uv),
-            pass: candidate.pass,
-            material: candidate.material,
-            material_name: candidate.material_name.clone(),
-            policy: candidate.policy,
-            sample_offset: candidate.sample_offset,
-            sample_distance: candidate.sample_distance,
-            node: candidate.node,
-            mesh: candidate.mesh,
-            primitive: candidate.primitive,
-            triangle: candidate.triangle,
-            indices: candidate.indices,
-            depth: candidate.depth,
-            min_barycentric: candidate.min_barycentric,
-            edge_distance_pixels: candidate.edge_distance_pixels,
-            nearest_edge: candidate.nearest_edge,
-            nearest_edge_indices: candidate.nearest_edge_indices,
-            nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
-            front_facing: candidate.front_facing,
-            alpha: candidate.alpha,
-            visible_by_cull_policy: candidate.visible_by_cull_policy,
-            visible_by_alpha_policy: candidate.visible_by_alpha_policy,
-            visible_by_policy: candidate.visible_by_policy,
-            base_uv: candidate.base_uv,
-            base_texture_rgba: candidate.base_texture_rgba,
+        .map(|(candidate_index, candidate)| {
+            candidate_match(
+                candidate_index,
+                candidate,
+                uv_distance(candidate.base_uv, linear_uv),
+            )
         })
         .min_by(|left, right| {
             left.base_uv_distance
@@ -1182,50 +1222,71 @@ fn nearest_candidate_match_by(
         })
 }
 
+fn frontmost_any_candidate_match(candidates: &[HitCandidate]) -> Option<CandidateMatch> {
+    frontmost_candidate_match_by(candidates, |_| true)
+}
+
+fn frontmost_alpha_visible_candidate_match(candidates: &[HitCandidate]) -> Option<CandidateMatch> {
+    frontmost_candidate_match_by(candidates, |candidate| candidate.visible_by_alpha_policy)
+}
+
 fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<CandidateMatch> {
+    frontmost_candidate_match_by(candidates, |candidate| candidate.visible_by_policy)
+}
+
+fn frontmost_candidate_match_by(
+    candidates: &[HitCandidate],
+    filter: impl Fn(&HitCandidate) -> bool,
+) -> Option<CandidateMatch> {
     candidates
         .iter()
         .enumerate()
         .filter(|(_, candidate)| {
-            candidate.sample_offset == [0, 0]
-                && candidate.visible_by_policy
-                && candidate.depth >= -1.0
+            candidate.sample_offset == [0, 0] && candidate.depth >= -1.0 && filter(candidate)
         })
-        .map(|(candidate_index, candidate)| CandidateMatch {
-            candidate_index,
-            draw_index: candidate.draw_index,
-            base_uv_distance: 0.0,
-            pass: candidate.pass,
-            material: candidate.material,
-            material_name: candidate.material_name.clone(),
-            policy: candidate.policy,
-            sample_offset: candidate.sample_offset,
-            sample_distance: candidate.sample_distance,
-            node: candidate.node,
-            mesh: candidate.mesh,
-            primitive: candidate.primitive,
-            triangle: candidate.triangle,
-            indices: candidate.indices,
-            depth: candidate.depth,
-            min_barycentric: candidate.min_barycentric,
-            edge_distance_pixels: candidate.edge_distance_pixels,
-            nearest_edge: candidate.nearest_edge,
-            nearest_edge_indices: candidate.nearest_edge_indices,
-            nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
-            front_facing: candidate.front_facing,
-            alpha: candidate.alpha,
-            visible_by_cull_policy: candidate.visible_by_cull_policy,
-            visible_by_alpha_policy: candidate.visible_by_alpha_policy,
-            visible_by_policy: candidate.visible_by_policy,
-            base_uv: candidate.base_uv,
-            base_texture_rgba: candidate.base_texture_rgba,
-        })
+        .map(|(candidate_index, candidate)| candidate_match(candidate_index, candidate, 0.0))
         .min_by(|left, right| {
             left.depth
                 .partial_cmp(&right.depth)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| right.draw_index.cmp(&left.draw_index))
         })
+}
+
+fn candidate_match(
+    candidate_index: usize,
+    candidate: &HitCandidate,
+    base_uv_distance: f32,
+) -> CandidateMatch {
+    CandidateMatch {
+        candidate_index,
+        draw_index: candidate.draw_index,
+        base_uv_distance,
+        pass: candidate.pass,
+        material: candidate.material,
+        material_name: candidate.material_name.clone(),
+        policy: candidate.policy,
+        sample_offset: candidate.sample_offset,
+        sample_distance: candidate.sample_distance,
+        node: candidate.node,
+        mesh: candidate.mesh,
+        primitive: candidate.primitive,
+        triangle: candidate.triangle,
+        indices: candidate.indices,
+        depth: candidate.depth,
+        min_barycentric: candidate.min_barycentric,
+        edge_distance_pixels: candidate.edge_distance_pixels,
+        nearest_edge: candidate.nearest_edge,
+        nearest_edge_indices: candidate.nearest_edge_indices,
+        nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
+        front_facing: candidate.front_facing,
+        alpha: candidate.alpha,
+        visible_by_cull_policy: candidate.visible_by_cull_policy,
+        visible_by_alpha_policy: candidate.visible_by_alpha_policy,
+        visible_by_policy: candidate.visible_by_policy,
+        base_uv: candidate.base_uv,
+        base_texture_rgba: candidate.base_texture_rgba,
+    }
 }
 
 fn surface_candidates(

@@ -24,6 +24,16 @@
   base-color hotspot explanation and keeps the next slice focused on cull,
   primitive coverage, and diagnostic surface ownership near real-model UV
   boundaries.
+- Added cull-ignored frontmost diagnostics to the hotspot mapper
+  (`frontmost_any` and `frontmost_alpha_visible`) so back-face policy can be
+  separated from center-sample coverage. On the same Seed-san base-color top-32
+  reports, wgpu and Bevy both keep `frontmost_any = 20/32`,
+  `frontmost_alpha_visible = 20/32`, `frontmost_visible = 20/32`, and
+  `frontmost_any_cull_rejected = 0`. Ignoring cull therefore does not recover
+  the `12/32` pixels without a center frontmost candidate; the next blocker is
+  now tighter: CPU-projected center coverage, primitive ownership, or
+  diagnostic material ownership at real-model UV/texture boundaries rather
+  than cull, alpha, broad texture binding, or sampler state.
 - Added Seed-san `base-factor` and `base-color` diagnostic render modes across
   the three-vrm browser reference, wgpu capture, Bevy capture, and local
   render-parity runner. The new `rgb-shared-nonblack-interior1px` metric keeps
