@@ -268,6 +268,7 @@ fn run(options: Options) -> Result<(), String> {
         )?;
         run_example_smokes()?;
         run_example_unit_tests()?;
+        run_render_tool_self_tests()?;
     }
 
     if !options.skip_coverage {
@@ -310,6 +311,19 @@ fn run_example_unit_tests() -> Result<(), String> {
         run_cmd("cargo", ["test", "--example", example, "--all-features"])?;
     }
     Ok(())
+}
+
+fn run_render_tool_self_tests() -> Result<(), String> {
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
+            "tools/render-parity/map-render-hotspots.rs",
+            "--",
+            "--self-test",
+        ],
+    )
 }
 
 fn ensure_no_github_actions_workflows() -> Result<(), String> {

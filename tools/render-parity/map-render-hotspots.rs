@@ -41,10 +41,12 @@ use vrm_io::{
     about = "Map imqraw delta hotspot pixels to CPU-projected VRM primitive/material candidates"
 )]
 struct Options {
-    #[arg(long)]
-    fixture: PathBuf,
-    #[arg(long)]
-    deltas: PathBuf,
+    #[arg(long, hide = true)]
+    self_test: bool,
+    #[arg(long, required_unless_present = "self_test")]
+    fixture: Option<PathBuf>,
+    #[arg(long, required_unless_present = "self_test")]
+    deltas: Option<PathBuf>,
     #[arg(long)]
     out: Option<PathBuf>,
     #[arg(long)]
@@ -251,10 +253,22 @@ fn main() {
 }
 
 fn run(options: Options) -> Result<(), Box<dyn Error>> {
-    let delta_report = read_delta_report(&options.deltas)?;
+    if options.self_test {
+        run_self_test()?;
+        return Ok(());
+    }
+    let fixture = options
+        .fixture
+        .as_deref()
+        .ok_or("--fixture is required unless --self-test is used")?;
+    let deltas = options
+        .deltas
+        .as_deref()
+        .ok_or("--deltas is required unless --self-test is used")?;
+    let delta_report = read_delta_report(deltas)?;
     let width = options.width.unwrap_or(delta_report.width);
     let height = options.height.unwrap_or(delta_report.height);
-    let loaded = vrm_io::load_vrm_from_path(&options.fixture)?;
+    let loaded = vrm_io::load_vrm_from_path(fixture)?;
     let expression_effects =
         loaded.expression_render_effects(parse_expression_args(&options.expressions)?)?;
     let surfaces = build_surfaces(&loaded, &expression_effects, &options)?;
@@ -307,8 +321,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let summary = summarize_hotspots(&hotspots);
 
     let report = HotspotReport {
-        fixture: display_path(&options.fixture),
-        deltas: display_path(&options.deltas),
+        fixture: display_path(fixture),
+        deltas: display_path(deltas),
         width,
         height,
         camera: CameraReport {
@@ -329,6 +343,25 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     } else {
         print!("{formatted}");
     }
+    Ok(())
+}
+
+fn run_self_test() -> Result<(), Box<dyn Error>> {
+    assert_close(
+        triangle_edge_distance_pixels([0.25, 0.25], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]),
+        0.25,
+        "interior point nearest axis edge",
+    )?;
+    assert_close(
+        triangle_edge_distance_pixels([0.5, 0.5], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]),
+        0.0,
+        "point on hypotenuse edge",
+    )?;
+    assert_close(
+        point_to_segment_distance([2.0, 0.0], [0.0, 0.0], [1.0, 0.0]),
+        1.0,
+        "point past segment endpoint",
+    )?;
     Ok(())
 }
 
@@ -1038,6 +1071,13 @@ fn point_to_segment_distance(point: [f32; 2], start: [f32; 2], end: [f32; 2]) ->
         .clamp(0.0, 1.0);
     let closest = [start[0] + segment[0] * t, start[1] + segment[1] * t];
     ((point[0] - closest[0]).powi(2) + (point[1] - closest[1]).powi(2)).sqrt()
+}
+
+fn assert_close(actual: f32, expected: f32, label: &str) -> Result<(), Box<dyn Error>> {
+    if (actual - expected).abs() > 1.0e-6 {
+        return Err(format!("{label}: expected {expected}, got {actual}").into());
+    }
+    Ok(())
 }
 
 fn diagnostic_linear_uv(color: [u8; 4]) -> [f32; 2] {
