@@ -232,6 +232,9 @@ Primitive morph target evaluation is shared through
 `GltfPrimitiveData::morphed_vertex`, covering local position, normal, and
 tangent deltas before concrete captures apply skinning, outline expansion,
 normal-map tangent generation, or backend mesh construction.
+`skin_vertex_applies_weighted_joint_matrices_to_positions_and_normals` covers
+non-identity weighted skinning so renderer captures and VRMA/posed parity do not
+silently fall back to unskinned local vertex data.
 CPU-side texCoord0 transform application is shared through
 `vrm-io::transform_tex_coord_0`, covering offset/scale/rotation and the current
 policy of ignoring transforms that target non-zero UV sets.

@@ -1744,7 +1744,7 @@ pub fn skin_vertex(
         return fallback();
     };
 
-    let (position, normal, total_weight) = joints
+    let (skinned_position, skinned_normal, total_weight) = joints
         .into_iter()
         .zip(weights)
         .filter(|(_, weight)| *weight > 0.0)
@@ -1766,8 +1766,8 @@ pub fn skin_vertex(
 
     if total_weight > 0.0 {
         GltfSkinnedVertex {
-            position,
-            normal: normal.normalize_or_zero(),
+            position: skinned_position,
+            normal: skinned_normal.normalize_or_zero(),
         }
     } else {
         fallback()
@@ -4030,6 +4030,38 @@ mod tests {
             generated_tangents.all_tangents().unwrap(),
             vec![[1.0, 0.0, 0.0, 1.0]; 3]
         );
+    }
+
+    #[test]
+    fn skin_vertex_applies_weighted_joint_matrices_to_positions_and_normals() {
+        let joint_a = Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0));
+        let joint_b = Mat4::from_scale_rotation_translation(
+            Vec3::new(2.0, 1.0, 1.0),
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Vec3::new(0.0, 2.0, 0.0),
+        );
+        let skinned = skin_vertex(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::X,
+            Mat4::IDENTITY,
+            Some(&[joint_a, joint_b]),
+            Some([0, 1, 0, 0]),
+            Some([0.25, 0.75, 0.0, 0.0]),
+        );
+
+        assert_vec3_close(skinned.position.to_array(), [0.5, 3.0, 0.0]);
+        assert_vec3_close(skinned.normal.to_array(), [0.16439898, 0.9863939, 0.0]);
+
+        let fallback = skin_vertex(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::X,
+            Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)),
+            Some(&[joint_a]),
+            Some([0, 0, 0, 0]),
+            Some([0.0, 0.0, 0.0, 0.0]),
+        );
+        assert_vec3_close(fallback.position.to_array(), [1.0, 0.0, 3.0]);
+        assert_vec3_close(fallback.normal.to_array(), [1.0, 0.0, 0.0]);
     }
 
     #[test]
