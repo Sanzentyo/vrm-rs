@@ -128,6 +128,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
+    #[arg(long, default_value_t = 1.0)]
+    normal_map_scale: f32,
     #[arg(long)]
     mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
@@ -497,6 +499,8 @@ fn draw_primitive(
     );
     if context.options.disable_normal_maps {
         shading.normal_scale = 0.0;
+    } else {
+        shading.normal_scale *= context.options.normal_map_scale;
     }
     let uv_transforms = loaded.expression_material_uv_transforms(
         primitive.material,
@@ -1681,6 +1685,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
         "normalMapMode": options.normal_map_mode.as_str(),
+        "normalMapScale": options.normal_map_scale,
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {

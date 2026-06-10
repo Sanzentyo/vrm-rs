@@ -296,6 +296,14 @@ but was worse than the generated-tangent path, with Seed-san wgpu `30.8717 dB`
 Keep using generated tangents for the current real-fixture guard until a closer
 formulation beats `just render-parity-real-normal-maps`.
 
+For normal-map strength diagnostics, pass `--render-normal-map-scale N` to the
+local runner. This scales only the Rust wgpu/Bevy capture normal-map strength;
+the three-vrm reference remains native. Keep the default at `1.0` for parity
+runs. On the 2026-06-10 Seed-san diagnostic, both `0.75` and `1.25` were worse
+than the default, so the current blocker points more toward tangent-frame,
+normal texture sampling, or rasterization details than a simple normal-strength
+coefficient.
+
 The Rust capture paths default to `--mtoon-light-accumulation three-vrm`. That
 mode uses the closer WebGL MToon accumulator shape for light/color audits:
 direct diffuse is normalized by the `DirectionalLight(Math.PI)` setup, indirect

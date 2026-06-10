@@ -149,6 +149,8 @@ struct CaptureOptions {
     disable_normal_maps: bool,
     #[arg(long, value_enum, default_value_t = NormalMapMode::GeneratedTangents)]
     normal_map_mode: NormalMapMode,
+    #[arg(long, default_value_t = 1.0)]
+    normal_map_scale: f32,
     #[arg(long)]
     mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
@@ -408,6 +410,8 @@ fn spawn_vrm_meshes(
             );
             if options.disable_normal_maps {
                 shading.normal_scale = 0.0;
+            } else {
+                shading.normal_scale *= options.normal_map_scale;
             }
             let render_order = material_render_order(loaded, primitive.material);
             let normal_plan =
@@ -1483,6 +1487,7 @@ fn write_capture(
         "outlineWidthScale": options.outline_width_scale,
         "disableNormalMaps": options.disable_normal_maps,
         "normalMapMode": options.normal_map_mode.as_str(),
+        "normalMapScale": options.normal_map_scale,
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
