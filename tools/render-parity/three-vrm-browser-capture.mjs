@@ -349,6 +349,7 @@ function capturePage(options) {
   const ownerIdRecords = [];
   const ownerIdByColor = new Map();
   const ownerIdByCandidate = new Map();
+  const ownerIdByDiagnosticCandidate = new Map();
   let nextOwnerId = 1;
 
   const screenVertex = (mesh, index, uvAttribute, viewProjection, target, clip) => {
@@ -625,6 +626,7 @@ function capturePage(options) {
       for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
         const id = nextOwnerId;
         nextOwnerId += 1;
+        const diagnosticTriangle = Math.floor(sourceVertexIndices.length / 3);
         const color = encodeOwnerId(id);
         const linear = ownerColorToLinearRgb(color);
         const materialIndex = group.materialIndex ?? 0;
@@ -682,6 +684,10 @@ function capturePage(options) {
         ownerIdRecords.push(record);
         ownerIdByColor.set(ownerColorKey(color), record);
         ownerIdByCandidate.set(ownerCandidateKey(mesh.uuid, materialIndex, record.triangle), record);
+        ownerIdByDiagnosticCandidate.set(
+          ownerCandidateKey(mesh.uuid, materialIndex, diagnosticTriangle),
+          record,
+        );
       }
       diagnosticGeometry.addGroup(
         groupVertexStart,
@@ -703,7 +709,8 @@ function capturePage(options) {
   };
 
   const ownerIdForCandidate = (mesh, materialIndex, triangle) => {
-    const record = ownerIdByCandidate.get(ownerCandidateKey(mesh.uuid, materialIndex, triangle));
+    const key = ownerCandidateKey(mesh.uuid, materialIndex, triangle);
+    const record = ownerIdByDiagnosticCandidate.get(key) ?? ownerIdByCandidate.get(key);
     return record ? { id: record.id, color: record.color } : null;
   };
 
