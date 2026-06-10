@@ -220,6 +220,8 @@ impl From<NormalMapMode> for GltfNormalMapMode {
 enum DiagnosticRender {
     Shaded,
     Flat,
+    BaseFactor,
+    BaseColor,
 }
 
 impl DiagnosticRender {
@@ -227,6 +229,8 @@ impl DiagnosticRender {
         match self {
             Self::Shaded => "shaded",
             Self::Flat => "flat",
+            Self::BaseFactor => "base-factor",
+            Self::BaseColor => "base-color",
         }
     }
 }
@@ -951,7 +955,11 @@ fn bevy_mtoon_material(
         } else {
             0.0
         },
-        render_extra.flags2[3],
+        match context.options.diagnostic_render {
+            DiagnosticRender::BaseFactor => -1.0,
+            DiagnosticRender::BaseColor => 1.0,
+            DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
+        },
     );
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),

@@ -110,6 +110,33 @@ changed pixels and Bevy has `228`, all RGB-only silhouette/raster-edge pixels.
 This narrows the main Seed-san body residual to material/shader color parity
 while keeping edge/raster differences as a separate blocker.
 
+For the next material/shader split, run:
+
+```powershell
+just render-parity-seed-base-factor-diagnostic
+just render-parity-seed-base-color-diagnostic
+```
+
+`base-factor` keeps the same alpha/cull/depth/order policy and paints fragments
+with the resolved material base color factor only. `base-color` multiplies that
+factor by the resolved main/base texture, but still skips MToon light, normal,
+rim, shade, and emissive terms. Both recipes use
+`rgb-shared-nonblack-interior1px`, which measures only one-pixel-interior RGB
+pixels where both the three-vrm reference and Rust capture drew nonblack model
+content. This drops opaque-black background dilution and silhouette/raster-edge
+classification noise while preserving body-color deltas.
+
+The 2026-06-10 Seed-san diagnostic writes
+`.external-fixtures/render-parity-seed-base-factor-diagnostic/` and reports
+base-factor selected PSNR `Infinity` for wgpu and `74.8665 dB` for Bevy, with
+max selected-channel deltas `0` and `1`. The matching base-color run writes
+`.external-fixtures/render-parity-seed-base-color-diagnostic/` and reports
+wgpu `28.7633 dB` / Bevy `27.8394 dB`, with max selected-channel deltas `220`
+/ `233`. This confirms that material assignment and base factors match in the
+model-body overlap region; the remaining Seed-san color blocker starts at
+base-texture sampling, UV/sampler state, texture color-space handling, or a
+texture-selection detail before the MToon lighting stack is applied.
+
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
 three-vrm/wgpu/Bevy. For a focused check, use:
@@ -159,10 +186,15 @@ delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
 selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, `--metric rgb-nonblack`,
-`--metric rgb-interior1px`, `--metric rgb-visible-interior1px`, and
-`--metric rgb-nonblack-interior1px`; pass/fail thresholds use the selected
-metric. The nonblack metrics are intended for opaque-black review sweeps where
-empty background pixels should not dilute the model-body color error. It also
+`--metric rgb-interior1px`, `--metric rgb-visible-interior1px`,
+`--metric rgb-nonblack-interior1px`, and
+`--metric rgb-shared-nonblack-interior1px`; pass/fail thresholds use the
+selected metric. The nonblack metrics are intended for opaque-black review
+sweeps where empty background pixels should not dilute the model-body color
+error. The shared-nonblack metric is stricter for focused diagnostics: a pixel
+is included only when both compared images and their one-pixel neighbors are
+nonblack, so it isolates overlapping model-body color from silhouette
+classification differences. It also
 accepts
 `--max-selected-channel-delta` and `--max-alpha-delta` for fixture-specific
 worst-case guards, and the Rust local runner forwards them as
@@ -173,7 +205,9 @@ useful for explicit transparent alpha-mask audits. Use `rgb-nonblack` for
 opaque-black whole-model diagnostics and `rgb-nonblack-interior1px` when
 one-pixel silhouette/raster edges should be dropped from that diagnostic. Use
 `rgb-visible-interior1px` when transparent interiors must be measured while
-still dropping one-pixel silhouette edges.
+still dropping one-pixel silhouette edges, and use
+`rgb-shared-nonblack-interior1px` when both sides must draw nonblack content
+before a body-color pixel is admitted.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 

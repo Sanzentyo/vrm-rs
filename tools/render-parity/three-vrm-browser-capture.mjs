@@ -48,7 +48,7 @@ const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--diagnostic-render shaded|flat]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--diagnostic-render shaded|flat|base-factor|base-color]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -82,8 +82,8 @@ if (!['opaque-black', 'transparent'].includes(background)) {
   console.error(`invalid background: ${background}; expected opaque-black or transparent`);
   process.exit(2);
 }
-if (!['shaded', 'flat'].includes(diagnosticRender)) {
-  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded or flat`);
+if (!['shaded', 'flat', 'base-factor', 'base-color'].includes(diagnosticRender)) {
+  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, or base-color`);
   process.exit(2);
 }
 
@@ -297,10 +297,15 @@ function capturePage(options) {
           material.needsUpdate = true;
         }
       }
-      if (${JSON.stringify(options.diagnosticRender)} === 'flat' && object.isMesh && object.material) {
+      if (${JSON.stringify(options.diagnosticRender)} !== 'shaded' && object.isMesh && object.material) {
         const diagnosticMaterial = (material) => {
+          const mode = ${JSON.stringify(options.diagnosticRender)};
+          const color = (mode === 'base-factor' || mode === 'base-color') && material?.color?.isColor === true
+            ? material.color.clone()
+            : new THREE.Color(0xffffff);
           const flat = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
+            color,
+            map: mode === 'base-color' ? material?.map ?? null : null,
             side: material?.side ?? THREE.FrontSide,
             transparent: material?.transparent ?? false,
             opacity: material?.opacity ?? 1.0,

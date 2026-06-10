@@ -155,6 +155,7 @@ enum RenderPsnrMetric {
     RgbInterior1px,
     RgbVisibleInterior1px,
     RgbNonblackInterior1px,
+    RgbSharedNonblackInterior1px,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -174,6 +175,8 @@ enum RenderNormalMapMode {
 enum RenderDiagnosticMode {
     Shaded,
     Flat,
+    BaseFactor,
+    BaseColor,
 }
 
 impl RenderMtoonLightAccumulation {
@@ -200,6 +203,8 @@ impl RenderDiagnosticMode {
         match self {
             Self::Shaded => "shaded",
             Self::Flat => "flat",
+            Self::BaseFactor => "base-factor",
+            Self::BaseColor => "base-color",
         }
     }
 }
@@ -215,6 +220,7 @@ impl RenderPsnrMetric {
             Self::RgbInterior1px => "rgb-interior1px",
             Self::RgbVisibleInterior1px => "rgb-visible-interior1px",
             Self::RgbNonblackInterior1px => "rgb-nonblack-interior1px",
+            Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
         }
     }
 }

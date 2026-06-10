@@ -267,6 +267,8 @@ impl From<NormalMapMode> for GltfNormalMapMode {
 enum DiagnosticRender {
     Shaded,
     Flat,
+    BaseFactor,
+    BaseColor,
 }
 
 impl DiagnosticRender {
@@ -274,6 +276,8 @@ impl DiagnosticRender {
         match self {
             Self::Shaded => "shaded",
             Self::Flat => "flat",
+            Self::BaseFactor => "base-factor",
+            Self::BaseColor => "base-color",
         }
     }
 }
@@ -659,7 +663,11 @@ fn material_extra_uniform(
             } else {
                 0.0
             },
-            plan.flags2[3],
+            match options.diagnostic_render {
+                DiagnosticRender::BaseFactor => -1.0,
+                DiagnosticRender::BaseColor => 1.0,
+                DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
+            },
         ],
     }
 }
@@ -2076,6 +2084,12 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     let diffuse = input.color.rgb * texel.rgb;
+    if material_extra.flags2.w < -0.5 {
+        return output_color(input.color.rgb, opaque_alpha);
+    }
+    if material_extra.flags2.w > 0.5 {
+        return output_color(diffuse, opaque_alpha);
+    }
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     if material_extra.flags2.x > 0.5 {
         return output_color(diffuse + input.emissive.rgb * emissive_texel, opaque_alpha);

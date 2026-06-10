@@ -54,6 +54,7 @@ enum MetricName {
     RgbInterior1px,
     RgbVisibleInterior1px,
     RgbNonblackInterior1px,
+    RgbSharedNonblackInterior1px,
 }
 
 impl std::str::FromStr for MetricName {
@@ -69,8 +70,9 @@ impl std::str::FromStr for MetricName {
             "rgb-interior1px" => Ok(Self::RgbInterior1px),
             "rgb-visible-interior1px" => Ok(Self::RgbVisibleInterior1px),
             "rgb-nonblack-interior1px" => Ok(Self::RgbNonblackInterior1px),
+            "rgb-shared-nonblack-interior1px" => Ok(Self::RgbSharedNonblackInterior1px),
             other => Err(format!(
-                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, or rgb-nonblack-interior1px"
+                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, or rgb-shared-nonblack-interior1px"
             )),
         }
     }
@@ -87,6 +89,7 @@ impl MetricName {
             Self::RgbInterior1px => "rgb-interior1px",
             Self::RgbVisibleInterior1px => "rgb-visible-interior1px",
             Self::RgbNonblackInterior1px => "rgb-nonblack-interior1px",
+            Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
         }
     }
 }
@@ -181,6 +184,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         |pixel| is_interior_nonblack(&expected, &actual, pixel),
         &[0, 1, 2],
     );
+    let shared_nonblack_interior_rgb = compare_channels(
+        &expected,
+        &actual,
+        |pixel| is_interior_shared_nonblack(&expected, &actual, pixel),
+        &[0, 1, 2],
+    );
     let alpha = alpha_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
@@ -193,6 +202,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             (MetricName::RgbInterior1px, interior_rgb),
             (MetricName::RgbVisibleInterior1px, visible_interior_rgb),
             (MetricName::RgbNonblackInterior1px, nonblack_interior_rgb),
+            (
+                MetricName::RgbSharedNonblackInterior1px,
+                shared_nonblack_interior_rgb,
+            ),
         ],
     )?;
     let pass = pass_status(selected, alpha, &options);
@@ -215,6 +228,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "rgbInterior1px": metric_report(interior_rgb),
         "rgbVisibleInterior1px": metric_report(visible_interior_rgb),
         "rgbNonblackInterior1px": metric_report(nonblack_interior_rgb),
+        "rgbSharedNonblackInterior1px": metric_report(shared_nonblack_interior_rgb),
         "selectedMetric": selected_metric_report(options.metric, selected),
         "pass": pass,
         "thresholds": {
@@ -532,6 +546,12 @@ fn is_interior_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) 
     })
 }
 
+fn is_interior_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    is_interior(expected, pixel, |neighbor| {
+        is_shared_nonblack(expected, actual, neighbor)
+    })
+}
+
 fn is_interior(image: &RgbaImage, pixel: usize, include_neighbor: impl Fn(usize) -> bool) -> bool {
     let pixel_index = pixel / 4;
     let x = pixel_index % image.width;
@@ -554,6 +574,10 @@ fn is_interior(image: &RgbaImage, pixel: usize, include_neighbor: impl Fn(usize)
 
 fn is_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
     pixel_rgb_nonzero(&expected.rgba, pixel) || pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    pixel_rgb_nonzero(&expected.rgba, pixel) && pixel_rgb_nonzero(&actual.rgba, pixel)
 }
 
 fn pixel_rgb_nonzero(rgba: &[u8], pixel: usize) -> bool {

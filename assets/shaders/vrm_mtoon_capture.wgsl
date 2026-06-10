@@ -246,6 +246,12 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     let diffuse = material.base_color.rgb * texel.rgb;
+    if material.material_flags2.w < -0.5 {
+        return output_color(material.base_color.rgb, opaque_alpha);
+    }
+    if material.material_flags2.w > 0.5 {
+        return output_color(diffuse, opaque_alpha);
+    }
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
     if material.material_flags2.x > 0.5 {
         return output_color(diffuse + material.emissive.rgb * emissive_texel, opaque_alpha);

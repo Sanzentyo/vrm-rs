@@ -34,10 +34,11 @@ const metricNames = new Set([
   'rgb-interior1px',
   'rgb-visible-interior1px',
   'rgb-nonblack-interior1px',
+  'rgb-shared-nonblack-interior1px',
 ]);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-nonblack|rgb-interior1px|rgb-visible-interior1px|rgb-nonblack-interior1px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-nonblack|rgb-interior1px|rgb-visible-interior1px|rgb-nonblack-interior1px|rgb-shared-nonblack-interior1px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
@@ -76,6 +77,7 @@ const nonblackRgb = compareChannels((pixel) => isNonblack(pixel), [0, 1, 2]);
 const interiorRgb = compareChannels((pixel) => isInteriorOpaque(pixel), [0, 1, 2]);
 const visibleInteriorRgb = compareChannels((pixel) => isInteriorVisible(pixel), [0, 1, 2]);
 const nonblackInteriorRgb = compareChannels((pixel) => isInteriorNonblack(pixel), [0, 1, 2]);
+const sharedNonblackInteriorRgb = compareChannels((pixel) => isInteriorSharedNonblack(pixel), [0, 1, 2]);
 const alpha = alphaStats();
 const selectedMetric = selectMetric(metricName, {
   rgba: fullImage,
@@ -86,6 +88,7 @@ const selectedMetric = selectMetric(metricName, {
   'rgb-interior1px': interiorRgb,
   'rgb-visible-interior1px': visibleInteriorRgb,
   'rgb-nonblack-interior1px': nonblackInteriorRgb,
+  'rgb-shared-nonblack-interior1px': sharedNonblackInteriorRgb,
 });
 const mse = fullImage.mse;
 const psnr = fullImage.psnr;
@@ -107,6 +110,7 @@ const report = {
   rgbInterior1px: metricReport(interiorRgb),
   rgbVisibleInterior1px: metricReport(visibleInteriorRgb),
   rgbNonblackInterior1px: metricReport(nonblackInteriorRgb),
+  rgbSharedNonblackInterior1px: metricReport(sharedNonblackInteriorRgb),
   selectedMetric: {
     name: metricName,
     ...metricReport(selectedMetric),
@@ -325,6 +329,28 @@ function isInteriorNonblack(pixel) {
     }
   }
   return true;
+}
+
+function isInteriorSharedNonblack(pixel) {
+  const pixelIndex = pixel / 4;
+  const x = pixelIndex % expected.width;
+  const y = Math.floor(pixelIndex / expected.width);
+  if (x === 0 || y === 0 || x === expected.width - 1 || y === expected.height - 1) {
+    return false;
+  }
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const neighbor = ((y + dy) * expected.width + (x + dx)) * 4;
+      if (!isSharedNonblack(neighbor)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function isSharedNonblack(pixel) {
+  return pixelRgbNonzero(expected.rgba, pixel) && pixelRgbNonzero(actual.rgba, pixel);
 }
 
 function pixelRgbNonzero(rgba, pixel) {

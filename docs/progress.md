@@ -2,6 +2,16 @@
 
 ## 2026-06-10
 
+- Added Seed-san `base-factor` and `base-color` diagnostic render modes across
+  the three-vrm browser reference, wgpu capture, Bevy capture, and local
+  render-parity runner. The new `rgb-shared-nonblack-interior1px` metric keeps
+  focused body-color diagnostics on overlapping nonblack interior pixels. The
+  fixed base-factor run now matches the reference in the body region
+  (`Infinity` for wgpu, `74.8665 dB` for Bevy, max selected-channel deltas
+  `0`/`1`), while base-color drops to wgpu `28.7633 dB` / Bevy `27.8394 dB`.
+  This narrows the Seed-san body-color blocker to base texture sampling,
+  UV/sampler state, texture color-space handling, or texture selection before
+  MToon light/normal/rim/shade terms enter the frame.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git --locked --force imq` and confirmed the
   installed `0fdc5263` CLI still does not expose `--selected-metric` or the
