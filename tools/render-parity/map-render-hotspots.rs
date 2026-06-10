@@ -151,8 +151,37 @@ struct HotspotSummary {
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
     frontmost_edge_distance_lte_100px: usize,
+    frontmost_nearest_edge_counts: Vec<EdgeBucketCount>,
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct EdgeBucketCount {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
+    triangle: usize,
+    edge: usize,
+    edge_indices: [u32; 2],
+    count: usize,
+    mean_edge_distance_pixels: f32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct EdgeBucketKey {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
+    triangle: usize,
+    edge: usize,
+    edge_indices: [u32; 2],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -192,10 +221,16 @@ struct CandidateMatch {
     policy: MaterialPolicyReport,
     sample_offset: [i32; 2],
     sample_distance: f32,
+    node: usize,
+    mesh: usize,
+    primitive: usize,
     triangle: usize,
+    indices: [u32; 3],
     depth: f32,
     min_barycentric: f32,
     edge_distance_pixels: f32,
+    nearest_edge: usize,
+    nearest_edge_indices: [u32; 2],
     front_facing: bool,
     visible_by_policy: bool,
     base_uv: [f32; 2],
@@ -230,6 +265,8 @@ struct HitCandidate {
     barycentric: [f32; 3],
     min_barycentric: f32,
     edge_distance_pixels: f32,
+    nearest_edge: usize,
+    nearest_edge_indices: [u32; 2],
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     screen: [[f32; 2]; 3],
@@ -243,6 +280,12 @@ struct ProjectedVertex {
     depth: f32,
     uv: [f32; 2],
     reciprocal_w: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TriangleEdgeDistance {
+    edge: usize,
+    distance_pixels: f32,
 }
 
 fn main() {
@@ -362,6 +405,13 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         1.0,
         "point past segment endpoint",
     )?;
+    let nearest = nearest_triangle_edge([0.5, 0.05], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]);
+    if nearest.edge != 0 {
+        return Err(format!("expected edge 0, got {}", nearest.edge).into());
+    }
+    if triangle_edge_indices([10, 11, 12], 2) != [12, 10] {
+        return Err("triangle edge 2 indices should wrap from c to a".into());
+    }
     Ok(())
 }
 
@@ -425,6 +475,7 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
         frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
         frontmost_edge_distance_lte_100px: frontmost_edge_distance_lte(hotspots, 1.00),
+        frontmost_nearest_edge_counts: frontmost_nearest_edge_counts(hotspots),
         actual_visible_sample_offsets: offset_counts(
             hotspots
                 .iter()
@@ -511,6 +562,56 @@ fn frontmost_edge_distance_lte(hotspots: &[Hotspot], threshold: f32) -> usize {
         .filter_map(|hotspot| hotspot.frontmost_visible.as_ref())
         .filter(|frontmost| frontmost.edge_distance_pixels <= threshold)
         .count()
+}
+
+fn frontmost_nearest_edge_counts(hotspots: &[Hotspot]) -> Vec<EdgeBucketCount> {
+    let mut counts = BTreeMap::<EdgeBucketKey, (usize, f32)>::new();
+    for frontmost in hotspots
+        .iter()
+        .filter_map(|hotspot| hotspot.frontmost_visible.as_ref())
+    {
+        let key = EdgeBucketKey {
+            node: frontmost.node,
+            mesh: frontmost.mesh,
+            primitive: frontmost.primitive,
+            pass: frontmost.pass,
+            material: frontmost.material,
+            material_name: frontmost.material_name.clone(),
+            triangle: frontmost.triangle,
+            edge: frontmost.nearest_edge,
+            edge_indices: frontmost.nearest_edge_indices,
+        };
+        let (count, distance_sum) = counts.entry(key).or_default();
+        *count += 1;
+        *distance_sum += frontmost.edge_distance_pixels;
+    }
+    let mut buckets = counts
+        .into_iter()
+        .map(|(key, (count, distance_sum))| EdgeBucketCount {
+            node: key.node,
+            mesh: key.mesh,
+            primitive: key.primitive,
+            pass: key.pass,
+            material: key.material,
+            material_name: key.material_name,
+            triangle: key.triangle,
+            edge: key.edge,
+            edge_indices: key.edge_indices,
+            count,
+            mean_edge_distance_pixels: distance_sum / count as f32,
+        })
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.node.cmp(&right.node))
+            .then_with(|| left.mesh.cmp(&right.mesh))
+            .then_with(|| left.primitive.cmp(&right.primitive))
+            .then_with(|| left.triangle.cmp(&right.triangle))
+            .then_with(|| left.edge.cmp(&right.edge))
+    });
+    buckets
 }
 
 fn offset_counts<'a>(candidates: impl Iterator<Item = &'a CandidateMatch>) -> Vec<OffsetCount> {
@@ -730,10 +831,16 @@ fn nearest_candidate_match_by(
             policy: candidate.policy,
             sample_offset: candidate.sample_offset,
             sample_distance: candidate.sample_distance,
+            node: candidate.node,
+            mesh: candidate.mesh,
+            primitive: candidate.primitive,
             triangle: candidate.triangle,
+            indices: candidate.indices,
             depth: candidate.depth,
             min_barycentric: candidate.min_barycentric,
             edge_distance_pixels: candidate.edge_distance_pixels,
+            nearest_edge: candidate.nearest_edge,
+            nearest_edge_indices: candidate.nearest_edge_indices,
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -765,10 +872,16 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
             policy: candidate.policy,
             sample_offset: candidate.sample_offset,
             sample_distance: candidate.sample_distance,
+            node: candidate.node,
+            mesh: candidate.mesh,
+            primitive: candidate.primitive,
             triangle: candidate.triangle,
+            indices: candidate.indices,
             depth: candidate.depth,
             min_barycentric: candidate.min_barycentric,
             edge_distance_pixels: candidate.edge_distance_pixels,
+            nearest_edge: candidate.nearest_edge,
+            nearest_edge_indices: candidate.nearest_edge_indices,
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -818,6 +931,8 @@ fn surface_candidates(
             let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
             let signed_area = signed_area(a.screen, b.screen, c.screen);
             let front_facing = signed_area < 0.0;
+            let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
+            let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
             Some(HitCandidate {
                 draw_index: surface.draw_index,
                 node: surface.node,
@@ -839,9 +954,9 @@ fn surface_candidates(
                 min_barycentric: barycentric
                     .into_iter()
                     .fold(f32::INFINITY, |left, right| left.min(right)),
-                edge_distance_pixels: triangle_edge_distance_pixels(
-                    point, a.screen, b.screen, c.screen,
-                ),
+                edge_distance_pixels: nearest_edge.distance_pixels,
+                nearest_edge: nearest_edge.edge,
+                nearest_edge_indices: edge_indices,
                 raw_uv,
                 base_uv,
                 screen: [a.screen, b.screen, c.screen],
@@ -1055,9 +1170,40 @@ fn triangle_edge_distance_pixels(
     b: [f32; 2],
     c: [f32; 2],
 ) -> f32 {
-    point_to_segment_distance(point, a, b)
-        .min(point_to_segment_distance(point, b, c))
-        .min(point_to_segment_distance(point, c, a))
+    nearest_triangle_edge(point, a, b, c).distance_pixels
+}
+
+fn nearest_triangle_edge(
+    point: [f32; 2],
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+) -> TriangleEdgeDistance {
+    [(0, a, b), (1, b, c), (2, c, a)]
+        .into_iter()
+        .map(|(edge, start, end)| TriangleEdgeDistance {
+            edge,
+            distance_pixels: point_to_segment_distance(point, start, end),
+        })
+        .min_by(|left, right| {
+            left.distance_pixels
+                .partial_cmp(&right.distance_pixels)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.edge.cmp(&right.edge))
+        })
+        .unwrap_or(TriangleEdgeDistance {
+            edge: 0,
+            distance_pixels: 0.0,
+        })
+}
+
+fn triangle_edge_indices(indices: [u32; 3], edge: usize) -> [u32; 2] {
+    match edge {
+        0 => [indices[0], indices[1]],
+        1 => [indices[1], indices[2]],
+        2 => [indices[2], indices[0]],
+        _ => [indices[0], indices[1]],
+    }
 }
 
 fn point_to_segment_distance(point: [f32; 2], start: [f32; 2], end: [f32; 2]) -> f32 {

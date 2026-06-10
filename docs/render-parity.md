@@ -277,6 +277,17 @@ This maps the top-256 `shared-nonblack-interior1px` base-UV deltas. The wider
 lower-amplitude band is still mostly a near-boundary phenomenon rather than a
 large model-interior drift.
 
+The hotspot mapper also reports `frontmost_nearest_edge_counts`, which groups
+frontmost samples by node/mesh/primitive/material/triangle/edge. On the 2026-06-10
+top-32 pass, wgpu and Bevy report the same leading edge buckets: node `145`,
+mesh `4`, primitive `3`, material `1`, triangles `160`, `164`, and `171` each
+account for three of the worst samples, followed by node `144`, mesh `3`,
+primitive `0`, material `5`, triangle `1548` with two samples. The top-256 pass
+spreads into more mesh `3` and mesh `4` base-pass edges, but remains concentrated
+around local triangle ownership rather than a global camera, color, or sampler
+offset. This makes adjacent-triangle/depth-edge policy the next most useful
+diagnostic target.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell
