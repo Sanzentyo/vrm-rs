@@ -31,8 +31,9 @@ use vrm_adapter::{
 };
 use vrm_core::MaterialRef;
 use vrm_io::{
-    transform_tex_coord_0, GltfAlphaMode, GltfExpressionRenderEffects, GltfOutlineScale,
-    GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
+    transform_tex_coord_0, CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects,
+    GltfOutlineScale, GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm,
+    Rgba8SamplingOrigin,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -113,6 +114,7 @@ struct Surface {
     material_name: Option<String>,
     policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
+    base_texture: Option<CpuRgba8Image>,
     indices: Vec<u32>,
     edge_adjacency: BTreeMap<[u32; 2], Vec<usize>>,
     vertices: Vec<GltfTransformedVertex>,
@@ -159,6 +161,10 @@ struct HotspotSummary {
     expected_frontmost_mean_rgb_distance: Option<f32>,
     actual_frontmost_max_rgb_distance: Option<f32>,
     expected_frontmost_max_rgb_distance: Option<f32>,
+    actual_frontmost_mean_base_texture_rgb_distance: Option<f32>,
+    expected_frontmost_mean_base_texture_rgb_distance: Option<f32>,
+    actual_frontmost_max_base_texture_rgb_distance: Option<f32>,
+    expected_frontmost_max_base_texture_rgb_distance: Option<f32>,
     frontmost_mean_edge_distance_pixels: Option<f32>,
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
@@ -249,8 +255,11 @@ struct Hotspot {
     nearest_visible_actual: Option<CandidateMatch>,
     frontmost_visible: Option<CandidateMatch>,
     frontmost_base_uv_srgb: Option<[u8; 4]>,
+    frontmost_base_texture_rgba: Option<[u8; 4]>,
     frontmost_expected_rgb_distance: Option<f32>,
     frontmost_actual_rgb_distance: Option<f32>,
+    frontmost_base_texture_expected_rgb_distance: Option<f32>,
+    frontmost_base_texture_actual_rgb_distance: Option<f32>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -279,6 +288,7 @@ struct CandidateMatch {
     front_facing: bool,
     visible_by_policy: bool,
     base_uv: [f32; 2],
+    base_texture_rgba: Option<[u8; 4]>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -315,6 +325,7 @@ struct HitCandidate {
     nearest_edge_neighbor_triangles: Vec<usize>,
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
+    base_texture_rgba: Option<[u8; 4]>,
     screen: [[f32; 2]; 3],
     front_facing: bool,
     visible_by_policy: bool,
@@ -386,6 +397,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 frontmost_visible.as_ref().map(|frontmost| {
                     diagnostic_linear_uv_to_srgb_color(frontmost.base_uv, delta.actual[3])
                 });
+            let frontmost_base_texture_rgba = frontmost_visible
+                .as_ref()
+                .and_then(|frontmost| frontmost.base_texture_rgba);
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -409,9 +423,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 ),
                 frontmost_visible,
                 frontmost_base_uv_srgb,
+                frontmost_base_texture_rgba,
                 frontmost_expected_rgb_distance: frontmost_base_uv_srgb
                     .map(|color| rgb_distance(color, delta.expected)),
                 frontmost_actual_rgb_distance: frontmost_base_uv_srgb
+                    .map(|color| rgb_distance(color, delta.actual)),
+                frontmost_base_texture_expected_rgb_distance: frontmost_base_texture_rgba
+                    .map(|color| rgb_distance(color, delta.expected)),
+                frontmost_base_texture_actual_rgb_distance: frontmost_base_texture_rgba
                     .map(|color| rgb_distance(color, delta.actual)),
                 candidates,
             }
@@ -593,6 +612,22 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         expected_frontmost_max_rgb_distance: max_frontmost_rgb_distance(hotspots, |hotspot| {
             hotspot.frontmost_expected_rgb_distance
         }),
+        actual_frontmost_mean_base_texture_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_base_texture_actual_rgb_distance,
+        ),
+        expected_frontmost_mean_base_texture_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_base_texture_expected_rgb_distance,
+        ),
+        actual_frontmost_max_base_texture_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_base_texture_actual_rgb_distance,
+        ),
+        expected_frontmost_max_base_texture_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_base_texture_expected_rgb_distance,
+        ),
         frontmost_mean_edge_distance_pixels: mean_frontmost_edge_distance(hotspots),
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
         frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
@@ -920,6 +955,7 @@ fn build_surfaces(
                 expression_effects,
             );
             let base_uv_transform = uv_transforms.base;
+            let base_texture = loaded.material_base_texture_rgba8_image(primitive.material);
             let base_policy = capture_material_policy(loaded, primitive.material);
             let indices = primitive_indices(primitive.indices.as_slice(), vertices.len());
             surfaces.push(Surface {
@@ -932,6 +968,7 @@ fn build_surfaces(
                 material_name: material_name.clone(),
                 policy: base_policy,
                 base_uv_transform,
+                base_texture: base_texture.clone(),
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
                 vertices: vertices.clone(),
@@ -980,6 +1017,7 @@ fn build_surfaces(
                 material_name,
                 policy: outline_material_policy(base_policy),
                 base_uv_transform,
+                base_texture,
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
                 vertices: outline_vertices,
@@ -1097,6 +1135,7 @@ fn nearest_candidate_match_by(
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
+            base_texture_rgba: candidate.base_texture_rgba,
         })
         .min_by(|left, right| {
             left.base_uv_distance
@@ -1139,6 +1178,7 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
+            base_texture_rgba: candidate.base_texture_rgba,
         })
         .min_by(|left, right| {
             left.depth
@@ -1183,6 +1223,9 @@ fn surface_candidates(
             let barycentric = barycentric(point, a.screen, b.screen, c.screen)?;
             let raw_uv = interpolate_perspective_correct_uv(barycentric, a, b, c);
             let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
+            let base_texture_rgba = surface.base_texture.as_ref().map(|texture| {
+                texture.sample_rgba8_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft)
+            });
             let signed_area = signed_area(a.screen, b.screen, c.screen);
             let front_facing = signed_area < 0.0;
             let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
@@ -1216,6 +1259,7 @@ fn surface_candidates(
                 nearest_edge_neighbor_triangles,
                 raw_uv,
                 base_uv,
+                base_texture_rgba,
                 screen: [a.screen, b.screen, c.screen],
                 front_facing,
                 visible_by_policy: visible_by_cull_policy(surface.policy.cull_mode, front_facing),

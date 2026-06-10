@@ -57,6 +57,15 @@ impl LoadedVrm {
         CpuRgba8Image::from_image_data(self.texture_image(texture)?).ok()
     }
 
+    pub fn material_base_texture_rgba8_image(
+        &self,
+        material: Option<usize>,
+    ) -> Option<CpuRgba8Image> {
+        self.material_texture_slots(material)
+            .base
+            .and_then(|texture| self.texture_rgba8_image(texture))
+    }
+
     pub fn material_outline_width_rgba8_image(
         &self,
         material: Option<usize>,
@@ -473,6 +482,28 @@ impl CpuRgba8Image {
         self.sample_channel_repeat_linear(tex_coord, 1, 255, origin)
     }
 
+    pub fn sample_rgba_repeat_linear(
+        &self,
+        tex_coord: [f32; 2],
+        origin: Rgba8SamplingOrigin,
+    ) -> [f32; 4] {
+        [
+            self.sample_channel_repeat_linear(tex_coord, 0, 0, origin),
+            self.sample_channel_repeat_linear(tex_coord, 1, 0, origin),
+            self.sample_channel_repeat_linear(tex_coord, 2, 0, origin),
+            self.sample_channel_repeat_linear(tex_coord, 3, 255, origin),
+        ]
+    }
+
+    pub fn sample_rgba8_repeat_linear(
+        &self,
+        tex_coord: [f32; 2],
+        origin: Rgba8SamplingOrigin,
+    ) -> [u8; 4] {
+        self.sample_rgba_repeat_linear(tex_coord, origin)
+            .map(quantize_unorm8)
+    }
+
     pub fn sample_channel_repeat_linear(
         &self,
         tex_coord: [f32; 2],
@@ -692,6 +723,10 @@ fn checked_pixel_count(width: u32, height: u32) -> Option<usize> {
 
 fn lerp(left: f32, right: f32, t: f32) -> f32 {
     left + (right - left) * t
+}
+
+fn quantize_unorm8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 impl From<gltf::image::Format> for ImageFormat {
@@ -3195,6 +3230,39 @@ mod tests {
         assert_f32_close(
             image.sample_channel_repeat_linear([0.25, 0.25], 7, 128, Rgba8SamplingOrigin::TopLeft),
             128.0 / 255.0,
+        );
+        assert_eq!(
+            image.sample_rgba8_repeat_linear([0.25, 0.25], Rgba8SamplingOrigin::TopLeft),
+            [0, 10, 0, 255]
+        );
+        assert_eq!(
+            image.sample_rgba8_repeat_linear([0.25, 0.25], Rgba8SamplingOrigin::BottomLeft),
+            [0, 30, 0, 255]
+        );
+    }
+
+    #[test]
+    fn cpu_rgba8_image_samples_all_channels_repeat_linear() {
+        let image = CpuRgba8Image::from_rgba8(
+            2,
+            2,
+            vec![
+                0, 0, 0, 0, 100, 0, 0, 100, 0, 100, 0, 200, 100, 100, 100, 255,
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            image.sample_rgba8_repeat_linear([0.25, 0.25], Rgba8SamplingOrigin::TopLeft),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            image.sample_rgba8_repeat_linear([0.75, 0.75], Rgba8SamplingOrigin::TopLeft),
+            [100, 100, 100, 255]
+        );
+        assert_eq!(
+            image.sample_rgba8_repeat_linear([0.5, 0.5], Rgba8SamplingOrigin::TopLeft),
+            [50, 50, 25, 139]
         );
     }
 

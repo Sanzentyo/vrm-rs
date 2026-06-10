@@ -230,6 +230,18 @@ only `4/32`. The mean frontmost UV distance is tiny for Rust actuals
 (`0.3739`), confirming that the diagnostic is measuring a reference-vs-Rust
 surface-selection difference rather than random texture sampling drift.
 
+For base-color diagnostics, the same mapper also samples the frontmost
+material's base texture through `vrm-io::CpuRgba8Image` and writes
+`frontmost_base_texture_rgba`,
+`frontmost_base_texture_expected_rgb_distance`, and
+`frontmost_base_texture_actual_rgb_distance`. On the current Seed-san
+base-color hotspot report, the sampled frontmost base texture is close to the
+Rust actual color (mean RGB distance about `18`) but far from the three-vrm
+expected color (mean distance about `320`). Treat that as evidence against a
+broad base texture binding, V-flip, or generated sampler failure, and focus the
+next investigation on real-model-local surface selection, visibility, or
+diagnostic material ownership near texture/UV boundaries.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,
