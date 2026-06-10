@@ -374,6 +374,24 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/summarize-render-hotspots.rs",
+            "--help",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
+            "tools/render-parity/summarize-render-hotspots.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/generate-split-ownership-fixture.rs",
             "--help",
         ],

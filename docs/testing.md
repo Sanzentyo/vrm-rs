@@ -195,6 +195,14 @@ the top shared-body hotspot pixels through the browser owner diagnostic. The
 local runner's `--render-screen-jitter-x` and `--render-screen-jitter-y` options
 accept negative values, so focused sweeps can test
 `--render-screen-jitter-x -0.25` without using an equals-form workaround.
+`tools/render-parity/summarize-render-hotspots.rs` turns
+`map-render-hotspots.rs` JSON into compact JSON/Markdown review artifacts. The
+outline-off Seed-san diagnostic writes
+`.external-fixtures/render-parity-seed-base-color-outline-off-diagnostic/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.hotspots.summary.{json,md}`;
+the current summary keeps the focused blocker readable: `64/64` hotspots have
+frontmost visible candidates, `58/64` are within `0.25px` of an edge, and Rust's
+actual base-texture sample is closer to the CPU frontmost texture than the
+three-vrm rendered expected color for `43/64` hotspots.
 The canonical local runner now uses
 `--render-background opaque-black`, so the three-vrm reference, wgpu capture,
 and Bevy capture are all reviewed with the same opaque-background contract. Use
