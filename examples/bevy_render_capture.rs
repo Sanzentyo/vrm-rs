@@ -31,7 +31,7 @@ use bevy::render::render_graph::{
 use bevy::render::render_phase::ViewSortedRenderPhases;
 use bevy::render::render_resource::{
     AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, Face,
-    MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
+    FrontFace, MapMode, PollType, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
     SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureDataOrder,
     TextureFormat, TextureUsages,
 };
@@ -163,6 +163,8 @@ struct CaptureOptions {
     expressions: Vec<String>,
     #[arg(long, value_enum, default_value_t = DiagnosticRender::Shaded)]
     diagnostic_render: DiagnosticRender,
+    #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
+    front_face: CaptureFrontFace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -191,6 +193,28 @@ impl From<MtoonLightAccumulation> for GltfLightAccumulation {
         match value {
             MtoonLightAccumulation::Tuned => Self::Tuned,
             MtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, ValueEnum)]
+enum CaptureFrontFace {
+    Ccw,
+    Cw,
+}
+
+impl CaptureFrontFace {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ccw => "ccw",
+            Self::Cw => "cw",
+        }
+    }
+
+    fn to_bevy(self) -> FrontFace {
+        match self {
+            Self::Ccw => FrontFace::Ccw,
+            Self::Cw => FrontFace::Cw,
         }
     }
 }
@@ -652,6 +676,7 @@ fn diagnostic_owner_ids(
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
                     "drawIndex": draw_index,
+                    "frontFace": options.front_face.as_str(),
                     "cullMode": bevy_primitive_cull_mode(primitive),
                     "alphaMode": bevy_primitive_alpha_mode(primitive),
                     "alphaCutoff": bevy_primitive_alpha_cutoff(primitive),
@@ -1264,6 +1289,7 @@ struct BevyMtoonMaterial {
     alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
     depth_write: bool,
+    front_face: CaptureFrontFace,
     depth_bias: f32,
 }
 
@@ -1271,6 +1297,7 @@ struct BevyMtoonMaterial {
 struct BevyMtoonKey {
     cull_mode: Option<Face>,
     depth_write: bool,
+    front_face: CaptureFrontFace,
 }
 
 #[derive(Clone, Copy, Debug, ShaderType)]
@@ -1343,6 +1370,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonKey {
         Self {
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
+            front_face: material.front_face,
         }
     }
 }
@@ -1370,6 +1398,7 @@ impl Material for BevyMtoonMaterial {
         layout: &bevy::mesh::MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.front_face = key.bind_group_data.front_face.to_bevy();
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
         if layout.0.contains(Mesh::ATTRIBUTE_TANGENT) {
             descriptor.vertex.shader_defs.push("VERTEX_TANGENTS".into());
@@ -1549,6 +1578,7 @@ fn bevy_mtoon_material(
         alpha_mode,
         cull_mode,
         depth_write,
+        front_face: context.options.front_face,
         depth_bias,
     }
 }
@@ -2104,6 +2134,7 @@ fn write_capture(
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
+        "frontFace": options.front_face.as_str(),
         "renderer": {
             "backend": "bevy",
             "diagnosticOwnerIds": diagnostic_owner_ids,

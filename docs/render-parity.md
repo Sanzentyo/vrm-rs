@@ -290,6 +290,7 @@ just render-parity-seed-base-color-three-hotspots D:/git/three-vrm 0.75 0.75
 just render-parity-seed-base-color-owner-hotspots
 just render-parity-seed-base-color-owner-hotspots D:/git/three-vrm 0.75 0.75
 just render-parity-seed-owner-id-diagnostic
+just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm
 ```
 
 It creates `shared-nonblack-interior1px` delta reports and maps the top 64
@@ -414,16 +415,32 @@ stream and Rust's sorted triangle stream, with wgpu-vs-Bevy triangle-edge
 differences as a secondary sanity check.
 
 The same reports include `top_pass_transitions` so pass ownership changes can
-be tracked without reading every owner pair. The current Seed-san
-three-vrm-vs-Rust owner reports are dominated by `outline -> base`
-transitions (`11774` pixels for wgpu, `11774` for Bevy before the rejected
-outline-expansion experiment), with only a small `base -> base` residue. The
-direct wgpu-vs-Bevy owner report is mostly same-pass `base -> base`, so the
-primary mismatch is reference-vs-Rust outline ownership rather than a broad
-Rust backend disagreement. A trial that used expanded outline geometry for
-Rust `owner-id` diagnostics improved a few outline owner matches but reduced
-three-vrm PSNR and made wgpu-vs-Bevy much noisier, so `owner-id` remains on
-the non-shaded diagnostic outline geometry path.
+be tracked without reading every owner pair. The default Seed-san owner
+diagnostic keeps the Rust captures on `frontFace = ccw`, matching the shaded
+renderer default, and is dominated by `outline -> base` transitions (`11774`
+pixels for wgpu, `11774` for Bevy before the rejected outline-expansion
+experiment), with only a small `base -> base` residue. The direct wgpu-vs-Bevy
+owner report is mostly same-pass `base -> base`, so the primary mismatch is
+reference-vs-Rust outline ownership rather than a broad Rust backend
+disagreement. A trial that used expanded outline geometry for Rust `owner-id`
+diagnostics improved a few outline owner matches but reduced three-vrm PSNR and
+made wgpu-vs-Bevy much noisier, so `owner-id` remains on the non-shaded
+diagnostic outline geometry path.
+
+For cull/facing isolation, run
+`just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
+It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
+and records `Front face: cw` in the generated summary/manifest and owner label
+metadata. On the current Seed-san owner-ID run this almost flips the dominant
+pass transition back to the reference outline owner: wgpu reports
+`outline -> outline = 11769`, `base -> base = 707`, `base -> outline = 148`,
+and `outline -> base = 23`; Bevy reports `11773`, `707`, `148`, and `19`.
+The selected owner-ID PSNR rises only slightly to wgpu `16.9160 dB` and Bevy
+`16.9249 dB`. Do not use this as the shaded default: a shaded Seed-san trial
+with CW dropped to wgpu `14.8325 dB`, while the normal CCW real normal-map gate
+continues to pass at Seed-san wgpu `34.6538 dB` / Bevy `34.1163 dB` and
+constraint wgpu `36.2518 dB` / Bevy `36.2349 dB`. Treat the CW recipe as a
+local pass/facing diagnostic before changing material or lighting code.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

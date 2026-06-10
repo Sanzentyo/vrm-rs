@@ -143,6 +143,8 @@ struct CaptureOptions {
     expressions: Vec<String>,
     #[arg(long, value_enum, default_value_t = DiagnosticRender::Shaded)]
     diagnostic_render: DiagnosticRender,
+    #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
+    front_face: CaptureFrontFace,
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +262,7 @@ struct PipelineKey {
     cull_mode: CaptureCullMode,
     depth_write: bool,
     blend: bool,
+    front_face: CaptureFrontFace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -292,6 +295,28 @@ impl CaptureAlphaMode {
             Self::Opaque => "opaque",
             Self::Mask => "mask",
             Self::Blend => "blend",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ValueEnum)]
+enum CaptureFrontFace {
+    Ccw,
+    Cw,
+}
+
+impl CaptureFrontFace {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ccw => "ccw",
+            Self::Cw => "cw",
+        }
+    }
+
+    fn to_wgpu(self) -> wgpu::FrontFace {
+        match self {
+            Self::Ccw => wgpu::FrontFace::Ccw,
+            Self::Cw => wgpu::FrontFace::Cw,
         }
     }
 }
@@ -1355,13 +1380,20 @@ fn texture_resource_indices(resources: &[TextureResource]) -> HashMap<usize, usi
         .collect()
 }
 
-fn pipeline_keys(mesh: &MeshDrawData) -> Vec<PipelineKey> {
+fn pipeline_keys(mesh: &MeshDrawData, options: &CaptureOptions) -> Vec<PipelineKey> {
     let mut keys = mesh
         .primitives
         .iter()
-        .map(|primitive| pipeline_key(primitive.policy))
+        .map(|primitive| pipeline_key(primitive.policy, options.front_face))
         .collect::<Vec<_>>();
-    keys.sort_by_key(|key| (key.cull_mode as u8, key.depth_write, key.blend));
+    keys.sort_by_key(|key| {
+        (
+            key.front_face as u8,
+            key.cull_mode as u8,
+            key.depth_write,
+            key.blend,
+        )
+    });
     keys.dedup();
     keys
 }
@@ -1374,11 +1406,12 @@ fn pipeline_indices(keys: &[PipelineKey]) -> HashMap<PipelineKey, usize> {
         .collect()
 }
 
-fn pipeline_key(policy: MaterialPolicy) -> PipelineKey {
+fn pipeline_key(policy: MaterialPolicy, front_face: CaptureFrontFace) -> PipelineKey {
     PipelineKey {
         cull_mode: policy.cull_mode,
         depth_write: policy.depth_write,
         blend: policy.blend,
+        front_face,
     }
 }
 
@@ -1406,7 +1439,7 @@ fn render_pipeline(
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: key.front_face.to_wgpu(),
             cull_mode: cull_face(key.cull_mode),
             ..Default::default()
         },
@@ -1713,7 +1746,7 @@ async fn render_capture(
         label: Some("render parity shader"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
-    let pipeline_keys = pipeline_keys(mesh);
+    let pipeline_keys = pipeline_keys(mesh, options);
     let pipelines = pipeline_keys
         .iter()
         .map(|key| {
@@ -1768,7 +1801,8 @@ async fn render_capture(
                 index_buffer,
                 index_count: u32::try_from(primitive.indices.len())?,
                 texture_bind_group_index: primitive_index,
-                pipeline_index: pipeline_indices[&pipeline_key(primitive.policy)],
+                pipeline_index: pipeline_indices
+                    [&pipeline_key(primitive.policy, options.front_face)],
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -2034,6 +2068,7 @@ fn write_rgba_json(
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
+        "frontFace": options.front_face.as_str(),
         "renderer": {
             "backend": "wgpu",
             "diagnosticOwnerIds": diagnostic_owner_ids,
@@ -2124,6 +2159,7 @@ fn diagnostic_owner_ids(
                     "pass": source.pass.as_str(),
                     "renderOrder": source.render_order,
                     "drawIndex": draw_index,
+                    "frontFace": options.front_face.as_str(),
                     "cullMode": primitive.policy.cull_mode.as_str(),
                     "alphaMode": primitive.policy.alpha_mode.as_str(),
                     "alphaCutoff": primitive.policy.alpha_cutoff,
