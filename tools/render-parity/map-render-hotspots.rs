@@ -145,6 +145,10 @@ struct HotspotSummary {
     expected_frontmost_mean_uv_distance: Option<f32>,
     actual_frontmost_max_uv_distance: Option<f32>,
     expected_frontmost_max_uv_distance: Option<f32>,
+    frontmost_mean_edge_distance_pixels: Option<f32>,
+    frontmost_edge_distance_lte_025px: usize,
+    frontmost_edge_distance_lte_050px: usize,
+    frontmost_edge_distance_lte_100px: usize,
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
 }
@@ -188,6 +192,8 @@ struct CandidateMatch {
     sample_distance: f32,
     triangle: usize,
     depth: f32,
+    min_barycentric: f32,
+    edge_distance_pixels: f32,
     front_facing: bool,
     visible_by_policy: bool,
     base_uv: [f32; 2],
@@ -220,6 +226,8 @@ struct HitCandidate {
     sample_distance: f32,
     depth: f32,
     barycentric: [f32; 3],
+    min_barycentric: f32,
+    edge_distance_pixels: f32,
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     screen: [[f32; 2]; 3],
@@ -380,6 +388,10 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         expected_frontmost_max_uv_distance: max_frontmost_uv_distance(hotspots, |hotspot| {
             hotspot.expected_linear_uv
         }),
+        frontmost_mean_edge_distance_pixels: mean_frontmost_edge_distance(hotspots),
+        frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
+        frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
+        frontmost_edge_distance_lte_100px: frontmost_edge_distance_lte(hotspots, 1.00),
         actual_visible_sample_offsets: offset_counts(
             hotspots
                 .iter()
@@ -443,6 +455,29 @@ fn max_frontmost_uv_distance(
                 .map(|frontmost| uv_distance(frontmost.base_uv, uv(hotspot)))
         })
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn mean_frontmost_edge_distance(hotspots: &[Hotspot]) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .frontmost_visible
+                .as_ref()
+                .map(|frontmost| frontmost.edge_distance_pixels)
+        })
+        .fold((0.0, 0usize), |(sum, count), distance| {
+            (sum + distance, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn frontmost_edge_distance_lte(hotspots: &[Hotspot], threshold: f32) -> usize {
+    hotspots
+        .iter()
+        .filter_map(|hotspot| hotspot.frontmost_visible.as_ref())
+        .filter(|frontmost| frontmost.edge_distance_pixels <= threshold)
+        .count()
 }
 
 fn offset_counts<'a>(candidates: impl Iterator<Item = &'a CandidateMatch>) -> Vec<OffsetCount> {
@@ -664,6 +699,8 @@ fn nearest_candidate_match_by(
             sample_distance: candidate.sample_distance,
             triangle: candidate.triangle,
             depth: candidate.depth,
+            min_barycentric: candidate.min_barycentric,
+            edge_distance_pixels: candidate.edge_distance_pixels,
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -697,6 +734,8 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
             sample_distance: candidate.sample_distance,
             triangle: candidate.triangle,
             depth: candidate.depth,
+            min_barycentric: candidate.min_barycentric,
+            edge_distance_pixels: candidate.edge_distance_pixels,
             front_facing: candidate.front_facing,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
@@ -764,6 +803,12 @@ fn surface_candidates(
                     .sqrt(),
                 depth: interpolate_scalar(barycentric, a.depth, b.depth, c.depth),
                 barycentric,
+                min_barycentric: barycentric
+                    .into_iter()
+                    .fold(f32::INFINITY, |left, right| left.min(right)),
+                edge_distance_pixels: triangle_edge_distance_pixels(
+                    point, a.screen, b.screen, c.screen,
+                ),
                 raw_uv,
                 base_uv,
                 screen: [a.screen, b.screen, c.screen],
@@ -969,6 +1014,30 @@ fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
 
 fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn triangle_edge_distance_pixels(
+    point: [f32; 2],
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+) -> f32 {
+    point_to_segment_distance(point, a, b)
+        .min(point_to_segment_distance(point, b, c))
+        .min(point_to_segment_distance(point, c, a))
+}
+
+fn point_to_segment_distance(point: [f32; 2], start: [f32; 2], end: [f32; 2]) -> f32 {
+    let segment = [end[0] - start[0], end[1] - start[1]];
+    let length_squared = segment[0] * segment[0] + segment[1] * segment[1];
+    if length_squared <= f32::EPSILON {
+        return ((point[0] - start[0]).powi(2) + (point[1] - start[1]).powi(2)).sqrt();
+    }
+    let relative = [point[0] - start[0], point[1] - start[1]];
+    let t = ((relative[0] * segment[0] + relative[1] * segment[1]) / length_squared)
+        .clamp(0.0, 1.0);
+    let closest = [start[0] + segment[0] * t, start[1] + segment[1] * t];
+    ((point[0] - closest[0]).powi(2) + (point[1] - closest[1]).powi(2)).sqrt()
 }
 
 fn diagnostic_linear_uv(color: [u8; 4]) -> [f32; 2] {

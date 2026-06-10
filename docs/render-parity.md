@@ -253,6 +253,14 @@ sample-center mapper result as a classification clue, not a render correction;
 the remaining blocker is still local GPU/CPU-prepared surface selection around
 UV seams and triangle boundaries.
 
+`map-render-hotspots.rs` now records each candidate's minimum barycentric value
+and nearest screen-space triangle-edge distance in pixels. Re-running the
+Seed-san base-UV hotspot maps shows the current top-32 frontmost candidates are
+all within `0.25px` of a triangle edge for both wgpu and Bevy, with mean edge
+distance `0.0341px`. That makes the residual a genuine boundary ownership
+problem, not a broad UV interpolation, material assignment, or sampler-state
+drift across model interiors.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
