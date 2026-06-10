@@ -294,6 +294,7 @@ function capturePage(options) {
     depthTest: material?.depthTest ?? true,
     blending: material?.blending ?? null,
     premultipliedAlpha: material?.premultipliedAlpha ?? false,
+    color: material?.color?.isColor ? material.color.toArray() : null,
     map: textureReport(material?.map),
   });
 
@@ -405,6 +406,94 @@ function capturePage(options) {
 
   const quantize = (value) => Math.round(Math.min(1, Math.max(0, value)) * 255);
 
+  const srgbToLinear = (value) => {
+    const clamped = Math.min(1, Math.max(0, value));
+    return clamped <= 0.04045 ? clamped / 12.92 : Math.pow((clamped + 0.055) / 1.055, 2.4);
+  };
+
+  const texturePixelsCache = new Map();
+
+  const texturePixels = (texture) => {
+    if (!texture?.isTexture || !texture.image) return null;
+    if (texturePixelsCache.has(texture.uuid)) return texturePixelsCache.get(texture.uuid);
+    const image = texture.image;
+    const width = image.width ?? image.naturalWidth ?? image.videoWidth ?? 0;
+    const height = image.height ?? image.naturalHeight ?? image.videoHeight ?? 0;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      texturePixelsCache.set(texture.uuid, null);
+      return null;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(image, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height).data;
+      const pixels = { width, height, data };
+      texturePixelsCache.set(texture.uuid, pixels);
+      return pixels;
+    } catch (error) {
+      console.warn('failed to sample texture ' + (texture.name ?? texture.uuid) + ': ' + (error?.message ?? error));
+      texturePixelsCache.set(texture.uuid, null);
+      return null;
+    }
+  };
+
+  const wrapCoord = (value, wrap) => {
+    if (wrap === THREE.ClampToEdgeWrapping) return Math.min(1, Math.max(0, value));
+    const repeated = value - Math.floor(value);
+    if (wrap !== THREE.MirroredRepeatWrapping) return repeated;
+    const mirror = value - Math.floor(value / 2) * 2;
+    return mirror < 1 ? mirror : 2 - mirror;
+  };
+
+  const pixelAtRepeatLinear = (pixels, x, y, channel) => {
+    const ix = ((x % pixels.width) + pixels.width) % pixels.width;
+    const iy = ((y % pixels.height) + pixels.height) % pixels.height;
+    return pixels.data[(iy * pixels.width + ix) * 4 + channel] ?? (channel === 3 ? 255 : 0);
+  };
+
+  const lerp = (left, right, amount) => left + (right - left) * amount;
+
+  const sampleTextureRgba = (texture, uv) => {
+    const pixels = texturePixels(texture);
+    if (!pixels) return [255, 255, 255, 255];
+    const u = wrapCoord(uv[0], texture.wrapS);
+    const v = wrapCoord(uv[1], texture.wrapT);
+    const x = u * pixels.width - 0.5;
+    const y = v * pixels.height - 0.5;
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const tx = x - x0;
+    const ty = y - y0;
+    return [0, 1, 2, 3].map((channel) => quantize(lerp(
+      lerp(
+        pixelAtRepeatLinear(pixels, x0, y0, channel) / 255,
+        pixelAtRepeatLinear(pixels, x0 + 1, y0, channel) / 255,
+        tx,
+      ),
+      lerp(
+        pixelAtRepeatLinear(pixels, x0, y0 + 1, channel) / 255,
+        pixelAtRepeatLinear(pixels, x0 + 1, y0 + 1, channel) / 255,
+        tx,
+      ),
+      ty,
+    )));
+  };
+
+  const projectedBaseColor = (material, mapUv, alpha) => {
+    const sampledMapRgba = sampleTextureRgba(material?.map, mapUv);
+    const color = material?.color?.isColor ? material.color : { r: 1, g: 1, b: 1 };
+    const projectedBaseColorSrgb = [
+      quantize(linearToSrgb(color.r * srgbToLinear(sampledMapRgba[0] / 255))),
+      quantize(linearToSrgb(color.g * srgbToLinear(sampledMapRgba[1] / 255))),
+      quantize(linearToSrgb(color.b * srgbToLinear(sampledMapRgba[2] / 255))),
+      alpha,
+    ];
+    return { sampledMapRgba, projectedBaseColorSrgb };
+  };
+
   const rgbDistance = (left, right) => {
     const dr = left[0] - right[0];
     const dg = left[1] - right[1];
@@ -479,6 +568,7 @@ function capturePage(options) {
                 0,
                 hotspot.expected?.[3] ?? 255,
               ];
+              const baseColor = projectedBaseColor(material, mapUv, hotspot.expected?.[3] ?? 255);
               candidates.push({
                 meshName: mesh.name ?? '',
                 meshUuid: mesh.uuid,
@@ -492,8 +582,12 @@ function capturePage(options) {
                 rawUv,
                 mapUv,
                 color,
+                sampledMapRgba: baseColor.sampledMapRgba,
+                projectedBaseColorSrgb: baseColor.projectedBaseColorSrgb,
                 expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
                 actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
+                projectedBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
+                projectedBaseColorActualRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.actual ?? [0, 0, 0, 255]),
                 screen: [a.screen, b.screen, c.screen],
               });
             }
@@ -508,6 +602,12 @@ function capturePage(options) {
         const nearestActual = candidates
           .slice()
           .sort((left, right) => left.actualRgbDistance - right.actualRgbDistance || left.depth - right.depth)[0] ?? null;
+        const nearestExpectedBaseColor = candidates
+          .slice()
+          .sort((left, right) => left.projectedBaseColorExpectedRgbDistance - right.projectedBaseColorExpectedRgbDistance || left.depth - right.depth)[0] ?? null;
+        const nearestActualBaseColor = candidates
+          .slice()
+          .sort((left, right) => left.projectedBaseColorActualRgbDistance - right.projectedBaseColorActualRgbDistance || left.depth - right.depth)[0] ?? null;
         return {
           x: hotspot.x,
           y: hotspot.y,
@@ -516,10 +616,16 @@ function capturePage(options) {
           frontmost,
           nearestExpected,
           nearestActual,
+          nearestExpectedBaseColor,
+          nearestActualBaseColor,
           candidateCount: candidates.length,
           candidatesByExpected: candidates
             .slice()
             .sort((left, right) => left.expectedRgbDistance - right.expectedRgbDistance || left.depth - right.depth)
+            .slice(0, 8),
+          candidatesByExpectedBaseColor: candidates
+            .slice()
+            .sort((left, right) => left.projectedBaseColorExpectedRgbDistance - right.projectedBaseColorExpectedRgbDistance || left.depth - right.depth)
             .slice(0, 8),
         };
       }),

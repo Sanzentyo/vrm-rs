@@ -285,6 +285,8 @@ hotspot recipe:
 
 ```powershell
 just render-parity-seed-base-color-hotspots-focused
+just render-parity-seed-base-color-three-hotspots
+just render-parity-seed-base-color-three-hotspots D:/git/three-vrm 0.75 0.75
 ```
 
 It creates `shared-nonblack-interior1px` delta reports and maps the top 64
@@ -294,6 +296,19 @@ top-64 pixels, and the CPU-sampled frontmost base texture is closer to Rust
 actual than three-vrm expected. Use that focused report when working on the
 remaining shared-body PSNR floor; use the broader all-pixel report for
 silhouette and raster edge ownership.
+
+`render-parity-seed-base-color-three-hotspots` sends the same shared-body delta
+pixels back through the browser after three-vrm has loaded the avatar. Its
+projection report includes CPU-sampled `material.map` colors in
+`reference.renderer.diagnosticHotspots.*.projectedBaseColorSrgb`. At sample
+center `0.5,0.5`, the browser-side CPU frontmost candidate is closer to Rust
+actual than to the rendered three-vrm expected color (mean RGB distance
+`52.06` vs `115.12`). The nearest candidate to the expected color is closer
+(`43.65` mean distance), but it is the same surface as frontmost only `24/64`
+times. At `0.75,0.75`, expected/frontmost improves (`99.28`) while
+actual/frontmost worsens (`74.28`), matching the earlier conclusion that this
+is a local fill/depth/surface ownership issue rather than a global sample-center
+offset.
 
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the

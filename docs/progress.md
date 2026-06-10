@@ -14,6 +14,19 @@
   (normal wgpu/Bevy `32.4602`/`32.4177 dB`; raw `32.1018`/`32.0621 dB`). This
   rules out a broad "raw base texture filtering" switch as the parity fix while
   preserving the experiment for future sampler/color-space slices.
+- Extended the three-vrm browser hotspot projection with CPU sampling of
+  `material.map` plus `material.color`, and added
+  `just render-parity-seed-base-color-three-hotspots`. On the Seed-san
+  `shared-nonblack-interior1px` top-64 base-color hotspots, the three.js CPU
+  frontmost candidate is closer to Rust actual than to the rendered three-vrm
+  expected color (`52.06` vs `115.12` mean RGB distance at sample center
+  `0.5,0.5`). The nearest candidate to the rendered expected color improves to
+  mean distance `43.65`, but it is the same surface as CPU frontmost only
+  `24/64` times. A `0.75,0.75` sample center improves expected-frontmost mean
+  distance to `99.28` but worsens actual-frontmost to `74.28`, so this is not a
+  global sample-center fix. The remaining Seed-san base-color blocker is now
+  best classified as local WebGL-vs-CPU surface/depth/fill ownership around
+  real material/UV regions.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
