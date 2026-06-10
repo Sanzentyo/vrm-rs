@@ -355,6 +355,21 @@ full base-UV PSNR from wgpu/Bevy `38.14/38.12 dB` to `27.01/27.45 dB`. So the
 remaining issue is not a global camera offset; it is local triangle fill /
 raster ownership near boundaries.
 
+The local comparator also exposes `rgb-shared-nonblack-interior3px` for this
+specific diagnostic. Reusing the same Seed-san base-UV raw captures, the
+shared-nonblack interior sweep is:
+
+| metric | wgpu PSNR / MAE | Bevy PSNR / MAE |
+| --- | ---: | ---: |
+| `rgb-shared-nonblack-interior1px` | `38.6925 dB` / `0.1307` | `38.5360 dB` / `0.4307` |
+| `rgb-shared-nonblack-interior2px` | `39.1371 dB` / `0.1204` | `38.9656 dB` / `0.4216` |
+| `rgb-shared-nonblack-interior3px` | `40.4952 dB` / `0.1040` | `40.2751 dB` / `0.4050` |
+
+The improvement confirms that the dominant base-UV diagnostic error is near
+shared-edge ownership. The maximum selected channel delta remains `166`, so
+there are still a few strong localized residuals to inspect before treating
+this diagnostic as exhausted.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell
@@ -438,16 +453,17 @@ node tools\render-parity\compare-psnr.mjs `
   --fail-under 40
 ```
 
-The report contains dimensions, MSE, PSNR, maximum channel delta, maximum pixel
-delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
+The report contains dimensions, MSE, MAE, PSNR, maximum channel delta, maximum
+pixel delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
 selected metric, and pass/fail status. Exact matches report `"Infinity"` for
 PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, `--metric rgb-nonblack`,
 `--metric rgb-interior1px`, `--metric rgb-visible-interior1px`,
 `--metric rgb-nonblack-interior1px`, and
 `--metric rgb-shared-nonblack-interior1px`, and
-`--metric rgb-shared-nonblack-interior2px`; pass/fail thresholds use the
-selected metric. The nonblack metrics are intended for opaque-black review
+`--metric rgb-shared-nonblack-interior2px`, and
+`--metric rgb-shared-nonblack-interior3px`; pass/fail thresholds use the selected
+metric. The nonblack metrics are intended for opaque-black review
 sweeps where empty background pixels should not dilute the model-body color
 error. The shared-nonblack metric is stricter for focused diagnostics: a pixel
 is included only when both compared images and their one-pixel neighbors are
@@ -468,7 +484,9 @@ still dropping one-pixel silhouette edges, and use
 before a body-color pixel is admitted. Use
 `rgb-shared-nonblack-interior2px` as a stricter diagnostic when a two-pixel
 body mask is needed to distinguish edge contamination from interior texture
-residuals.
+residuals. Use `rgb-shared-nonblack-interior3px` only as a sharper local
+diagnostic for persistent shared-edge/raster-ownership residuals, not as the
+default whole-sample acceptance metric.
 
 For the full local Seed-san parity loop, use the Rust local CI runner:
 

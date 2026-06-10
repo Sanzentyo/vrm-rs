@@ -35,6 +35,12 @@ VRM-specific direct-raw gate. `compare-psnr.mjs` remains only a diagnostic
 cross-check over `.rgba.json` artifacts, and the public `imq` CLI remains an
 independent raw-buffer cross-check for generic color/all metrics.
 
+The repository-local direct-raw comparator reports `mae` beside `mse`, `psnr`,
+`maxChannelDelta`, and `maxPixelDelta` for every metric domain. It also includes
+`rgb-shared-nonblack-interior3px` as a focused diagnostic for cases where
+one- and two-pixel shared-edge ownership still dominate a base-UV or
+material-color comparison.
+
 ## Current Comparator Role
 
 `tools/render-parity/compare-imqraw.rs` currently compares two direct
@@ -120,6 +126,13 @@ either image.
 
 Use this for opaque-black model-body diagnostics that should ignore both empty
 background and one-pixel silhouettes.
+
+### `rgb-shared-nonblack-interiorNpx`
+
+Compare RGB only where both images have non-black RGB content throughout the
+selected `(2N + 1)` square. The current local comparator exposes 1px, 2px, and
+3px variants. Use this as a diagnostic when shared-edge or fill-rule ownership
+needs to be separated from material color drift on the body of the model.
 
 ## Alpha Diagnostics
 

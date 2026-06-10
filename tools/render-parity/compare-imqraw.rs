@@ -56,6 +56,7 @@ enum MetricName {
     RgbNonblackInterior1px,
     RgbSharedNonblackInterior1px,
     RgbSharedNonblackInterior2px,
+    RgbSharedNonblackInterior3px,
 }
 
 impl std::str::FromStr for MetricName {
@@ -73,8 +74,9 @@ impl std::str::FromStr for MetricName {
             "rgb-nonblack-interior1px" => Ok(Self::RgbNonblackInterior1px),
             "rgb-shared-nonblack-interior1px" => Ok(Self::RgbSharedNonblackInterior1px),
             "rgb-shared-nonblack-interior2px" => Ok(Self::RgbSharedNonblackInterior2px),
+            "rgb-shared-nonblack-interior3px" => Ok(Self::RgbSharedNonblackInterior3px),
             other => Err(format!(
-                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, or rgb-shared-nonblack-interior2px"
+                "invalid metric `{other}`; expected rgba, rgb-all, rgb-opaque, rgb-visible, rgb-nonblack, rgb-interior1px, rgb-visible-interior1px, rgb-nonblack-interior1px, rgb-shared-nonblack-interior1px, rgb-shared-nonblack-interior2px, or rgb-shared-nonblack-interior3px"
             )),
         }
     }
@@ -93,6 +95,7 @@ impl MetricName {
             Self::RgbNonblackInterior1px => "rgb-nonblack-interior1px",
             Self::RgbSharedNonblackInterior1px => "rgb-shared-nonblack-interior1px",
             Self::RgbSharedNonblackInterior2px => "rgb-shared-nonblack-interior2px",
+            Self::RgbSharedNonblackInterior3px => "rgb-shared-nonblack-interior3px",
         }
     }
 }
@@ -109,6 +112,7 @@ struct Metric {
     pixel_count: usize,
     channel_count: usize,
     mse: Option<f64>,
+    mae: Option<f64>,
     psnr: Option<f64>,
     max_channel_delta: u8,
     max_pixel_delta: f64,
@@ -201,6 +205,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         }),
         &[0, 1, 2],
     );
+    let shared_nonblack_interior_3px_rgb = compare_channels(
+        &expected,
+        &actual,
+        |pixel| is_interior_radius(&expected, pixel, 3, |neighbor| {
+            is_shared_nonblack(&expected, &actual, neighbor)
+        }),
+        &[0, 1, 2],
+    );
     let alpha = alpha_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
@@ -220,6 +232,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             (
                 MetricName::RgbSharedNonblackInterior2px,
                 shared_nonblack_interior_2px_rgb,
+            ),
+            (
+                MetricName::RgbSharedNonblackInterior3px,
+                shared_nonblack_interior_3px_rgb,
             ),
         ],
     )?;
@@ -245,6 +261,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "rgbNonblackInterior1px": metric_report(nonblack_interior_rgb),
         "rgbSharedNonblackInterior1px": metric_report(shared_nonblack_interior_rgb),
         "rgbSharedNonblackInterior2px": metric_report(shared_nonblack_interior_2px_rgb),
+        "rgbSharedNonblackInterior3px": metric_report(shared_nonblack_interior_3px_rgb),
         "selectedMetric": selected_metric_report(options.metric, selected),
         "pass": pass,
         "thresholds": {
@@ -380,6 +397,7 @@ fn compare_channels(
     channels: &[usize],
 ) -> Metric {
     let mut squared_error = 0.0;
+    let mut absolute_error = 0.0;
     let mut sample_count = 0;
     let mut pixel_count = 0;
     let mut max_channel_delta = 0u8;
@@ -396,6 +414,7 @@ fn compare_channels(
             max_channel_delta = max_channel_delta.max(absolute);
             let squared = f64::from(delta * delta);
             squared_error += squared;
+            absolute_error += f64::from(absolute);
             pixel_squared += squared;
             sample_count += 1;
         }
@@ -407,16 +426,19 @@ fn compare_channels(
             pixel_count,
             channel_count: 0,
             mse: None,
+            mae: None,
             psnr: None,
             max_channel_delta,
             max_pixel_delta,
         };
     }
     let mse = squared_error / sample_count as f64;
+    let mae = absolute_error / sample_count as f64;
     Metric {
         pixel_count,
         channel_count: sample_count,
         mse: Some(mse),
+        mae: Some(mae),
         psnr: Some(if mse == 0.0 {
             f64::INFINITY
         } else {
@@ -496,6 +518,7 @@ fn metric_report(metric: Metric) -> Value {
         "pixels": metric.pixel_count,
         "channels": metric.channel_count,
         "mse": metric.mse,
+        "mae": metric.mae,
         "psnr": psnr_value(metric.psnr),
         "maxChannelDelta": metric.max_channel_delta,
         "maxPixelDelta": metric.max_pixel_delta,

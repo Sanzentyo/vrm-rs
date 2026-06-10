@@ -36,10 +36,11 @@ const metricNames = new Set([
   'rgb-nonblack-interior1px',
   'rgb-shared-nonblack-interior1px',
   'rgb-shared-nonblack-interior2px',
+  'rgb-shared-nonblack-interior3px',
 ]);
 
 if (!expectedPath || !actualPath) {
-  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-nonblack|rgb-interior1px|rgb-visible-interior1px|rgb-nonblack-interior1px|rgb-shared-nonblack-interior1px|rgb-shared-nonblack-interior2px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
+  console.error('usage: node tools/render-parity/compare-psnr.mjs --expected expected.rgba.json --actual actual.rgba.json [--out report.json] [--metric rgba|rgb-all|rgb-opaque|rgb-visible|rgb-nonblack|rgb-interior1px|rgb-visible-interior1px|rgb-nonblack-interior1px|rgb-shared-nonblack-interior1px|rgb-shared-nonblack-interior2px|rgb-shared-nonblack-interior3px] [--fail-under 40] [--max-selected-channel-delta 2] [--max-alpha-delta 1]');
   process.exit(2);
 }
 if (failUnder != null && (!Number.isFinite(failUnder) || failUnder < 0.0)) {
@@ -80,6 +81,7 @@ const visibleInteriorRgb = compareChannels((pixel) => isInteriorVisible(pixel), 
 const nonblackInteriorRgb = compareChannels((pixel) => isInteriorNonblack(pixel), [0, 1, 2]);
 const sharedNonblackInteriorRgb = compareChannels((pixel) => isInteriorSharedNonblack(pixel), [0, 1, 2]);
 const sharedNonblackInterior2pxRgb = compareChannels((pixel) => isInteriorSharedNonblack(pixel, 2), [0, 1, 2]);
+const sharedNonblackInterior3pxRgb = compareChannels((pixel) => isInteriorSharedNonblack(pixel, 3), [0, 1, 2]);
 const alpha = alphaStats();
 const selectedMetric = selectMetric(metricName, {
   rgba: fullImage,
@@ -92,6 +94,7 @@ const selectedMetric = selectMetric(metricName, {
   'rgb-nonblack-interior1px': nonblackInteriorRgb,
   'rgb-shared-nonblack-interior1px': sharedNonblackInteriorRgb,
   'rgb-shared-nonblack-interior2px': sharedNonblackInterior2pxRgb,
+  'rgb-shared-nonblack-interior3px': sharedNonblackInterior3pxRgb,
 });
 const mse = fullImage.mse;
 const psnr = fullImage.psnr;
@@ -115,6 +118,7 @@ const report = {
   rgbNonblackInterior1px: metricReport(nonblackInteriorRgb),
   rgbSharedNonblackInterior1px: metricReport(sharedNonblackInteriorRgb),
   rgbSharedNonblackInterior2px: metricReport(sharedNonblackInterior2pxRgb),
+  rgbSharedNonblackInterior3px: metricReport(sharedNonblackInterior3pxRgb),
   selectedMetric: {
     name: metricName,
     ...metricReport(selectedMetric),
@@ -181,6 +185,7 @@ function readRgbaJson(file) {
 
 function compareChannels(includePixel, channels) {
   let squaredError = 0.0;
+  let absoluteError = 0.0;
   let sampleCount = 0;
   let pixelCount = 0;
   let maxChannelDelta = 0;
@@ -193,6 +198,7 @@ function compareChannels(includePixel, channels) {
       const absolute = Math.abs(delta);
       maxChannelDelta = Math.max(maxChannelDelta, absolute);
       squaredError += delta * delta;
+      absoluteError += absolute;
       pixelSquared += delta * delta;
       sampleCount += 1;
     }
@@ -204,17 +210,20 @@ function compareChannels(includePixel, channels) {
       pixelCount,
       channelCount: 0,
       mse: null,
+      mae: null,
       psnr: null,
       maxChannelDelta,
       maxPixelDelta,
     };
   }
   const mse = squaredError / sampleCount;
+  const mae = absoluteError / sampleCount;
   const psnr = mse === 0.0 ? Number.POSITIVE_INFINITY : 10.0 * Math.log10((255.0 * 255.0) / mse);
   return {
     pixelCount,
     channelCount: sampleCount,
     mse,
+    mae,
     psnr,
     maxChannelDelta,
     maxPixelDelta,
@@ -226,6 +235,7 @@ function metricReport(metric) {
     pixels: metric.pixelCount,
     channels: metric.channelCount,
     mse: metric.mse,
+    mae: metric.mae,
     psnr: metric.psnr == null ? null : Number.isFinite(metric.psnr) ? metric.psnr : 'Infinity',
     maxChannelDelta: metric.maxChannelDelta,
     maxPixelDelta: metric.maxPixelDelta,
