@@ -90,6 +90,26 @@ wgpu has `8151` changed pixels with `6791` interior-nonblack, and Bevy has
 Seed-san blocker at model-body material/geometry/pose residuals rather than PNG
 encoding, alpha, or transparent-background handling.
 
+For a stronger geometry/pose versus material-color split, run the flat
+diagnostic:
+
+```powershell
+just render-parity-seed-flat-diagnostic
+```
+
+This forwards `--render-diagnostic-mode flat` to three-vrm, wgpu, and Bevy.
+The mode keeps the same mesh transforms, skinning, outline/cull/depth policy,
+opaque alpha contract, and render order, but paints fragments white after the
+renderer-side alpha/cutoff branch. It is intentionally a Seed-san-oriented
+opaque diagnostic, not a replacement for normal MToon or texture-alpha parity.
+The 2026-06-10 Seed-san run writes
+`.external-fixtures/render-parity-seed-flat-diagnostic/` and reports
+`rgb-nonblack-interior1px = Infinity` for both wgpu and Bevy. The direct
+hotspot reports have `0` `interiorNonblackChangedPixels`; wgpu has `229`
+changed pixels and Bevy has `228`, all RGB-only silhouette/raster-edge pixels.
+This narrows the main Seed-san body residual to material/shader color parity
+while keeping edge/raster differences as a separate blocker.
+
 The local runner also verifies every renderer's direct `.imqraw` artifact
 against its companion `.rgba.json` artifact before writing PNGs or comparing
 three-vrm/wgpu/Bevy. For a focused check, use:

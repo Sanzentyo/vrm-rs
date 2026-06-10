@@ -44,10 +44,11 @@ const ambientIntensity = Number(args.get('ambient-intensity') ?? '0.1');
 const background = args.get('background') ?? 'opaque-black';
 const disableOutlines = args.has('disable-outlines');
 const disableNormalMaps = args.has('disable-normal-maps');
+const diagnosticRender = args.get('diagnostic-render') ?? 'shaded';
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--diagnostic-render shaded|flat]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -79,6 +80,10 @@ if (directionalX === 0 && directionalY === 0 && directionalZ === 0) {
 }
 if (!['opaque-black', 'transparent'].includes(background)) {
   console.error(`invalid background: ${background}; expected opaque-black or transparent`);
+  process.exit(2);
+}
+if (!['shaded', 'flat'].includes(diagnosticRender)) {
+  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded or flat`);
   process.exit(2);
 }
 
@@ -128,6 +133,7 @@ const server = http.createServer((request, response) => {
       directionalG,
       directionalB,
       ambientIntensity,
+      diagnosticRender,
     }));
     return;
   }
@@ -291,6 +297,26 @@ function capturePage(options) {
           material.needsUpdate = true;
         }
       }
+      if (${JSON.stringify(options.diagnosticRender)} === 'flat' && object.isMesh && object.material) {
+        const diagnosticMaterial = (material) => {
+          const flat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            side: material?.side ?? THREE.FrontSide,
+            transparent: material?.transparent ?? false,
+            opacity: material?.opacity ?? 1.0,
+            alphaTest: material?.alphaTest ?? 0.0,
+            depthWrite: material?.depthWrite ?? true,
+            depthTest: material?.depthTest ?? true,
+          });
+          flat.name = (material?.name ?? 'material') + ':vrm-rs-flat-diagnostic';
+          flat.blending = material?.blending ?? THREE.NormalBlending;
+          flat.premultipliedAlpha = material?.premultipliedAlpha ?? false;
+          return flat;
+        };
+        object.material = Array.isArray(object.material)
+          ? object.material.map((material) => diagnosticMaterial(material))
+          : diagnosticMaterial(object.material);
+      }
     });
     scene.add(vrm.scene);
     const expressions = ${JSON.stringify(options.expressions)};
@@ -334,6 +360,7 @@ function capturePage(options) {
         premultipliedAlpha: false,
         disableOutlines: ${disableOutlines},
         disableNormalMaps: ${disableNormalMaps},
+        diagnosticRender: ${JSON.stringify(options.diagnosticRender)},
       },
       expressions,
       lighting: {

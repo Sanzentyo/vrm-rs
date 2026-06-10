@@ -155,6 +155,8 @@ struct CaptureOptions {
     mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
+    #[arg(long, value_enum, default_value_t = DiagnosticRender::Shaded)]
+    diagnostic_render: DiagnosticRender,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -210,6 +212,21 @@ impl From<NormalMapMode> for GltfNormalMapMode {
             NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
             NormalMapMode::Derivative => Self::Derivative,
             NormalMapMode::ViewDerivative => Self::ViewDerivative,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum DiagnosticRender {
+    Shaded,
+    Flat,
+}
+
+impl DiagnosticRender {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shaded => "shaded",
+            Self::Flat => "flat",
         }
     }
 }
@@ -926,6 +943,16 @@ fn bevy_mtoon_material(
             direct_light_scale: context.options.direct_light_scale,
         })
         .uniform_plan();
+    let material_flags2 = BVec4::new(
+        render_extra.flags2[0],
+        render_extra.flags2[1],
+        if context.options.diagnostic_render == DiagnosticRender::Flat {
+            1.0
+        } else {
+            0.0
+        },
+        render_extra.flags2[3],
+    );
     BevyMtoonMaterial {
         base_color: BVec4::from_array(shading.base_color),
         shade_color: BVec4::from_array(shading.shade_color),
@@ -960,7 +987,7 @@ fn bevy_mtoon_material(
             0.0,
         ),
         material_flags: BVec4::from_array(render_extra.flags),
-        material_flags2: BVec4::from_array(render_extra.flags2),
+        material_flags2,
         pbr_params: BVec4::from_array(render_extra.pbr_params),
         outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
         pipeline: BVec4::new(
@@ -1523,6 +1550,7 @@ fn write_capture(
         "disableNormalMaps": options.disable_normal_maps,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
+        "diagnosticRender": options.diagnostic_render.as_str(),
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {

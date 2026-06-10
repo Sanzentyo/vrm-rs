@@ -135,6 +135,8 @@ struct CaptureOptions {
     mtoon_v0_compat_shade: bool,
     #[arg(long = "expression")]
     expressions: Vec<String>,
+    #[arg(long, value_enum, default_value_t = DiagnosticRender::Shaded)]
+    diagnostic_render: DiagnosticRender,
 }
 
 #[derive(Clone, Debug)]
@@ -257,6 +259,21 @@ impl From<NormalMapMode> for GltfNormalMapMode {
             NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
             NormalMapMode::Derivative => Self::Derivative,
             NormalMapMode::ViewDerivative => Self::ViewDerivative,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum DiagnosticRender {
+    Shaded,
+    Flat,
+}
+
+impl DiagnosticRender {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shaded => "shaded",
+            Self::Flat => "flat",
         }
     }
 }
@@ -634,7 +651,16 @@ fn material_extra_uniform(
     MaterialExtraUniform {
         flags: plan.flags,
         pbr_params: plan.pbr_params,
-        flags2: plan.flags2,
+        flags2: [
+            plan.flags2[0],
+            plan.flags2[1],
+            if options.diagnostic_render == DiagnosticRender::Flat {
+                1.0
+            } else {
+                0.0
+            },
+            plan.flags2[3],
+        ],
     }
 }
 
@@ -1699,6 +1725,7 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "disableNormalMaps": options.disable_normal_maps,
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
+        "diagnosticRender": options.diagnostic_render.as_str(),
         "expressions": options.expressions,
         "camera": { "y": options.camera_y, "z": options.camera_z, "targetY": options.target_y },
         "mtoonLighting": {
@@ -2045,6 +2072,9 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         discard;
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
+    if material_extra.flags2.z > 0.5 {
+        return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+    }
     let diffuse = input.color.rgb * texel.rgb;
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     if material_extra.flags2.x > 0.5 {
