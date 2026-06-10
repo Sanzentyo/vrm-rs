@@ -191,6 +191,7 @@ impl From<MtoonLightAccumulation> for GltfLightAccumulation {
 enum NormalMapMode {
     GeneratedTangents,
     Derivative,
+    ViewDerivative,
 }
 
 impl NormalMapMode {
@@ -198,6 +199,7 @@ impl NormalMapMode {
         match self {
             Self::GeneratedTangents => "generated-tangents",
             Self::Derivative => "derivative",
+            Self::ViewDerivative => "view-derivative",
         }
     }
 }
@@ -207,6 +209,7 @@ impl From<NormalMapMode> for GltfNormalMapMode {
         match value {
             NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
             NormalMapMode::Derivative => Self::Derivative,
+            NormalMapMode::ViewDerivative => Self::ViewDerivative,
         }
     }
 }
@@ -431,8 +434,7 @@ fn spawn_vrm_meshes(
                     shading,
                     &primitive_context,
                     render_depth_bias(render_order),
-                    normal_plan.material_normal_scale(has_tangents),
-                    normal_plan.uses_derivative_normals(),
+                    BevyNormalMapMaterialPlan::from_normal_plan(normal_plan, has_tangents),
                 )),
                 render_order,
                 phase_order: material_phase_order(loaded, primitive.material),
@@ -471,6 +473,31 @@ struct BevyPrimitiveContext<'a> {
     skin_matrices: Option<&'a [Mat4]>,
     options: &'a CaptureOptions,
     image_handles: &'a BevyImageHandles,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BevyNormalMapMaterialPlan {
+    scale: f32,
+    derivative: bool,
+    view_derivative: bool,
+}
+
+impl BevyNormalMapMaterialPlan {
+    fn from_normal_plan(plan: vrm_io::GltfNormalMapPlan, has_tangents: bool) -> Self {
+        Self {
+            scale: plan.material_normal_scale(has_tangents),
+            derivative: plan.uses_derivative_normals(),
+            view_derivative: plan.uses_view_derivative_normals(),
+        }
+    }
+
+    fn disabled() -> Self {
+        Self {
+            scale: 0.0,
+            derivative: false,
+            view_derivative: false,
+        }
+    }
 }
 
 fn bevy_outline_primitive(
@@ -512,8 +539,7 @@ fn bevy_outline_primitive(
         ),
         context,
         render_depth_bias(material_render_order(loaded, primitive.material) + 1),
-        0.0,
-        false,
+        BevyNormalMapMaterialPlan::disabled(),
     );
     material.outline_color = BVec4::from_array(outline.color);
     material.alpha_mode = AlphaMode::Opaque;
@@ -868,8 +894,7 @@ fn bevy_mtoon_material(
     shading: GltfMaterialShadingPlan,
     context: &BevyPrimitiveContext<'_>,
     depth_bias: f32,
-    normal_scale: f32,
-    use_derivative_normals: bool,
+    normal_map: BevyNormalMapMaterialPlan,
 ) -> BevyMtoonMaterial {
     let alpha_mode = material_alpha_mode(loaded, primitive.material);
     let cull_mode = material_cull_mode(loaded, primitive.material);
@@ -887,7 +912,8 @@ fn bevy_mtoon_material(
     let render_extra = shading
         .render_extra_plan(GltfMaterialRenderExtraOptions {
             light_accumulation: context.options.mtoon_light_accumulation.into(),
-            derivative_normals: use_derivative_normals,
+            derivative_normals: normal_map.derivative,
+            view_derivative_normals: normal_map.view_derivative,
             direct_light_scale: context.options.direct_light_scale,
         })
         .uniform_plan();
@@ -931,7 +957,7 @@ fn bevy_mtoon_material(
         pipeline: BVec4::new(
             alpha_mode_code(alpha_mode),
             alpha_cutoff(alpha_mode),
-            normal_scale,
+            normal_map.scale,
             if cull_mode.is_none() { 1.0 } else { 0.0 },
         ),
         lighting: bevy_mtoon_lighting(context.options),

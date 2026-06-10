@@ -72,6 +72,7 @@ impl Vertex {
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
     view: [[f32; 4]; 4],
+    world_from_view: [[f32; 4]; 4],
     light_dir: [f32; 4],
     light_color: [f32; 4],
     camera_pos: [f32; 4],
@@ -237,6 +238,7 @@ enum CaptureAlphaMode {
 enum NormalMapMode {
     GeneratedTangents,
     Derivative,
+    ViewDerivative,
 }
 
 impl NormalMapMode {
@@ -244,6 +246,7 @@ impl NormalMapMode {
         match self {
             Self::GeneratedTangents => "generated-tangents",
             Self::Derivative => "derivative",
+            Self::ViewDerivative => "view-derivative",
         }
     }
 }
@@ -253,6 +256,7 @@ impl From<NormalMapMode> for GltfNormalMapMode {
         match value {
             NormalMapMode::GeneratedTangents => Self::GeneratedTangents,
             NormalMapMode::Derivative => Self::Derivative,
+            NormalMapMode::ViewDerivative => Self::ViewDerivative,
         }
     }
 }
@@ -582,7 +586,12 @@ fn draw_primitive(
         indices: primitive.indices.clone(),
         images: loaded.material_texture_slots(primitive.material),
         uv_transforms,
-        material_extra: material_extra_uniform(shading, context.options),
+        material_extra: material_extra_uniform(
+            shading,
+            context.options,
+            normal_plan.uses_derivative_normals(),
+            normal_plan.uses_view_derivative_normals(),
+        ),
         policy,
     })
 }
@@ -611,11 +620,14 @@ fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn 
 fn material_extra_uniform(
     shading: GltfMaterialShadingPlan,
     options: &CaptureOptions,
+    use_derivative_normals: bool,
+    use_view_derivative_normals: bool,
 ) -> MaterialExtraUniform {
     let plan = shading
         .render_extra_plan(GltfMaterialRenderExtraOptions {
             light_accumulation: options.mtoon_light_accumulation.into(),
-            derivative_normals: false,
+            derivative_normals: use_derivative_normals,
+            view_derivative_normals: use_view_derivative_normals,
             direct_light_scale: options.direct_light_scale,
         })
         .uniform_plan();
@@ -1612,6 +1624,7 @@ fn uniforms(options: &CaptureOptions) -> Uniforms {
     Uniforms {
         view_projection: (projection * view).to_cols_array_2d(),
         view: view.to_cols_array_2d(),
+        world_from_view: view.inverse().to_cols_array_2d(),
         light_dir: Vec4::new(
             light_dir.x,
             light_dir.y,
@@ -1730,6 +1743,7 @@ const SHADER: &str = r#"
 struct Uniforms {
     view_projection: mat4x4<f32>,
     view: mat4x4<f32>,
+    world_from_view: mat4x4<f32>,
     light_dir: vec4<f32>,
     light_color: vec4<f32>,
     camera_pos: vec4<f32>,
@@ -1974,12 +1988,17 @@ fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) ->
         sampled.z * 2.0 - 1.0,
     );
     if input.normal_scale < 0.0 {
-        let q0 = dpdx(input.world_position);
-        let q1 = dpdy(input.world_position);
+        let use_view_derivative = material_extra.flags2.y > 0.5;
+        let view_position = (uniforms.view * vec4<f32>(input.world_position, 1.0)).xyz;
+        let view_normal = normalize((uniforms.view * vec4<f32>(geometric_normal, 0.0)).xyz);
+        let derivative_position = select(input.world_position, view_position, use_view_derivative);
+        let derivative_normal = select(geometric_normal, view_normal, use_view_derivative);
+        let q0 = dpdx(derivative_position);
+        let q1 = dpdy(derivative_position);
         let st0 = dpdx(normal_uv);
         let st1 = dpdy(normal_uv);
-        let q1perp = cross(q1, geometric_normal);
-        let q0perp = cross(geometric_normal, q0);
+        let q1perp = cross(q1, derivative_normal);
+        let q0perp = cross(derivative_normal, q0);
         var tangent = q1perp * st0.x + q0perp * st1.x;
         var bitangent = q1perp * st0.y + q0perp * st1.y;
         let det = max(dot(tangent, tangent), dot(bitangent, bitangent));
@@ -1989,10 +2008,15 @@ fn surface_normal(input: VertexOut, front_facing: bool, normal_uv: vec2<f32>) ->
         let scale = 1.0 / sqrt(det);
         tangent = tangent * scale * face_sign;
         bitangent = bitangent * scale * face_sign;
-        return normalize(
+        let perturbed = normalize(
             tangent * tangent_normal.x +
             bitangent * tangent_normal.y +
-            geometric_normal * tangent_normal.z,
+            derivative_normal * tangent_normal.z,
+        );
+        return select(
+            perturbed,
+            normalize((uniforms.world_from_view * vec4<f32>(perturbed, 0.0)).xyz),
+            use_view_derivative,
         );
     }
     return normalize(

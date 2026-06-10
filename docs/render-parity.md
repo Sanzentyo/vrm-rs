@@ -296,6 +296,19 @@ but was worse than the generated-tangent path, with Seed-san wgpu `30.8717 dB`
 Keep using generated tangents for the current real-fixture guard until a closer
 formulation beats `just render-parity-real-normal-maps`.
 
+There is also a view-space derivative diagnostic:
+
+```powershell
+just render-parity-normal-maps-view-derivative
+```
+
+This uses a view-space derivative tangent frame and transforms the perturbed
+normal back into the Rust captures' world-space lighting path. It is closer in
+shape to three-vrm's tangentless WebGL shader than the older world-space
+derivative mode, but the first 64px Seed-san smoke on 2026-06-10 still measured
+below the default generated-tangent path at wgpu `29.5312 dB` / Bevy
+`29.5376 dB`; keep it diagnostic until a follow-up change improves the result.
+
 For normal-map strength diagnostics, pass `--render-normal-map-scale N` to the
 local runner. This scales only the Rust wgpu/Bevy capture normal-map strength;
 the three-vrm reference remains native. Keep the default at `1.0` for parity

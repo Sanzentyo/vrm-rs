@@ -1104,6 +1104,7 @@ impl GltfMaterialShadingPlan {
                 three_vrm_light_accumulation: options.light_accumulation.is_three_vrm(),
                 derivative_normals: options.derivative_normals,
                 unlit: self.unlit,
+                view_derivative_normals: options.view_derivative_normals,
             },
             metallic: self.metallic,
             roughness: self.roughness,
@@ -1130,6 +1131,7 @@ impl GltfMtoonLightAccumulation {
 pub struct GltfMaterialRenderExtraOptions {
     pub light_accumulation: GltfMtoonLightAccumulation,
     pub derivative_normals: bool,
+    pub view_derivative_normals: bool,
     pub direct_light_scale: f32,
 }
 
@@ -1138,6 +1140,7 @@ impl Default for GltfMaterialRenderExtraOptions {
         Self {
             light_accumulation: GltfMtoonLightAccumulation::ThreeVrm,
             derivative_normals: false,
+            view_derivative_normals: false,
             direct_light_scale: 1.0,
         }
     }
@@ -1150,6 +1153,7 @@ pub struct GltfMaterialRenderFlags {
     pub three_vrm_light_accumulation: bool,
     pub derivative_normals: bool,
     pub unlit: bool,
+    pub view_derivative_normals: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1176,7 +1180,12 @@ impl GltfMaterialRenderExtraPlan {
                 self.occlusion_strength,
                 self.direct_light_scale,
             ],
-            flags2: [self.flags.unlit as u8 as f32, 0.0, 0.0, 0.0],
+            flags2: [
+                self.flags.unlit as u8 as f32,
+                self.flags.view_derivative_normals as u8 as f32,
+                0.0,
+                0.0,
+            ],
         }
     }
 }
@@ -1367,6 +1376,7 @@ pub enum GltfNormalMapMode {
     #[default]
     GeneratedTangents,
     Derivative,
+    ViewDerivative,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1400,7 +1410,18 @@ impl GltfNormalMapPlan {
     }
 
     pub fn uses_derivative_normals(self) -> bool {
-        self.is_enabled() && !self.authored_tangents && self.mode == GltfNormalMapMode::Derivative
+        self.is_enabled()
+            && !self.authored_tangents
+            && matches!(
+                self.mode,
+                GltfNormalMapMode::Derivative | GltfNormalMapMode::ViewDerivative
+            )
+    }
+
+    pub fn uses_view_derivative_normals(self) -> bool {
+        self.is_enabled()
+            && !self.authored_tangents
+            && self.mode == GltfNormalMapMode::ViewDerivative
     }
 
     pub fn material_normal_scale(self, has_runtime_tangents: bool) -> f32 {
@@ -3697,12 +3718,13 @@ mod tests {
             .render_extra_plan(GltfMaterialRenderExtraOptions {
                 light_accumulation: GltfMtoonLightAccumulation::ThreeVrm,
                 derivative_normals: true,
+                view_derivative_normals: true,
                 direct_light_scale: 0.75,
             })
             .uniform_plan();
         assert_vec4_close(extra.flags, [1.0, 0.0, 1.0, 1.0]);
         assert_vec4_close(extra.pbr_params, [0.0, 1.0, 0.0, 0.75]);
-        assert_vec4_close(extra.flags2, [0.0, 0.0, 0.0, 0.0]);
+        assert_vec4_close(extra.flags2, [0.0, 1.0, 0.0, 0.0]);
 
         let fallback = loaded.material_shading_plan(None, GltfMaterialShadingOptions::default());
         assert_vec4_close(fallback.base_color, [0.78, 0.78, 0.78, 1.0]);
@@ -3714,6 +3736,7 @@ mod tests {
             .render_extra_plan(GltfMaterialRenderExtraOptions {
                 light_accumulation: GltfMtoonLightAccumulation::Tuned,
                 derivative_normals: false,
+                view_derivative_normals: false,
                 direct_light_scale: 1.0,
             })
             .uniform_plan();
@@ -3992,14 +4015,23 @@ mod tests {
         let derivative = primitive.normal_map_plan(0.8, GltfNormalMapMode::Derivative);
         assert!(!derivative.should_generate_tangents());
         assert!(derivative.uses_derivative_normals());
+        assert!(!derivative.uses_view_derivative_normals());
         assert_f32_close(derivative.material_normal_scale(false), 0.8);
         assert_f32_close(derivative.vertex_normal_scale(false), -0.8);
 
+        let view_derivative = primitive.normal_map_plan(0.8, GltfNormalMapMode::ViewDerivative);
+        assert!(!view_derivative.should_generate_tangents());
+        assert!(view_derivative.uses_derivative_normals());
+        assert!(view_derivative.uses_view_derivative_normals());
+        assert_f32_close(view_derivative.material_normal_scale(false), 0.8);
+        assert_f32_close(view_derivative.vertex_normal_scale(false), -0.8);
+
         primitive.tangents = vec![[1.0, 0.0, 0.0, 1.0]; 3];
-        let authored = primitive.normal_map_plan(0.8, GltfNormalMapMode::Derivative);
+        let authored = primitive.normal_map_plan(0.8, GltfNormalMapMode::ViewDerivative);
         assert!(authored.authored_tangents);
         assert!(!authored.should_generate_tangents());
         assert!(!authored.uses_derivative_normals());
+        assert!(!authored.uses_view_derivative_normals());
         assert_f32_close(authored.material_normal_scale(true), 0.8);
         assert_f32_close(authored.vertex_normal_scale(true), 0.8);
 

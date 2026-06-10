@@ -169,12 +169,17 @@ fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>)
         sampled.z * 2.0 - 1.0,
     );
     if material.material_flags.w > 0.5 {
-        let q0 = dpdx(input.world_position.xyz);
-        let q1 = dpdy(input.world_position.xyz);
+        let use_view_derivative = material.material_flags2.y > 0.5;
+        let view_position = (view.view_from_world * vec4<f32>(input.world_position.xyz, 1.0)).xyz;
+        let view_normal = normalize((view.view_from_world * vec4<f32>(geometric_normal, 0.0)).xyz);
+        let derivative_position = select(input.world_position.xyz, view_position, use_view_derivative);
+        let derivative_normal = select(geometric_normal, view_normal, use_view_derivative);
+        let q0 = dpdx(derivative_position);
+        let q1 = dpdy(derivative_position);
         let st0 = dpdx(normal_uv);
         let st1 = dpdy(normal_uv);
-        let q1perp = cross(q1, geometric_normal);
-        let q0perp = cross(geometric_normal, q0);
+        let q1perp = cross(q1, derivative_normal);
+        let q0perp = cross(derivative_normal, q0);
         var tangent = q1perp * st0.x + q0perp * st1.x;
         var bitangent = q1perp * st0.y + q0perp * st1.y;
         let det = max(dot(tangent, tangent), dot(bitangent, bitangent));
@@ -184,10 +189,15 @@ fn surface_normal(input: VertexOutput, front_facing: bool, normal_uv: vec2<f32>)
         let scale = 1.0 / sqrt(det);
         tangent = tangent * scale * face_sign;
         bitangent = bitangent * scale * face_sign;
-        return normalize(
+        let perturbed = normalize(
             tangent * tangent_normal.x +
             bitangent * tangent_normal.y +
-            geometric_normal * tangent_normal.z,
+            derivative_normal * tangent_normal.z,
+        );
+        return select(
+            perturbed,
+            normalize((view.world_from_view * vec4<f32>(perturbed, 0.0)).xyz),
+            use_view_derivative,
         );
     }
 #ifdef VERTEX_TANGENTS

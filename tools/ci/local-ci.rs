@@ -165,6 +165,7 @@ enum RenderMtoonLightAccumulation {
 enum RenderNormalMapMode {
     GeneratedTangents,
     Derivative,
+    ViewDerivative,
 }
 
 impl RenderMtoonLightAccumulation {
@@ -181,6 +182,7 @@ impl RenderNormalMapMode {
         match self {
             Self::GeneratedTangents => "generated-tangents",
             Self::Derivative => "derivative",
+            Self::ViewDerivative => "view-derivative",
         }
     }
 }
