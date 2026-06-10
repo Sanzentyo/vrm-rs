@@ -396,6 +396,18 @@ parity step is pass/material ownership alignment between the three-vrm WebGL
 draw stream and Rust's sorted triangle stream, with wgpu-vs-Bevy triangle-edge
 differences as a secondary sanity check.
 
+The same reports include `top_pass_transitions` so pass ownership changes can
+be tracked without reading every owner pair. The current Seed-san
+three-vrm-vs-Rust owner reports are dominated by `outline -> base`
+transitions (`11774` pixels for wgpu, `11774` for Bevy before the rejected
+outline-expansion experiment), with only a small `base -> base` residue. The
+direct wgpu-vs-Bevy owner report is mostly same-pass `base -> base`, so the
+primary mismatch is reference-vs-Rust outline ownership rather than a broad
+Rust backend disagreement. A trial that used expanded outline geometry for
+Rust `owner-id` diagnostics improved a few outline owner matches but reduced
+three-vrm PSNR and made wgpu-vs-Bevy much noisier, so `owner-id` remains on
+the non-shaded diagnostic outline geometry path.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

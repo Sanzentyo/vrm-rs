@@ -121,6 +121,16 @@
   `robo_arm_2` with `arm_plastic (Outline)`. This makes the next
   pass/material-order investigation less index-only and keeps the added
   metadata available to wgpu, Bevy, ash-style, and custom-engine diagnostics.
+- Added pass labels to three-vrm owner-ID metadata and pass-transition
+  summaries to `compare-owner-id-images.rs`. The Seed-san owner diagnostic now
+  quantifies the current blocker directly: three-vrm-vs-wgpu is dominated by
+  `outline -> base` (`11774` pixels) with a small `base -> base` residue
+  (`855`), while wgpu-vs-Bevy is mostly same-pass `base -> base` with only a
+  handful of outline/base crossovers. A trial that expanded Rust owner-ID
+  outlines like shaded outlines increased `outline -> outline` matches but
+  worsened both three-vrm PSNR and wgpu-vs-Bevy stability, so it was reverted;
+  the retained next target is draw/depth/material ordering for unexpanded
+  diagnostic outline groups rather than global owner-ID outline expansion.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base

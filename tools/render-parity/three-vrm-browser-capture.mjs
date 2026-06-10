@@ -279,11 +279,18 @@ function capturePage(options) {
     };
   };
 
+  const materialPass = (material) => (
+    (material?.name ?? '').includes('(Outline)') || (material?.type ?? '').toLowerCase().includes('outline')
+      ? 'outline'
+      : 'base'
+  );
+
   const materialReport = (material, mesh, slot) => ({
     meshName: mesh?.name ?? '',
     meshUuid: mesh?.uuid ?? null,
     materialSlot: slot,
     materialName: material?.name ?? '',
+    pass: materialPass(material),
     materialUuid: material?.uuid ?? null,
     materialType: material?.type ?? null,
     side: material?.side ?? null,
@@ -558,6 +565,7 @@ function capturePage(options) {
           meshUuid: mesh.uuid,
           materialIndex,
           materialName: material?.name ?? '',
+          pass: materialPass(material),
           materialType: material?.type ?? null,
           triangle: Math.floor(offset / 3),
           indices: sourceIndex

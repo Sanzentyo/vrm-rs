@@ -73,6 +73,7 @@ struct OwnerCompareReport {
     max_expected_owner: u32,
     max_actual_owner: u32,
     top_owner_id_deltas: Vec<OwnerIdDelta>,
+    top_pass_transitions: Vec<OwnerPassTransition>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
@@ -89,6 +90,13 @@ struct OwnerTransition {
 #[derive(Clone, Debug, Serialize)]
 struct OwnerIdDelta {
     expected_minus_actual: i64,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerPassTransition {
+    expected_pass: String,
+    actual_pass: String,
     count: u64,
 }
 
@@ -190,6 +198,7 @@ fn compare_owner_images(
     let mut expected_to_actual = BTreeMap::new();
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
+    let mut pass_transitions = BTreeMap::new();
 
     for (index, (&expected_id, &actual_id)) in expected_ids.iter().zip(&actual_ids).enumerate() {
         if expected_id != 0 {
@@ -210,6 +219,11 @@ fn compare_owner_images(
                     mismatched_shared_nonzero += 1;
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
+                    bump_pass_transition(
+                        &mut pass_transitions,
+                        expected_metadata.get(&left),
+                        actual_metadata.get(&right),
+                    );
                     *owner_id_deltas
                         .entry(i64::from(left) - i64::from(right))
                         .or_default() += 1;
@@ -265,6 +279,7 @@ fn compare_owner_images(
         max_expected_owner: expected_ids.iter().copied().max().unwrap_or(0),
         max_actual_owner: actual_ids.iter().copied().max().unwrap_or(0),
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
+        top_pass_transitions: top_pass_transitions(pass_transitions, top),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
         top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
         top_expected_to_actual_details: top_transition_details(
@@ -298,6 +313,39 @@ fn top_deltas(map: BTreeMap<i64, u64>, top: usize) -> Vec<OwnerIdDelta> {
         .take(top)
         .map(|(expected_minus_actual, count)| OwnerIdDelta {
             expected_minus_actual,
+            count,
+        })
+        .collect()
+}
+
+fn bump_pass_transition(
+    map: &mut BTreeMap<(String, String), u64>,
+    expected: Option<&OwnerLabel>,
+    actual: Option<&OwnerLabel>,
+) {
+    let expected_pass = expected
+        .and_then(|label| label.pass.as_deref())
+        .unwrap_or("unknown")
+        .to_owned();
+    let actual_pass = actual
+        .and_then(|label| label.pass.as_deref())
+        .unwrap_or("unknown")
+        .to_owned();
+    *map.entry((expected_pass, actual_pass)).or_default() += 1;
+}
+
+fn top_pass_transitions(
+    map: BTreeMap<(String, String), u64>,
+    top: usize,
+) -> Vec<OwnerPassTransition> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    entries
+        .into_iter()
+        .take(top)
+        .map(|((expected_pass, actual_pass), count)| OwnerPassTransition {
+            expected_pass,
+            actual_pass,
             count,
         })
         .collect()
