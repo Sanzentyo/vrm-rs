@@ -35,6 +35,12 @@
   JavaScript/WASM distribution, encodes the flipped top-left RGBA readback with
   `encodeRgba8`, and returns the raw bundle for Node to write beside the
   reference `.rgba.json`.
+- Added `examples/custom_engine_adapter.rs` as a compile-checked non-Bevy
+  integration flow. It uses `HeadlessSceneState` as a custom-engine staging
+  scene, runs `VrmRuntimeDriver`, and mirrors transform, morph, visibility,
+  constraint, emissive, material color, and MToon pipeline writes into
+  engine-owned node/material tables. The local CI example smoke list now runs
+  this example alongside the wgpu/ash-like and Bevy materialization examples.
 
 ## 2026-05-31
 

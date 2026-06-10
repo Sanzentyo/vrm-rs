@@ -253,7 +253,11 @@ fn run(options: Options) -> Result<(), String> {
 }
 
 fn run_example_smokes() -> Result<(), String> {
-    for example in ["mtoon_renderer_skeletons", "bevy_mtoon_materialization"] {
+    for example in [
+        "mtoon_renderer_skeletons",
+        "bevy_mtoon_materialization",
+        "custom_engine_adapter",
+    ] {
         run_cmd("cargo", ["run", "--example", example])?;
     }
     Ok(())
