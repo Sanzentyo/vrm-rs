@@ -242,6 +242,14 @@ broad base texture binding, V-flip, or generated sampler failure, and focus the
 next investigation on real-model-local surface selection, visibility, or
 diagnostic material ownership near texture/UV boundaries.
 
+The mapper's `visible_by_policy` classification includes cull policy and mask
+alpha discard. Candidate entries expose `alpha`, `visible_by_cull_policy`, and
+`visible_by_alpha_policy`; the summary exposes rejected candidate counts. On
+the same Seed-san base-color top-32 reports, wgpu and Bevy both have `329`
+candidates rejected by cull policy and `0` rejected by alpha policy. That rules
+out alpha-mask discard as the focused hotspot cause and points the next slice at
+cull/coverage/surface ownership.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

@@ -14,6 +14,16 @@
   remaining cause; the next target is real-model-local surface selection,
   visibility, or diagnostic material ownership around Seed-san texture/UV
   boundaries.
+- Extended `map-render-hotspots.rs` visible-candidate classification with
+  renderer-matching alpha input (`baseColor.a * texture.a`, plus vertex color
+  alpha for PBR fallback) and mask-cutoff rejection. Re-running the Seed-san
+  base-color top-32 reports shows identical alpha classification for wgpu and
+  Bevy: `20/32` pixels have a frontmost visible candidate, `329` candidate
+  hits are rejected by cull policy, and `0` are rejected by alpha policy. This
+  rules out alpha mask / texture-alpha discard as the current Seed-san
+  base-color hotspot explanation and keeps the next slice focused on cull,
+  primitive coverage, and diagnostic surface ownership near real-model UV
+  boundaries.
 - Added Seed-san `base-factor` and `base-color` diagnostic render modes across
   the three-vrm browser reference, wgpu capture, Bevy capture, and local
   render-parity runner. The new `rgb-shared-nonblack-interior1px` metric keeps

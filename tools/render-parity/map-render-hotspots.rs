@@ -32,8 +32,8 @@ use vrm_adapter::{
 use vrm_core::MaterialRef;
 use vrm_io::{
     transform_tex_coord_0, CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects,
-    GltfOutlineScale, GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm,
-    Rgba8SamplingOrigin,
+    GltfMaterialShadingOptions, GltfOutlineScale, GltfOutlineVertexSettings,
+    GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -115,6 +115,8 @@ struct Surface {
     policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
     base_texture: Option<CpuRgba8Image>,
+    base_color_alpha: f32,
+    pbr_fallback: bool,
     indices: Vec<u32>,
     edge_adjacency: BTreeMap<[u32; 2], Vec<usize>>,
     vertices: Vec<GltfTransformedVertex>,
@@ -142,6 +144,9 @@ struct CameraReport {
 #[derive(Clone, Debug, Serialize)]
 struct HotspotSummary {
     hotspot_count: usize,
+    frontmost_visible_count: usize,
+    cull_policy_rejected_candidate_count: usize,
+    alpha_policy_rejected_candidate_count: usize,
     actual_frontmost_triangle_matches: usize,
     expected_frontmost_triangle_matches: usize,
     actual_frontmost_material_matches: usize,
@@ -286,6 +291,9 @@ struct CandidateMatch {
     nearest_edge_indices: [u32; 2],
     nearest_edge_neighbor_triangles: Vec<usize>,
     front_facing: bool,
+    alpha: f32,
+    visible_by_cull_policy: bool,
+    visible_by_alpha_policy: bool,
     visible_by_policy: bool,
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
@@ -328,6 +336,9 @@ struct HitCandidate {
     base_texture_rgba: Option<[u8; 4]>,
     screen: [[f32; 2]; 3],
     front_facing: bool,
+    alpha: f32,
+    visible_by_cull_policy: bool,
+    visible_by_alpha_policy: bool,
     visible_by_policy: bool,
 }
 
@@ -513,6 +524,20 @@ fn read_delta_report(path: &Path) -> Result<DeltaReport, Box<dyn Error>> {
 fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
     HotspotSummary {
         hotspot_count: hotspots.len(),
+        frontmost_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.frontmost_visible.is_some())
+            .count(),
+        cull_policy_rejected_candidate_count: hotspots
+            .iter()
+            .flat_map(|hotspot| hotspot.candidates.iter())
+            .filter(|candidate| !candidate.visible_by_cull_policy)
+            .count(),
+        alpha_policy_rejected_candidate_count: hotspots
+            .iter()
+            .flat_map(|hotspot| hotspot.candidates.iter())
+            .filter(|candidate| candidate.visible_by_cull_policy && !candidate.visible_by_alpha_policy)
+            .count(),
         actual_frontmost_triangle_matches: hotspots
             .iter()
             .filter(|hotspot| {
@@ -956,6 +981,11 @@ fn build_surfaces(
             );
             let base_uv_transform = uv_transforms.base;
             let base_texture = loaded.material_base_texture_rgba8_image(primitive.material);
+            let shading = loaded.expression_material_shading_plan(
+                primitive.material,
+                GltfMaterialShadingOptions::default(),
+                expression_effects,
+            );
             let base_policy = capture_material_policy(loaded, primitive.material);
             let indices = primitive_indices(primitive.indices.as_slice(), vertices.len());
             surfaces.push(Surface {
@@ -969,6 +999,8 @@ fn build_surfaces(
                 policy: base_policy,
                 base_uv_transform,
                 base_texture: base_texture.clone(),
+                base_color_alpha: shading.base_color[3],
+                pbr_fallback: shading.pbr_fallback,
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
                 vertices: vertices.clone(),
@@ -1018,6 +1050,8 @@ fn build_surfaces(
                 policy: outline_material_policy(base_policy),
                 base_uv_transform,
                 base_texture,
+                base_color_alpha: 1.0,
+                pbr_fallback: false,
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
                 vertices: outline_vertices,
@@ -1133,6 +1167,9 @@ fn nearest_candidate_match_by(
             nearest_edge_indices: candidate.nearest_edge_indices,
             nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
             front_facing: candidate.front_facing,
+            alpha: candidate.alpha,
+            visible_by_cull_policy: candidate.visible_by_cull_policy,
+            visible_by_alpha_policy: candidate.visible_by_alpha_policy,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
             base_texture_rgba: candidate.base_texture_rgba,
@@ -1176,6 +1213,9 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
             nearest_edge_indices: candidate.nearest_edge_indices,
             nearest_edge_neighbor_triangles: candidate.nearest_edge_neighbor_triangles.clone(),
             front_facing: candidate.front_facing,
+            alpha: candidate.alpha,
+            visible_by_cull_policy: candidate.visible_by_cull_policy,
+            visible_by_alpha_policy: candidate.visible_by_alpha_policy,
             visible_by_policy: candidate.visible_by_policy,
             base_uv: candidate.base_uv,
             base_texture_rgba: candidate.base_texture_rgba,
@@ -1223,11 +1263,28 @@ fn surface_candidates(
             let barycentric = barycentric(point, a.screen, b.screen, c.screen)?;
             let raw_uv = interpolate_perspective_correct_uv(barycentric, a, b, c);
             let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
-            let base_texture_rgba = surface.base_texture.as_ref().map(|texture| {
-                texture.sample_rgba8_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft)
-            });
+            let base_texture_rgba_linear = surface
+                .base_texture
+                .as_ref()
+                .map(|texture| texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft));
+            let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
+            let vertex_alpha = if surface.pbr_fallback {
+                interpolate_vertex_color_alpha(
+                    barycentric,
+                    surface.vertices.get(ia as usize)?,
+                    surface.vertices.get(ib as usize)?,
+                    surface.vertices.get(ic as usize)?,
+                )
+            } else {
+                1.0
+            };
+            let texture_alpha = base_texture_rgba_linear.map_or(1.0, |rgba| rgba[3]);
+            let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
             let signed_area = signed_area(a.screen, b.screen, c.screen);
             let front_facing = signed_area < 0.0;
+            let visible_by_cull_policy =
+                visible_by_cull_policy(surface.policy.cull_mode, front_facing);
+            let visible_by_alpha_policy = visible_by_alpha_policy(surface.policy, alpha);
             let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
             let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
             let nearest_edge_neighbor_triangles =
@@ -1262,7 +1319,10 @@ fn surface_candidates(
                 base_texture_rgba,
                 screen: [a.screen, b.screen, c.screen],
                 front_facing,
-                visible_by_policy: visible_by_cull_policy(surface.policy.cull_mode, front_facing),
+                alpha,
+                visible_by_cull_policy,
+                visible_by_alpha_policy,
+                visible_by_policy: visible_by_cull_policy && visible_by_alpha_policy,
             })
         })
         .collect()
@@ -1347,6 +1407,10 @@ fn visible_by_cull_policy(cull_mode: &'static str, front_facing: bool) -> bool {
         "back" => front_facing,
         _ => true,
     }
+}
+
+fn visible_by_alpha_policy(policy: MaterialPolicyReport, alpha: f32) -> bool {
+    policy.alpha_mode != "mask" || alpha >= policy.alpha_cutoff
 }
 
 fn project(
@@ -1500,6 +1564,15 @@ fn uv_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
 
 fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
     barycentric[0] * a + barycentric[1] * b + barycentric[2] * c
+}
+
+fn interpolate_vertex_color_alpha(
+    barycentric: [f32; 3],
+    a: &GltfTransformedVertex,
+    b: &GltfTransformedVertex,
+    c: &GltfTransformedVertex,
+) -> f32 {
+    interpolate_scalar(barycentric, a.color_0[3], b.color_0[3], c.color_0[3])
 }
 
 fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
