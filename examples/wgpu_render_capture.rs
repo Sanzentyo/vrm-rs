@@ -2065,7 +2065,9 @@ fn diagnostic_owner_ids(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_js
                     "id": owner.id,
                     "color": owner_id_color_u8(owner.id),
                     "nodeIndex": source.node_index,
+                    "nodeName": node_name(loaded, source.node_index),
                     "meshIndex": source.mesh_index,
+                    "meshName": mesh_name(loaded, source.mesh_index),
                     "primitiveIndex": source.primitive_index,
                     "materialIndex": source.material,
                     "materialName": material_name(loaded, source.material),
@@ -2077,6 +2079,20 @@ fn diagnostic_owner_ids(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_js
             })
         })
         .collect()
+}
+
+fn node_name(loaded: &LoadedVrm, node: usize) -> Option<&str> {
+    loaded
+        .scene
+        .node(node)
+        .and_then(|node| node.name.as_deref())
+}
+
+fn mesh_name(loaded: &LoadedVrm, mesh: usize) -> Option<&str> {
+    loaded
+        .meshes
+        .get(mesh)
+        .and_then(|mesh| mesh.name.as_deref())
 }
 
 fn material_name(loaded: &LoadedVrm, material: Option<usize>) -> Option<&str> {

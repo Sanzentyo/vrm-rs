@@ -1383,6 +1383,7 @@ impl GltfSceneRest {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GltfNodeRest {
+    pub name: Option<String>,
     pub parent: Option<usize>,
     pub children: Vec<usize>,
     pub mesh: Option<usize>,
@@ -1428,6 +1429,7 @@ impl GltfSkinData {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GltfMeshData {
+    pub name: Option<String>,
     pub weights: Vec<f32>,
     pub primitives: Vec<GltfPrimitiveData>,
 }
@@ -2003,6 +2005,7 @@ fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
     document
         .meshes()
         .map(|mesh| GltfMeshData {
+            name: mesh.name().map(ToOwned::to_owned),
             weights: mesh.weights().unwrap_or_default().to_vec(),
             primitives: mesh
                 .primitives()
@@ -2662,6 +2665,7 @@ impl VrmaRestPose {
 struct NodeRestGraph {
     parents: Vec<Option<usize>>,
     children: Vec<Vec<usize>>,
+    names: Vec<Option<String>>,
     meshes: Vec<Option<usize>>,
     skins: Vec<Option<usize>>,
     weights: Vec<Vec<f32>>,
@@ -2677,6 +2681,7 @@ impl NodeRestGraph {
         let mut graph = Self {
             parents: vec![None; node_count],
             children: vec![Vec::new(); node_count],
+            names: vec![None; node_count],
             meshes: vec![None; node_count],
             skins: vec![None; node_count],
             weights: vec![Vec::new(); node_count],
@@ -2699,6 +2704,7 @@ impl NodeRestGraph {
         GltfSceneRest {
             nodes: (0..node_count)
                 .map(|index| GltfNodeRest {
+                    name: self.names[index].clone(),
                     parent: self.parents[index],
                     children: self.children[index].clone(),
                     mesh: self.meshes[index],
@@ -2737,6 +2743,7 @@ impl NodeRestGraph {
         let (world_scale, world_rotation_decomposed, world_translation) =
             world_matrix.to_scale_rotation_translation();
         self.parents[index] = parent;
+        self.names[index] = node.name().map(ToOwned::to_owned);
         self.meshes[index] = node.mesh().map(|mesh| mesh.index());
         self.skins[index] = node.skin().map(|skin| skin.index());
         self.weights[index] = node.weights().unwrap_or_default().to_vec();
@@ -3346,6 +3353,7 @@ mod tests {
             .expression_render_effects([("blink", 0.5)])
             .expect("generated expression should resolve render effects");
         let mesh = GltfMeshData {
+            name: None,
             weights: vec![0.2],
             primitives: Vec::new(),
         };

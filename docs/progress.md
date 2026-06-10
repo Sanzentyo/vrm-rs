@@ -114,6 +114,13 @@
   material/pass with neighboring triangle ordinals such as `442 -> 443`, so the
   next ownership slice should compare three-vrm pass/material ordering against
   Rust's sorted per-triangle stream before changing light accumulation.
+- Preserved glTF node and mesh names in `vrm-io` renderer-facing rest data and
+  added those names to Rust owner-ID metadata. Re-running the Seed-san owner
+  diagnostic keeps the same pass mismatch shape, but the labeled report now
+  shows the top Rust owner as node/mesh `robo_arm` while three-vrm reports mesh
+  `robo_arm_2` with `arm_plastic (Outline)`. This makes the next
+  pass/material-order investigation less index-only and keeps the added
+  metadata available to wgpu, Bevy, ash-style, and custom-engine diagnostics.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
@@ -718,7 +725,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-10: workspace line coverage is 85.05%, and `vrm-adapter-bevy` line coverage is 94.42%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-10: workspace line coverage is 85.06%, and `vrm-adapter-bevy` line coverage is 94.42%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.
@@ -871,6 +878,6 @@
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 85.05% line coverage, with `vrm-io` at 87.22%, `vrm-protocol` at 90.93%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.35%.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 85.06% line coverage, with `vrm-io` at 87.24%, `vrm-protocol` at 90.93%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.35%.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
 - P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.
