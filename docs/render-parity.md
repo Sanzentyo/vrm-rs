@@ -259,6 +259,17 @@ missing `12/32` frontmost pixels are not recovered by disabling cull. Treat the
 remaining focused blocker as center coverage / primitive ownership / diagnostic
 surface ownership around real model UV boundaries.
 
+For center-coverage checks, the report includes
+`nearest_sample_visible_frontmost` and
+`missing_center_nearest_visible_offsets`. These search the configured hit
+radius after the center sample fails. On the current Seed-san base-color top-32
+reports, the missing `12/32` center hits are all recovered within the 1px
+neighborhood, with offsets distributed across left, up, down, and right. The
+recovered neighbors' base texture colors are close to three-vrm expected
+(missing-center mean RGB distance `33.05`) and far from Rust actual (mean
+`378.13`). That is the strongest current sign that the focused residual is
+raster/sample ownership at local UV or material boundaries.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,

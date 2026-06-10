@@ -34,6 +34,19 @@
   now tighter: CPU-projected center coverage, primitive ownership, or
   diagnostic material ownership at real-model UV/texture boundaries rather
   than cull, alpha, broad texture binding, or sampler state.
+- Added nearest-sample frontmost diagnostics for hotspot pixels that do not
+  have a center visible candidate. On Seed-san base-color top-32, wgpu and Bevy
+  both recover all missing center hits from the 1px neighborhood:
+  `frontmost_visible = 20/32`, `nearest_sample_visible_frontmost = 32/32`, and
+  `missing_center_recovered_by_nearest_visible = 12/32`. The recovered offsets
+  are balanced across four directions (`[-1,0] = 3`, `[0,-1] = 2`,
+  `[0,1] = 4`, `[1,0] = 3`), arguing against a simple global sample shift. For
+  those 12 recovered hits, the nearest-sample base texture is close to the
+  three-vrm expected color (mean RGB distance `33.05`, max `65.05`) and far
+  from the Rust actual color (mean `378.13`, max `398.37`). This makes the
+  remaining Seed-san base-color blocker a raster/sample ownership issue around
+  local UV/texture boundaries rather than material math, texture binding,
+  alpha, cull, or mip behavior.
 - Added Seed-san `base-factor` and `base-color` diagnostic render modes across
   the three-vrm browser reference, wgpu capture, Bevy capture, and local
   render-parity runner. The new `rgb-shared-nonblack-interior1px` metric keeps

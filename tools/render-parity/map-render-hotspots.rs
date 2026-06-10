@@ -148,6 +148,8 @@ struct HotspotSummary {
     frontmost_alpha_visible_count: usize,
     frontmost_visible_count: usize,
     frontmost_any_cull_rejected_count: usize,
+    nearest_sample_visible_frontmost_count: usize,
+    missing_center_recovered_by_nearest_visible_count: usize,
     cull_policy_rejected_candidate_count: usize,
     alpha_policy_rejected_candidate_count: usize,
     actual_frontmost_any_triangle_matches: usize,
@@ -177,6 +179,14 @@ struct HotspotSummary {
     expected_frontmost_mean_base_texture_rgb_distance: Option<f32>,
     actual_frontmost_max_base_texture_rgb_distance: Option<f32>,
     expected_frontmost_max_base_texture_rgb_distance: Option<f32>,
+    actual_nearest_sample_visible_mean_base_texture_rgb_distance: Option<f32>,
+    expected_nearest_sample_visible_mean_base_texture_rgb_distance: Option<f32>,
+    actual_nearest_sample_visible_max_base_texture_rgb_distance: Option<f32>,
+    expected_nearest_sample_visible_max_base_texture_rgb_distance: Option<f32>,
+    actual_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f32>,
+    expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f32>,
+    actual_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
+    expected_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
     frontmost_mean_edge_distance_pixels: Option<f32>,
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
@@ -184,6 +194,8 @@ struct HotspotSummary {
     actual_frontmost_edge_neighbor_matches: usize,
     expected_frontmost_edge_neighbor_matches: usize,
     frontmost_nearest_edge_counts: Vec<EdgeBucketCount>,
+    nearest_sample_visible_offsets: Vec<OffsetCount>,
+    missing_center_nearest_visible_offsets: Vec<OffsetCount>,
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
 }
@@ -268,12 +280,17 @@ struct Hotspot {
     frontmost_any: Option<CandidateMatch>,
     frontmost_alpha_visible: Option<CandidateMatch>,
     frontmost_visible: Option<CandidateMatch>,
+    nearest_sample_visible_frontmost: Option<CandidateMatch>,
+    nearest_sample_any_frontmost: Option<CandidateMatch>,
     frontmost_base_uv_srgb: Option<[u8; 4]>,
     frontmost_base_texture_rgba: Option<[u8; 4]>,
     frontmost_expected_rgb_distance: Option<f32>,
     frontmost_actual_rgb_distance: Option<f32>,
     frontmost_base_texture_expected_rgb_distance: Option<f32>,
     frontmost_base_texture_actual_rgb_distance: Option<f32>,
+    nearest_sample_visible_base_texture_rgba: Option<[u8; 4]>,
+    nearest_sample_visible_base_texture_expected_rgb_distance: Option<f32>,
+    nearest_sample_visible_base_texture_actual_rgb_distance: Option<f32>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -415,11 +432,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let frontmost_any = frontmost_any_candidate_match(&candidates);
             let frontmost_alpha_visible = frontmost_alpha_visible_candidate_match(&candidates);
             let frontmost_visible = frontmost_visible_candidate_match(&candidates);
+            let nearest_sample_visible_frontmost =
+                nearest_sample_visible_frontmost_candidate_match(&candidates);
+            let nearest_sample_any_frontmost =
+                nearest_sample_any_frontmost_candidate_match(&candidates);
             let frontmost_base_uv_srgb =
                 frontmost_visible.as_ref().map(|frontmost| {
                     diagnostic_linear_uv_to_srgb_color(frontmost.base_uv, delta.actual[3])
                 });
             let frontmost_base_texture_rgba = frontmost_visible
+                .as_ref()
+                .and_then(|frontmost| frontmost.base_texture_rgba);
+            let nearest_sample_visible_base_texture_rgba = nearest_sample_visible_frontmost
                 .as_ref()
                 .and_then(|frontmost| frontmost.base_texture_rgba);
             Hotspot {
@@ -446,6 +470,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 frontmost_any,
                 frontmost_alpha_visible,
                 frontmost_visible,
+                nearest_sample_visible_frontmost,
+                nearest_sample_any_frontmost,
                 frontmost_base_uv_srgb,
                 frontmost_base_texture_rgba,
                 frontmost_expected_rgb_distance: frontmost_base_uv_srgb
@@ -456,6 +482,13 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     .map(|color| rgb_distance(color, delta.expected)),
                 frontmost_base_texture_actual_rgb_distance: frontmost_base_texture_rgba
                     .map(|color| rgb_distance(color, delta.actual)),
+                nearest_sample_visible_base_texture_rgba,
+                nearest_sample_visible_base_texture_expected_rgb_distance:
+                    nearest_sample_visible_base_texture_rgba
+                        .map(|color| rgb_distance(color, delta.expected)),
+                nearest_sample_visible_base_texture_actual_rgb_distance:
+                    nearest_sample_visible_base_texture_rgba
+                        .map(|color| rgb_distance(color, delta.actual)),
                 candidates,
             }
         })
@@ -553,6 +586,17 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             .iter()
             .filter_map(|hotspot| hotspot.frontmost_any.as_ref())
             .filter(|frontmost| !frontmost.visible_by_cull_policy)
+            .count(),
+        nearest_sample_visible_frontmost_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.nearest_sample_visible_frontmost.is_some())
+            .count(),
+        missing_center_recovered_by_nearest_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| {
+                hotspot.frontmost_visible.is_none()
+                    && hotspot.nearest_sample_visible_frontmost.is_some()
+            })
             .count(),
         cull_policy_rejected_candidate_count: hotspots
             .iter()
@@ -715,6 +759,38 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             hotspots,
             |hotspot| hotspot.frontmost_base_texture_expected_rgb_distance,
         ),
+        actual_nearest_sample_visible_mean_base_texture_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_actual_rgb_distance
+            }),
+        expected_nearest_sample_visible_mean_base_texture_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
+            }),
+        actual_nearest_sample_visible_max_base_texture_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_base_texture_actual_rgb_distance,
+        ),
+        expected_nearest_sample_visible_max_base_texture_rgb_distance:
+            max_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
+            }),
+        actual_missing_center_nearest_visible_mean_base_texture_rgb_distance:
+            mean_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_actual_rgb_distance
+            }),
+        expected_missing_center_nearest_visible_mean_base_texture_rgb_distance:
+            mean_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
+            }),
+        actual_missing_center_nearest_visible_max_base_texture_rgb_distance:
+            max_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_actual_rgb_distance
+            }),
+        expected_missing_center_nearest_visible_max_base_texture_rgb_distance:
+            max_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
+            }),
         frontmost_mean_edge_distance_pixels: mean_frontmost_edge_distance(hotspots),
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
         frontmost_edge_distance_lte_050px: frontmost_edge_distance_lte(hotspots, 0.50),
@@ -738,6 +814,20 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             })
             .count(),
         frontmost_nearest_edge_counts: frontmost_nearest_edge_counts(hotspots),
+        nearest_sample_visible_offsets: offset_counts(
+            hotspots
+                .iter()
+                .filter_map(|hotspot| hotspot.nearest_sample_visible_frontmost.as_ref()),
+        ),
+        missing_center_nearest_visible_offsets: offset_counts(hotspots.iter().filter_map(
+            |hotspot| {
+                hotspot
+                    .frontmost_visible
+                    .is_none()
+                    .then_some(hotspot.nearest_sample_visible_frontmost.as_ref())
+                    .flatten()
+            },
+        )),
         actual_visible_sample_offsets: offset_counts(
             hotspots
                 .iter()
@@ -907,6 +997,31 @@ fn max_frontmost_rgb_distance(
 ) -> Option<f32> {
     hotspots
         .iter()
+        .filter_map(distance)
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn mean_missing_center_nearest_rgb_distance(
+    hotspots: &[Hotspot],
+    distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter(|hotspot| hotspot.frontmost_visible.is_none())
+        .filter_map(distance)
+        .fold((0.0, 0usize), |(sum, count), distance| {
+            (sum + distance, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn max_missing_center_nearest_rgb_distance(
+    hotspots: &[Hotspot],
+    distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Option<f32> {
+    hotspots
+        .iter()
+        .filter(|hotspot| hotspot.frontmost_visible.is_none())
         .filter_map(distance)
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
 }
@@ -1234,6 +1349,18 @@ fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<Cand
     frontmost_candidate_match_by(candidates, |candidate| candidate.visible_by_policy)
 }
 
+fn nearest_sample_any_frontmost_candidate_match(
+    candidates: &[HitCandidate],
+) -> Option<CandidateMatch> {
+    nearest_sample_frontmost_candidate_match_by(candidates, |_| true)
+}
+
+fn nearest_sample_visible_frontmost_candidate_match(
+    candidates: &[HitCandidate],
+) -> Option<CandidateMatch> {
+    nearest_sample_frontmost_candidate_match_by(candidates, |candidate| candidate.visible_by_policy)
+}
+
 fn frontmost_candidate_match_by(
     candidates: &[HitCandidate],
     filter: impl Fn(&HitCandidate) -> bool,
@@ -1249,6 +1376,28 @@ fn frontmost_candidate_match_by(
             left.depth
                 .partial_cmp(&right.depth)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.draw_index.cmp(&left.draw_index))
+        })
+}
+
+fn nearest_sample_frontmost_candidate_match_by(
+    candidates: &[HitCandidate],
+    filter: impl Fn(&HitCandidate) -> bool,
+) -> Option<CandidateMatch> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.depth >= -1.0 && filter(candidate))
+        .map(|(candidate_index, candidate)| candidate_match(candidate_index, candidate, 0.0))
+        .min_by(|left, right| {
+            left.sample_distance
+                .partial_cmp(&right.sample_distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    left.depth
+                        .partial_cmp(&right.depth)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .then_with(|| right.draw_index.cmp(&left.draw_index))
         })
 }
