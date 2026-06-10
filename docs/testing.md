@@ -116,6 +116,13 @@ render has non-zero RGB while dropping the one-pixel silhouette edge. The
 current model-body floor is Seed-san Bevy `27.5065 dB`; Seed-san wgpu is
 `30.0461 dB`, the UV animation sample is wgpu `28.6651 dB` / Bevy
 `28.6173 dB`, and Alicia VRM0 is wgpu `34.4442 dB` / Bevy `34.3709 dB`.
+Use `just render-parity-samples-shared-body3` for the same six-fixture sweep
+under `.external-fixtures/render-parity-samples-shared-body3/`; it selects
+`rgb-shared-nonblack-interior3px >= 28.5 dB`, comparing only pixels where both
+renderers have non-black model content after dropping a three-pixel local
+raster-ownership band. The current shared-body floor is the constraint sample
+at wgpu `28.6412 dB` / Bevy `28.6300 dB`, while Seed-san improves to wgpu
+`31.9233 dB` / Bevy `31.2229 dB` under this stricter shared-content mask.
 Use
 `--render-mtoon-time SECONDS` for MToon material-update parity checks such as UV
 animation; `just render-parity-uv-animation` stores its time-advanced sample

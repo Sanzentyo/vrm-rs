@@ -503,6 +503,23 @@ residuals. Use `rgb-shared-nonblack-interior3px` only as a sharper local
 diagnostic for persistent shared-edge/raster-ownership residuals, not as the
 default whole-sample acceptance metric.
 
+For a full real-sample shaded sweep that uses that stricter shared-body mask,
+run:
+
+```powershell
+just render-parity-samples-shared-body3
+```
+
+This writes `.external-fixtures/render-parity-samples-shared-body3/`, selects
+`rgb-shared-nonblack-interior3px`, and enforces `--render-fail-under 28.5`.
+The current six-fixture floor is the constraint sample at wgpu `28.6412 dB` /
+Bevy `28.6300 dB`; Seed-san is wgpu `31.9233 dB` / Bevy `31.2229 dB`, UV
+animation is wgpu `30.1907 dB` / Bevy `30.1538 dB`, the expression mask samples
+are wgpu `51.6179 dB` / Bevy `50.1671 dB`, and Alicia VRM0 is wgpu
+`33.1953 dB` / Bevy `33.1425 dB`. This is not a replacement for the canonical
+`rgb-visible` review; it is the body-color/material sweep used after known
+local raster ownership bands have been classified separately.
+
 For the full local Seed-san parity loop, use the Rust local CI runner:
 
 ```powershell
