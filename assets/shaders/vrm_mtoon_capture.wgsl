@@ -112,6 +112,11 @@ fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     );
 }
 
+fn owner_id_output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
+    let rgb8 = round(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0) / 255.0;
+    return vec4<f32>(rgb8, alpha);
+}
+
 fn pbr_direct(
     diffuse: vec3<f32>,
     normal: vec3<f32>,
@@ -272,9 +277,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     }
     if material.material_flags2.w > 4.5 && material.material_flags2.w < 5.5 {
 #ifdef VERTEX_COLORS
-        return output_color(input.color.rgb, opaque_alpha);
+        return owner_id_output_color(input.color.rgb, opaque_alpha);
 #else
-        return output_color(material.owner_color.rgb, opaque_alpha);
+        return owner_id_output_color(material.owner_color.rgb, opaque_alpha);
 #endif
     }
     if material.material_flags2.w > 2.5 {

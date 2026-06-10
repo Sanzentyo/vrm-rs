@@ -599,9 +599,9 @@ fn assign_owner_id_triangles(primitives: &mut [DrawPrimitive]) {
 fn owner_id_color(id: u32) -> [f32; 4] {
     let [r, g, b, a] = owner_id_color_u8(id);
     [
-        srgb_u8_to_linear(r),
-        srgb_u8_to_linear(g),
-        srgb_u8_to_linear(b),
+        f32::from(r) / 255.0,
+        f32::from(g) / 255.0,
+        f32::from(b) / 255.0,
         f32::from(a) / 255.0,
     ]
 }
@@ -613,15 +613,6 @@ fn owner_id_color_u8(id: u32) -> [u8; 4] {
         ((id >> 16) & 0xff) as u8,
         255,
     ]
-}
-
-fn srgb_u8_to_linear(value: u8) -> f32 {
-    let value = f32::from(value) / 255.0;
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -2510,6 +2501,11 @@ fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     );
 }
 
+fn owner_id_output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
+    let rgb8 = round(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0) / 255.0;
+    return vec4<f32>(rgb8, alpha);
+}
+
 fn pbr_direct(
     diffuse: vec3<f32>,
     normal: vec3<f32>,
@@ -2656,7 +2652,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
     if material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5 {
-        return output_color(input.color.rgb, opaque_alpha);
+        return owner_id_output_color(input.color.rgb, opaque_alpha);
     }
     if material_extra.flags2.w > 2.5 {
         if material_extra.flags2.w > 3.5 {

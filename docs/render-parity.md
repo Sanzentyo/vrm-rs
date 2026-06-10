@@ -466,6 +466,20 @@ the older finite-projection approximation. That rules out projection depth as
 the explanation for the Bevy-only metadata-visibility bucket, but not
 edge/fill, color decode, or material specialization effects.
 
+The owner comparator also reports actual-side metadata bounds misses and
+near-ID recovery:
+`actual_metadata_bounds_miss_shared_nonzero`,
+`actual_metadata_bounds_miss_mismatched_shared_nonzero`,
+`actual_metadata_bounds_miss_recovered_by_near_id_shared_nonzero`,
+`actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero`,
+and `top_actual_metadata_recoveries`. On the current default CCW Seed-san run,
+wgpu-vs-three-vrm has `0` metadata misses. Bevy has `4498` metadata misses in
+wgpu-vs-Bevy and all `4498` recover to a nearby owner ID whose screen bounds
+contain the pixel; Bevy-vs-three-vrm is `4492/4492`. Treat this as a Bevy
+diagnostic-ID/fill ownership artifact, not as evidence that Bevy drew culled
+triangles. The three-vrm-vs-wgpu report remains the cleaner signal for the
+remaining pass/material/fill parity work.
+
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths

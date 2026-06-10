@@ -69,6 +69,10 @@ struct OwnerCompareReport {
     mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
+    actual_metadata_bounds_miss_shared_nonzero: u64,
+    actual_metadata_bounds_miss_mismatched_shared_nonzero: u64,
+    actual_metadata_bounds_miss_recovered_by_near_id_shared_nonzero: u64,
+    actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero: u64,
     exact_owner_match_ratio: f64,
     expected_neighborhood_1px_ratio: f64,
     actual_neighborhood_1px_ratio: f64,
@@ -78,6 +82,7 @@ struct OwnerCompareReport {
     top_pass_transitions: Vec<OwnerPassTransition>,
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
     top_actual_cull_visibility: Vec<OwnerActualCullVisibility>,
+    top_actual_metadata_recoveries: Vec<OwnerMetadataRecovery>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
@@ -133,6 +138,13 @@ struct OwnerActualCullVisibility {
     actual_gpu_front_facing: String,
     actual_visible_by_cull_policy: String,
     actual_depth_write: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerMetadataRecovery {
+    decoded_actual: u32,
+    recovered_actual: u32,
     count: u64,
 }
 
@@ -320,12 +332,17 @@ fn compare_owner_images(
     let mut mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
+    let mut actual_metadata_bounds_miss_shared_nonzero = 0;
+    let mut actual_metadata_bounds_miss_mismatched_shared_nonzero = 0;
+    let mut actual_metadata_bounds_miss_recovered_by_near_id_shared_nonzero = 0;
+    let mut actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero = 0;
     let mut expected_to_actual = BTreeMap::new();
     let mut actual_to_expected = BTreeMap::new();
     let mut owner_id_deltas = BTreeMap::new();
     let mut pass_transitions = BTreeMap::new();
     let mut render_policy_transitions = BTreeMap::new();
     let mut actual_cull_visibility = BTreeMap::new();
+    let mut actual_metadata_recoveries = BTreeMap::new();
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
 
@@ -353,6 +370,20 @@ fn compare_owner_images(
                 if actual_is_culled {
                     actual_not_visible_by_cull_policy_shared_nonzero += 1;
                 }
+                let actual_metadata_bounds_miss =
+                    actual_label.is_some_and(|label| !owner_label_contains_pixel(label, pixel, 2.0));
+                let actual_metadata_recovery = actual_metadata_bounds_miss
+                    .then(|| recover_near_actual_owner(right, pixel, actual_metadata))
+                    .flatten();
+                if actual_metadata_bounds_miss {
+                    actual_metadata_bounds_miss_shared_nonzero += 1;
+                    if let Some(recovered) = actual_metadata_recovery {
+                        actual_metadata_bounds_miss_recovered_by_near_id_shared_nonzero += 1;
+                        *actual_metadata_recoveries
+                            .entry((right, recovered))
+                            .or_default() += 1;
+                    }
+                }
                 bump_actual_cull_visibility(&mut actual_cull_visibility, actual_label);
                 if left == right {
                     exact_owner_matches += 1;
@@ -360,6 +391,12 @@ fn compare_owner_images(
                     mismatched_shared_nonzero += 1;
                     if actual_is_culled {
                         actual_not_visible_by_cull_policy_mismatched_shared_nonzero += 1;
+                    }
+                    if actual_metadata_bounds_miss {
+                        actual_metadata_bounds_miss_mismatched_shared_nonzero += 1;
+                        if actual_metadata_recovery.is_some() {
+                            actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero += 1;
+                        }
                     }
                     bump_transition(&mut expected_to_actual, left, right);
                     bump_transition(&mut actual_to_expected, right, left);
@@ -420,6 +457,10 @@ fn compare_owner_images(
         mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
+        actual_metadata_bounds_miss_shared_nonzero,
+        actual_metadata_bounds_miss_mismatched_shared_nonzero,
+        actual_metadata_bounds_miss_recovered_by_near_id_shared_nonzero,
+        actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero,
         exact_owner_match_ratio: ratio(exact_owner_matches, shared_nonzero),
         expected_neighborhood_1px_ratio: ratio(
             expected_found_in_actual_neighborhood_1px,
@@ -438,6 +479,10 @@ fn compare_owner_images(
             top,
         ),
         top_actual_cull_visibility: top_actual_cull_visibility(actual_cull_visibility, top),
+        top_actual_metadata_recoveries: top_actual_metadata_recoveries(
+            actual_metadata_recoveries,
+            top,
+        ),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
         top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
         top_expected_to_actual_details: top_transition_details(
@@ -578,6 +623,81 @@ fn top_actual_cull_visibility(
             count,
         })
         .collect()
+}
+
+fn top_actual_metadata_recoveries(
+    map: BTreeMap<(u32, u32), u64>,
+    top: usize,
+) -> Vec<OwnerMetadataRecovery> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.0.cmp(&right.0.0))
+            .then_with(|| left.0.1.cmp(&right.0.1))
+    });
+    entries
+        .into_iter()
+        .take(top)
+        .map(|((decoded_actual, recovered_actual), count)| OwnerMetadataRecovery {
+            decoded_actual,
+            recovered_actual,
+            count,
+        })
+        .collect()
+}
+
+fn owner_label_contains_pixel(label: &OwnerLabel, pixel: OwnerPixel, pad: f64) -> bool {
+    label.screen_bounds.is_some_and(|bounds| {
+        let x = pixel.x as f64;
+        let y = pixel.y as f64;
+        x >= bounds.min_x - pad
+            && x <= bounds.max_x + pad
+            && y >= bounds.min_y - pad
+            && y <= bounds.max_y + pad
+    })
+}
+
+fn recover_near_actual_owner(
+    decoded_actual: u32,
+    pixel: OwnerPixel,
+    metadata: &HashMap<u32, OwnerLabel>,
+) -> Option<u32> {
+    near_owner_id_candidates(decoded_actual)
+        .into_iter()
+        .filter_map(|candidate| {
+            metadata
+                .get(&candidate)
+                .filter(|label| owner_label_contains_pixel(label, pixel, 2.0))
+                .map(|_| candidate)
+        })
+        .min_by_key(|candidate| candidate.abs_diff(decoded_actual))
+}
+
+fn near_owner_id_candidates(id: u32) -> Vec<u32> {
+    let mut candidates = Vec::new();
+    for db in -1_i32..=1 {
+        for dg in -1_i32..=1 {
+            for dr in -2_i32..=2 {
+                if dr == 0 && dg == 0 && db == 0 {
+                    continue;
+                }
+                let delta = dr + dg * 256 + db * 65_536;
+                let candidate = if delta < 0 {
+                    id.checked_sub(delta.unsigned_abs())
+                } else {
+                    id.checked_add(delta as u32)
+                };
+                if let Some(candidate) = candidate.filter(|candidate| *candidate != 0) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
 }
 
 impl OwnerRenderPolicyKey {

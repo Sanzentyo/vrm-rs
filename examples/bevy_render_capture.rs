@@ -918,9 +918,9 @@ fn material_name(loaded: &LoadedVrm, material: Option<usize>) -> Option<&str> {
 fn owner_id_color(id: u32) -> [f32; 4] {
     let [r, g, b, a] = owner_id_color_u8(id);
     [
-        srgb_u8_to_linear(r),
-        srgb_u8_to_linear(g),
-        srgb_u8_to_linear(b),
+        f32::from(r) / 255.0,
+        f32::from(g) / 255.0,
+        f32::from(b) / 255.0,
         f32::from(a) / 255.0,
     ]
 }
@@ -932,15 +932,6 @@ fn owner_id_color_u8(id: u32) -> [u8; 4] {
         ((id >> 16) & 0xff) as u8,
         255,
     ]
-}
-
-fn srgb_u8_to_linear(value: u8) -> f32 {
-    let value = f32::from(value) / 255.0;
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 #[derive(Clone, Copy)]
