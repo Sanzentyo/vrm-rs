@@ -51,7 +51,7 @@ just render-parity-vrm1-samples
 just render-parity-imqraw-seed-normal
 ```
 
-The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons` and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `ash_mtoon_pipeline_materialization`, and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path, the concrete Vulkan-shaped descriptor/pipeline mapping, and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
 The Rust script also sets cargo dev/test debug info to level `1` for commands
 it launches. That keeps Windows MSVC PDB files below the observed Bevy-heavy
 debug-info limit without changing runtime behavior, render output, or the
@@ -473,8 +473,9 @@ Latest VRM0 Alicia expansion:
 12. Bevy spring parity integration is covered by a full `App::update` path that reads ECS transforms, captures `SpringRestMap`, initializes center-space spring state, runs the runtime tick, and writes the solved joint rotation back to a Bevy `Transform`.
 13. Bevy spring parity recapture is covered by a marker-resource test that requests a rest-pose recapture and verifies the captured `SpringRestMap` is rebuilt without callers manually clearing `BevyVrmSpringParityState`.
 14. MToon renderer skeleton coverage now includes `cargo run --example mtoon_renderer_skeletons`, which maps public `MtoonRendererMaterialPlan` and `RendererMaterialPipelinePlan` values into wgpu-like and ash-like pipeline/material tables without renderer dependencies.
-15. Bevy hierarchy readback now covers real `ChildOf` ECS hierarchy components, deriving `BevyRuntimeSceneState` parent/child links before spring parity and runtime-driver ticks.
-16. Bevy MToon materialization coverage now includes `cargo run --example bevy_mtoon_materialization`, which maps MToon pass plans and runtime material state into a Bevy-facing asset without shader policy.
+15. Ash/Vulkan materialization coverage now includes `cargo run --example ash_mtoon_pipeline_materialization`, which maps the same public MToon plans into Vulkan-shaped descriptor-set layouts, combined image sampler writes, push constants, rasterization/depth/blend keys, pass shader names, and sorted base/outline draw queues.
+16. Bevy hierarchy readback now covers real `ChildOf` ECS hierarchy components, deriving `BevyRuntimeSceneState` parent/child links before spring parity and runtime-driver ticks.
+17. Bevy MToon materialization coverage now includes `cargo run --example bevy_mtoon_materialization`, which maps MToon pass plans and runtime material state into a Bevy-facing asset without shader policy.
 
 Each milestone should update this document before code changes, add ignored external-fixture commands when real assets are needed, keep generated golden JSON under `.external-fixtures/`, and run the normal fmt/test/clippy/coverage gate before commit.
 
