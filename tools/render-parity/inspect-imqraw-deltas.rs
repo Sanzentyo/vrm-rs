@@ -11,7 +11,7 @@ serde_json = "1.0.150"
 
 //! Inspect worst per-pixel deltas between two direct renderer `imqraw` RGBA8 artifacts.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use imq::{PixelFormat, RawImageRecord, decode_imqraw_bundle};
 use serde_json::{Value, json};
 use std::error::Error;
@@ -34,10 +34,49 @@ struct Options {
     top: usize,
     #[arg(long, default_value_t = 1)]
     min_channel_delta: u8,
+    #[arg(long, value_enum, default_value_t = PixelDomain::All)]
+    domain: PixelDomain,
     #[arg(long, default_value_t = 0)]
     expected_index: usize,
     #[arg(long, default_value_t = 0)]
     actual_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+enum PixelDomain {
+    All,
+    ActualOnly,
+    ExpectedOnly,
+    SharedNonblack,
+    SharedNonblackInterior1px,
+    SharedNonblackInterior2px,
+}
+
+impl PixelDomain {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::ActualOnly => "actual-only",
+            Self::ExpectedOnly => "expected-only",
+            Self::SharedNonblack => "shared-nonblack",
+            Self::SharedNonblackInterior1px => "shared-nonblack-interior1px",
+            Self::SharedNonblackInterior2px => "shared-nonblack-interior2px",
+        }
+    }
+
+    fn includes(self, expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::ActualOnly => is_actual_only_nonblack(expected, actual, pixel),
+            Self::ExpectedOnly => is_expected_only_nonblack(expected, actual, pixel),
+            Self::SharedNonblack => is_shared_nonblack(expected, actual, pixel),
+            Self::SharedNonblackInterior1px => is_interior_shared_nonblack(expected, actual, pixel),
+            Self::SharedNonblackInterior2px => is_interior_radius(expected, pixel, 2, |neighbor| {
+                is_shared_nonblack(expected, actual, neighbor)
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -47,7 +86,7 @@ struct RgbaImage {
     rgba: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct PixelDelta {
     pixel: usize,
     max_channel_delta: u8,
@@ -75,7 +114,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    let mut deltas = pixel_deltas(&expected, &actual, options.min_channel_delta);
+    let all_deltas = pixel_deltas(&expected, &actual, options.min_channel_delta);
+    let mut deltas = all_deltas
+        .iter()
+        .filter(|delta| options.domain.includes(&expected, &actual, delta.pixel))
+        .copied()
+        .collect::<Vec<_>>();
     deltas.sort_by(|left, right| {
         right
             .max_channel_delta
@@ -95,7 +139,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "width": expected.width,
         "height": expected.height,
         "minChannelDelta": options.min_channel_delta,
+        "domain": options.domain.as_str(),
+        "allChangedPixels": all_deltas.len(),
         "changedPixels": deltas.len(),
+        "domainBreakdown": domain_breakdown(&expected, &actual, &all_deltas),
         "summary": delta_summary(&expected, &actual, &deltas),
         "top": deltas
             .iter()
@@ -206,6 +253,22 @@ fn delta_summary(expected: &RgbaImage, actual: &RgbaImage, deltas: &[PixelDelta]
     })
 }
 
+fn domain_breakdown(expected: &RgbaImage, actual: &RgbaImage, deltas: &[PixelDelta]) -> Value {
+    let count = |domain: PixelDomain| {
+        deltas
+            .iter()
+            .filter(|delta| domain.includes(expected, actual, delta.pixel))
+            .count()
+    };
+    json!({
+        "actualOnly": count(PixelDomain::ActualOnly),
+        "expectedOnly": count(PixelDomain::ExpectedOnly),
+        "sharedNonblack": count(PixelDomain::SharedNonblack),
+        "sharedNonblackInterior1px": count(PixelDomain::SharedNonblackInterior1px),
+        "sharedNonblackInterior2px": count(PixelDomain::SharedNonblackInterior2px),
+    })
+}
+
 fn pixel_delta_json(expected: &RgbaImage, actual: &RgbaImage, delta: &PixelDelta) -> Value {
     let pixel_index = delta.pixel / 4;
     let x = pixel_index % expected.width;
@@ -226,6 +289,19 @@ fn pixel_delta_json(expected: &RgbaImage, actual: &RgbaImage, delta: &PixelDelta
         "interiorVisible": is_interior_visible(expected, actual, delta.pixel),
         "nonblack": is_nonblack(expected, actual, delta.pixel),
         "interiorNonblack": is_interior_nonblack(expected, actual, delta.pixel),
+        "domain": pixel_domain_json(expected, actual, delta.pixel),
+    })
+}
+
+fn pixel_domain_json(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> Value {
+    json!({
+        "actualOnly": is_actual_only_nonblack(expected, actual, pixel),
+        "expectedOnly": is_expected_only_nonblack(expected, actual, pixel),
+        "sharedNonblack": is_shared_nonblack(expected, actual, pixel),
+        "sharedNonblackInterior1px": is_interior_shared_nonblack(expected, actual, pixel),
+        "sharedNonblackInterior2px": is_interior_radius(expected, pixel, 2, |neighbor| {
+            is_shared_nonblack(expected, actual, neighbor)
+        }),
     })
 }
 
@@ -280,17 +356,36 @@ fn is_interior_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) 
     })
 }
 
+fn is_interior_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    is_interior(expected, pixel, |neighbor| {
+        is_shared_nonblack(expected, actual, neighbor)
+    })
+}
+
 fn is_interior(image: &RgbaImage, pixel: usize, include_neighbor: impl Fn(usize) -> bool) -> bool {
+    is_interior_radius(image, pixel, 1, include_neighbor)
+}
+
+fn is_interior_radius(
+    image: &RgbaImage,
+    pixel: usize,
+    radius: usize,
+    include_neighbor: impl Fn(usize) -> bool,
+) -> bool {
     let pixel_index = pixel / 4;
     let x = pixel_index % image.width;
     let y = pixel_index / image.width;
-    if x == 0 || y == 0 || x == image.width - 1 || y == image.height - 1 {
+    if x < radius
+        || y < radius
+        || x + radius >= image.width
+        || y + radius >= image.height
+    {
         return false;
     }
-    for dy in [usize::MAX, 0, 1] {
-        for dx in [usize::MAX, 0, 1] {
-            let neighbor_x = x.wrapping_add(dx);
-            let neighbor_y = y.wrapping_add(dy);
+    for dy in 0..=(radius * 2) {
+        for dx in 0..=(radius * 2) {
+            let neighbor_x = x + dx - radius;
+            let neighbor_y = y + dy - radius;
             let neighbor = (neighbor_y * image.width + neighbor_x) * 4;
             if !include_neighbor(neighbor) {
                 return false;
@@ -302,6 +397,18 @@ fn is_interior(image: &RgbaImage, pixel: usize, include_neighbor: impl Fn(usize)
 
 fn is_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
     pixel_rgb_nonzero(&expected.rgba, pixel) || pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_shared_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    pixel_rgb_nonzero(&expected.rgba, pixel) && pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_actual_only_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    !pixel_rgb_nonzero(&expected.rgba, pixel) && pixel_rgb_nonzero(&actual.rgba, pixel)
+}
+
+fn is_expected_only_nonblack(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    pixel_rgb_nonzero(&expected.rgba, pixel) && !pixel_rgb_nonzero(&actual.rgba, pixel)
 }
 
 fn pixel_rgb_nonzero(rgba: &[u8], pixel: usize) -> bool {

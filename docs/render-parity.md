@@ -76,12 +76,19 @@ For direct raw-buffer hotspot inspection, use:
 just imqraw-deltas `
   .external-fixtures/render-parity-real-normal-maps/three-vrm/Seed-san.frame000.imqraw `
   .external-fixtures/render-parity-real-normal-maps/wgpu/Seed-san.frame000.imqraw `
-  .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.deltas.json
+  .external-fixtures/render-parity-real-normal-maps/reports/Seed-san.wgpu-vs-three-vrm.deltas.json `
+  32 `
+  1 `
+  shared-nonblack-interior1px
 ```
 
 `tools/render-parity/inspect-imqraw-deltas.rs` reports the worst per-pixel RGBA
 deltas, changed-pixel bounds, and whether each changed pixel is visible,
-nonblack, or one-pixel-interior. The convenience recipe
+nonblack, one-pixel-interior, actual-only, expected-only, or shared-nonblack
+inside a one/two-pixel body mask. Use `actual-only` / `expected-only` for
+coverage-only pixels and `shared-nonblack-interior1px` or
+`shared-nonblack-interior2px` for material/UV/body-color deltas that should
+ignore silhouette and background classification noise. The convenience recipe
 `just render-parity-imqraw-seed-normal-deltas` writes wgpu and Bevy reports for
 the current real normal-map Seed-san artifacts. The 2026-06-10 Seed-san report
 shows no alpha deltas, but max RGB delta `255` inside visible/interior pixels:

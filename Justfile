@@ -228,8 +228,8 @@ imqraw-compare expected actual output metric="rgb-visible":
     cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs --expected "{{ expected }}" --actual "{{ actual }}" --metric "{{ metric }}" --out "{{ output }}"
 
 # Inspect worst per-pixel deltas in two direct renderer imqraw artifacts.
-imqraw-deltas expected actual output top="32" min_channel_delta="1":
-    cargo +nightly -Zscript tools/render-parity/inspect-imqraw-deltas.rs --expected "{{ expected }}" --actual "{{ actual }}" --top {{ top }} --min-channel-delta {{ min_channel_delta }} --out "{{ output }}"
+imqraw-deltas expected actual output top="32" min_channel_delta="1" domain="all":
+    cargo +nightly -Zscript tools/render-parity/inspect-imqraw-deltas.rs --expected "{{ expected }}" --actual "{{ actual }}" --top {{ top }} --min-channel-delta {{ min_channel_delta }} --domain "{{ domain }}" --out "{{ output }}"
 
 # Verify that a renderer imqraw artifact contains exactly the same RGBA bytes as its companion RGBA JSON artifact.
 imqraw-verify imqraw rgba_json:

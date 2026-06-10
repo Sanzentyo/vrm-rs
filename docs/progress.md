@@ -37,6 +37,16 @@
   with max selected-channel deltas `213` / `214`, so the current base-texture
   blocker includes UV/primitive/coverage or lookup-locality effects and is not
   explained by mip generation alone.
+- Extended `tools/render-parity/inspect-imqraw-deltas.rs` and `just
+  imqraw-deltas` with raw-domain filters (`actual-only`, `expected-only`,
+  `shared-nonblack`, and one/two-pixel shared interior domains). On the Seed-san
+  UV diagnostic, `actual-only` is only wgpu `229` / Bevy `228` pixels, matching
+  the known edge/raster-sized component, while the shared body domain still has
+  large local deltas. Raising `--min-channel-delta` to `16` shrinks the shared
+  body count to wgpu `131` / Bevy `146` pixels, and wgpu-vs-Bevy direct UV
+  comparison is `43.5658 dB`; the next slice should map those local shared-UV
+  hotspots back to primitive/material IDs rather than treating the whole UV
+  field as globally wrong.
 - Reinstalled the latest public `imq` main with `cargo install --git
   https://github.com/Sanzentyo/imq.git imq --locked --force` after refreshing
   the local skills through `chezmoi --no-tty --force apply`, and confirmed the
