@@ -87,7 +87,7 @@ fn validate_fixture(
     require_string(fixture, "name")?;
     require_string(fixture, "stem")?;
     require_existing_path(fixture, base_dir, "source")?;
-    validate_artifact_group(
+    let reference = artifact_group_paths(
         required_object(fixture, "reference", &source)?,
         base_dir,
         &format!("{source}.reference"),
@@ -104,6 +104,7 @@ fn validate_fixture(
         validate_comparison(
             comparison,
             base_dir,
+            &reference,
             &format!("{source}.comparisons[{comparison_index}]"),
             allow_failed,
         )?;
@@ -114,18 +115,19 @@ fn validate_fixture(
 fn validate_comparison(
     comparison: &Value,
     base_dir: &Path,
+    reference: &ArtifactPaths,
     source: &str,
     allow_failed: bool,
 ) -> Result<(), Box<dyn Error>> {
     expect_object(comparison, source)?;
     require_string(comparison, "renderer")?;
-    validate_artifact_group(
+    let capture = artifact_group_paths(
         required_object(comparison, "capture", source)?,
         base_dir,
         &format!("{source}.capture"),
     )?;
     let numeric_report_path = require_existing_path(comparison, base_dir, "numericReport")?;
-    require_existing_path(comparison, base_dir, "diagnosticReport")?;
+    let diagnostic_report_path = require_existing_path(comparison, base_dir, "diagnosticReport")?;
     require_existing_path(comparison, base_dir, "diffPng")?;
 
     let summary = required_object(comparison, "summary", source)?;
@@ -147,6 +149,13 @@ fn validate_comparison(
 
     let report_text = fs::read_to_string(&numeric_report_path)?;
     let report = serde_json::from_str::<Value>(&report_text)?;
+    validate_report_paths(
+        &report,
+        &reference.imqraw,
+        &capture.imqraw,
+        &numeric_report_path,
+        source,
+    )?;
     let report_pass = report.get("pass").and_then(Value::as_bool).ok_or_else(|| {
         format!(
             "{}: pass must be a boolean",
@@ -184,19 +193,178 @@ fn validate_comparison(
             .into());
         }
     }
+    validate_summary_matches_report(summary, &report, &numeric_report_path, source)?;
+
+    let diagnostic_text = fs::read_to_string(&diagnostic_report_path)?;
+    let diagnostic_report = serde_json::from_str::<Value>(&diagnostic_text)?;
+    validate_report_paths(
+        &diagnostic_report,
+        &reference.rgba_json,
+        &capture.rgba_json,
+        &diagnostic_report_path,
+        source,
+    )?;
     Ok(())
 }
 
-fn validate_artifact_group(
+#[derive(Clone, Debug)]
+struct ArtifactPaths {
+    rgba_json: PathBuf,
+    imqraw: PathBuf,
+}
+
+fn artifact_group_paths(
     group: &Value,
     base_dir: &Path,
     source: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<ArtifactPaths, Box<dyn Error>> {
     expect_object(group, source)?;
-    for field in ["rgbaJson", "imqraw", "png"] {
-        require_existing_path(group, base_dir, field)?;
-    }
+    let rgba_json = require_existing_path(group, base_dir, "rgbaJson")?;
+    let imqraw = require_existing_path(group, base_dir, "imqraw")?;
+    require_existing_path(group, base_dir, "png")?;
+    Ok(ArtifactPaths { rgba_json, imqraw })
+}
+
+fn validate_report_paths(
+    report: &Value,
+    expected: &Path,
+    actual: &Path,
+    report_path: &Path,
+    source: &str,
+) -> Result<(), Box<dyn Error>> {
+    let report_expected = report_path_field(report, "expected", report_path)?;
+    let report_actual = report_path_field(report, "actual", report_path)?;
+    ensure_same_path(
+        &report_expected,
+        expected,
+        &format!("{source}.expected report path"),
+    )?;
+    ensure_same_path(
+        &report_actual,
+        actual,
+        &format!("{source}.actual report path"),
+    )?;
     Ok(())
+}
+
+fn report_path_field(
+    report: &Value,
+    field: &str,
+    report_path: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let raw = report
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{}: {field} must be a string", display_path(report_path)))?;
+    Ok(PathBuf::from(raw))
+}
+
+fn ensure_same_path(left: &Path, right: &Path, source: &str) -> Result<(), Box<dyn Error>> {
+    let left = canonical_path(left)?;
+    let right = canonical_path(right)?;
+    if left == right {
+        Ok(())
+    } else {
+        Err(format!(
+            "{source} mismatch: left={}, right={}",
+            left.display(),
+            right.display()
+        )
+        .into())
+    }
+}
+
+fn canonical_path(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    path.canonicalize()
+        .map_err(|err| format!("failed to canonicalize {}: {err}", path.display()).into())
+}
+
+fn validate_summary_matches_report(
+    summary: &Value,
+    report: &Value,
+    report_path: &Path,
+    source: &str,
+) -> Result<(), Box<dyn Error>> {
+    let selected = report
+        .get("selectedMetric")
+        .ok_or_else(|| format!("{}: selectedMetric is missing", display_path(report_path)))?;
+    let alpha = report
+        .get("alpha")
+        .ok_or_else(|| format!("{}: alpha is missing", display_path(report_path)))?;
+    ensure_summary_field(
+        summary,
+        "selectedPsnr",
+        &report_f64_string(selected, "psnr", report_path)?,
+        source,
+    )?;
+    ensure_summary_field(
+        summary,
+        "maxChannelDelta",
+        &report_u64_string(selected, "maxChannelDelta", report_path)?,
+        source,
+    )?;
+    ensure_summary_field(
+        summary,
+        "alphaMismatches",
+        &report_u64_string(alpha, "mismatches", report_path)?,
+        source,
+    )?;
+    ensure_summary_field(
+        summary,
+        "alphaMaxDelta",
+        &report_u64_string(alpha, "maxDelta", report_path)?,
+        source,
+    )?;
+    Ok(())
+}
+
+fn ensure_summary_field(
+    summary: &Value,
+    field: &str,
+    expected: &str,
+    source: &str,
+) -> Result<(), Box<dyn Error>> {
+    let actual = summary
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{source}.summary.{field} must be a string"))?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(
+            format!("{source}.summary.{field} mismatch: manifest={actual}, report={expected}")
+                .into(),
+        )
+    }
+}
+
+fn report_f64_string(
+    value: &Value,
+    field: &str,
+    report_path: &Path,
+) -> Result<String, Box<dyn Error>> {
+    let Some(value) = value.get(field) else {
+        return Err(format!("{}: {field} is missing", display_path(report_path)).into());
+    };
+    if value.is_null() || value.as_str() == Some("Infinity") {
+        return Ok("Infinity".to_owned());
+    }
+    let value = value
+        .as_f64()
+        .ok_or_else(|| format!("{}: {field} must be a number", display_path(report_path)))?;
+    Ok(format!("{value:.4}"))
+}
+
+fn report_u64_string(
+    value: &Value,
+    field: &str,
+    report_path: &Path,
+) -> Result<String, Box<dyn Error>> {
+    let value = value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{}: {field} must be an integer", display_path(report_path)))?;
+    Ok(value.to_string())
 }
 
 fn required_object<'a>(

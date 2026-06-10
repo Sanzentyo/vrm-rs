@@ -188,7 +188,12 @@ cargo +nightly -Zscript tools/render-parity/validate-review-manifest.rs `
   --manifest .external-fixtures/render-parity/review-manifest.json
 ```
 
-The `just render-parity-validate MANIFEST` wrapper runs the same audit.
+The `just render-parity-validate MANIFEST` wrapper runs the same audit. The
+validator also cross-checks the manifest's reference/capture artifact paths
+against the `expected` and `actual` fields embedded in both the direct-imqraw
+numeric report and RGBA diagnostic report, and requires the manifest summary
+strings to match the numeric report's selected PSNR, selected max-channel
+delta, alpha mismatch count, and alpha max delta.
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel

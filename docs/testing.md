@@ -171,8 +171,9 @@ selected PSNR, max channel delta, alpha mismatch, and pass/fail status.
 `review-manifest.json` links that same gate data to source fixtures,
 reference/capture RGBA JSON, direct imqraw, PNG, diagnostic reports, and diff
 heatmaps for downstream audits, and `tools/render-parity/validate-review-manifest.rs`
-checks those links plus comparison pass flags. The compared images live
-under `.external-fixtures/render-parity/three-vrm/`,
+checks those links, comparison pass flags, report-local `expected`/`actual`
+paths, and summary fields mirrored from the direct-imqraw numeric report. The
+compared images live under `.external-fixtures/render-parity/three-vrm/`,
 `.external-fixtures/render-parity/wgpu/`, and
 `.external-fixtures/render-parity/bevy/`.
 The runner keeps the reusable comparison logic Sans I/O where practical:
