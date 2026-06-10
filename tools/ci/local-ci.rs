@@ -331,6 +331,7 @@ fn run(options: Options) -> Result<(), String> {
 fn run_example_smokes() -> Result<(), String> {
     for example in [
         "mtoon_renderer_skeletons",
+        "wgpu_mtoon_pipeline_materialization",
         "ash_mtoon_pipeline_materialization",
         "bevy_mtoon_materialization",
         "custom_engine_adapter",
