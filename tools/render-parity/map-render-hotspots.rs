@@ -148,6 +148,10 @@ struct HotspotSummary {
     expected_frontmost_mean_uv_distance: Option<f32>,
     actual_frontmost_max_uv_distance: Option<f32>,
     expected_frontmost_max_uv_distance: Option<f32>,
+    actual_frontmost_mean_rgb_distance: Option<f32>,
+    expected_frontmost_mean_rgb_distance: Option<f32>,
+    actual_frontmost_max_rgb_distance: Option<f32>,
+    expected_frontmost_max_rgb_distance: Option<f32>,
     frontmost_mean_edge_distance_pixels: Option<f32>,
     frontmost_edge_distance_lte_025px: usize,
     frontmost_edge_distance_lte_050px: usize,
@@ -210,6 +214,9 @@ struct Hotspot {
     nearest_visible_expected: Option<CandidateMatch>,
     nearest_visible_actual: Option<CandidateMatch>,
     frontmost_visible: Option<CandidateMatch>,
+    frontmost_base_uv_srgb: Option<[u8; 4]>,
+    frontmost_expected_rgb_distance: Option<f32>,
+    frontmost_actual_rgb_distance: Option<f32>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -340,6 +347,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 options.hit_radius,
                 [options.sample_center_x, options.sample_center_y],
             );
+            let frontmost_visible = frontmost_visible_candidate_match(&candidates);
+            let frontmost_base_uv_srgb =
+                frontmost_visible.as_ref().map(|frontmost| {
+                    diagnostic_linear_uv_to_srgb_color(frontmost.base_uv, delta.actual[3])
+                });
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -361,7 +373,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     &candidates,
                     actual_linear_uv,
                 ),
-                frontmost_visible: frontmost_visible_candidate_match(&candidates),
+                frontmost_visible,
+                frontmost_base_uv_srgb,
+                frontmost_expected_rgb_distance: frontmost_base_uv_srgb
+                    .map(|color| rgb_distance(color, delta.expected)),
+                frontmost_actual_rgb_distance: frontmost_base_uv_srgb
+                    .map(|color| rgb_distance(color, delta.actual)),
                 candidates,
             }
         })
@@ -424,6 +441,14 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     if edge_neighbors(&adjacency, [0, 1], 0) != Vec::<usize>::new() {
         return Err("boundary edge should not report neighbors".into());
     }
+    let encoded = diagnostic_linear_uv_to_srgb_color([0.25, 0.5], 255);
+    if diagnostic_linear_uv(encoded)
+        .into_iter()
+        .zip([0.25, 0.5])
+        .any(|(actual, expected)| (actual - expected).abs() > 0.003)
+    {
+        return Err("base-uv sRGB encode/decode should round-trip within one byte".into());
+    }
     Ok(())
 }
 
@@ -482,6 +507,18 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         }),
         expected_frontmost_max_uv_distance: max_frontmost_uv_distance(hotspots, |hotspot| {
             hotspot.expected_linear_uv
+        }),
+        actual_frontmost_mean_rgb_distance: mean_frontmost_rgb_distance(hotspots, |hotspot| {
+            hotspot.frontmost_actual_rgb_distance
+        }),
+        expected_frontmost_mean_rgb_distance: mean_frontmost_rgb_distance(hotspots, |hotspot| {
+            hotspot.frontmost_expected_rgb_distance
+        }),
+        actual_frontmost_max_rgb_distance: max_frontmost_rgb_distance(hotspots, |hotspot| {
+            hotspot.frontmost_actual_rgb_distance
+        }),
+        expected_frontmost_max_rgb_distance: max_frontmost_rgb_distance(hotspots, |hotspot| {
+            hotspot.frontmost_expected_rgb_distance
         }),
         frontmost_mean_edge_distance_pixels: mean_frontmost_edge_distance(hotspots),
         frontmost_edge_distance_lte_025px: frontmost_edge_distance_lte(hotspots, 0.25),
@@ -582,6 +619,29 @@ fn max_frontmost_uv_distance(
                 .as_ref()
                 .map(|frontmost| uv_distance(frontmost.base_uv, uv(hotspot)))
         })
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn mean_frontmost_rgb_distance(
+    hotspots: &[Hotspot],
+    distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(distance)
+        .fold((0.0, 0usize), |(sum, count), distance| {
+            (sum + distance, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn max_frontmost_rgb_distance(
+    hotspots: &[Hotspot],
+    distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Option<f32> {
+    hotspots
+        .iter()
+        .filter_map(distance)
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
 }
 
@@ -1327,12 +1387,41 @@ fn diagnostic_linear_uv(color: [u8; 4]) -> [f32; 2] {
     ]
 }
 
+fn diagnostic_linear_uv_to_srgb_color(linear_uv: [f32; 2], alpha: u8) -> [u8; 4] {
+    [
+        quantize_unorm8(linear_to_srgb_channel(linear_uv[0])),
+        quantize_unorm8(linear_to_srgb_channel(linear_uv[1])),
+        0,
+        alpha,
+    ]
+}
+
 fn srgb_to_linear_channel(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92
     } else {
         ((value + 0.055) / 1.055).powf(2.4)
     }
+}
+
+fn linear_to_srgb_channel(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.0031308 {
+        12.92 * value
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn quantize_unorm8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f32 {
+    let dr = f32::from(left[0]) - f32::from(right[0]);
+    let dg = f32::from(left[1]) - f32::from(right[1]);
+    let db = f32::from(left[2]) - f32::from(right[2]);
+    (dr * dr + dg * dg + db * db).sqrt()
 }
 
 fn display_path(path: &Path) -> String {

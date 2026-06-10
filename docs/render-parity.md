@@ -300,6 +300,19 @@ same-triangle `145/180` and edge-neighbor `39/25`. This weakens the simple
 points next toward local UV/color quantization, interpolation/sample-position,
 or non-unique UV-color matching diagnostics.
 
+The mapper now quantizes the CPU frontmost `base_uv` through the same
+linear-to-sRGB path used by the wgpu diagnostic shader and reports RGB distance
+to the captured actual/expected pixels. This strongly separates Rust renderer
+self-consistency from the remaining three-vrm delta: top-32 wgpu has frontmost
+RGB mean actual/expected `0.0313/80.0337` with max `1/188.0877`; Bevy has
+`0.7134/80.0337` with max `1.4142/188.0877`. The top-256 pass is less extreme
+but keeps the same shape: wgpu `0.6093/11.1972`, Bevy `1.8690/10.9681`. That
+means the Rust CPU projection, UV transform, and capture shader agree closely
+with each other, while three-vrm's diagnostic `vMapUv` path still differs on
+the worst pixels. The next high-value target is to inspect or reproduce
+three.js `vMapUv` generation for the affected materials, including map matrix,
+UV channel, and derivative/sample-position behavior.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell
