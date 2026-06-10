@@ -100,6 +100,20 @@
   `6341` exact owner matches, and the largest residual clusters are `+256`
   (`2023` pixels), `+1` (`1573`), and `-1` (`1039`), which makes concrete
   renderer divergence much narrower than the three-vrm mapping gap.
+- Extended the wgpu and Bevy owner-ID capture artifacts with renderer metadata
+  for every diagnostic triangle: owner ID/color, node, mesh, primitive,
+  material index/name, base-vs-outline pass, render order, triangle ordinal,
+  and source indices. `compare-owner-id-images.rs` now reads that adjacent
+  `.rgba.json` metadata and adds labeled transition details to
+  `*.owner-ids.json`. On the current Seed-san run both Rust captures emit
+  `81236` owner labels. The top three-vrm-vs-Rust mismatch is no longer an
+  anonymous ID delta: three-vrm renders `arm_plastic (Outline)` on
+  `robo_arm_2`, while Rust resolves the same visible region to base-pass
+  `material_6` on node `144`, mesh `3`, primitive `1`, triangle `406/407`.
+  The wgpu-vs-Bevy report stays much narrower, mostly the same
+  material/pass with neighboring triangle ordinals such as `442 -> 443`, so the
+  next ownership slice should compare three-vrm pass/material ordering against
+  Rust's sorted per-triangle stream before changing light accumulation.
 - Added reusable CPU-side RGBA repeat-linear sampling to `vrm-io::CpuRgba8Image`
   and exposed `LoadedVrm::material_base_texture_rgba8_image`. The
   `map-render-hotspots.rs` report now records each candidate's sampled base
@@ -857,6 +871,6 @@
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 84.95% line coverage, with `vrm-io` at 86.91%, `vrm-protocol` at 90.93%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.35%.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot is workspace 85.05% line coverage, with `vrm-io` at 87.22%, `vrm-protocol` at 90.93%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.35%.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
 - P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.

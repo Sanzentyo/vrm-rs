@@ -15,7 +15,9 @@ serde_json = "1.0.150"
 use clap::Parser;
 use imq::{PixelFormat, RawImageRecord, decode_imqraw_bundle};
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,6 +75,8 @@ struct OwnerCompareReport {
     top_owner_id_deltas: Vec<OwnerIdDelta>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
+    top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
+    top_actual_to_expected_details: Vec<OwnerTransitionDetail>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -85,6 +89,26 @@ struct OwnerTransition {
 #[derive(Clone, Debug, Serialize)]
 struct OwnerIdDelta {
     expected_minus_actual: i64,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct OwnerLabel {
+    id: u32,
+    material_name: Option<String>,
+    pass: Option<String>,
+    mesh_name: Option<String>,
+    node_index: Option<u64>,
+    mesh_index: Option<u64>,
+    primitive_index: Option<u64>,
+    material_index: Option<i64>,
+    triangle: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerTransitionDetail {
+    expected: OwnerLabel,
+    actual: OwnerLabel,
     count: u64,
 }
 
@@ -111,11 +135,15 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .ok_or("--actual is required unless --self-test is set")?;
     let expected = read_imqraw_rgba8(expected_path, options.expected_index)?;
     let actual = read_imqraw_rgba8(actual_path, options.actual_index)?;
+    let expected_metadata = read_owner_metadata_for_imqraw(expected_path).unwrap_or_default();
+    let actual_metadata = read_owner_metadata_for_imqraw(actual_path).unwrap_or_default();
     let report = compare_owner_images(
         display_path(expected_path),
         display_path(actual_path),
         &expected,
         &actual,
+        &expected_metadata,
+        &actual_metadata,
         options.top,
     )?;
     let json = format!("{}\n", serde_json::to_string_pretty(&report)?);
@@ -135,6 +163,8 @@ fn compare_owner_images(
     actual_name: String,
     expected: &RgbaImage,
     actual: &RgbaImage,
+    expected_metadata: &HashMap<u32, OwnerLabel>,
+    actual_metadata: &HashMap<u32, OwnerLabel>,
     top: usize,
 ) -> Result<OwnerCompareReport, Box<dyn Error>> {
     if expected.width != actual.width || expected.height != actual.height {
@@ -234,8 +264,20 @@ fn compare_owner_images(
         max_expected_owner: expected_ids.iter().copied().max().unwrap_or(0),
         max_actual_owner: actual_ids.iter().copied().max().unwrap_or(0),
         top_owner_id_deltas: top_deltas(owner_id_deltas, top),
-        top_expected_to_actual: top_transitions(expected_to_actual, top),
-        top_actual_to_expected: top_transitions(actual_to_expected, top),
+        top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
+        top_actual_to_expected: top_transitions(actual_to_expected.clone(), top),
+        top_expected_to_actual_details: top_transition_details(
+            &expected_to_actual,
+            expected_metadata,
+            actual_metadata,
+            top,
+        ),
+        top_actual_to_expected_details: top_transition_details(
+            &actual_to_expected,
+            actual_metadata,
+            expected_metadata,
+            top,
+        ),
     })
 }
 
@@ -258,6 +300,46 @@ fn top_deltas(map: BTreeMap<i64, u64>, top: usize) -> Vec<OwnerIdDelta> {
             count,
         })
         .collect()
+}
+
+fn top_transition_details(
+    map: &BTreeMap<(u32, u32), u64>,
+    expected_metadata: &HashMap<u32, OwnerLabel>,
+    actual_metadata: &HashMap<u32, OwnerLabel>,
+    top: usize,
+) -> Vec<OwnerTransitionDetail> {
+    let mut entries = map.iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .1
+            .cmp(left.1)
+            .then_with(|| left.0.0.cmp(&right.0.0))
+            .then_with(|| left.0.1.cmp(&right.0.1))
+    });
+    entries
+        .into_iter()
+        .take(top)
+        .map(|((expected, actual), count)| OwnerTransitionDetail {
+            expected: expected_metadata
+                .get(expected)
+                .cloned()
+                .unwrap_or_else(|| OwnerLabel::from_id(*expected)),
+            actual: actual_metadata
+                .get(actual)
+                .cloned()
+                .unwrap_or_else(|| OwnerLabel::from_id(*actual)),
+            count: *count,
+        })
+        .collect()
+}
+
+impl OwnerLabel {
+    fn from_id(id: u32) -> Self {
+        Self {
+            id,
+            ..Self::default()
+        }
+    }
 }
 
 fn neighborhood_contains(
@@ -379,6 +461,43 @@ fn record_to_rgba8(
     })
 }
 
+fn read_owner_metadata_for_imqraw(path: &Path) -> Result<HashMap<u32, OwnerLabel>, Box<dyn Error>> {
+    let rgba_json = path.with_extension("rgba.json");
+    if !rgba_json.exists() {
+        return Ok(HashMap::new());
+    }
+    let value = serde_json::from_slice::<Value>(&fs::read(&rgba_json)?)?;
+    let owners = value
+        .pointer("/renderer/diagnosticOwnerIds")
+        .or_else(|| value.pointer("/reference/renderer/diagnosticOwnerIds"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok(owners
+        .iter()
+        .filter_map(owner_label)
+        .map(|label| (label.id, label))
+        .collect())
+}
+
+fn owner_label(value: &Value) -> Option<OwnerLabel> {
+    Some(OwnerLabel {
+        id: u32::try_from(value.get("id")?.as_u64()?).ok()?,
+        material_name: string_field(value, "materialName"),
+        pass: string_field(value, "pass"),
+        mesh_name: string_field(value, "meshName"),
+        node_index: value.get("nodeIndex").and_then(Value::as_u64),
+        mesh_index: value.get("meshIndex").and_then(Value::as_u64),
+        primitive_index: value.get("primitiveIndex").and_then(Value::as_u64),
+        material_index: value.get("materialIndex").and_then(Value::as_i64),
+        triangle: value.get("triangle").and_then(Value::as_u64),
+    })
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(ToOwned::to_owned)
+}
+
 fn display_path(path: &Path) -> String {
     path.display().to_string()
 }
@@ -399,6 +518,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         "actual".to_owned(),
         &expected,
         &actual,
+        &HashMap::new(),
+        &HashMap::new(),
         8,
     )?;
     assert_eq!(report.expected_nonzero, 2);

@@ -474,7 +474,7 @@ fn spawn_vrm_meshes(
             options,
             image_handles: &image_handles,
         };
-        for primitive in &mesh.primitives {
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
             let mut shading = loaded.expression_material_shading_plan(
                 primitive.material,
                 GltfMaterialShadingOptions {
@@ -488,6 +488,14 @@ fn spawn_vrm_meshes(
                 shading.normal_scale *= options.normal_map_scale;
             }
             let render_order = material_render_order(loaded, primitive.material);
+            let owner_source = OwnerSource {
+                node_index,
+                mesh_index,
+                primitive_index,
+                material: primitive.material,
+                pass: OwnerPass::Base,
+                render_order,
+            };
             let normal_plan =
                 primitive.normal_map_plan(shading.normal_scale, options.normal_map_mode.into());
             let (mesh, has_tangents) = bevy_mesh(
@@ -509,11 +517,18 @@ fn spawn_vrm_meshes(
                 )),
                 render_order,
                 phase_order: material_phase_order(loaded, primitive.material),
+                owner_source,
+                owner_ids: Vec::new(),
             };
             primitives.push(surface);
             if !options.disable_outlines
-                && let Some(outline) =
-                    bevy_outline_primitive(loaded, primitive, &morph_weights, &primitive_context)
+                && let Some(outline) = bevy_outline_primitive(
+                    loaded,
+                    primitive,
+                    &morph_weights,
+                    &primitive_context,
+                    owner_source,
+                )
             {
                 primitives.push(outline);
             }
@@ -525,6 +540,9 @@ fn spawn_vrm_meshes(
     } else {
         assign_owner_id_colors(&mut primitives);
     }
+    commands.insert_resource(RenderOwnerMetadata {
+        diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives),
+    });
 
     for primitive in primitives {
         let mesh = meshes.add(primitive.mesh);
@@ -556,6 +574,8 @@ fn assign_owner_id_colors(primitives: &mut [BevyPrimitive]) {
 fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
     let mut next_id = 1;
     for primitive in primitives {
+        let original_indices = mesh_indices_u32(&primitive.mesh);
+        primitive.owner_ids.clear();
         primitive
             .mesh
             .try_duplicate_vertices()
@@ -563,13 +583,24 @@ fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
         let vertex_count = primitive.mesh.count_vertices();
         let mut colors = Vec::with_capacity(vertex_count);
         let mut remaining = vertex_count;
+        let mut triangle_index = 0;
         while remaining > 0 {
             let color = owner_id_color(next_id);
+            let indices = original_indices
+                .get(triangle_index * 3..triangle_index * 3 + 3)
+                .and_then(|slice| <[u32; 3]>::try_from(slice).ok())
+                .unwrap_or([0, 0, 0]);
+            primitive.owner_ids.push(OwnerTriangle {
+                id: next_id,
+                triangle: triangle_index,
+                indices,
+            });
             next_id += 1;
             for _ in 0..remaining.min(3) {
                 colors.push(color);
             }
             remaining = remaining.saturating_sub(3);
+            triangle_index += 1;
         }
         primitive
             .mesh
@@ -582,12 +613,68 @@ fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
     }
 }
 
+fn mesh_indices_u32(mesh: &Mesh) -> Vec<u32> {
+    match mesh.indices() {
+        Some(Indices::U16(indices)) => indices.iter().map(|index| u32::from(*index)).collect(),
+        Some(Indices::U32(indices)) => indices.clone(),
+        None => (0..u32::try_from(mesh.count_vertices()).unwrap_or(0)).collect(),
+    }
+}
+
+fn diagnostic_owner_ids(
+    loaded: &LoadedVrm,
+    primitives: &[BevyPrimitive],
+) -> Vec<serde_json::Value> {
+    primitives
+        .iter()
+        .flat_map(|primitive| {
+            primitive.owner_ids.iter().map(move |owner| {
+                let source = primitive.owner_source;
+                json!({
+                    "id": owner.id,
+                    "color": owner_id_color_u8(owner.id),
+                    "nodeIndex": source.node_index,
+                    "meshIndex": source.mesh_index,
+                    "primitiveIndex": source.primitive_index,
+                    "materialIndex": source.material,
+                    "materialName": material_name(loaded, source.material),
+                    "pass": source.pass.as_str(),
+                    "renderOrder": source.render_order,
+                    "triangle": owner.triangle,
+                    "indices": owner.indices,
+                })
+            })
+        })
+        .collect()
+}
+
+fn material_name(loaded: &LoadedVrm, material: Option<usize>) -> Option<&str> {
+    material.and_then(|index| {
+        loaded
+            .model()
+            .document()
+            .materials
+            .get(index)
+            .and_then(|material| material.name.as_deref())
+    })
+}
+
 fn owner_id_color(id: u32) -> [f32; 4] {
+    let [r, g, b, a] = owner_id_color_u8(id);
     [
-        srgb_u8_to_linear((id & 0xff) as u8),
-        srgb_u8_to_linear(((id >> 8) & 0xff) as u8),
-        srgb_u8_to_linear(((id >> 16) & 0xff) as u8),
-        1.0,
+        srgb_u8_to_linear(r),
+        srgb_u8_to_linear(g),
+        srgb_u8_to_linear(b),
+        f32::from(a) / 255.0,
+    ]
+}
+
+fn owner_id_color_u8(id: u32) -> [u8; 4] {
+    [
+        (id & 0xff) as u8,
+        ((id >> 8) & 0xff) as u8,
+        ((id >> 16) & 0xff) as u8,
+        255,
     ]
 }
 
@@ -639,6 +726,7 @@ fn bevy_outline_primitive(
     primitive: &GltfPrimitiveData,
     morph_weights: &[f32],
     context: &BevyPrimitiveContext<'_>,
+    owner_source: OwnerSource,
 ) -> Option<BevyPrimitive> {
     let outline =
         loaded.expression_mtoon_outline_plan(primitive.material, context.expression_effects)?;
@@ -695,6 +783,12 @@ fn bevy_outline_primitive(
         material: BevyPrimitiveMaterial::Mtoon(material),
         render_order: material_render_order(loaded, primitive.material).saturating_add(1),
         phase_order: material_phase_order(loaded, primitive.material).saturating_add(1),
+        owner_source: OwnerSource {
+            pass: OwnerPass::Outline,
+            render_order: material_render_order(loaded, primitive.material).saturating_add(1),
+            ..owner_source
+        },
+        owner_ids: Vec::new(),
     })
 }
 
@@ -766,6 +860,45 @@ struct BevyPrimitive {
     material: BevyPrimitiveMaterial,
     render_order: i32,
     phase_order: i32,
+    owner_source: OwnerSource,
+    owner_ids: Vec<OwnerTriangle>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnerPass {
+    Base,
+    Outline,
+}
+
+impl OwnerPass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Outline => "outline",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OwnerSource {
+    node_index: usize,
+    mesh_index: usize,
+    primitive_index: usize,
+    material: Option<usize>,
+    pass: OwnerPass,
+    render_order: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OwnerTriangle {
+    id: u32,
+    triangle: usize,
+    indices: [u32; 3],
+}
+
+#[derive(Clone, Debug, Default, Resource)]
+struct RenderOwnerMetadata {
+    diagnostic_owner_ids: Vec<serde_json::Value>,
 }
 
 enum BevyPrimitiveMaterial {
@@ -1705,6 +1838,7 @@ fn receive_image_from_buffer(
 fn update(
     receiver: Res<MainWorldReceiver>,
     options: Res<CaptureOptions>,
+    owner_metadata: Option<Res<RenderOwnerMetadata>>,
     sender: Res<CaptureSender>,
     mut scene_controller: ResMut<SceneController>,
     mut app_exit_writer: MessageWriter<AppExit>,
@@ -1724,13 +1858,15 @@ fn update(
         return;
     }
 
-    let result = write_capture(&options, &image_data).map_err(|error| error.to_string());
+    let result = write_capture(&options, owner_metadata.as_deref(), &image_data)
+        .map_err(|error| error.to_string());
     let _ = sender.0.send(result);
     app_exit_writer.write(AppExit::Success);
 }
 
 fn write_capture(
     options: &CaptureOptions,
+    owner_metadata: Option<&RenderOwnerMetadata>,
     image_data: &[u8],
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let row_bytes = options.width as usize * 4;
@@ -1749,6 +1885,9 @@ fn write_capture(
         fs::create_dir_all(parent)?;
     }
     let effective_lighting = mtoon_lighting_values(options);
+    let diagnostic_owner_ids = owner_metadata
+        .map(|metadata| metadata.diagnostic_owner_ids.clone())
+        .unwrap_or_default();
     let artifact = json!({
         "generator": "vrm-rs examples/bevy_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -1761,6 +1900,10 @@ fn write_capture(
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
+        "renderer": {
+            "backend": "bevy",
+            "diagnosticOwnerIds": diagnostic_owner_ids,
+        },
         "expressions": options.expressions,
         "camera": {
             "y": options.camera_y,

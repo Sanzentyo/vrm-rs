@@ -158,6 +158,40 @@ struct DrawPrimitive {
     uv_transforms: MaterialUvTransforms,
     material_extra: MaterialExtraUniform,
     policy: MaterialPolicy,
+    owner_source: OwnerSource,
+    owner_ids: Vec<OwnerTriangle>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnerPass {
+    Base,
+    Outline,
+}
+
+impl OwnerPass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Outline => "outline",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OwnerSource {
+    node_index: usize,
+    mesh_index: usize,
+    primitive_index: usize,
+    material: Option<usize>,
+    pass: OwnerPass,
+    render_order: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OwnerTriangle {
+    id: u32,
+    triangle: usize,
+    indices: [u32; 3],
 }
 
 struct GpuPrimitive {
@@ -398,7 +432,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mesh = mesh_draw_data(&loaded, &options)?;
     let rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
 
-    write_rgba_json(&options, &rgba)?;
+    write_rgba_json(&options, &rgba, &loaded, &mesh)?;
     if let Some(path) = &options.png_out {
         write_png(path, options.width, options.height, &rgba)?;
     }
@@ -447,8 +481,16 @@ fn mesh_draw_data(
             skin_matrices: skin_matrices.as_deref(),
             options,
         };
-        for primitive in &mesh.primitives {
-            let surface = draw_primitive(loaded, primitive, &morph_weights, &draw_context)?;
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            let source = OwnerSource {
+                node_index,
+                mesh_index,
+                primitive_index,
+                material: primitive.material,
+                pass: OwnerPass::Base,
+                render_order: material_policy(loaded, primitive.material).render_order,
+            };
+            let surface = draw_primitive(loaded, primitive, &morph_weights, &draw_context, source)?;
             primitives.push(surface.clone());
             if !options.disable_outlines
                 && let Some(outline) =
@@ -482,8 +524,15 @@ fn assign_owner_id_triangles(primitives: &mut [DrawPrimitive]) {
     let mut next_id = 1;
     for primitive in primitives {
         let mut vertices = Vec::with_capacity(primitive.indices.len());
-        for triangle in primitive.indices.chunks_exact(3) {
+        primitive.owner_ids.clear();
+        for (triangle_index, triangle) in primitive.indices.chunks_exact(3).enumerate() {
             let color = owner_id_color(next_id);
+            let indices = [triangle[0], triangle[1], triangle[2]];
+            primitive.owner_ids.push(OwnerTriangle {
+                id: next_id,
+                triangle: triangle_index,
+                indices,
+            });
             next_id += 1;
             vertices.extend(
                 triangle
@@ -503,11 +552,21 @@ fn assign_owner_id_triangles(primitives: &mut [DrawPrimitive]) {
 }
 
 fn owner_id_color(id: u32) -> [f32; 4] {
+    let [r, g, b, a] = owner_id_color_u8(id);
     [
-        srgb_u8_to_linear((id & 0xff) as u8),
-        srgb_u8_to_linear(((id >> 8) & 0xff) as u8),
-        srgb_u8_to_linear(((id >> 16) & 0xff) as u8),
-        1.0,
+        srgb_u8_to_linear(r),
+        srgb_u8_to_linear(g),
+        srgb_u8_to_linear(b),
+        f32::from(a) / 255.0,
+    ]
+}
+
+fn owner_id_color_u8(id: u32) -> [u8; 4] {
+    [
+        (id & 0xff) as u8,
+        ((id >> 8) & 0xff) as u8,
+        ((id >> 16) & 0xff) as u8,
+        255,
     ]
 }
 
@@ -593,6 +652,12 @@ fn outline_primitive(
             blend: false,
             alpha_cutoff: 0.5,
         },
+        owner_source: OwnerSource {
+            pass: OwnerPass::Outline,
+            render_order: surface.policy.render_order.saturating_add(1),
+            ..surface.owner_source
+        },
+        owner_ids: Vec::new(),
     })
 }
 
@@ -601,6 +666,7 @@ fn draw_primitive(
     primitive: &GltfPrimitiveData,
     morph_weights: &[f32],
     context: &PrimitiveDrawContext<'_>,
+    owner_source: OwnerSource,
 ) -> Result<DrawPrimitive, Box<dyn Error>> {
     let mut shading = loaded.expression_material_shading_plan(
         primitive.material,
@@ -701,6 +767,8 @@ fn draw_primitive(
             normal_plan.uses_view_derivative_normals(),
         ),
         policy,
+        owner_source,
+        owner_ids: Vec::new(),
     })
 }
 
@@ -1923,11 +1991,17 @@ mod tests {
     }
 }
 
-fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn Error>> {
+fn write_rgba_json(
+    options: &CaptureOptions,
+    rgba: &[u8],
+    loaded: &LoadedVrm,
+    mesh: &MeshDrawData,
+) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
     let effective_lighting = mtoon_lighting_uniform(options);
+    let diagnostic_owner_ids = diagnostic_owner_ids(loaded, mesh);
     let artifact = json!({
         "generator": "vrm-rs examples/wgpu_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -1940,6 +2014,10 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
+        "renderer": {
+            "backend": "wgpu",
+            "diagnosticOwnerIds": diagnostic_owner_ids,
+        },
         "expressions": options.expressions,
         "camera": {
             "y": options.camera_y,
@@ -1975,6 +2053,41 @@ fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn 
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn diagnostic_owner_ids(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_json::Value> {
+    mesh.primitives
+        .iter()
+        .flat_map(|primitive| {
+            primitive.owner_ids.iter().map(move |owner| {
+                let source = primitive.owner_source;
+                json!({
+                    "id": owner.id,
+                    "color": owner_id_color_u8(owner.id),
+                    "nodeIndex": source.node_index,
+                    "meshIndex": source.mesh_index,
+                    "primitiveIndex": source.primitive_index,
+                    "materialIndex": source.material,
+                    "materialName": material_name(loaded, source.material),
+                    "pass": source.pass.as_str(),
+                    "renderOrder": source.render_order,
+                    "triangle": owner.triangle,
+                    "indices": owner.indices,
+                })
+            })
+        })
+        .collect()
+}
+
+fn material_name(loaded: &LoadedVrm, material: Option<usize>) -> Option<&str> {
+    material.and_then(|index| {
+        loaded
+            .model()
+            .document()
+            .materials
+            .get(index)
+            .and_then(|material| material.name.as_deref())
+    })
 }
 
 fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), Box<dyn Error>> {

@@ -375,6 +375,26 @@ the largest residual offsets are `+256`, `+1`, and `-1`. Use this before
 changing triangle generation/order; a useful change should shrink those offset
 clusters or make their cause obvious.
 
+The owner-specific reports become labeled when adjacent `.rgba.json` artifacts
+contain diagnostic owner metadata. The wgpu and Bevy captures now write that
+metadata under `renderer.diagnosticOwnerIds`; each label includes owner
+ID/color, node index, mesh index, primitive index, material index/name,
+base-vs-outline pass, render order, triangle ordinal, and source indices. The
+comparator reads both normal Rust metadata and three-vrm reference metadata
+from `/renderer/diagnosticOwnerIds` or `/reference/renderer/diagnosticOwnerIds`
+and writes `top_expected_to_actual_details` plus
+`top_actual_to_expected_details`. On the current Seed-san owner run, both Rust
+captures emit `81236` owner labels. The leading three-vrm-vs-Rust transition
+maps three-vrm `arm_plastic (Outline)` on `robo_arm_2` to Rust base-pass
+`material_6`, node `144`, mesh `3`, primitive `1`, with the same local triangle
+ordinal band (`406/407`). The leading wgpu-vs-Bevy transitions are narrower:
+same material/pass/node/mesh/primitive, but neighboring triangle ordinals
+(`442 -> 443`, `418 -> 417`, `666 -> 665`) and the existing `+256` cluster.
+Treat this as evidence that the next useful parity step is pass/material
+ownership alignment between the three-vrm WebGL draw stream and Rust's sorted
+triangle stream, with wgpu-vs-Bevy triangle-edge differences as a secondary
+sanity check.
+
 For subpixel raster-convention checks, `map-render-hotspots.rs` accepts
 `--sample-center-x` and `--sample-center-y` while leaving the default at the
 normal pixel center `0.5,0.5`. On the current Seed-san top-32 base-UV hotspots,
