@@ -94,6 +94,120 @@ impl RendererFrontFace {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenProjectionSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl ScreenProjectionSize {
+    pub fn from_pixels(width: u32, height: u32) -> Self {
+        Self {
+            width: width as f32,
+            height: height as f32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenProjectionBounds {
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
+}
+
+impl ScreenProjectionBounds {
+    pub fn from_triangle(screen: [[f32; 2]; 3]) -> Self {
+        Self {
+            min_x: screen
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::INFINITY, f32::min),
+            min_y: screen
+                .iter()
+                .map(|point| point[1])
+                .fold(f32::INFINITY, f32::min),
+            max_x: screen
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::NEG_INFINITY, f32::max),
+            max_y: screen
+                .iter()
+                .map(|point| point[1])
+                .fold(f32::NEG_INFINITY, f32::max),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenTriangleProjection {
+    pub screen: [[f32; 2]; 3],
+    pub bounds: ScreenProjectionBounds,
+    pub ndc_depth: f32,
+    pub webgl_depth: f32,
+    pub screen_signed_area: f32,
+    pub front_facing: bool,
+    pub gpu_front_facing: bool,
+}
+
+pub fn project_triangle_to_screen<D>(
+    positions: [[f32; 3]; 3],
+    view_projection: Mat4,
+    size: ScreenProjectionSize,
+    front_face: RendererFrontFace,
+) -> Option<ScreenTriangleProjection>
+where
+    D: ClipDepthMapping,
+{
+    let points =
+        positions.map(|position| project_position_to_screen::<D>(position, view_projection, size));
+    let [Some(a), Some(b), Some(c)] = points else {
+        return None;
+    };
+    let screen = [[a[0], a[1]], [b[0], b[1]], [c[0], c[1]]];
+    let screen_signed_area = screen_triangle_signed_area(screen);
+    let ndc_depth = (a[2] + b[2] + c[2]) / 3.0;
+    Some(ScreenTriangleProjection {
+        screen,
+        bounds: ScreenProjectionBounds::from_triangle(screen),
+        ndc_depth,
+        webgl_depth: D::webgl_depth_from_ndc_z(ndc_depth),
+        screen_signed_area,
+        front_facing: screen_signed_area > 0.0,
+        gpu_front_facing: front_face.is_gpu_front_facing(screen_signed_area),
+    })
+}
+
+pub fn project_position_to_screen<D>(
+    position: [f32; 3],
+    view_projection: Mat4,
+    size: ScreenProjectionSize,
+) -> Option<[f32; 3]>
+where
+    D: ClipDepthMapping,
+{
+    let clip = view_projection * Vec3::from_array(position).extend(1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    let screen = [
+        (ndc.x * 0.5 + 0.5) * size.width,
+        (0.5 - ndc.y * 0.5) * size.height,
+        ndc.z,
+    ];
+    screen
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(screen)
+}
+
+pub fn screen_triangle_signed_area(screen: [[f32; 2]; 3]) -> f32 {
+    (screen[1][0] - screen[0][0]) * (screen[2][1] - screen[0][1])
+        - (screen[1][1] - screen[0][1]) * (screen[2][0] - screen[0][0])
+}
+
 pub trait SceneGraph {
     type Error;
 
@@ -2937,6 +3051,32 @@ mod tests {
         assert!(!RendererFrontFace::Ccw.is_gpu_front_facing(1.0));
         assert!(RendererFrontFace::Cw.is_gpu_front_facing(1.0));
         assert!(!RendererFrontFace::Cw.is_gpu_front_facing(-1.0));
+    }
+
+    #[test]
+    fn screen_projection_maps_triangle_into_y_down_pixels() {
+        let projection = project_triangle_to_screen::<ZeroToOneDepth>(
+            [[-1.0, -1.0, 0.25], [1.0, -1.0, 0.25], [0.0, 1.0, 0.25]],
+            Mat4::IDENTITY,
+            ScreenProjectionSize {
+                width: 100.0,
+                height: 200.0,
+            },
+            RendererFrontFace::Ccw,
+        )
+        .unwrap();
+
+        assert_eq!(
+            projection.screen,
+            [[0.0, 200.0], [100.0, 200.0], [50.0, 0.0]]
+        );
+        assert_eq!(projection.bounds.min_x, 0.0);
+        assert_eq!(projection.bounds.max_y, 200.0);
+        assert_eq!(projection.ndc_depth, 0.25);
+        assert_eq!(projection.webgl_depth, -0.5);
+        assert!(projection.screen_signed_area < 0.0);
+        assert!(!projection.front_facing);
+        assert!(projection.gpu_front_facing);
     }
 
     #[derive(Default)]

@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RendererFrontFace, ZeroToOneDepth,
+    RendererFrontFace, ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth,
+    project_triangle_to_screen,
 };
 use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -2147,25 +2148,6 @@ fn write_rgba_json(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
-struct OwnerScreenBounds {
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct OwnerProjection {
-    screen: [[f32; 2]; 3],
-    bounds: OwnerScreenBounds,
-    depth: f32,
-    webgl_depth: f32,
-    screen_signed_area: f32,
-    front_facing: bool,
-    gpu_front_facing: bool,
-}
-
 fn diagnostic_owner_ids(
     loaded: &LoadedVrm,
     mesh: &MeshDrawData,
@@ -2215,7 +2197,7 @@ fn diagnostic_owner_ids(
                         "maxX": projection.bounds.max_x,
                         "maxY": projection.bounds.max_y,
                     })),
-                    "depth": projection.map(|projection| projection.depth),
+                    "depth": projection.map(|projection| projection.ndc_depth),
                     "webglDepth": projection.map(|projection| projection.webgl_depth),
                     "depthRange": projection.map(|_| ZeroToOneDepth::DEPTH_RANGE_LABEL),
                     "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
@@ -2248,52 +2230,21 @@ fn owner_triangle_projection<D>(
     triangle: usize,
     view_projection: Mat4,
     options: &CaptureOptions,
-) -> Option<OwnerProjection>
+) -> Option<ScreenTriangleProjection>
 where
     D: ClipDepthMapping,
 {
     let start = triangle.checked_mul(3)?;
-    let points = [
-        owner_screen_vertex(vertices.get(start)?.position, view_projection, options)?,
-        owner_screen_vertex(vertices.get(start + 1)?.position, view_projection, options)?,
-        owner_screen_vertex(vertices.get(start + 2)?.position, view_projection, options)?,
-    ];
-    let screen = points.map(|point| [point[0], point[1]]);
-    let screen_signed_area = triangle_signed_area(screen[0], screen[1], screen[2]);
-    let depth = (points[0][2] + points[1][2] + points[2][2]) / 3.0;
-    Some(OwnerProjection {
-        screen,
-        bounds: OwnerScreenBounds {
-            min_x: screen
-                .iter()
-                .map(|point| point[0])
-                .fold(f32::INFINITY, f32::min),
-            min_y: screen
-                .iter()
-                .map(|point| point[1])
-                .fold(f32::INFINITY, f32::min),
-            max_x: screen
-                .iter()
-                .map(|point| point[0])
-                .fold(f32::NEG_INFINITY, f32::max),
-            max_y: screen
-                .iter()
-                .map(|point| point[1])
-                .fold(f32::NEG_INFINITY, f32::max),
-        },
-        depth,
-        webgl_depth: D::webgl_depth_from_ndc_z(depth),
-        screen_signed_area,
-        front_facing: screen_signed_area > 0.0,
-        gpu_front_facing: options
-            .front_face
-            .renderer_policy()
-            .is_gpu_front_facing(screen_signed_area),
-    })
-}
-
-fn triangle_signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
-    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    project_triangle_to_screen::<D>(
+        [
+            vertices.get(start)?.position,
+            vertices.get(start + 1)?.position,
+            vertices.get(start + 2)?.position,
+        ],
+        view_projection,
+        ScreenProjectionSize::from_pixels(options.width, options.height),
+        options.front_face.renderer_policy(),
+    )
 }
 
 fn visible_by_cull_policy(cull_mode: CaptureCullMode, gpu_front_facing: bool) -> bool {
@@ -2302,27 +2253,6 @@ fn visible_by_cull_policy(cull_mode: CaptureCullMode, gpu_front_facing: bool) ->
         CaptureCullMode::Front => !gpu_front_facing,
         CaptureCullMode::Back => gpu_front_facing,
     }
-}
-
-fn owner_screen_vertex(
-    position: [f32; 3],
-    view_projection: Mat4,
-    options: &CaptureOptions,
-) -> Option<[f32; 3]> {
-    let clip = view_projection * Vec3::from_array(position).extend(1.0);
-    if clip.w.abs() <= f32::EPSILON {
-        return None;
-    }
-    let ndc = clip.truncate() / clip.w;
-    let screen = [
-        (ndc.x * 0.5 + 0.5) * options.width as f32,
-        (0.5 - ndc.y * 0.5) * options.height as f32,
-        ndc.z,
-    ];
-    screen
-        .iter()
-        .all(|value| value.is_finite())
-        .then_some(screen)
 }
 
 fn node_name(loaded: &LoadedVrm, node: usize) -> Option<&str> {
