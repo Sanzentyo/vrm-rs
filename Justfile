@@ -263,6 +263,13 @@ render-parity-seed-base-uv-hotspots:
     just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.json 32
     just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.deltas.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.hotspots.json 32
 
+# Map a wider Seed-san transformed-base-UV hotspot band to confirm whether lower-amplitude deltas remain near triangle boundaries.
+render-parity-seed-base-uv-hotspots-wide:
+    just imqraw-deltas .external-fixtures/render-parity-seed-base-uv-diagnostic/three-vrm/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/wgpu/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.top256.json 256 1 shared-nonblack-interior1px
+    just imqraw-deltas .external-fixtures/render-parity-seed-base-uv-diagnostic/three-vrm/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/bevy/Seed-san.frame000.imqraw .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.deltas.top256.json 256 1 shared-nonblack-interior1px
+    just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.deltas.top256.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.top256.json 256
+    just map-render-hotspots .external-fixtures/official/Seed-san.vrm .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.deltas.top256.json .external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.bevy-vs-three-vrm.hotspots.top256.json 256
+
 # Verify that a renderer imqraw artifact contains exactly the same RGBA bytes as its companion RGBA JSON artifact.
 imqraw-verify imqraw rgba_json:
     cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs --imqraw "{{ imqraw }}" --rgba-json "{{ rgba_json }}"

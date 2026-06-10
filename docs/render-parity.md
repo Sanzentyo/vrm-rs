@@ -262,6 +262,21 @@ ownership the strongest explanation; broader interior pixels and lower-amplitude
 deltas still need separate checks before ruling out every sampler or
 interpolation edge case.
 
+For that broader check, run:
+
+```powershell
+just render-parity-seed-base-uv-hotspots-wide
+```
+
+This maps the top-256 `shared-nonblack-interior1px` base-UV deltas. The wider
+2026-06-10 pass keeps the same shape but is less absolute than top-32: wgpu has
+`173/256` frontmost candidates within `0.25px` of an edge, `217/256` within
+`0.5px`, and `253/256` within `1px`; Bevy has `149/256`, `204/256`, and
+`246/256` respectively. Mean edge distance is wgpu `0.2257px` and Bevy
+`0.2924px`. So the worst deltas sit directly on triangle boundaries, while the
+lower-amplitude band is still mostly a near-boundary phenomenon rather than a
+large model-interior drift.
+
 A source-like generated UV-boundary control is available through:
 
 ```powershell
