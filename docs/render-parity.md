@@ -243,12 +243,12 @@ center worsens Rust actual/frontmost agreement.
 The follow-up Rust-side screen-jitter capture confirms that the sample-center
 hint should not be applied as a global projection offset. The capture examples
 and local runner accept `--screen-jitter-x/y` for focused diagnostics; the wgpu
-path applies a clip-space projection offset, while the Bevy path uses an
-equivalent fixed-camera translation approximation. On Seed-san base-UV,
+path applies a tested clip-space projection offset, while the Bevy path uses a
+fixed-camera translation approximation for capture-only comparison. On Seed-san base-UV,
 `rgb-shared-nonblack-interior1px` baseline is wgpu `38.6925 dB` / Bevy
 `38.5360 dB` with max selected-channel delta `166`. Jittering Rust by `+0.25`
-pixel on X drops the score to wgpu `30.6636 dB` / Bevy `26.9913 dB`, and
-`-0.25` drops it to wgpu `30.9648 dB` / Bevy `26.9061 dB`. Treat the
+pixel on X drops the score to wgpu `27.0500 dB` / Bevy `26.9913 dB`, and
+`-0.25` drops it to wgpu `26.9579 dB` / Bevy `26.9061 dB`. Treat the
 sample-center mapper result as a classification clue, not a render correction;
 the remaining blocker is still local GPU/CPU-prepared surface selection around
 UV seams and triangle boundaries.
@@ -257,9 +257,10 @@ UV seams and triangle boundaries.
 and nearest screen-space triangle-edge distance in pixels. Re-running the
 Seed-san base-UV hotspot maps shows the current top-32 frontmost candidates are
 all within `0.25px` of a triangle edge for both wgpu and Bevy, with mean edge
-distance `0.0341px`. That makes the residual a genuine boundary ownership
-problem, not a broad UV interpolation, material assignment, or sampler-state
-drift across model interiors.
+distance `0.0341px`. For the current top hotspot set, this makes boundary
+ownership the strongest explanation; broader interior pixels and lower-amplitude
+deltas still need separate checks before ruling out every sampler or
+interpolation edge case.
 
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and

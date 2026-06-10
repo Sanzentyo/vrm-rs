@@ -1753,9 +1753,31 @@ fn camera_view(options: &CaptureOptions) -> Mat4 {
     )
 }
 
-fn jittered_projection(mut projection: Mat4, options: &CaptureOptions) -> Mat4 {
-    projection.w_axis.x += 2.0 * options.screen_jitter_x / options.width as f32;
-    projection.w_axis.y -= 2.0 * options.screen_jitter_y / options.height as f32;
+fn jittered_projection(projection: Mat4, options: &CaptureOptions) -> Mat4 {
+    jitter_projection_pixels(
+        projection,
+        [options.screen_jitter_x, options.screen_jitter_y],
+        options.width,
+        options.height,
+    )
+}
+
+fn jitter_projection_pixels(
+    mut projection: Mat4,
+    screen_jitter: [f32; 2],
+    width: u32,
+    height: u32,
+) -> Mat4 {
+    let ndc_x = 2.0 * screen_jitter[0] / width as f32;
+    let ndc_y = -2.0 * screen_jitter[1] / height as f32;
+    projection.x_axis.x += ndc_x * projection.x_axis.w;
+    projection.y_axis.x += ndc_x * projection.y_axis.w;
+    projection.z_axis.x += ndc_x * projection.z_axis.w;
+    projection.w_axis.x += ndc_x * projection.w_axis.w;
+    projection.x_axis.y += ndc_y * projection.x_axis.w;
+    projection.y_axis.y += ndc_y * projection.y_axis.w;
+    projection.z_axis.y += ndc_y * projection.z_axis.w;
+    projection.w_axis.y += ndc_y * projection.w_axis.w;
     projection
 }
 
@@ -1773,6 +1795,50 @@ fn extent(options: &CaptureOptions) -> wgpu::Extent3d {
 
 fn align_to(value: u32, alignment: u32) -> u32 {
     value.div_ceil(alignment) * alignment
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_screen_jitter_offsets_pixels_without_depth_scaling() {
+        let width = 320;
+        let height = 180;
+        let projection = Mat4::perspective_rh(
+            30.0_f32.to_radians(),
+            width as f32 / height as f32,
+            0.1,
+            20.0,
+        );
+        let point = Vec3::new(0.2, 0.35, -3.0);
+        let before = project_to_screen(projection, point, width, height);
+        let after = project_to_screen(
+            jitter_projection_pixels(projection, [1.25, 0.75], width, height),
+            point,
+            width,
+            height,
+        );
+
+        assert_close(after[0] - before[0], 1.25);
+        assert_close(after[1] - before[1], 0.75);
+    }
+
+    fn project_to_screen(projection: Mat4, point: Vec3, width: u32, height: u32) -> [f32; 2] {
+        let clip = projection * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        [
+            (ndc.x * 0.5 + 0.5) * width as f32,
+            (0.5 - ndc.y * 0.5) * height as f32,
+        ]
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-4,
+            "expected {expected}, got {actual}"
+        );
+    }
 }
 
 fn write_rgba_json(options: &CaptureOptions, rgba: &[u8]) -> Result<(), Box<dyn Error>> {

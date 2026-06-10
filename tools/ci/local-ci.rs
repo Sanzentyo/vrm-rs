@@ -267,6 +267,7 @@ fn run(options: Options) -> Result<(), String> {
             ],
         )?;
         run_example_smokes()?;
+        run_example_unit_tests()?;
     }
 
     if !options.skip_coverage {
@@ -300,6 +301,13 @@ fn run_example_smokes() -> Result<(), String> {
         "custom_engine_adapter",
     ] {
         run_cmd("cargo", ["run", "--example", example])?;
+    }
+    Ok(())
+}
+
+fn run_example_unit_tests() -> Result<(), String> {
+    for example in ["wgpu_render_capture", "bevy_render_capture"] {
+        run_cmd("cargo", ["test", "--example", example, "--all-features"])?;
     }
     Ok(())
 }

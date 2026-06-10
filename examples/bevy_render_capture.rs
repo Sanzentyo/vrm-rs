@@ -1212,13 +1212,20 @@ fn bevy_camera_transform(options: &CaptureOptions) -> Transform {
 }
 
 fn camera_jitter_world(options: &CaptureOptions) -> GVec3 {
-    let distance = options.camera_z.max(0.0001);
+    camera_jitter_world_pixels(
+        [options.screen_jitter_x, options.screen_jitter_y],
+        options.height,
+        options.camera_z,
+    )
+}
+
+fn camera_jitter_world_pixels(screen_jitter: [f32; 2], height: u32, camera_z: f32) -> GVec3 {
+    let distance = camera_z.max(0.0001);
     let half_height = (0.5 * 30.0_f32.to_radians()).tan() * distance;
-    let world_per_pixel_y = 2.0 * half_height / options.height as f32;
-    let world_per_pixel_x = world_per_pixel_y * options.width as f32 / options.height as f32;
+    let world_per_pixel = 2.0 * half_height / height as f32;
     GVec3::new(
-        -options.screen_jitter_x * world_per_pixel_x,
-        options.screen_jitter_y * world_per_pixel_y,
+        -screen_jitter[0] * world_per_pixel,
+        screen_jitter[1] * world_per_pixel,
         0.0,
     )
 }
@@ -1706,4 +1713,23 @@ fn write_png(
     }
     image::save_buffer(path, rgba, width, height, image::ColorType::Rgba8)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_jitter_uses_same_world_scale_for_non_square_pixels() {
+        let jitter = camera_jitter_world_pixels([2.0, 2.0], 180, 3.0);
+
+        assert_close(jitter.x.abs(), jitter.y.abs());
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-6,
+            "expected {expected}, got {actual}"
+        );
+    }
 }
