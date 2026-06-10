@@ -189,8 +189,11 @@ This writes
 `.external-fixtures/render-parity-seed-base-uv-diagnostic/reports/Seed-san.{wgpu,bevy}-vs-three-vrm.hotspots.json`.
 `tools/render-parity/map-render-hotspots.rs` reuses the renderer-independent
 `vrm-io` transformed vertex path and the same fixed capture camera to list
-candidate node, mesh, primitive, material, triangle, raw UV, and transformed
-base UV values for each top direct-imqraw hotspot pixel. Use it after
+candidate node, mesh, primitive, material, material pipeline policy, triangle,
+raw UV, and transformed base UV values for each top direct-imqraw hotspot
+pixel. The report also records nearest-by-encoded-UV matches for both all
+candidate faces and faces that pass the material cull policy, which helps avoid
+misreading back-face CPU hits as render-visible winners. Use it after
 `just render-parity-seed-base-uv-diagnostic` when the next question is "which
 material/primitive owns this residual?" The mapper defaults to the local
 render-parity runner's camera (`256x256`, `camera-z = 3`) and to non-expanded
@@ -198,6 +201,16 @@ diagnostic outlines, matching three-vrm's diagnostic material replacement. Pass
 `--expand-outlines` when mapping normal shaded artifacts, and pass `--width`,
 `--height`, or camera options when inspecting artifacts generated with custom
 capture settings.
+
+The 2026-06-10 focused Seed-san hotspot pass shows wgpu and Bevy producing the
+same top-32 visible-candidate distribution. The largest visible mismatch group
+is `material_2 -> material_1` (`11/32` hotspots), while same-material hotspots
+remain concentrated on `material_1`, `material_0`, material index `14`, and the
+small `material_5/6/8` groups. All of these are opaque, depth-writing,
+back-face-culled base passes, so the remaining base-UV blocker is best treated
+as base surface material/primitive selection, interpolation, or raster-depth
+locality rather than transparent blending, outline expansion, or UV-transform
+state.
 
 The outline-isolated variant is:
 

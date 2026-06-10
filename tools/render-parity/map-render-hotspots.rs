@@ -8,6 +8,8 @@ clap = { version = "4.6.1", features = ["derive"] }
 glam = "0.32.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+vrm-adapter = { path = "../../crates/vrm-adapter" }
+vrm-core = { path = "../../crates/vrm-core" }
 vrm-io = { path = "../../crates/vrm-io" }
 vrm-rs = { path = "../.." }
 ---
@@ -21,8 +23,14 @@ use serde_json::Value;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use vrm_adapter::{
+    renderer_material_pipeline_plan, GltfMaterialAlphaMode, GltfMaterialPipelineOverride,
+    MtoonMaterializationOptions, RendererMaterialAlphaMode, RendererMaterialCullMode,
+    RendererMaterialPipelinePlan,
+};
+use vrm_core::MaterialRef;
 use vrm_io::{
-    transform_tex_coord_0, GltfExpressionRenderEffects, GltfOutlineScale,
+    transform_tex_coord_0, GltfAlphaMode, GltfExpressionRenderEffects, GltfOutlineScale,
     GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
 };
 
@@ -95,6 +103,7 @@ struct Surface {
     pass: &'static str,
     material: Option<usize>,
     material_name: Option<String>,
+    policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
     indices: Vec<u32>,
     vertices: Vec<GltfTransformedVertex>,
@@ -129,7 +138,37 @@ struct Hotspot {
     actual_encoded_uv: [f32; 2],
     max_channel_delta: u8,
     rgb_distance: f64,
+    nearest_expected: Option<CandidateMatch>,
+    nearest_actual: Option<CandidateMatch>,
+    nearest_visible_expected: Option<CandidateMatch>,
+    nearest_visible_actual: Option<CandidateMatch>,
     candidates: Vec<HitCandidate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CandidateMatch {
+    candidate_index: usize,
+    base_uv_distance: f32,
+    pass: &'static str,
+    material: Option<usize>,
+    material_name: Option<String>,
+    policy: MaterialPolicyReport,
+    triangle: usize,
+    depth: f32,
+    front_facing: bool,
+    visible_by_policy: bool,
+    base_uv: [f32; 2],
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct MaterialPolicyReport {
+    render_order: i32,
+    phase_order: i32,
+    cull_mode: &'static str,
+    alpha_mode: &'static str,
+    depth_write: bool,
+    blend: bool,
+    alpha_cutoff: f32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -142,6 +181,7 @@ struct HitCandidate {
     indices: [u32; 3],
     material: Option<usize>,
     material_name: Option<String>,
+    policy: MaterialPolicyReport,
     sample_offset: [i32; 2],
     sample_distance: f32,
     depth: f32,
@@ -150,6 +190,7 @@ struct HitCandidate {
     base_uv: [f32; 2],
     screen: [[f32; 2]; 3],
     front_facing: bool,
+    visible_by_policy: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -180,18 +221,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .top
         .iter()
         .take(options.top_pixels)
-        .map(|delta| Hotspot {
-            x: delta.x,
-            y: delta.y,
-            pixel: delta.pixel,
-            expected: delta.expected,
-            actual: delta.actual,
-            delta: delta.delta,
-            expected_encoded_uv: encoded_uv(delta.expected),
-            actual_encoded_uv: encoded_uv(delta.actual),
-            max_channel_delta: delta.max_channel_delta,
-            rgb_distance: delta.rgb_distance,
-            candidates: candidates_for_pixel(
+        .map(|delta| {
+            let expected_encoded_uv = encoded_uv(delta.expected);
+            let actual_encoded_uv = encoded_uv(delta.actual);
+            let candidates = candidates_for_pixel(
                 delta.x,
                 delta.y,
                 &surfaces,
@@ -200,7 +233,30 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 height,
                 options.candidate_limit,
                 options.hit_radius,
-            ),
+            );
+            Hotspot {
+                x: delta.x,
+                y: delta.y,
+                pixel: delta.pixel,
+                expected: delta.expected,
+                actual: delta.actual,
+                delta: delta.delta,
+                expected_encoded_uv,
+                actual_encoded_uv,
+                max_channel_delta: delta.max_channel_delta,
+                rgb_distance: delta.rgb_distance,
+                nearest_expected: nearest_candidate_match(&candidates, expected_encoded_uv),
+                nearest_actual: nearest_candidate_match(&candidates, actual_encoded_uv),
+                nearest_visible_expected: nearest_visible_candidate_match(
+                    &candidates,
+                    expected_encoded_uv,
+                ),
+                nearest_visible_actual: nearest_visible_candidate_match(
+                    &candidates,
+                    actual_encoded_uv,
+                ),
+                candidates,
+            }
         })
         .collect();
 
@@ -280,6 +336,7 @@ fn build_surfaces(
                 expression_effects,
             );
             let base_uv_transform = uv_transforms.base;
+            let base_policy = capture_material_policy(loaded, primitive.material);
             surfaces.push(Surface {
                 node: node_index,
                 mesh: mesh_index,
@@ -287,6 +344,7 @@ fn build_surfaces(
                 pass: "base",
                 material: primitive.material,
                 material_name: material_name.clone(),
+                policy: base_policy,
                 base_uv_transform,
                 indices: primitive_indices(primitive.indices.as_slice(), vertices.len()),
                 vertices: vertices.clone(),
@@ -331,6 +389,7 @@ fn build_surfaces(
                 pass: "outline",
                 material: primitive.material,
                 material_name,
+                policy: outline_material_policy(base_policy),
                 base_uv_transform,
                 indices: primitive_indices(primitive.indices.as_slice(), outline_vertices.len()),
                 vertices: outline_vertices,
@@ -391,6 +450,52 @@ fn candidates_for_pixel(
     candidates
 }
 
+fn nearest_candidate_match(
+    candidates: &[HitCandidate],
+    encoded_uv: [f32; 2],
+) -> Option<CandidateMatch> {
+    nearest_candidate_match_by(candidates, encoded_uv, |_| true)
+}
+
+fn nearest_visible_candidate_match(
+    candidates: &[HitCandidate],
+    encoded_uv: [f32; 2],
+) -> Option<CandidateMatch> {
+    nearest_candidate_match_by(candidates, encoded_uv, |candidate| {
+        candidate.visible_by_policy
+    })
+}
+
+fn nearest_candidate_match_by(
+    candidates: &[HitCandidate],
+    encoded_uv: [f32; 2],
+    filter: impl Fn(&HitCandidate) -> bool,
+) -> Option<CandidateMatch> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| filter(candidate))
+        .map(|(candidate_index, candidate)| CandidateMatch {
+            candidate_index,
+            base_uv_distance: uv_distance(candidate.base_uv, encoded_uv),
+            pass: candidate.pass,
+            material: candidate.material,
+            material_name: candidate.material_name.clone(),
+            policy: candidate.policy,
+            triangle: candidate.triangle,
+            depth: candidate.depth,
+            front_facing: candidate.front_facing,
+            visible_by_policy: candidate.visible_by_policy,
+            base_uv: candidate.base_uv,
+        })
+        .min_by(|left, right| {
+            left.base_uv_distance
+                .partial_cmp(&right.base_uv_distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.candidate_index.cmp(&right.candidate_index))
+        })
+}
+
 fn surface_candidates(
     surface: &Surface,
     view_projection: Mat4,
@@ -427,6 +532,7 @@ fn surface_candidates(
             let raw_uv = interpolate_uv(barycentric, a.uv, b.uv, c.uv);
             let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
             let signed_area = signed_area(a.screen, b.screen, c.screen);
+            let front_facing = signed_area < 0.0;
             Some(HitCandidate {
                 node: surface.node,
                 mesh: surface.mesh,
@@ -436,6 +542,7 @@ fn surface_candidates(
                 indices: [ia, ib, ic],
                 material: surface.material,
                 material_name: surface.material_name.clone(),
+                policy: surface.policy,
                 sample_offset,
                 sample_distance: ((sample_offset[0] * sample_offset[0]
                     + sample_offset[1] * sample_offset[1])
@@ -446,10 +553,92 @@ fn surface_candidates(
                 raw_uv,
                 base_uv,
                 screen: [a.screen, b.screen, c.screen],
-                front_facing: signed_area < 0.0,
+                front_facing,
+                visible_by_policy: visible_by_cull_policy(surface.policy.cull_mode, front_facing),
             })
         })
         .collect()
+}
+
+fn capture_material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicyReport {
+    material_policy_report(capture_material_plan(loaded, material))
+}
+
+fn capture_material_plan(
+    loaded: &LoadedVrm,
+    material: Option<usize>,
+) -> RendererMaterialPipelinePlan {
+    let material_ref = material.map(MaterialRef);
+    let gltf_override = material
+        .and_then(|index| loaded.gltf_materials.get(index))
+        .map(|gltf| GltfMaterialPipelineOverride {
+            alpha_mode: gltf_alpha_mode(gltf.alpha_mode),
+            alpha_cutoff: gltf.alpha_cutoff,
+            double_sided: gltf.double_sided,
+        });
+    renderer_material_pipeline_plan(
+        loaded.model().document(),
+        material_ref,
+        MtoonMaterializationOptions::default(),
+        gltf_override,
+    )
+}
+
+fn gltf_alpha_mode(mode: GltfAlphaMode) -> GltfMaterialAlphaMode {
+    match mode {
+        GltfAlphaMode::Opaque => GltfMaterialAlphaMode::Opaque,
+        GltfAlphaMode::Mask => GltfMaterialAlphaMode::Mask,
+        GltfAlphaMode::Blend => GltfMaterialAlphaMode::Blend,
+    }
+}
+
+fn material_policy_report(plan: RendererMaterialPipelinePlan) -> MaterialPolicyReport {
+    MaterialPolicyReport {
+        render_order: plan.render_order,
+        phase_order: plan.phase_order,
+        cull_mode: cull_mode_name(plan.cull_mode),
+        alpha_mode: alpha_mode_name(plan.alpha_mode),
+        depth_write: plan.depth_write,
+        blend: plan.blend,
+        alpha_cutoff: plan.alpha_cutoff,
+    }
+}
+
+fn outline_material_policy(base_policy: MaterialPolicyReport) -> MaterialPolicyReport {
+    MaterialPolicyReport {
+        render_order: base_policy.render_order + 1,
+        phase_order: base_policy.phase_order + 1,
+        cull_mode: "front",
+        alpha_mode: "opaque",
+        depth_write: true,
+        blend: false,
+        alpha_cutoff: 0.5,
+    }
+}
+
+fn cull_mode_name(mode: RendererMaterialCullMode) -> &'static str {
+    match mode {
+        RendererMaterialCullMode::Off => "off",
+        RendererMaterialCullMode::Front => "front",
+        RendererMaterialCullMode::Back => "back",
+    }
+}
+
+fn alpha_mode_name(mode: RendererMaterialAlphaMode) -> &'static str {
+    match mode {
+        RendererMaterialAlphaMode::Opaque => "opaque",
+        RendererMaterialAlphaMode::Mask => "mask",
+        RendererMaterialAlphaMode::Blend => "blend",
+    }
+}
+
+fn visible_by_cull_policy(cull_mode: &'static str, front_facing: bool) -> bool {
+    match cull_mode {
+        "off" => true,
+        "front" => !front_facing,
+        "back" => front_facing,
+        _ => true,
+    }
 }
 
 fn project(
@@ -532,6 +721,10 @@ fn interpolate_uv(barycentric: [f32; 3], a: [f32; 2], b: [f32; 2], c: [f32; 2]) 
         barycentric[0] * a[0] + barycentric[1] * b[0] + barycentric[2] * c[0],
         barycentric[0] * a[1] + barycentric[1] * b[1] + barycentric[2] * c[1],
     ]
+}
+
+fn uv_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
+    ((left[0] - right[0]).powi(2) + (left[1] - right[1]).powi(2)).sqrt()
 }
 
 fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
