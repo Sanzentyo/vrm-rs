@@ -459,6 +459,12 @@ the same pass/cull/front-face trend, but has smaller buckets where this
 metadata estimate says not visible (`2265` default CCW pixels, `887` CW pixels),
 so use wgpu as the cleaner winding/facing probe and treat the Bevy split as a
 separate projection/fill or specialization diagnostic until it is explained.
+The Bevy capture now computes this owner metadata projection through Bevy's own
+`PerspectiveProjection::get_clip_from_view()` path and labels its depth range
+as `bevy-reverse-zero-to-one-ndc`; the split did not change after moving from
+the older finite-projection approximation. That rules out projection depth as
+the explanation for the Bevy-only metadata-visibility bucket, but not
+edge/fill, color decode, or material specialization effects.
 
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.

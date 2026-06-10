@@ -11,7 +11,7 @@ mod render_capture_scene;
 
 use bevy::app::{AppExit, ScheduleRunnerPlugin};
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::RenderTarget;
+use bevy::camera::{CameraProjection, RenderTarget};
 use bevy::core_pipeline::{core_3d::Transparent3d, tonemapping::Tonemapping};
 use bevy::ecs::system::SystemParam;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -696,7 +696,7 @@ fn diagnostic_owner_ids(
                     })),
                     "depth": projection.map(|projection| projection.depth),
                     "webglDepth": projection.map(|projection| projection.webgl_depth),
-                    "depthRange": projection.map(|_| "zero-to-one-ndc"),
+                    "depthRange": projection.map(|_| "bevy-reverse-zero-to-one-ndc"),
                     "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
                     "frontFacing": projection.map(|projection| projection.front_facing),
                     "gpuFrontFacing": projection.map(|projection| projection.gpu_front_facing),
@@ -786,12 +786,15 @@ struct OwnerProjection {
 }
 
 fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
-    Mat4::perspective_rh(
-        30.0_f32.to_radians(),
-        options.width as f32 / options.height as f32,
-        0.1,
-        20.0,
-    ) * camera_view(options)
+    let projection = PerspectiveProjection {
+        fov: 30.0_f32.to_radians(),
+        aspect_ratio: options.width as f32 / options.height as f32,
+        near: 0.1,
+        far: 20.0,
+        ..default()
+    }
+    .get_clip_from_view();
+    Mat4::from_cols_array(&projection.to_cols_array()) * camera_view(options)
 }
 
 fn owner_triangle_projection(
