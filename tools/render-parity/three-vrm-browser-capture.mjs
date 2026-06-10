@@ -26,6 +26,7 @@ const fixture = args.get('fixture');
 const threeVrmRoot = path.resolve(args.get('three-vrm-root') ?? '../three-vrm');
 const out = args.get('out');
 const pngOut = args.get('png-out');
+const imqrawOut = args.get('imqraw-out');
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
@@ -46,7 +47,7 @@ const disableNormalMaps = args.has('disable-normal-maps');
 const expressionWeights = parseExpressionWeights(expressions);
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -118,6 +119,7 @@ const server = http.createServer((request, response) => {
       mtoonTime,
       expressions: expressionWeights,
       background,
+      imqraw: Boolean(imqrawOut),
       directionalIntensity,
       directionalX,
       directionalY,
@@ -193,6 +195,13 @@ try {
     fs.mkdirSync(path.dirname(pngOut), { recursive: true });
     fs.writeFileSync(pngOut, encodePngRgba(width, height, capture.rgba));
   }
+  if (imqrawOut) {
+    if (!Array.isArray(capture.imqraw)) {
+      throw new Error('browser capture did not return imqraw bytes');
+    }
+    fs.mkdirSync(path.dirname(imqrawOut), { recursive: true });
+    fs.writeFileSync(imqrawOut, Buffer.from(capture.imqraw));
+  }
 } finally {
   if (browser) await browser.close();
   await new Promise((resolve) => server.close(resolve));
@@ -219,6 +228,7 @@ function capturePage(options) {
   import * as THREE from '/three/build/three.module.js';
   import { GLTFLoader } from '/three/examples/jsm/loaders/GLTFLoader.js';
   import { VRMLoaderPlugin } from '/three-vrm/lib/three-vrm.module.js';
+  ${options.imqraw ? "import { init as initImqraw, encodeRgba8 } from 'https://sanzentyo.github.io/imq/imqraw/v0.1.0/imqraw.js';" : ''}
 
   globalThis.captureVrmFrame = async () => {
     const canvas = document.getElementById('canvas');
@@ -304,6 +314,14 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
+    let imqraw = null;
+    if (${options.imqraw}) {
+      await initImqraw();
+      imqraw = Array.from(encodeRgba8(rgba, ${options.width}, ${options.height}, {
+        label: 'three-vrm',
+        tags: ['three-vrm', 'reference'],
+      }));
+    }
     const reference = {
       threeRevision: THREE.REVISION,
       renderer: {
@@ -339,7 +357,7 @@ function capturePage(options) {
       },
     };
     renderer.dispose();
-    return { rgba: Array.from(rgba), reference };
+    return { rgba: Array.from(rgba), imqraw, reference };
   };
 </script>`;
 }

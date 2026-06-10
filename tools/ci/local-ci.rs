@@ -692,6 +692,8 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
         .arg(path(&options.three_vrm_root))
         .arg("--out")
         .arg(path(&render_artifact(options, fixture, "three-vrm")))
+        .arg("--imqraw-out")
+        .arg(path(&render_imqraw_artifact(options, fixture, "three-vrm")))
         .arg("--width")
         .arg(options.render_width.to_string())
         .arg("--height")

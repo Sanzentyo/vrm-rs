@@ -21,7 +21,7 @@ The RGBA artifact is intentionally simple so browser canvas, Bevy readback,
 wgpu readback, or an ash staging image can all write the same format before a
 PNG visual artifact is added for human review.
 
-The concrete Rust captures can also write `imqraw` directly:
+The capture paths can also write `imqraw` directly:
 
 ```powershell
 cargo run --example wgpu_render_capture -- `
@@ -35,11 +35,22 @@ cargo run --example wgpu_render_capture -- `
 imq bundle-info .external-fixtures/render-parity-imqraw-smoke/wgpu/mtoon-light.frame000.imqraw --format json
 ```
 
-`tools/ci/local-ci.rs --render-parity` now asks the wgpu and Bevy capture
-examples to emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The
-current public `imq image` CLI reads those files through `--stdin-format
-imqraw`; direct path arguments with `.imqraw` are not yet auto-detected by the
-installed CLI.
+The three-vrm browser reference accepts the same kind of direct raw artifact:
+
+```powershell
+node tools/render-parity/three-vrm-browser-capture.mjs `
+  --fixture .external-fixtures/official/Seed-san.vrm `
+  --three-vrm-root .external-fixtures/three-vrm `
+  --out .external-fixtures/render-parity-imqraw-smoke/three-vrm/Seed-san.frame000.rgba.json `
+  --imqraw-out .external-fixtures/render-parity-imqraw-smoke/three-vrm/Seed-san.frame000.imqraw `
+  --width 64 `
+  --height 64
+```
+
+`tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
+emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
+`imq image` CLI reads those files through `--stdin-format imqraw`; direct path
+arguments with `.imqraw` are not yet auto-detected by the installed CLI.
 
 For independent raw-image metric checks that do not pass through PNG encoding
 or decoding, use the `imqraw` TypeScript/WASM pack path:
@@ -120,7 +131,7 @@ prepare Playwright, and build the pinned three-vrm checkout under
 `.external-fixtures/three-vrm`. If no `--render-fixture` is passed, the render
 set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 
-- `.external-fixtures/render-parity/three-vrm/<fixture>.frame000.{rgba.json,png}`
+- `.external-fixtures/render-parity/three-vrm/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json`

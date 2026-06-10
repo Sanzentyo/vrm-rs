@@ -181,6 +181,9 @@ The final render parity path should avoid `.rgba.json` for numeric comparison:
 - three-vrm JavaScript/WebGL reference:
   - use `encodeThreeRenderer`, or `gl.readPixels` plus `encodeRgba8` /
     `encodeBundle`.
+  - Current status: the browser capture accepts `--imqraw-out` and encodes the
+    top-left RGBA readback through `encodeRgba8` with `three-vrm`/`reference`
+    tags.
 - Rust wgpu/Bevy captures:
   - use the `imq` Rust crate to encode `FrameOwned::packed_tight(...,
     PixelFormat::Rgba8)` records.
@@ -217,6 +220,8 @@ report without lossy text parsing.
 3. Add selected-metric threshold gates.
 4. Add `rgb-interior1px` and `rgb-visible-interior1px`.
 5. Add `rgb-nonblack` and `rgb-nonblack-interior1px`.
-6. Add direct `imqraw` renderer output for three-vrm, wgpu, and Bevy captures.
+6. Switch local render-parity numeric reports to direct renderer `imqraw`
+   inputs after the installed `imq` CLI supports the required VRM metric
+   domains and gates.
 7. Retire `compare-psnr.mjs` after render-parity recipes no longer depend on
    metrics that only exist in the local comparator.

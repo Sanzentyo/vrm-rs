@@ -72,10 +72,11 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
 This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, writes `.external-fixtures/render-parity/summary.md`, and creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
-The wgpu and Bevy captures also write `.frame000.imqraw` files beside their
-`.rgba.json` artifacts. Check them with `imq bundle-info PATH --format json` or
-pipe the bundle into `imq image - - --stdin-format imqraw` until the installed
-CLI auto-detects `.imqraw` path arguments.
+The three-vrm, wgpu, and Bevy captures also write `.frame000.imqraw` files
+beside their `.rgba.json` artifacts. Check them with
+`imq bundle-info PATH --format json` or pipe the bundle into
+`imq image - - --stdin-format imqraw` until the installed CLI auto-detects
+`.imqraw` path arguments.
 For a PNG-free cross-check of existing RGBA artifacts, use
 `just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
 the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the

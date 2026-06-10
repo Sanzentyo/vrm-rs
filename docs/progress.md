@@ -30,6 +30,11 @@
   `.rgba.json` artifacts. Smoke runs on the generated MToon light fixture
   verified that both wgpu and Bevy imqraw files decode with `imq bundle-info`
   and self-compare through `imq image - - --stdin-format imqraw`.
+- Added matching `--imqraw-out` support to the three-vrm Playwright reference
+  capture. When requested, the browser module imports the fixed imqraw
+  JavaScript/WASM distribution, encodes the flipped top-left RGBA readback with
+  `encodeRgba8`, and returns the raw bundle for Node to write beside the
+  reference `.rgba.json`.
 
 ## 2026-05-31
 
