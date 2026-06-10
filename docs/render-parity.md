@@ -36,7 +36,9 @@ This runs `tools/render-parity/imqraw-compare-rgba-json.ts`, imports the fixed
 the two `.rgba.json` buffers with `encodeBundle`, and pipes the resulting
 lossless `imqraw` bytes to `imq image - - --stdin-format imqraw`. The PNG and
 HTML artifacts remain for visual review only; this path compares the raw RGBA
-buffers produced by the renderers.
+buffers produced by the renderers. The feature gap that still keeps
+`compare-psnr.mjs` in the main gate is tracked in
+`docs/imq-compare-vrm-parity-requirements.md`.
 
 ## PSNR
 

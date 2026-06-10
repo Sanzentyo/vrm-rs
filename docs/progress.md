@@ -11,6 +11,19 @@
   `just render-parity-imqraw-seed-normal` now re-measures the current Seed-san
   real normal-map artifacts through this path; the verified reports are written
   under `.external-fixtures/render-parity-real-normal-maps/reports/`.
+- Added `docs/imq-compare-vrm-parity-requirements.md` to make the comparator
+  replacement target explicit. The documented gap is no longer raw comparison
+  itself, but the VRM-specific metric domains, one-pixel interior masks, alpha
+  diagnostics, and selected-threshold gates currently provided only by
+  `compare-psnr.mjs`.
+- Re-applied the latest local `imq-cli` skill through chezmoi and reinstalled
+  the latest public `imq` main with `cargo install --git
+  https://github.com/Sanzentyo/imq.git imq --locked --force`, which installed
+  commit `0fdc5263`. Generic raw `imqraw` comparison still works
+  (`psnr:color = 34.6181114203507 dB` for the current Seed-san wgpu
+  normal-map artifact), but the installed CLI still rejects `rgb-visible` with
+  `unknown sample domain`, so the refreshed skill appears ahead of the
+  currently available public CLI.
 
 ## 2026-05-31
 
