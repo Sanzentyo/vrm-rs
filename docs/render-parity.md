@@ -219,6 +219,13 @@ three-vrm WebGL path and the Rust CPU-prepared geometry, rather than
 transparent blending, outline expansion, color-space decoding, or texture
 transform state.
 
+An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
+`.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
+reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
+delta `166`. Dropping a two-pixel shared-nonblack boundary band improves the
+score only modestly, so the residual is not just the outer silhouette; it is a
+thin but real set of internal UV seam / triangle-boundary selections.
+
 The outline-isolated variant is:
 
 ```powershell
