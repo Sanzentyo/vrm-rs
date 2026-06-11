@@ -44,14 +44,17 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
     fn from_vrm_rotation(rotation: Quat) -> Quat;
     fn to_vrm_rotation(rotation: Quat) -> Quat;
 
+    #[inline(always)]
     fn from_vrm_direction(direction: Vec3) -> Vec3 {
         Self::from_vrm_position(direction)
     }
 
+    #[inline(always)]
     fn to_vrm_direction(direction: Vec3) -> Vec3 {
         Self::to_vrm_position(direction)
     }
 
+    #[inline(always)]
     fn from_vrm_transform(transform: Transform) -> Transform {
         Transform {
             translation: Self::from_vrm_position(transform.translation),
@@ -60,6 +63,7 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
         }
     }
 
+    #[inline(always)]
     fn to_vrm_transform(transform: Transform) -> Transform {
         Transform {
             translation: Self::to_vrm_position(transform.translation),
@@ -68,6 +72,7 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
         }
     }
 
+    #[inline(always)]
     fn from_vrm_matrix(matrix: Mat4) -> Mat4 {
         map_coordinate_space_affine_matrix(
             matrix,
@@ -78,6 +83,7 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
         )
     }
 
+    #[inline(always)]
     fn to_vrm_matrix(matrix: Mat4) -> Mat4 {
         map_coordinate_space_affine_matrix(
             matrix,
@@ -96,18 +102,22 @@ impl CoordinateSpaceMapping for VrmCoordinateSpace {
     const LABEL: &'static str = "vrm-gltf-right-handed-y-up";
     const MIRRORS_HANDEDNESS: bool = false;
 
+    #[inline(always)]
     fn from_vrm_position(position: Vec3) -> Vec3 {
         position
     }
 
+    #[inline(always)]
     fn to_vrm_position(position: Vec3) -> Vec3 {
         position
     }
 
+    #[inline(always)]
     fn from_vrm_rotation(rotation: Quat) -> Quat {
         rotation
     }
 
+    #[inline(always)]
     fn to_vrm_rotation(rotation: Quat) -> Quat {
         rotation
     }
@@ -120,18 +130,22 @@ impl CoordinateSpaceMapping for FlipZCoordinateSpace {
     const LABEL: &'static str = "flip-z-left-handed-y-up";
     const MIRRORS_HANDEDNESS: bool = true;
 
+    #[inline(always)]
     fn from_vrm_position(position: Vec3) -> Vec3 {
         Vec3::new(position.x, position.y, -position.z)
     }
 
+    #[inline(always)]
     fn to_vrm_position(position: Vec3) -> Vec3 {
         Vec3::new(position.x, position.y, -position.z)
     }
 
+    #[inline(always)]
     fn from_vrm_rotation(rotation: Quat) -> Quat {
         flip_z_rotation(rotation)
     }
 
+    #[inline(always)]
     fn to_vrm_rotation(rotation: Quat) -> Quat {
         flip_z_rotation(rotation)
     }
@@ -140,10 +154,12 @@ impl CoordinateSpaceMapping for FlipZCoordinateSpace {
 pub type GltfCoordinateSpace = VrmCoordinateSpace;
 pub type LeftHandedZForwardCoordinateSpace = FlipZCoordinateSpace;
 
+#[inline(always)]
 fn flip_z_rotation(rotation: Quat) -> Quat {
     Quat::from_xyzw(-rotation.x, -rotation.y, rotation.z, rotation.w).normalize()
 }
 
+#[inline(always)]
 fn map_coordinate_space_affine_matrix(
     matrix: Mat4,
     map_output_position: impl Fn(Vec3) -> Vec3,
@@ -172,6 +188,7 @@ pub struct ZeroToOneDepth;
 impl ClipDepthMapping for ZeroToOneDepth {
     const DEPTH_RANGE_LABEL: &'static str = "zero-to-one-ndc";
 
+    #[inline(always)]
     fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
         ndc_z * 2.0 - 1.0
     }
@@ -183,6 +200,7 @@ pub struct ReverseZeroToOneDepth;
 impl ClipDepthMapping for ReverseZeroToOneDepth {
     const DEPTH_RANGE_LABEL: &'static str = "reverse-zero-to-one-ndc";
 
+    #[inline(always)]
     fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
         (1.0 - ndc_z) * 2.0 - 1.0
     }
@@ -194,6 +212,7 @@ pub struct NegativeOneToOneDepth;
 impl ClipDepthMapping for NegativeOneToOneDepth {
     const DEPTH_RANGE_LABEL: &'static str = "negative-one-to-one-ndc";
 
+    #[inline(always)]
     fn webgl_depth_from_ndc_z(ndc_z: f32) -> f32 {
         ndc_z
     }
@@ -207,6 +226,7 @@ pub enum RendererFrontFace {
 }
 
 impl RendererFrontFace {
+    #[inline(always)]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ccw => "ccw",
@@ -214,6 +234,7 @@ impl RendererFrontFace {
         }
     }
 
+    #[inline(always)]
     pub fn is_gpu_front_facing(self, y_down_screen_signed_area: f32) -> bool {
         match self {
             Self::Ccw => y_down_screen_signed_area < 0.0,
@@ -229,6 +250,7 @@ pub struct ScreenProjectionSize {
 }
 
 impl ScreenProjectionSize {
+    #[inline(always)]
     pub fn from_pixels(width: u32, height: u32) -> Self {
         Self {
             width: width as f32,
@@ -246,6 +268,7 @@ pub struct ScreenProjectionBounds {
 }
 
 impl ScreenProjectionBounds {
+    #[inline(always)]
     pub fn from_triangle(screen: [[f32; 2]; 3]) -> Self {
         Self {
             min_x: screen
@@ -279,6 +302,7 @@ pub struct ScreenTriangleProjection {
     pub gpu_front_facing: bool,
 }
 
+#[inline(always)]
 pub fn project_triangle_to_screen<D>(
     positions: [[f32; 3]; 3],
     view_projection: Mat4,
@@ -293,6 +317,7 @@ where
     project_screen_triangle_from_points::<D>(points, front_face)
 }
 
+#[inline(always)]
 pub fn project_vrm_triangle_to_screen<C, D>(
     positions: [[f32; 3]; 3],
     view_projection: Mat4,
@@ -308,6 +333,7 @@ where
     project_screen_triangle_from_points::<D>(points, front_face)
 }
 
+#[inline(always)]
 fn project_screen_triangle_from_points<D>(
     points: [Option<[f32; 3]>; 3],
     front_face: RendererFrontFace,
@@ -332,6 +358,7 @@ where
     })
 }
 
+#[inline(always)]
 pub fn project_position_to_screen<D>(
     position: [f32; 3],
     view_projection: Mat4,
@@ -343,6 +370,7 @@ where
     project_renderer_position_to_screen::<D>(position, view_projection, size)
 }
 
+#[inline(always)]
 pub fn project_vrm_position_to_screen<C, D>(
     position: [f32; 3],
     view_projection: Mat4,
@@ -356,6 +384,7 @@ where
     project_renderer_position_to_screen::<D>(renderer_position.to_array(), view_projection, size)
 }
 
+#[inline(always)]
 pub fn project_renderer_position_to_screen<D>(
     position: [f32; 3],
     view_projection: Mat4,
@@ -380,6 +409,7 @@ where
         .then_some(screen)
 }
 
+#[inline(always)]
 pub fn screen_triangle_signed_area(screen: [[f32; 2]; 3]) -> f32 {
     (screen[1][0] - screen[0][0]) * (screen[2][1] - screen[0][1])
         - (screen[1][1] - screen[0][1]) * (screen[2][0] - screen[0][0])
@@ -405,6 +435,7 @@ impl<'a, T, C> CoordinateSpaceTarget<'a, T, C>
 where
     C: CoordinateSpaceMapping,
 {
+    #[inline(always)]
     pub fn new(target: &'a mut T) -> Self {
         Self {
             target,
@@ -412,19 +443,23 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn target(&self) -> &T {
         self.target
     }
 
+    #[inline(always)]
     pub fn target_mut(&mut self) -> &mut T {
         self.target
     }
 
+    #[inline(always)]
     pub fn into_inner(self) -> &'a mut T {
         self.target
     }
 }
 
+#[inline(always)]
 pub fn coordinate_space_target<C, T>(target: &mut T) -> CoordinateSpaceTarget<'_, T, C>
 where
     C: CoordinateSpaceMapping,
@@ -439,10 +474,12 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error> {
         self.target.parent(node)
     }
 
+    #[inline(always)]
     fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error> {
         self.target.children(node)
     }
@@ -468,10 +505,12 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn local_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
         self.target.local_transform(node).map(C::to_vrm_transform)
     }
 
+    #[inline(always)]
     fn set_local_transform(
         &mut self,
         node: NodeRef,
@@ -481,11 +520,13 @@ where
             .set_local_transform(node, C::from_vrm_transform(transform))
     }
 
+    #[inline(always)]
     fn set_local_rotation(&mut self, node: NodeRef, rotation: Quat) -> Result<(), Self::Error> {
         self.target
             .set_local_rotation(node, C::from_vrm_rotation(rotation))
     }
 
+    #[inline(always)]
     fn translate_local(&mut self, node: NodeRef, translation: Vec3) -> Result<(), Self::Error> {
         self.target
             .translate_local(node, C::from_vrm_position(translation))
@@ -505,6 +546,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
         self.target.world_transform(node).map(C::to_vrm_transform)
     }
@@ -523,6 +565,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
         self.target.world_matrix(node).map(C::to_vrm_matrix)
     }
@@ -541,6 +584,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
         self.target.update_world_transforms()
     }
@@ -563,6 +607,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn constraint_rest_state(
         &self,
         destination: NodeRef,
@@ -1700,6 +1745,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn set_morph_weight(
         &mut self,
         node: NodeRef,
@@ -1717,6 +1763,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn set_material_color(
         &mut self,
         material: MaterialRef,
@@ -1726,6 +1773,7 @@ where
         self.target.set_material_color(material, property, value)
     }
 
+    #[inline(always)]
     fn set_texture_transform(
         &mut self,
         material: MaterialRef,
@@ -1735,6 +1783,7 @@ where
         self.target.set_texture_transform(material, scale, offset)
     }
 
+    #[inline(always)]
     fn set_emissive_intensity(
         &mut self,
         material: MaterialRef,
@@ -1751,6 +1800,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn set_mtoon_pipeline_passes(
         &mut self,
         material: MaterialRef,
@@ -2220,6 +2270,7 @@ where
     type Descriptor = T::Descriptor;
     type Error = T::Error;
 
+    #[inline(always)]
     fn materialize_mtoon(
         &mut self,
         descriptor: &MtoonMaterialDescriptor,
@@ -2243,6 +2294,7 @@ where
     type Texture = T::Texture;
     type Error = T::Error;
 
+    #[inline(always)]
     fn resolve_texture(&self, texture: TextureRef) -> Result<Self::Texture, Self::Error> {
         self.target.resolve_texture(texture)
     }
@@ -2261,6 +2313,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error> {
         self.target.set_node_visible(node, visible)
     }
@@ -2279,6 +2332,7 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
         self.target
             .set_look_at_rotation(C::from_vrm_rotation(rotation))
@@ -2299,10 +2353,12 @@ where
 {
     type Error = T::Error;
 
+    #[inline(always)]
     fn apply_expression(&mut self, expression: &AppliedExpression) -> Result<(), Self::Error> {
         self.target.apply_expression(expression)
     }
 
+    #[inline(always)]
     fn apply_runtime_events(&mut self, events: &RuntimeEvents) -> Result<(), Self::Error> {
         self.target.apply_runtime_events(events)
     }
