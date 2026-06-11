@@ -510,10 +510,15 @@ still requires `overlap-depth-close` (`<= 0.001` WebGL-reference depth), while
 `same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero`
 also counts `overlap-depth-near` (`<= 0.02`). The projection-gap summary records
 `within_webgl_depth_001` and `within_webgl_depth_02` so the size of the depth
-offset is visible without reclassifying it as exact parity. On the current
-Seed-san outline-off report, Bevy has `7303/12140` mismatched shared pixels that
-are same/adjacent/shared-edge projected triangles within `0.02` depth, and all
-`7637` unexplained-tail pixels are within `0.02`; wgpu's corresponding tail is
+offset is visible without reclassifying it as exact parity. Bevy 0.18 uses
+infinite reverse-Z for its actual camera projection, while the three-vrm/wgpu
+reference uses finite WebGL-style depth. The Bevy capture therefore writes both
+actual `webglDepth` / `depthRange` and comparison-oriented
+`referenceWebglDepth` / `referenceDepthRange`; `compare-owner-id-images.rs`
+prefers the reference field when present. On the current Seed-san outline-off
+report, Bevy has `7292/12140` mismatched shared pixels that are strictly
+same/adjacent/shared-edge projected triangles, `7303/12140` within `0.02`
+depth, and its unexplained tail is down to `539`; wgpu's corresponding tail is
 only `85` pixels, with `79` already within `0.001`.
 
 For cull/facing isolation, run

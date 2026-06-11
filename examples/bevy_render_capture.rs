@@ -54,7 +54,7 @@ use std::time::Duration;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
     RendererFrontFace, ReverseZeroToOneDepth, ScreenProjectionSize, ScreenTriangleProjection,
-    project_triangle_to_screen,
+    ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
@@ -670,6 +670,7 @@ fn diagnostic_owner_ids(
     options: &CaptureOptions,
 ) -> Vec<serde_json::Value> {
     let view_projection = diagnostic_view_projection(options);
+    let reference_view_projection = diagnostic_reference_view_projection(options);
     primitives
         .iter()
         .enumerate()
@@ -680,6 +681,12 @@ fn diagnostic_owner_ids(
                     &primitive.mesh,
                     owner.triangle,
                     view_projection,
+                    options,
+                );
+                let reference_projection = owner_triangle_projection::<ZeroToOneDepth>(
+                    &primitive.mesh,
+                    owner.triangle,
+                    reference_view_projection,
                     options,
                 );
                 json!({
@@ -717,6 +724,8 @@ fn diagnostic_owner_ids(
                     "depth": projection.map(|projection| projection.ndc_depth),
                     "webglDepth": projection.map(|projection| projection.webgl_depth),
                     "depthRange": projection.map(|_| ReverseZeroToOneDepth::DEPTH_RANGE_LABEL),
+                    "referenceWebglDepth": reference_projection.map(|projection| projection.webgl_depth),
+                    "referenceDepthRange": reference_projection.map(|_| ZeroToOneDepth::DEPTH_RANGE_LABEL),
                     "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
                     "frontFacing": projection.map(|projection| projection.front_facing),
                     "gpuFrontFacing": projection.map(|projection| projection.gpu_front_facing),
@@ -796,6 +805,15 @@ fn diagnostic_view_projection(options: &CaptureOptions) -> Mat4 {
     }
     .get_clip_from_view();
     Mat4::from_cols_array(&projection.to_cols_array()) * camera_view(options)
+}
+
+fn diagnostic_reference_view_projection(options: &CaptureOptions) -> Mat4 {
+    Mat4::perspective_rh(
+        30.0_f32.to_radians(),
+        options.width as f32 / options.height as f32,
+        0.1,
+        20.0,
+    ) * camera_view(options)
 }
 
 fn owner_triangle_projection<D>(

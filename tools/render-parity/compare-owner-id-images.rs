@@ -343,7 +343,9 @@ struct OwnerLabel {
     screen_bounds: Option<OwnerScreenBounds>,
     depth: Option<f64>,
     webgl_depth: Option<f64>,
+    reference_webgl_depth: Option<f64>,
     depth_range: Option<String>,
+    reference_depth_range: Option<String>,
     screen_signed_area: Option<f64>,
     front_facing: Option<bool>,
     gpu_front_facing: Option<bool>,
@@ -1536,7 +1538,7 @@ enum DepthRelation {
 }
 
 fn owner_depth(label: &OwnerLabel) -> Option<f64> {
-    label.webgl_depth.or(label.depth)
+    label.reference_webgl_depth.or(label.webgl_depth).or(label.depth)
 }
 
 fn mean(sum: f64, count: u64) -> Option<f64> {
@@ -1912,7 +1914,9 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         screen_bounds: owner_screen_bounds(value.get("screenBounds")),
         depth: value.get("depth").and_then(Value::as_f64),
         webgl_depth: value.get("webglDepth").and_then(Value::as_f64),
+        reference_webgl_depth: value.get("referenceWebglDepth").and_then(Value::as_f64),
         depth_range: string_field(value, "depthRange"),
+        reference_depth_range: string_field(value, "referenceDepthRange"),
         screen_signed_area: value.get("screenSignedArea").and_then(Value::as_f64),
         front_facing: value.get("frontFacing").and_then(Value::as_bool),
         gpu_front_facing: value.get("gpuFrontFacing").and_then(Value::as_bool),
@@ -2114,6 +2118,15 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(
         OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_edge_actual))
             .is_same_projected_or_adjacent_triangle_near_depth()
+    );
+    let reference_depth_actual = OwnerLabel {
+        webgl_depth: Some(0.25),
+        reference_webgl_depth: Some(0.5005),
+        ..shared_edge_actual.clone()
+    };
+    assert_eq!(
+        projection_relation(Some(&shared_edge_expected), Some(&reference_depth_actual)),
+        "overlap-depth-close"
     );
     let report = compare_owner_images(
         "expected".to_owned(),
