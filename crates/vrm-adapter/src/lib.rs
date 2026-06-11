@@ -14,7 +14,10 @@
 
 use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 use thiserror::Error;
 use vrm_core::{
     ColliderShape, ConstraintKind, EmissiveStrength, ExpressionBind, ExpressionName, Feature,
@@ -63,6 +66,26 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
             rotation: Self::to_vrm_rotation(transform.rotation),
             scale: transform.scale,
         }
+    }
+
+    fn from_vrm_matrix(matrix: Mat4) -> Mat4 {
+        map_coordinate_space_affine_matrix(
+            matrix,
+            Self::from_vrm_position,
+            Self::from_vrm_direction,
+            Self::to_vrm_position,
+            Self::to_vrm_direction,
+        )
+    }
+
+    fn to_vrm_matrix(matrix: Mat4) -> Mat4 {
+        map_coordinate_space_affine_matrix(
+            matrix,
+            Self::to_vrm_position,
+            Self::to_vrm_direction,
+            Self::from_vrm_position,
+            Self::from_vrm_direction,
+        )
     }
 }
 
@@ -119,6 +142,22 @@ pub type LeftHandedZForwardCoordinateSpace = FlipZCoordinateSpace;
 
 fn flip_z_rotation(rotation: Quat) -> Quat {
     Quat::from_xyzw(-rotation.x, -rotation.y, rotation.z, rotation.w).normalize()
+}
+
+fn map_coordinate_space_affine_matrix(
+    matrix: Mat4,
+    map_output_position: impl Fn(Vec3) -> Vec3,
+    map_output_direction: impl Fn(Vec3) -> Vec3,
+    map_input_position: impl Fn(Vec3) -> Vec3,
+    map_input_direction: impl Fn(Vec3) -> Vec3,
+) -> Mat4 {
+    let origin = map_output_position(matrix.transform_point3(map_input_position(Vec3::ZERO)));
+    Mat4::from_cols(
+        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::X))).extend(0.0),
+        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::Y))).extend(0.0),
+        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::Z))).extend(0.0),
+        origin.extend(1.0),
+    )
 }
 
 pub trait ClipDepthMapping: Copy + std::fmt::Debug + 'static {
@@ -353,6 +392,62 @@ pub trait SceneGraph {
     fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error>;
 }
 
+#[derive(Debug)]
+pub struct CoordinateSpaceTarget<'a, T, C>
+where
+    C: CoordinateSpaceMapping,
+{
+    target: &'a mut T,
+    space: PhantomData<C>,
+}
+
+impl<'a, T, C> CoordinateSpaceTarget<'a, T, C>
+where
+    C: CoordinateSpaceMapping,
+{
+    pub fn new(target: &'a mut T) -> Self {
+        Self {
+            target,
+            space: PhantomData,
+        }
+    }
+
+    pub fn target(&self) -> &T {
+        self.target
+    }
+
+    pub fn target_mut(&mut self) -> &mut T {
+        self.target
+    }
+
+    pub fn into_inner(self) -> &'a mut T {
+        self.target
+    }
+}
+
+pub fn coordinate_space_target<C, T>(target: &mut T) -> CoordinateSpaceTarget<'_, T, C>
+where
+    C: CoordinateSpaceMapping,
+{
+    CoordinateSpaceTarget::new(target)
+}
+
+impl<T, C> SceneGraph for CoordinateSpaceTarget<'_, T, C>
+where
+    T: SceneGraph,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error> {
+        self.target.parent(node)
+    }
+
+    fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error> {
+        self.target.children(node)
+    }
+}
+
 pub trait TransformAccess {
     type Error;
 
@@ -366,10 +461,53 @@ pub trait TransformAccess {
     fn translate_local(&mut self, node: NodeRef, translation: Vec3) -> Result<(), Self::Error>;
 }
 
+impl<T, C> TransformAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: TransformAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn local_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+        self.target.local_transform(node).map(C::to_vrm_transform)
+    }
+
+    fn set_local_transform(
+        &mut self,
+        node: NodeRef,
+        transform: Transform,
+    ) -> Result<(), Self::Error> {
+        self.target
+            .set_local_transform(node, C::from_vrm_transform(transform))
+    }
+
+    fn set_local_rotation(&mut self, node: NodeRef, rotation: Quat) -> Result<(), Self::Error> {
+        self.target
+            .set_local_rotation(node, C::from_vrm_rotation(rotation))
+    }
+
+    fn translate_local(&mut self, node: NodeRef, translation: Vec3) -> Result<(), Self::Error> {
+        self.target
+            .translate_local(node, C::from_vrm_position(translation))
+    }
+}
+
 pub trait WorldTransformAccess {
     type Error;
 
     fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error>;
+}
+
+impl<T, C> WorldTransformAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: WorldTransformAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn world_transform(&self, node: NodeRef) -> Result<Transform, Self::Error> {
+        self.target.world_transform(node).map(C::to_vrm_transform)
+    }
 }
 
 pub trait WorldMatrixAccess {
@@ -378,10 +516,34 @@ pub trait WorldMatrixAccess {
     fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error>;
 }
 
+impl<T, C> WorldMatrixAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: WorldMatrixAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
+        self.target.world_matrix(node).map(C::to_vrm_matrix)
+    }
+}
+
 pub trait WorldTransformUpdate {
     type Error;
 
     fn update_world_transforms(&mut self) -> Result<(), Self::Error>;
+}
+
+impl<T, C> WorldTransformUpdate for CoordinateSpaceTarget<'_, T, C>
+where
+    T: WorldTransformUpdate,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn update_world_transforms(&mut self) -> Result<(), Self::Error> {
+        self.target.update_world_transforms()
+    }
 }
 
 pub trait ConstraintRestAccess {
@@ -392,6 +554,27 @@ pub trait ConstraintRestAccess {
         destination: NodeRef,
         source: NodeRef,
     ) -> Result<ConstraintRestState, Self::Error>;
+}
+
+impl<T, C> ConstraintRestAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: ConstraintRestAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn constraint_rest_state(
+        &self,
+        destination: NodeRef,
+        source: NodeRef,
+    ) -> Result<ConstraintRestState, Self::Error> {
+        self.target
+            .constraint_rest_state(destination, source)
+            .map(|state| ConstraintRestState {
+                destination_rest_rotation: C::to_vrm_rotation(state.destination_rest_rotation),
+                source_rest_rotation: C::to_vrm_rotation(state.source_rest_rotation),
+            })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1510,6 +1693,73 @@ pub trait MtoonPipelineAccess {
     ) -> Result<(), Self::Error>;
 }
 
+impl<T, C> MorphTargetAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: MorphTargetAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn set_morph_weight(
+        &mut self,
+        node: NodeRef,
+        morph_index: usize,
+        weight: f32,
+    ) -> Result<(), Self::Error> {
+        self.target.set_morph_weight(node, morph_index, weight)
+    }
+}
+
+impl<T, C> MaterialAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: MaterialAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn set_material_color(
+        &mut self,
+        material: MaterialRef,
+        property: &str,
+        value: &[f32],
+    ) -> Result<(), Self::Error> {
+        self.target.set_material_color(material, property, value)
+    }
+
+    fn set_texture_transform(
+        &mut self,
+        material: MaterialRef,
+        scale: Option<[f32; 2]>,
+        offset: Option<[f32; 2]>,
+    ) -> Result<(), Self::Error> {
+        self.target.set_texture_transform(material, scale, offset)
+    }
+
+    fn set_emissive_intensity(
+        &mut self,
+        material: MaterialRef,
+        intensity: f32,
+    ) -> Result<(), Self::Error> {
+        self.target.set_emissive_intensity(material, intensity)
+    }
+}
+
+impl<T, C> MtoonPipelineAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: MtoonPipelineAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn set_mtoon_pipeline_passes(
+        &mut self,
+        material: MaterialRef,
+        passes: &[MtoonPipelinePass],
+    ) -> Result<(), Self::Error> {
+        self.target.set_mtoon_pipeline_passes(material, passes)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MtoonLightAccumulation {
     Tuned,
@@ -1962,11 +2212,40 @@ pub trait MtoonMaterializer {
     ) -> Result<Self::Descriptor, Self::Error>;
 }
 
+impl<T, C> MtoonMaterializer for CoordinateSpaceTarget<'_, T, C>
+where
+    T: MtoonMaterializer,
+    C: CoordinateSpaceMapping,
+{
+    type Descriptor = T::Descriptor;
+    type Error = T::Error;
+
+    fn materialize_mtoon(
+        &mut self,
+        descriptor: &MtoonMaterialDescriptor,
+    ) -> Result<Self::Descriptor, Self::Error> {
+        self.target.materialize_mtoon(descriptor)
+    }
+}
+
 pub trait TextureResolver {
     type Texture;
     type Error;
 
     fn resolve_texture(&self, texture: TextureRef) -> Result<Self::Texture, Self::Error>;
+}
+
+impl<T, C> TextureResolver for CoordinateSpaceTarget<'_, T, C>
+where
+    T: TextureResolver,
+    C: CoordinateSpaceMapping,
+{
+    type Texture = T::Texture;
+    type Error = T::Error;
+
+    fn resolve_texture(&self, texture: TextureRef) -> Result<Self::Texture, Self::Error> {
+        self.target.resolve_texture(texture)
+    }
 }
 
 pub trait VisibilityAccess {
@@ -1975,10 +2254,35 @@ pub trait VisibilityAccess {
     fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error>;
 }
 
+impl<T, C> VisibilityAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: VisibilityAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn set_node_visible(&mut self, node: NodeRef, visible: bool) -> Result<(), Self::Error> {
+        self.target.set_node_visible(node, visible)
+    }
+}
+
 pub trait LookAtAccess {
     type Error;
 
     fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error>;
+}
+
+impl<T, C> LookAtAccess for CoordinateSpaceTarget<'_, T, C>
+where
+    T: LookAtAccess,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn set_look_at_rotation(&mut self, rotation: Quat) -> Result<(), Self::Error> {
+        self.target
+            .set_look_at_rotation(C::from_vrm_rotation(rotation))
+    }
 }
 
 pub trait AnimationSink {
@@ -1986,6 +2290,22 @@ pub trait AnimationSink {
 
     fn apply_expression(&mut self, expression: &AppliedExpression) -> Result<(), Self::Error>;
     fn apply_runtime_events(&mut self, events: &RuntimeEvents) -> Result<(), Self::Error>;
+}
+
+impl<T, C> AnimationSink for CoordinateSpaceTarget<'_, T, C>
+where
+    T: AnimationSink,
+    C: CoordinateSpaceMapping,
+{
+    type Error = T::Error;
+
+    fn apply_expression(&mut self, expression: &AppliedExpression) -> Result<(), Self::Error> {
+        self.target.apply_expression(expression)
+    }
+
+    fn apply_runtime_events(&mut self, events: &RuntimeEvents) -> Result<(), Self::Error> {
+        self.target.apply_runtime_events(events)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3239,6 +3559,44 @@ mod tests {
     }
 
     #[test]
+    fn coordinate_space_target_converts_engine_boundary() {
+        let vrm_transform = Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_rotation_x(0.2) * Quat::from_rotation_y(0.4),
+            scale: Vec3::new(1.0, 2.0, 1.0),
+        };
+        let mut scene = HeadlessSceneState::default();
+        scene.insert_node(
+            NodeRef(0),
+            FlipZCoordinateSpace::from_vrm_transform(vrm_transform),
+        );
+        scene.update_world_transforms().unwrap();
+
+        let next_vrm_transform = Transform {
+            translation: Vec3::new(-2.0, 4.0, 6.0),
+            rotation: Quat::from_rotation_z(0.5) * Quat::from_rotation_y(-0.25),
+            scale: Vec3::splat(0.5),
+        };
+        {
+            let mut target = coordinate_space_target::<FlipZCoordinateSpace, _>(&mut scene);
+            let read = target.local_transform(NodeRef(0)).unwrap();
+            assert_transform_abs_diff_eq(read, vrm_transform, 0.0001);
+            let matrix = target.world_matrix(NodeRef(0)).unwrap();
+            assert_matrix_abs_diff_eq(matrix, transform_matrix(vrm_transform), 0.0001);
+            target
+                .set_local_transform(NodeRef(0), next_vrm_transform)
+                .unwrap();
+        }
+
+        let stored = scene.node(NodeRef(0)).unwrap().local;
+        assert_transform_abs_diff_eq(
+            stored,
+            FlipZCoordinateSpace::from_vrm_transform(next_vrm_transform),
+            0.0001,
+        );
+    }
+
+    #[test]
     fn screen_projection_maps_triangle_into_y_down_pixels() {
         let projection = project_triangle_to_screen::<ZeroToOneDepth>(
             [[-1.0, -1.0, 0.25], [1.0, -1.0, 0.25], [0.0, 1.0, 0.25]],
@@ -3287,6 +3645,30 @@ mod tests {
             transform.rotation,
             transform.translation,
         )
+    }
+
+    fn assert_transform_abs_diff_eq(actual: Transform, expected: Transform, tolerance: f32) {
+        assert!(
+            actual
+                .translation
+                .abs_diff_eq(expected.translation, tolerance),
+            "translation mismatch: actual={:?} expected={:?}",
+            actual.translation,
+            expected.translation
+        );
+        assert!(
+            actual.rotation.abs_diff_eq(expected.rotation, tolerance)
+                || actual.rotation.abs_diff_eq(-expected.rotation, tolerance),
+            "rotation mismatch: actual={:?} expected={:?}",
+            actual.rotation,
+            expected.rotation
+        );
+        assert!(
+            actual.scale.abs_diff_eq(expected.scale, tolerance),
+            "scale mismatch: actual={:?} expected={:?}",
+            actual.scale,
+            expected.scale
+        );
     }
 
     fn assert_matrix_abs_diff_eq(actual: Mat4, expected: Mat4, tolerance: f32) {

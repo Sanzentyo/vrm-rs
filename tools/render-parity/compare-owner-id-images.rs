@@ -72,8 +72,10 @@ struct OwnerCompareReport {
     mismatched_shared_nonzero: u64,
     same_projected_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_adjacent_triangle_mismatched_shared_nonzero: u64,
+    same_projected_or_touching_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero: u64,
     unexplained_owner_tail_mismatched_shared_nonzero: u64,
+    unexplained_owner_tail_after_touching_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
     actual_metadata_bounds_miss_shared_nonzero: u64,
@@ -499,8 +501,10 @@ fn compare_owner_images(
     let mut mismatched_shared_nonzero = 0;
     let mut same_projected_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_adjacent_triangle_mismatched_shared_nonzero = 0;
+    let mut same_projected_or_touching_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero = 0;
     let mut unexplained_owner_tail_mismatched_shared_nonzero = 0;
+    let mut unexplained_owner_tail_after_touching_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
     let mut actual_metadata_bounds_miss_shared_nonzero = 0;
@@ -588,12 +592,20 @@ fn compare_owner_images(
                     if same_projected_or_adjacent {
                         same_projected_or_adjacent_triangle_mismatched_shared_nonzero += 1;
                     }
+                    let same_projected_or_touching =
+                        geometry_class.is_same_projected_or_touching_triangle();
+                    if same_projected_or_touching {
+                        same_projected_or_touching_triangle_mismatched_shared_nonzero += 1;
+                    }
                     if geometry_class.is_same_projected_or_adjacent_triangle_near_depth() {
                         same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero +=
                             1;
                     }
                     if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
+                        if !same_projected_or_touching {
+                            unexplained_owner_tail_after_touching_mismatched_shared_nonzero += 1;
+                        }
                         unexplained_projection_gaps.add(expected_label, actual_label);
                         bump_owner_material_transition(
                             &mut unexplained_material_transitions,
@@ -687,8 +699,10 @@ fn compare_owner_images(
         mismatched_shared_nonzero,
         same_projected_triangle_mismatched_shared_nonzero,
         same_projected_or_adjacent_triangle_mismatched_shared_nonzero,
+        same_projected_or_touching_triangle_mismatched_shared_nonzero,
         same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
         unexplained_owner_tail_mismatched_shared_nonzero,
+        unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
         actual_metadata_bounds_miss_shared_nonzero,
@@ -1213,6 +1227,19 @@ impl OwnerGeometryClassKey {
             && matches!(
                 self.triangle_relation.as_str(),
                 "same-triangle" | "shared-edge-indices" | "adjacent-triangle-index"
+            )
+            && self.projection_relation == "overlap-depth-close"
+    }
+
+    fn is_same_projected_or_touching_triangle(&self) -> bool {
+        self.pass_relation == "same"
+            && self.mesh_relation != "different"
+            && matches!(
+                self.triangle_relation.as_str(),
+                "same-triangle"
+                    | "shared-edge-indices"
+                    | "shared-vertex-indices"
+                    | "adjacent-triangle-index"
             )
             && self.projection_relation == "overlap-depth-close"
     }
@@ -2116,6 +2143,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .is_same_projected_or_adjacent_triangle()
     );
     assert!(
+        OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_vertex_actual))
+            .is_same_projected_or_touching_triangle()
+    );
+    assert!(
+        !OwnerGeometryClassKey::from_labels(
+            Some(&shared_edge_expected),
+            Some(&shared_vertex_actual)
+        )
+        .is_same_projected_or_adjacent_triangle()
+    );
+    assert!(
         OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_edge_actual))
             .is_same_projected_or_adjacent_triangle_near_depth()
     );
@@ -2145,10 +2183,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.actual_only, 1);
     assert_eq!(report.mismatched_shared_nonzero, 2);
     assert_eq!(
+        report.same_projected_or_touching_triangle_mismatched_shared_nonzero,
+        0
+    );
+    assert_eq!(
         report.same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
         0
     );
     assert_eq!(report.unexplained_owner_tail_mismatched_shared_nonzero, 2);
+    assert_eq!(
+        report.unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
+        2
+    );
     assert_eq!(report.unexplained_projection_gap_summary.count, 2);
     assert_eq!(
         report

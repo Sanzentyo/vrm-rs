@@ -504,6 +504,16 @@ delta. Use wgpu for this tail; Bevy reports are still useful for consistency
 but include reverse-Z metadata convention and near-ID diagnostic-color recovery
 effects.
 
+The owner comparator also reports
+`same_projected_or_touching_triangle_mismatched_shared_nonzero` and
+`unexplained_owner_tail_after_touching_mismatched_shared_nonzero`. This
+diagnostic adds indexed shared vertices to the stricter same/adjacent/shared-edge
+set, so it should be read as a local-topology residual lens rather than an exact
+parity pass condition. On the current Seed-san outline-off reports, wgpu-vs-three-vrm
+has `11853/11933` touching-local mismatches and `80` pixels left after touching
+classification, Bevy-vs-three-vrm has `7977/12140` and `149`, and Bevy-vs-wgpu
+has `2228/6332` and `99`.
+
 When auditing Bevy owner reports, keep the strict close-depth fields separate
 from near-depth convention checks. `same_projected_or_adjacent_triangle_*`
 still requires `overlap-depth-close` (`<= 0.001` WebGL-reference depth), while

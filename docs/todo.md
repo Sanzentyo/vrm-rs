@@ -37,6 +37,9 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - Done when renderer owners can map `MtoonPipelinePass`, `MaterialRef`, and `TextureRef` into their own pipeline/material tables without depending on Bevy.
 - [x] Keep shader generation out of core crates.
   - Done when any renderer-specific shader work lives in examples, optional adapters, or downstream crates, with `vrm-core` and `vrm-adapter` remaining renderer-agnostic.
+- [x] Make engine coordinate systems configurable through typed adapter policy.
+  - Done when render diagnostics and runtime-driver integrations can choose VRM/native or mirrored left-handed coordinates through generic marker types without changing `vrm-core` or `vrm-runtime`.
+  - `CoordinateSpaceMapping` covers projection helpers, and `CoordinateSpaceTarget` now wraps engine adapters so transform/world/constraint/lookAt I/O is converted at the boundary while non-spatial traits are delegated unchanged.
 
 ## P1: three-vrm Parity
 
