@@ -22,6 +22,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const WEBGL_DEPTH_CLOSE_TOLERANCE: f64 = 0.001;
+const WEBGL_DEPTH_NEAR_TOLERANCE: f64 = 0.02;
+
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "compare-owner-id-images",
@@ -69,6 +72,7 @@ struct OwnerCompareReport {
     mismatched_shared_nonzero: u64,
     same_projected_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_adjacent_triangle_mismatched_shared_nonzero: u64,
+    same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero: u64,
     unexplained_owner_tail_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
@@ -362,6 +366,8 @@ struct OwnerProjectionGapSummary {
     overlapping_screen_bounds_1px: u64,
     disjoint_screen_bounds_1px: u64,
     with_depth: u64,
+    within_webgl_depth_001: u64,
+    within_webgl_depth_02: u64,
     mean_center_distance_pixels: Option<f64>,
     max_center_distance_pixels: Option<f64>,
     mean_area_ratio: Option<f64>,
@@ -377,6 +383,8 @@ struct OwnerProjectionGapAccumulator {
     overlapping_screen_bounds_1px: u64,
     disjoint_screen_bounds_1px: u64,
     with_depth: u64,
+    within_webgl_depth_001: u64,
+    within_webgl_depth_02: u64,
     center_distance_sum: f64,
     center_distance_max: f64,
     area_ratio_sum: f64,
@@ -489,6 +497,7 @@ fn compare_owner_images(
     let mut mismatched_shared_nonzero = 0;
     let mut same_projected_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_adjacent_triangle_mismatched_shared_nonzero = 0;
+    let mut same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero = 0;
     let mut unexplained_owner_tail_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
@@ -576,6 +585,10 @@ fn compare_owner_images(
                         geometry_class.is_same_projected_or_adjacent_triangle();
                     if same_projected_or_adjacent {
                         same_projected_or_adjacent_triangle_mismatched_shared_nonzero += 1;
+                    }
+                    if geometry_class.is_same_projected_or_adjacent_triangle_near_depth() {
+                        same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero +=
+                            1;
                     }
                     if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
@@ -672,6 +685,7 @@ fn compare_owner_images(
         mismatched_shared_nonzero,
         same_projected_triangle_mismatched_shared_nonzero,
         same_projected_or_adjacent_triangle_mismatched_shared_nonzero,
+        same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
         unexplained_owner_tail_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
@@ -1200,6 +1214,19 @@ impl OwnerGeometryClassKey {
             )
             && self.projection_relation == "overlap-depth-close"
     }
+
+    fn is_same_projected_or_adjacent_triangle_near_depth(&self) -> bool {
+        self.pass_relation == "same"
+            && self.mesh_relation != "different"
+            && matches!(
+                self.triangle_relation.as_str(),
+                "same-triangle" | "shared-edge-indices" | "adjacent-triangle-index"
+            )
+            && matches!(
+                self.projection_relation.as_str(),
+                "overlap-depth-close" | "overlap-depth-near"
+            )
+    }
 }
 
 impl OwnerMaterialTransitionKey {
@@ -1424,10 +1451,11 @@ fn projection_relation(expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel
     if !screen_bounds_overlap(expected_bounds, actual_bounds, 1.0) {
         return "disjoint-screen-bounds".to_owned();
     }
-    if same_webgl_depth(expected, actual, 0.001) {
-        "overlap-depth-close".to_owned()
-    } else {
-        "overlap-depth-different".to_owned()
+    match depth_relation(expected, actual) {
+        DepthRelation::Close => "overlap-depth-close".to_owned(),
+        DepthRelation::Near => "overlap-depth-near".to_owned(),
+        DepthRelation::Different => "overlap-depth-different".to_owned(),
+        DepthRelation::Unknown => "overlap-depth-unknown".to_owned(),
     }
 }
 
@@ -1483,11 +1511,28 @@ fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
     ((bounds.max_x - bounds.min_x).max(0.0)) * ((bounds.max_y - bounds.min_y).max(0.0))
 }
 
-fn same_webgl_depth(expected: &OwnerLabel, actual: &OwnerLabel, tolerance: f64) -> bool {
+fn depth_relation(expected: &OwnerLabel, actual: &OwnerLabel) -> DepthRelation {
     match (owner_depth(expected), owner_depth(actual)) {
-        (Some(left), Some(right)) => (left - right).abs() <= tolerance,
-        _ => false,
+        (Some(left), Some(right)) => {
+            let delta = (left - right).abs();
+            if delta <= WEBGL_DEPTH_CLOSE_TOLERANCE {
+                DepthRelation::Close
+            } else if delta <= WEBGL_DEPTH_NEAR_TOLERANCE {
+                DepthRelation::Near
+            } else {
+                DepthRelation::Different
+            }
+        }
+        _ => DepthRelation::Unknown,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DepthRelation {
+    Close,
+    Near,
+    Different,
+    Unknown,
 }
 
 fn owner_depth(label: &OwnerLabel) -> Option<f64> {
@@ -1614,6 +1659,12 @@ impl OwnerProjectionGapAccumulator {
         {
             self.with_depth += 1;
             let delta = (expected_depth - actual_depth).abs();
+            if delta <= WEBGL_DEPTH_CLOSE_TOLERANCE {
+                self.within_webgl_depth_001 += 1;
+            }
+            if delta <= WEBGL_DEPTH_NEAR_TOLERANCE {
+                self.within_webgl_depth_02 += 1;
+            }
             self.depth_delta_sum += delta;
             self.depth_delta_max = self.depth_delta_max.max(delta);
         }
@@ -1626,6 +1677,8 @@ impl OwnerProjectionGapAccumulator {
             overlapping_screen_bounds_1px: self.overlapping_screen_bounds_1px,
             disjoint_screen_bounds_1px: self.disjoint_screen_bounds_1px,
             with_depth: self.with_depth,
+            within_webgl_depth_001: self.within_webgl_depth_001,
+            within_webgl_depth_02: self.within_webgl_depth_02,
             mean_center_distance_pixels: mean(
                 self.center_distance_sum,
                 self.with_screen_bounds,
@@ -2058,6 +2111,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_edge_actual))
             .is_same_projected_or_adjacent_triangle()
     );
+    assert!(
+        OwnerGeometryClassKey::from_labels(Some(&shared_edge_expected), Some(&shared_edge_actual))
+            .is_same_projected_or_adjacent_triangle_near_depth()
+    );
     let report = compare_owner_images(
         "expected".to_owned(),
         "actual".to_owned(),
@@ -2074,6 +2131,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.expected_only, 0);
     assert_eq!(report.actual_only, 1);
     assert_eq!(report.mismatched_shared_nonzero, 2);
+    assert_eq!(
+        report.same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
+        0
+    );
     assert_eq!(report.unexplained_owner_tail_mismatched_shared_nonzero, 2);
     assert_eq!(report.unexplained_projection_gap_summary.count, 2);
     assert_eq!(
@@ -2095,6 +2156,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         1
     );
     assert_eq!(report.unexplained_projection_gap_summary.with_depth, 2);
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .within_webgl_depth_001,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .within_webgl_depth_02,
+        1
+    );
     assert_eq!(
         report
             .unexplained_projection_gap_summary

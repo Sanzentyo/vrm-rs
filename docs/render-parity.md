@@ -504,6 +504,18 @@ delta. Use wgpu for this tail; Bevy reports are still useful for consistency
 but include reverse-Z metadata convention and near-ID diagnostic-color recovery
 effects.
 
+When auditing Bevy owner reports, keep the strict close-depth fields separate
+from near-depth convention checks. `same_projected_or_adjacent_triangle_*`
+still requires `overlap-depth-close` (`<= 0.001` WebGL-reference depth), while
+`same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero`
+also counts `overlap-depth-near` (`<= 0.02`). The projection-gap summary records
+`within_webgl_depth_001` and `within_webgl_depth_02` so the size of the depth
+offset is visible without reclassifying it as exact parity. On the current
+Seed-san outline-off report, Bevy has `7303/12140` mismatched shared pixels that
+are same/adjacent/shared-edge projected triangles within `0.02` depth, and all
+`7637` unexplained-tail pixels are within `0.02`; wgpu's corresponding tail is
+only `85` pixels, with `79` already within `0.001`.
+
 For cull/facing isolation, run
 `just render-parity-seed-owner-id-front-face-cw-diagnostic D:/git/three-vrm`.
 It forwards `--render-front-face cw` only to the Rust wgpu/Bevy capture paths
