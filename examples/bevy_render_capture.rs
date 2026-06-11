@@ -671,6 +671,8 @@ fn diagnostic_owner_ids(
 ) -> Vec<serde_json::Value> {
     let view_projection = diagnostic_view_projection(options);
     let reference_view_projection = diagnostic_reference_view_projection(options);
+    let size = ScreenProjectionSize::from_pixels(options.width, options.height);
+    let front_face = options.front_face.renderer_policy();
     primitives
         .iter()
         .enumerate()
@@ -681,13 +683,15 @@ fn diagnostic_owner_ids(
                     &primitive.mesh,
                     owner.triangle,
                     view_projection,
-                    options,
+                    size,
+                    front_face,
                 );
                 let reference_projection = owner_triangle_projection::<ZeroToOneDepth>(
                     &primitive.mesh,
                     owner.triangle,
                     reference_view_projection,
-                    options,
+                    size,
+                    front_face,
                 );
                 json!({
                     "id": owner.id,
@@ -820,7 +824,8 @@ fn owner_triangle_projection<D>(
     mesh: &Mesh,
     triangle: usize,
     view_projection: Mat4,
-    options: &CaptureOptions,
+    size: ScreenProjectionSize,
+    front_face: RendererFrontFace,
 ) -> Option<ScreenTriangleProjection>
 where
     D: ClipDepthMapping,
@@ -834,8 +839,8 @@ where
             *positions.get(start + 2)?,
         ],
         view_projection,
-        ScreenProjectionSize::from_pixels(options.width, options.height),
-        options.front_face.renderer_policy(),
+        size,
+        front_face,
     )
 }
 

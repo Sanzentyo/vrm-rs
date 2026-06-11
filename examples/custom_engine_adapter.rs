@@ -105,15 +105,21 @@ impl CustomEngine {
             let material_ref = MaterialRef(material_index);
             let material = self.materials.entry(material_ref).or_default();
             if let Some(color) = self.staging.material_color(material_ref, "_Color") {
-                material
+                let color_property = material
                     .color_properties
-                    .insert("_Color".to_owned(), color.to_vec());
+                    .entry("_Color".to_owned())
+                    .or_default();
+                color_property.clear();
+                color_property.extend_from_slice(color);
             }
             if let Some(intensity) = self.staging.emissive_intensity(material_ref) {
                 material.emissive_intensity = intensity;
             }
             if let Some(passes) = self.staging.mtoon_pipeline_passes(material_ref) {
-                material.pipeline = passes.iter().map(engine_pipeline_from_pass).collect();
+                material.pipeline.clear();
+                material
+                    .pipeline
+                    .extend(passes.iter().map(engine_pipeline_from_pass));
             }
         }
     }

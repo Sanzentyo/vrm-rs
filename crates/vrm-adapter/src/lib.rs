@@ -74,24 +74,12 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
 
     #[inline(always)]
     fn from_vrm_matrix(matrix: Mat4) -> Mat4 {
-        map_coordinate_space_affine_matrix(
-            matrix,
-            Self::from_vrm_position,
-            Self::from_vrm_direction,
-            Self::to_vrm_position,
-            Self::to_vrm_direction,
-        )
+        coordinate_space_matrix_from_vrm::<Self>(matrix)
     }
 
     #[inline(always)]
     fn to_vrm_matrix(matrix: Mat4) -> Mat4 {
-        map_coordinate_space_affine_matrix(
-            matrix,
-            Self::to_vrm_position,
-            Self::to_vrm_direction,
-            Self::from_vrm_position,
-            Self::from_vrm_direction,
-        )
+        coordinate_space_matrix_to_vrm::<Self>(matrix)
     }
 }
 
@@ -160,18 +148,43 @@ fn flip_z_rotation(rotation: Quat) -> Quat {
 }
 
 #[inline(always)]
-fn map_coordinate_space_affine_matrix(
-    matrix: Mat4,
-    map_output_position: impl Fn(Vec3) -> Vec3,
-    map_output_direction: impl Fn(Vec3) -> Vec3,
-    map_input_position: impl Fn(Vec3) -> Vec3,
-    map_input_direction: impl Fn(Vec3) -> Vec3,
-) -> Mat4 {
-    let origin = map_output_position(matrix.transform_point3(map_input_position(Vec3::ZERO)));
+fn coordinate_space_matrix_from_vrm<C>(matrix: Mat4) -> Mat4
+where
+    C: CoordinateSpaceMapping,
+{
+    map_coordinate_space_affine_matrix::<VrmCoordinateSpace, C>(matrix)
+}
+
+#[inline(always)]
+fn coordinate_space_matrix_to_vrm<C>(matrix: Mat4) -> Mat4
+where
+    C: CoordinateSpaceMapping,
+{
+    map_coordinate_space_affine_matrix::<C, VrmCoordinateSpace>(matrix)
+}
+
+#[inline(always)]
+fn map_coordinate_space_affine_matrix<I, O>(matrix: Mat4) -> Mat4
+where
+    I: CoordinateSpaceMapping,
+    O: CoordinateSpaceMapping,
+{
+    let origin = O::from_vrm_position(I::to_vrm_position(
+        matrix.transform_point3(I::from_vrm_position(O::to_vrm_position(Vec3::ZERO))),
+    ));
     Mat4::from_cols(
-        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::X))).extend(0.0),
-        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::Y))).extend(0.0),
-        map_output_direction(matrix.transform_vector3(map_input_direction(Vec3::Z))).extend(0.0),
+        O::from_vrm_direction(I::to_vrm_direction(
+            matrix.transform_vector3(I::from_vrm_direction(O::to_vrm_direction(Vec3::X))),
+        ))
+        .extend(0.0),
+        O::from_vrm_direction(I::to_vrm_direction(
+            matrix.transform_vector3(I::from_vrm_direction(O::to_vrm_direction(Vec3::Y))),
+        ))
+        .extend(0.0),
+        O::from_vrm_direction(I::to_vrm_direction(
+            matrix.transform_vector3(I::from_vrm_direction(O::to_vrm_direction(Vec3::Z))),
+        ))
+        .extend(0.0),
         origin.extend(1.0),
     )
 }
@@ -270,23 +283,12 @@ pub struct ScreenProjectionBounds {
 impl ScreenProjectionBounds {
     #[inline(always)]
     pub fn from_triangle(screen: [[f32; 2]; 3]) -> Self {
+        let [[ax, ay], [bx, by], [cx, cy]] = screen;
         Self {
-            min_x: screen
-                .iter()
-                .map(|point| point[0])
-                .fold(f32::INFINITY, f32::min),
-            min_y: screen
-                .iter()
-                .map(|point| point[1])
-                .fold(f32::INFINITY, f32::min),
-            max_x: screen
-                .iter()
-                .map(|point| point[0])
-                .fold(f32::NEG_INFINITY, f32::max),
-            max_y: screen
-                .iter()
-                .map(|point| point[1])
-                .fold(f32::NEG_INFINITY, f32::max),
+            min_x: ax.min(bx).min(cx),
+            min_y: ay.min(by).min(cy),
+            max_x: ax.max(bx).max(cx),
+            max_y: ay.max(by).max(cy),
         }
     }
 }
@@ -403,10 +405,7 @@ where
         (0.5 - ndc.y * 0.5) * size.height,
         ndc.z,
     ];
-    screen
-        .iter()
-        .all(|value| value.is_finite())
-        .then_some(screen)
+    (ndc.x.is_finite() && ndc.y.is_finite() && ndc.z.is_finite()).then_some(screen)
 }
 
 #[inline(always)]
@@ -3612,6 +3611,28 @@ mod tests {
             roundtrip.rotation.abs_diff_eq(transform.rotation, 0.0001)
                 || roundtrip.rotation.abs_diff_eq(-transform.rotation, 0.0001)
         );
+    }
+
+    #[test]
+    fn coordinate_space_matrix_helpers_convert_basis_directly() {
+        let transform = Transform {
+            translation: Vec3::new(1.0, -2.0, 3.0),
+            rotation: Quat::from_rotation_x(0.35)
+                * Quat::from_rotation_y(-0.6)
+                * Quat::from_rotation_z(0.2),
+            scale: Vec3::new(1.25, 0.75, 2.0),
+        };
+        let matrix = transform_matrix(transform);
+        let mirror = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
+
+        assert_matrix_abs_diff_eq(VrmCoordinateSpace::from_vrm_matrix(matrix), matrix, 0.0001);
+        assert_matrix_abs_diff_eq(VrmCoordinateSpace::to_vrm_matrix(matrix), matrix, 0.0001);
+
+        let mapped = FlipZCoordinateSpace::from_vrm_matrix(matrix);
+        assert_matrix_abs_diff_eq(mapped, mirror * matrix * mirror, 0.0001);
+
+        let roundtrip = FlipZCoordinateSpace::to_vrm_matrix(mapped);
+        assert_matrix_abs_diff_eq(roundtrip, matrix, 0.0001);
     }
 
     #[test]

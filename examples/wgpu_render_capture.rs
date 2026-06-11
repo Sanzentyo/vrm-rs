@@ -1415,11 +1415,12 @@ fn texture_resource_indices(resources: &[TextureResource]) -> HashMap<usize, usi
 }
 
 fn pipeline_keys(mesh: &MeshDrawData, options: &CaptureOptions) -> Vec<PipelineKey> {
-    let mut keys = mesh
-        .primitives
-        .iter()
-        .map(|primitive| pipeline_key(primitive.policy, options.front_face))
-        .collect::<Vec<_>>();
+    let mut keys = Vec::with_capacity(mesh.primitives.len());
+    keys.extend(
+        mesh.primitives
+            .iter()
+            .map(|primitive| pipeline_key(primitive.policy, options.front_face)),
+    );
     keys.sort_by_key(|key| {
         (
             key.front_face as u8,
@@ -1433,11 +1434,14 @@ fn pipeline_keys(mesh: &MeshDrawData, options: &CaptureOptions) -> Vec<PipelineK
 }
 
 fn pipeline_indices(keys: &[PipelineKey]) -> HashMap<PipelineKey, usize> {
-    keys.iter()
-        .copied()
-        .enumerate()
-        .map(|(index, key)| (key, index))
-        .collect()
+    let mut indices = HashMap::with_capacity(keys.len());
+    indices.extend(
+        keys.iter()
+            .copied()
+            .enumerate()
+            .map(|(index, key)| (key, index)),
+    );
+    indices
 }
 
 fn pipeline_key(policy: MaterialPolicy, front_face: CaptureFrontFace) -> PipelineKey {
@@ -1784,65 +1788,60 @@ async fn render_capture(
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
     let pipeline_keys = pipeline_keys(mesh, options);
-    let pipelines = pipeline_keys
-        .iter()
-        .map(|key| {
-            render_pipeline(
-                &device,
-                &uniform_bind_group_layout,
-                &texture_bind_group_layout,
-                &shader,
-                format,
-                *key,
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut pipelines = Vec::with_capacity(pipeline_keys.len());
+    pipelines.extend(pipeline_keys.iter().map(|key| {
+        render_pipeline(
+            &device,
+            &uniform_bind_group_layout,
+            &texture_bind_group_layout,
+            &shader,
+            format,
+            *key,
+        )
+    }));
     let pipeline_indices = pipeline_indices(&pipeline_keys);
-    let primitive_texture_bind_groups = mesh
+    let primitive_pipeline_indices = mesh
         .primitives
         .iter()
-        .map(|primitive| {
-            material_texture_bind_group(
-                &device,
-                &texture_bind_group_layout,
-                TextureResourceTables {
-                    color: &color_texture_resources,
-                    raw_color: &raw_color_texture_resources,
-                    normal: &normal_texture_resources,
-                    indices: &texture_resource_indices,
-                    raw_base_color_filter: options.diagnostic_render.raw_base_color_filter(),
-                },
-                primitive.images,
-                primitive.uv_transforms,
-                primitive.material_extra,
-            )
-        })
+        .map(|primitive| pipeline_indices[&pipeline_key(primitive.policy, options.front_face)])
         .collect::<Vec<_>>();
-    let gpu_primitives = mesh
-        .primitives
-        .iter()
-        .enumerate()
-        .map(|(primitive_index, primitive)| {
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("render parity vertices"),
-                contents: bytemuck::cast_slice(&primitive.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("render parity indices"),
-                contents: bytemuck::cast_slice(&primitive.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-            Ok::<_, Box<dyn Error>>(GpuPrimitive {
-                vertex_buffer,
-                index_buffer,
-                index_count: u32::try_from(primitive.indices.len())?,
-                texture_bind_group_index: primitive_index,
-                pipeline_index: pipeline_indices
-                    [&pipeline_key(primitive.policy, options.front_face)],
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut primitive_texture_bind_groups = Vec::with_capacity(mesh.primitives.len());
+    for primitive in &mesh.primitives {
+        primitive_texture_bind_groups.push(material_texture_bind_group(
+            &device,
+            &texture_bind_group_layout,
+            TextureResourceTables {
+                color: &color_texture_resources,
+                raw_color: &raw_color_texture_resources,
+                normal: &normal_texture_resources,
+                indices: &texture_resource_indices,
+                raw_base_color_filter: options.diagnostic_render.raw_base_color_filter(),
+            },
+            primitive.images,
+            primitive.uv_transforms,
+            primitive.material_extra,
+        ));
+    }
+    let mut gpu_primitives = Vec::with_capacity(mesh.primitives.len());
+    for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("render parity vertices"),
+            contents: bytemuck::cast_slice(&primitive.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("render parity indices"),
+            contents: bytemuck::cast_slice(&primitive.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        gpu_primitives.push(GpuPrimitive {
+            vertex_buffer,
+            index_buffer,
+            index_count: u32::try_from(primitive.indices.len())?,
+            texture_bind_group_index: primitive_index,
+            pipeline_index: primitive_pipeline_indices[primitive_index],
+        });
+    }
 
     let bytes_per_pixel = 4;
     let unpadded_bytes_per_row = options.width * bytes_per_pixel;
