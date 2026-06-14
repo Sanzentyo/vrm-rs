@@ -389,6 +389,19 @@ impl SceneGraph for BevyRuntimeSceneState {
         self.entity(node)?;
         Ok(self.children.get(&node).cloned().unwrap_or_default())
     }
+
+    fn visit_children<F>(&self, node: NodeRef, mut visitor: F) -> Result<(), Self::Error>
+    where
+        F: FnMut(NodeRef),
+    {
+        self.entity(node)?;
+        if let Some(children) = self.children.get(&node) {
+            for &child in children {
+                visitor(child);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl TransformAccess for BevyRuntimeSceneState {

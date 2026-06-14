@@ -92,25 +92,25 @@ impl CustomEngine {
     }
 
     fn sync_from_staging(&mut self, document: &VrmDocument) {
-        for node in self.nodes.keys().copied().collect::<Vec<_>>() {
-            if let Some(engine_node) = self.nodes.get_mut(&node) {
-                engine_node.local = self.staging.local_transform(node).unwrap();
-                engine_node.visible = self.staging.node(node).unwrap().visible;
-                if let Some(weight) = self.staging.morph_weight(node, 0) {
-                    engine_node.morph_weights.insert(0, weight);
-                }
+        for (&node, engine_node) in &mut self.nodes {
+            engine_node.local = self.staging.local_transform(node).unwrap();
+            engine_node.visible = self.staging.node(node).unwrap().visible;
+            if let Some(weight) = self.staging.morph_weight(node, 0) {
+                engine_node.morph_weights.insert(0, weight);
             }
         }
         for material_index in 0..document.materials.len() {
             let material_ref = MaterialRef(material_index);
             let material = self.materials.entry(material_ref).or_default();
             if let Some(color) = self.staging.material_color(material_ref, "_Color") {
-                let color_property = material
-                    .color_properties
-                    .entry("_Color".to_owned())
-                    .or_default();
-                color_property.clear();
-                color_property.extend_from_slice(color);
+                if let Some(color_property) = material.color_properties.get_mut("_Color") {
+                    color_property.clear();
+                    color_property.extend_from_slice(color);
+                } else {
+                    material
+                        .color_properties
+                        .insert("_Color".to_owned(), color.to_vec());
+                }
             }
             if let Some(intensity) = self.staging.emissive_intensity(material_ref) {
                 material.emissive_intensity = intensity;

@@ -72,13 +72,25 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
         }
     }
 
+    /// Converts an affine transform matrix from VRM/glTF space into this
+    /// coordinate space.
+    ///
+    /// This intentionally treats `matrix` as affine data: translation and
+    /// basis vectors are remapped, while projective/perspective components are
+    /// not preserved. Use projection helpers for clip-space matrices.
     #[inline(always)]
-    fn from_vrm_matrix(matrix: Mat4) -> Mat4 {
+    fn from_vrm_affine_matrix(matrix: Mat4) -> Mat4 {
         coordinate_space_matrix_from_vrm::<Self>(matrix)
     }
 
+    /// Converts an affine transform matrix from this coordinate space back to
+    /// VRM/glTF space.
+    ///
+    /// This intentionally treats `matrix` as affine data: translation and
+    /// basis vectors are remapped, while projective/perspective components are
+    /// not preserved. Use projection helpers for clip-space matrices.
     #[inline(always)]
-    fn to_vrm_matrix(matrix: Mat4) -> Mat4 {
+    fn to_vrm_affine_matrix(matrix: Mat4) -> Mat4 {
         coordinate_space_matrix_to_vrm::<Self>(matrix)
     }
 }
@@ -405,7 +417,7 @@ where
         (0.5 - ndc.y * 0.5) * size.height,
         ndc.z,
     ];
-    (ndc.x.is_finite() && ndc.y.is_finite() && ndc.z.is_finite()).then_some(screen)
+    (screen[0].is_finite() && screen[1].is_finite() && screen[2].is_finite()).then_some(screen)
 }
 
 #[inline(always)]
@@ -419,6 +431,16 @@ pub trait SceneGraph {
 
     fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error>;
     fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error>;
+
+    fn visit_children<F>(&self, node: NodeRef, mut visitor: F) -> Result<(), Self::Error>
+    where
+        F: FnMut(NodeRef),
+    {
+        for child in self.children(node)? {
+            visitor(child);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -481,6 +503,14 @@ where
     #[inline(always)]
     fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error> {
         self.target.children(node)
+    }
+
+    #[inline(always)]
+    fn visit_children<F>(&self, node: NodeRef, visitor: F) -> Result<(), Self::Error>
+    where
+        F: FnMut(NodeRef),
+    {
+        self.target.visit_children(node, visitor)
     }
 }
 
@@ -566,7 +596,7 @@ where
 
     #[inline(always)]
     fn world_matrix(&self, node: NodeRef) -> Result<Mat4, Self::Error> {
-        self.target.world_matrix(node).map(C::to_vrm_matrix)
+        self.target.world_matrix(node).map(C::to_vrm_affine_matrix)
     }
 }
 
@@ -859,6 +889,19 @@ impl SceneGraph for HeadlessSceneState {
             .get(&node)
             .map(|state| state.children.clone())
             .unwrap_or_default())
+    }
+
+    fn visit_children<F>(&self, node: NodeRef, mut visitor: F) -> Result<(), Self::Error>
+    where
+        F: FnMut(NodeRef),
+    {
+        self.ensure_node(node)?;
+        if let Some(state) = self.nodes.get(&node) {
+            for &child in &state.children {
+                visitor(child);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1549,14 +1592,23 @@ fn spring_joint_child<T, E>(
 where
     T: SceneGraph<Error = E>,
 {
-    let children = target.children(node).map_err(AdapterError::Target)?;
+    let mut first_child = None;
+    let mut has_next_joint_child = false;
+    target
+        .visit_children(node, |child| {
+            first_child.get_or_insert(child);
+            if Some(child) == next_joint {
+                has_next_joint_child = true;
+            }
+        })
+        .map_err(AdapterError::Target)?;
     if let Some(next_joint) = next_joint
-        && (children.contains(&next_joint)
+        && (has_next_joint_child
             || target.parent(next_joint).map_err(AdapterError::Target)? == Some(node))
     {
         return Ok(Some(next_joint));
     }
-    Ok(children.first().copied())
+    Ok(first_child)
 }
 
 fn center_space_tail(
@@ -3155,11 +3207,13 @@ where
             let joint_local = target
                 .local_transform(joint.node)
                 .map_err(AdapterError::Target)?;
-            let child_world = target
-                .children(joint.node)
-                .map_err(AdapterError::Target)?
-                .first()
-                .copied()
+            let mut first_child = None;
+            target
+                .visit_children(joint.node, |child| {
+                    first_child.get_or_insert(child);
+                })
+                .map_err(AdapterError::Target)?;
+            let child_world = first_child
                 .map(|child| target.world_transform(child).map_err(AdapterError::Target))
                 .transpose()?;
             let (local_axis, bone_length) =
@@ -3614,7 +3668,7 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_space_matrix_helpers_convert_basis_directly() {
+    fn coordinate_space_affine_matrix_helpers_convert_basis_directly() {
         let transform = Transform {
             translation: Vec3::new(1.0, -2.0, 3.0),
             rotation: Quat::from_rotation_x(0.35)
@@ -3625,13 +3679,21 @@ mod tests {
         let matrix = transform_matrix(transform);
         let mirror = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
 
-        assert_matrix_abs_diff_eq(VrmCoordinateSpace::from_vrm_matrix(matrix), matrix, 0.0001);
-        assert_matrix_abs_diff_eq(VrmCoordinateSpace::to_vrm_matrix(matrix), matrix, 0.0001);
+        assert_matrix_abs_diff_eq(
+            VrmCoordinateSpace::from_vrm_affine_matrix(matrix),
+            matrix,
+            0.0001,
+        );
+        assert_matrix_abs_diff_eq(
+            VrmCoordinateSpace::to_vrm_affine_matrix(matrix),
+            matrix,
+            0.0001,
+        );
 
-        let mapped = FlipZCoordinateSpace::from_vrm_matrix(matrix);
+        let mapped = FlipZCoordinateSpace::from_vrm_affine_matrix(matrix);
         assert_matrix_abs_diff_eq(mapped, mirror * matrix * mirror, 0.0001);
 
-        let roundtrip = FlipZCoordinateSpace::to_vrm_matrix(mapped);
+        let roundtrip = FlipZCoordinateSpace::to_vrm_affine_matrix(mapped);
         assert_matrix_abs_diff_eq(roundtrip, matrix, 0.0001);
     }
 
@@ -3647,6 +3709,8 @@ mod tests {
             NodeRef(0),
             FlipZCoordinateSpace::from_vrm_transform(vrm_transform),
         );
+        scene.insert_node(NodeRef(1), Transform::default());
+        scene.set_parent(NodeRef(1), Some(NodeRef(0))).unwrap();
         scene.update_world_transforms().unwrap();
 
         let next_vrm_transform = Transform {
@@ -3660,6 +3724,11 @@ mod tests {
             assert_transform_abs_diff_eq(read, vrm_transform, 0.0001);
             let matrix = target.world_matrix(NodeRef(0)).unwrap();
             assert_matrix_abs_diff_eq(matrix, transform_matrix(vrm_transform), 0.0001);
+            let mut children = Vec::new();
+            target
+                .visit_children(NodeRef(0), |child| children.push(child))
+                .unwrap();
+            assert_eq!(children, vec![NodeRef(1)]);
             target
                 .set_local_transform(NodeRef(0), next_vrm_transform)
                 .unwrap();
@@ -3714,6 +3783,24 @@ mod tests {
 
         assert_eq!(projection.ndc_depth, 0.25);
         assert_eq!(projection.webgl_depth, -0.5);
+    }
+
+    #[test]
+    fn reverse_zero_to_one_depth_projection_maps_to_webgl_depth() {
+        let projection =
+            project_vrm_triangle_to_screen::<FlipZCoordinateSpace, ReverseZeroToOneDepth>(
+                [[0.0, 0.0, -0.25], [1.0, 0.0, -0.25], [0.0, 1.0, -0.25]],
+                Mat4::IDENTITY,
+                ScreenProjectionSize {
+                    width: 100.0,
+                    height: 100.0,
+                },
+                RendererFrontFace::Ccw,
+            )
+            .unwrap();
+
+        assert_eq!(projection.ndc_depth, 0.25);
+        assert_eq!(projection.webgl_depth, 0.5);
     }
 
     fn transform_matrix(transform: Transform) -> Mat4 {

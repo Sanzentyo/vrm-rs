@@ -1800,11 +1800,6 @@ async fn render_capture(
         )
     }));
     let pipeline_indices = pipeline_indices(&pipeline_keys);
-    let primitive_pipeline_indices = mesh
-        .primitives
-        .iter()
-        .map(|primitive| pipeline_indices[&pipeline_key(primitive.policy, options.front_face)])
-        .collect::<Vec<_>>();
     let mut primitive_texture_bind_groups = Vec::with_capacity(mesh.primitives.len());
     for primitive in &mesh.primitives {
         primitive_texture_bind_groups.push(material_texture_bind_group(
@@ -1839,7 +1834,7 @@ async fn render_capture(
             index_buffer,
             index_count: u32::try_from(primitive.indices.len())?,
             texture_bind_group_index: primitive_index,
-            pipeline_index: primitive_pipeline_indices[primitive_index],
+            pipeline_index: pipeline_indices[&pipeline_key(primitive.policy, options.front_face)],
         });
     }
 
