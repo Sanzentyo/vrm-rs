@@ -3994,6 +3994,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vrm-osc"
+version = "0.1.0"
+
+[[package]]
 name = "vrm-protocol"
 version = "0.1.0"
 dependencies = [
@@ -4021,6 +4025,7 @@ dependencies = [
  "vrm-adapter-bevy",
  "vrm-core",
  "vrm-io",
+ "vrm-osc",
  "vrm-protocol",
  "vrm-runtime",
  "vrm-sans-io",

@@ -18,6 +18,8 @@
 pub use vrm_adapter as adapter;
 pub use vrm_core as core;
 pub use vrm_io as io;
+#[cfg(feature = "osc")]
+pub use vrm_osc as osc;
 pub use vrm_protocol as protocol;
 pub use vrm_runtime as runtime;
 pub use vrm_sans_io as sans_io;
@@ -257,6 +259,20 @@ mod tests {
         let asset = VrmAsset::<Parsed>::new_parsed(core::VrmDocument::default());
         let model: ResolvedVrmModel = asset.mark_validated().resolve();
         assert_eq!(model.document().kind, core::VrmKind::Vrm1);
+    }
+
+    #[cfg(feature = "osc")]
+    #[test]
+    fn facade_reexports_osc_when_feature_enabled() {
+        let packet = osc::OscPacket::Message(osc::OscMessage {
+            addr: "/vrm-rs/osc".to_owned(),
+            args: vec![osc::OscType::Int(7)],
+        });
+        let bytes = osc::encoder::encode(&packet).unwrap();
+        let (remainder, decoded) = osc::decoder::decode_udp(&bytes).unwrap();
+
+        assert!(remainder.is_empty());
+        assert_eq!(decoded, packet);
     }
 
     #[test]

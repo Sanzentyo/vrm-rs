@@ -55,10 +55,10 @@ function Format-Percent {
 function Get-CrateSummaryMap {
     param([object]$CoverageData)
 
-    $map = @{}
+    $rawMap = @{}
     foreach ($file in $CoverageData.data[0].files) {
         $name = ""
-        if ($file.filename -match '(?:[\\\/])crates(?:[\\\/])([^\\\/]+)(?:[\\\/])src(?:[\\\/])lib\.rs$') {
+        if ($file.filename -match '(?:[\\\/])crates(?:[\\\/])([^\\\/]+)(?:[\\\/])src(?:[\\\/]).+\.rs$') {
             $name = $Matches[1]
         } elseif ($file.filename -match '(?:[\\\/])src(?:[\\\/])lib\.rs$') {
             $name = "src/lib.rs"
@@ -66,9 +66,27 @@ function Get-CrateSummaryMap {
             continue
         }
 
+        if (-not $rawMap.ContainsKey($name)) {
+            $rawMap[$name] = @{
+                RegionCount = 0.0
+                RegionCovered = 0.0
+                LineCount = 0.0
+                LineCovered = 0.0
+            }
+        }
+        $entry = $rawMap[$name]
+        $entry.RegionCount += [double]$file.summary.regions.count
+        $entry.RegionCovered += [double]$file.summary.regions.covered
+        $entry.LineCount += [double]$file.summary.lines.count
+        $entry.LineCovered += [double]$file.summary.lines.covered
+    }
+
+    $map = @{}
+    foreach ($name in $rawMap.Keys) {
+        $entry = $rawMap[$name]
         $map[$name] = @{
-            Regions = [double]$file.summary.regions.percent
-            Lines = [double]$file.summary.lines.percent
+            Regions = if ($entry.RegionCount -gt 0) { ($entry.RegionCovered * 100.0) / $entry.RegionCount } else { 0.0 }
+            Lines = if ($entry.LineCount -gt 0) { ($entry.LineCovered * 100.0) / $entry.LineCount } else { 0.0 }
         }
     }
 
@@ -90,6 +108,7 @@ function Build-TestingSection {
         @{ Name = "vrm-adapter"; Key = "vrm-adapter" },
         @{ Name = "vrm-core"; Key = "vrm-core" },
         @{ Name = "vrm-io"; Key = "vrm-io" },
+        @{ Name = "vrm-osc"; Key = "vrm-osc" },
         @{ Name = "vrm-protocol"; Key = "vrm-protocol" },
         @{ Name = "vrm-runtime"; Key = "vrm-runtime" },
         @{ Name = "vrm-sans-io"; Key = "vrm-sans-io" },
@@ -157,6 +176,13 @@ function Update-TestingDoc {
     $preservedTail = @()
     if ($lastTableLine -ge 0 -and ($lastTableLine + 1) -lt $oldSection.Length) {
         $preservedTail = $oldSection[($lastTableLine + 1)..($oldSection.Length - 1)]
+        while ($preservedTail.Length -gt 0 -and $preservedTail[-1] -eq "") {
+            if ($preservedTail.Length -eq 1) {
+                $preservedTail = @()
+            } else {
+                $preservedTail = $preservedTail[0..($preservedTail.Length - 2)]
+            }
+        }
     }
 
     $replacement = Build-TestingSection -DateText $DateText -CommandText $CommandText -SummaryMap $SummaryMap
@@ -170,7 +196,9 @@ function Update-TestingDoc {
         $newLines += $preservedTail
     }
     if ($endIdx -lt $lines.Length) {
-        $newLines += ""
+        if ($newLines.Length -gt 0 -and $newLines[-1] -ne "") {
+            $newLines += ""
+        }
         $newLines += $lines[$endIdx..($lines.Length - 1)]
     }
 

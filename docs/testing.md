@@ -14,6 +14,7 @@ Current generated coverage:
 - Per-material `KHR_materials_emissive_strength` extension, including invalid shape handling, present-but-empty defaulting, and precedence over archived HDR multiplier.
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
 - First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, generated VRMA warning/error/application policy, MToon descriptor generation, Bevy adapter skeleton compile tests, and Bevy ECS hierarchy readback.
+- Dependency-free OSC packet roundtrips for all supported OSC value variants, nested arrays/bundles, UDP packets, TCP length-prefixed packets, stream-fragment waiting, OSC string padding, and root facade `osc` feature re-export.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -467,15 +468,16 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 82.30% | 84.94% |
+| Workspace total | 81.53% | 84.38% |
 | `vrm-adapter-bevy` | 92.62% | 94.40% |
 | `vrm-adapter` | 67.11% | 75.34% |
 | `vrm-core` | 70.18% | 77.46% |
 | `vrm-io` | 88.22% | 87.40% |
+| `vrm-osc` | 68.00% | 70.53% |
 | `vrm-protocol` | 92.41% | 90.93% |
 | `vrm-runtime` | 87.90% | 88.42% |
 | `vrm-sans-io` | 93.37% | 96.43% |
-| `facade src/lib.rs` | 93.33% | 98.35% |
+| `facade src/lib.rs` | 93.64% | 98.41% |
 
 The current external fixture tests cover recursive fixture discovery, semantic
 IO loading including the Alicia VRM0 compatibility sample, adapter spring rest

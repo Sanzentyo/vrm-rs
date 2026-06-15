@@ -1,0 +1,8 @@
+[package]
+name = "vrm-osc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Dependency-free OSC 1.0 codec for vrm-rs, matching the data model supported by rosc."
+
+[dependencies]
