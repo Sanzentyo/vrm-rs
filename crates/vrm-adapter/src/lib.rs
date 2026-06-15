@@ -83,6 +83,19 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
         coordinate_space_matrix_from_vrm::<Self>(matrix)
     }
 
+    /// Deprecated compatibility alias for [`Self::from_vrm_affine_matrix`].
+    ///
+    /// The old name accepted `Mat4`, but this conversion has always been an
+    /// affine basis/translation remap rather than a projective matrix remap.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use from_vrm_affine_matrix; projective matrices are not preserved"
+    )]
+    #[inline(always)]
+    fn from_vrm_matrix(matrix: Mat4) -> Mat4 {
+        Self::from_vrm_affine_matrix(matrix)
+    }
+
     /// Converts an affine transform matrix from this coordinate space back to
     /// VRM/glTF space.
     ///
@@ -92,6 +105,19 @@ pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
     #[inline(always)]
     fn to_vrm_affine_matrix(matrix: Mat4) -> Mat4 {
         coordinate_space_matrix_to_vrm::<Self>(matrix)
+    }
+
+    /// Deprecated compatibility alias for [`Self::to_vrm_affine_matrix`].
+    ///
+    /// The old name accepted `Mat4`, but this conversion has always been an
+    /// affine basis/translation remap rather than a projective matrix remap.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use to_vrm_affine_matrix; projective matrices are not preserved"
+    )]
+    #[inline(always)]
+    fn to_vrm_matrix(matrix: Mat4) -> Mat4 {
+        Self::to_vrm_affine_matrix(matrix)
     }
 }
 
@@ -432,8 +458,14 @@ pub trait SceneGraph {
     fn parent(&self, node: NodeRef) -> Result<Option<NodeRef>, Self::Error>;
     fn children(&self, node: NodeRef) -> Result<Vec<NodeRef>, Self::Error>;
 
+    /// Visits direct children of `node`.
+    ///
+    /// The default implementation preserves compatibility by delegating to
+    /// [`Self::children`], which may allocate. Override this method in concrete
+    /// scene backends when child traversal sits on a hot path.
     fn visit_children<F>(&self, node: NodeRef, mut visitor: F) -> Result<(), Self::Error>
     where
+        Self: Sized,
         F: FnMut(NodeRef),
     {
         for child in self.children(node)? {
@@ -3695,6 +3727,30 @@ mod tests {
 
         let roundtrip = FlipZCoordinateSpace::to_vrm_affine_matrix(mapped);
         assert_matrix_abs_diff_eq(roundtrip, matrix, 0.0001);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn coordinate_space_matrix_aliases_remain_compatible() {
+        let matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        assert_matrix_abs_diff_eq(
+            FlipZCoordinateSpace::from_vrm_matrix(matrix),
+            FlipZCoordinateSpace::from_vrm_affine_matrix(matrix),
+            0.0001,
+        );
+        assert_matrix_abs_diff_eq(
+            FlipZCoordinateSpace::to_vrm_matrix(matrix),
+            FlipZCoordinateSpace::to_vrm_affine_matrix(matrix),
+            0.0001,
+        );
+    }
+
+    #[test]
+    fn scene_graph_trait_remains_object_safe() {
+        fn accepts_dyn_scene_graph(_scene: &dyn SceneGraph<Error = HeadlessAdapterError>) {}
+
+        let scene = HeadlessSceneState::default();
+        accepts_dyn_scene_graph(&scene);
     }
 
     #[test]

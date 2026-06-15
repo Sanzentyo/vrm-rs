@@ -30,7 +30,7 @@ cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
-The default script run covers `cargo fmt --all -- --check`, `cargo test --workspace --all-features`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70`.
+The default script run covers `cargo fmt --all -- --check`, `cargo test --workspace --all-features`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, non-rendering example smokes (`mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, `custom_engine_adapter`), capture-example compile/unit tests (`wgpu_render_capture`, `bevy_render_capture`), render-tool syntax/self-tests, and `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70`.
 
 ## Coverage Refresh Delegation
 

@@ -51,7 +51,7 @@ just render-parity-vrm1-samples
 just render-parity-imqraw-seed-normal
 ```
 
-The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `ash_mtoon_pipeline_materialization`, and `bevy_mtoon_materialization`, so the public `MtoonRendererMaterialPlan` wgpu/ash-style path, the concrete Vulkan-shaped descriptor/pipeline mapping, and Bevy-facing MToon material pipeline examples are checked by the normal local gate instead of only being compiled.
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, capture-example compile/unit tests, render-tool syntax/self-tests, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, and `custom_engine_adapter`, so the renderer-neutral skeleton, concrete wgpu-shaped bind-group/render-pipeline mapping, concrete Vulkan-shaped descriptor/pipeline mapping, Bevy-facing MToon material pipeline example, and non-Bevy custom-engine runtime adapter flow are checked by the normal local gate instead of only being compiled. The same default gate also runs `cargo test --example wgpu_render_capture --all-features`, `cargo test --example bevy_render_capture --all-features`, `node --check` for the three-vrm browser capture script, and the Rust render-tool help/self-test commands used by the parity harness.
 The Rust script also sets cargo dev/test debug info to level `1` for commands
 it launches. That keeps Windows MSVC PDB files below the observed Bevy-heavy
 debug-info limit without changing runtime behavior, render output, or the
@@ -467,9 +467,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 82.27% | 84.92% |
+| Workspace total | 82.30% | 84.94% |
 | `vrm-adapter-bevy` | 92.62% | 94.40% |
-| `vrm-adapter` | 66.94% | 75.25% |
+| `vrm-adapter` | 67.11% | 75.34% |
 | `vrm-core` | 70.18% | 77.46% |
 | `vrm-io` | 88.22% | 87.40% |
 | `vrm-protocol` | 92.41% | 90.93% |
