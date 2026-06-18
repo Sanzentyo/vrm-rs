@@ -338,6 +338,10 @@ fn run_example_smokes() -> Result<(), String> {
     ] {
         run_cmd("cargo", ["run", "--example", example])?;
     }
+    run_cmd(
+        "cargo",
+        ["run", "--example", "headless_vrma_animation", "--", "--help"],
+    )?;
     Ok(())
 }
 

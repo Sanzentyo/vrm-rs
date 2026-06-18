@@ -13,6 +13,10 @@ ci:
 ci-external:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 
+# Sample a VRMA clip onto a VRM avatar through the renderer-neutral headless adapter.
+vrma-animation avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/test.vrma" frames="5":
+    cargo run --example headless_vrma_animation -- --avatar "{{ avatar }}" --animation "{{ animation }}" --frames "{{ frames }}"
+
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
 render-parity three_vrm_root="D:/git/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"
