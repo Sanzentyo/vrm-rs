@@ -8,6 +8,10 @@
 pub mod bevy_scene;
 #[cfg(feature = "render")]
 pub use bevy_scene::*;
+#[cfg(feature = "viewer")]
+pub mod viewer_camera;
+#[cfg(feature = "viewer")]
+pub use viewer_camera::*;
 
 use bevy::prelude::{
     App, Asset, Assets, ChildOf, Component, Entity, Handle, IntoScheduleConfigs, Plugin,

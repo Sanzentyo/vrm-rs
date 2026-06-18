@@ -9,8 +9,8 @@ use clap::{Parser, ValueEnum};
 use std::error::Error;
 use std::path::PathBuf;
 use vrm_adapter_bevy::{
-    BevyVrmAnimationClip, BevyVrmMaterialMode, BevyVrmOrientation, BevyVrmScenePlugin,
-    BevyVrmSpawnConfig, animation_from_loaded, spawn_vrm_scene,
+    BevyVrmAnimationClip, BevyVrmMaterialMode, BevyVrmOrbitCameraPlugin, BevyVrmOrientation,
+    BevyVrmScenePlugin, BevyVrmSpawnConfig, VrmOrbitCamera, animation_from_loaded, spawn_vrm_scene,
 };
 use vrm_io::load_vrm_from_path;
 
@@ -41,6 +41,12 @@ struct Options {
     /// Camera Z distance.
     #[arg(long, default_value_t = 3.0)]
     camera_z: f32,
+    /// Minimum orbit camera radius.
+    #[arg(long, default_value_t = 0.4)]
+    min_camera_radius: f32,
+    /// Maximum orbit camera radius.
+    #[arg(long, default_value_t = 20.0)]
+    max_camera_radius: f32,
     /// Camera target height.
     #[arg(long, default_value_t = 1.1)]
     look_y: f32,
@@ -80,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }),
             ..default()
         }))
-        .add_plugins(BevyVrmScenePlugin)
+        .add_plugins((BevyVrmScenePlugin, BevyVrmOrbitCameraPlugin))
         .add_systems(Startup, setup)
         .run();
     Ok(())
@@ -141,11 +147,12 @@ fn setup(
     .unwrap_or_else(|error| panic!("failed to spawn VRM scene: {error}"));
 
     commands.entity(root).insert(Name::new("VRM avatar"));
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, options.look_y, options.camera_z)
-            .looking_at(Vec3::new(0.0, options.look_y, 0.0), Vec3::Y),
-    ));
+    let camera_target = Vec3::new(0.0, options.look_y, 0.0);
+    let camera_position = Vec3::new(0.0, options.look_y, options.camera_z);
+    let orbit_camera = VrmOrbitCamera::from_position(camera_target, camera_position)
+        .with_radius_limits(options.min_camera_radius, options.max_camera_radius)
+        .with_focus_target(camera_target);
+    commands.spawn((Camera3d::default(), orbit_camera.transform(), orbit_camera));
     commands.spawn((
         DirectionalLight {
             illuminance: 4_000.0,

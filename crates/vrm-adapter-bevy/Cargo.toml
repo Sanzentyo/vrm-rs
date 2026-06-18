@@ -35,4 +35,5 @@ viewer = [
     "bevy/png",
     "bevy/std",
     "bevy/tonemapping_luts",
+    "bevy/zstd_rust",
 ]
