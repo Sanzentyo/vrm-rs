@@ -1,0 +1,16 @@
+[package]
+name = "vrm-adapter-ash"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Ash/Vulkan-shaped VRM frame and material planning utilities for vrm-rs."
+
+[dependencies]
+ash.workspace = true
+bytemuck.workspace = true
+clap.workspace = true
+glam.workspace = true
+vrm-adapter = { path = "../vrm-adapter" }
+vrm-core = { path = "../vrm-core" }
+vrm-io = { path = "../vrm-io" }
+vrm-runtime = { path = "../vrm-runtime" }

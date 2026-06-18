@@ -104,7 +104,9 @@ function Build-TestingSection {
     $md = [char]96
     $rows = @(
         @{ Name = "Workspace total"; Key = "workspace" },
+        @{ Name = "vrm-adapter-ash"; Key = "vrm-adapter-ash" },
         @{ Name = "vrm-adapter-bevy"; Key = "vrm-adapter-bevy" },
+        @{ Name = "vrm-adapter-wgpu"; Key = "vrm-adapter-wgpu" },
         @{ Name = "vrm-adapter"; Key = "vrm-adapter" },
         @{ Name = "vrm-core"; Key = "vrm-core" },
         @{ Name = "vrm-io"; Key = "vrm-io" },

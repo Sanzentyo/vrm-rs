@@ -1,0 +1,18 @@
+[package]
+name = "vrm-adapter-wgpu"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Bevy-independent wgpu adapter and viewer utilities for vrm-rs."
+
+[dependencies]
+bytemuck.workspace = true
+clap.workspace = true
+glam.workspace = true
+pollster.workspace = true
+vrm-adapter = { path = "../vrm-adapter" }
+vrm-core = { path = "../vrm-core" }
+vrm-io = { path = "../vrm-io" }
+vrm-runtime = { path = "../vrm-runtime" }
+wgpu.workspace = true
+winit = "0.30.13"

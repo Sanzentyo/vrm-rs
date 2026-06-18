@@ -9,7 +9,9 @@ description = "Renderer-agnostic Rust toolkit for reading and driving VRM/VRMA a
 members = [
     ".",
     "crates/vrm-adapter",
+    "crates/vrm-adapter-ash",
     "crates/vrm-adapter-bevy",
+    "crates/vrm-adapter-wgpu",
     "crates/vrm-core",
     "crates/vrm-io",
     "crates/vrm-osc",
@@ -20,6 +22,7 @@ members = [
 resolver = "3"
 
 [workspace.dependencies]
+ash = "0.38.0"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 bitflags = "2.11.1"
 clap = { version = "4.6.1", features = ["derive"] }

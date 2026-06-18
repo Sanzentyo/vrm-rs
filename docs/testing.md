@@ -52,7 +52,7 @@ just render-parity-vrm1-samples
 just render-parity-imqraw-seed-normal
 ```
 
-The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, capture-example compile/unit tests, render-tool syntax/self-tests, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, `custom_engine_adapter`, `headless_vrma_animation --help`, and `cargo run --release --example bevy_vrma_viewer -- --help`, so the renderer-neutral skeleton, concrete wgpu-shaped bind-group/render-pipeline mapping, concrete Vulkan-shaped descriptor/pipeline mapping, Bevy-facing MToon material pipeline example, non-Bevy custom-engine runtime adapter flow, renderer-neutral VRMA animation CLI, and release-built Bevy viewer entrypoint stay checked by the normal local gate instead of only being compiled. The same default gate also runs `cargo test --example wgpu_render_capture --all-features`, `cargo test --example bevy_render_capture --all-features`, `node --check` for the three-vrm browser capture script, and the Rust render-tool help/self-test commands used by the parity harness.
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, capture-example compile/unit tests, render-tool syntax/self-tests, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, `custom_engine_adapter`, `headless_vrma_animation --help`, `cargo run --release --example bevy_vrma_viewer -- --help`, `cargo run --release -p vrm-adapter-wgpu --example vrma_viewer -- --help`, and `cargo run --release -p vrm-adapter-ash --example frame_plan -- --help`, so the renderer-neutral skeleton, concrete wgpu-shaped bind-group/render-pipeline mapping, concrete Vulkan-shaped descriptor/pipeline mapping, Bevy-facing MToon material pipeline example, non-Bevy custom-engine runtime adapter flow, renderer-neutral VRMA animation CLI, release-built Bevy viewer entrypoint, release-built Bevy-independent wgpu viewer entrypoint, and release-built ash/Vulkan frame-plan entrypoint stay checked by the normal local gate instead of only being compiled. The same default gate also runs `cargo test --example wgpu_render_capture --all-features`, `cargo test --example bevy_render_capture --all-features`, `node --check` for the three-vrm browser capture script, and the Rust render-tool help/self-test commands used by the parity harness.
 The Rust script also sets cargo dev/test debug info to level `1` for commands
 it launches. That keeps Windows MSVC PDB files below the observed Bevy-heavy
 debug-info limit without changing runtime behavior, render output, or the
@@ -460,7 +460,7 @@ Current known coverage gaps:
 
 ## Current Coverage Snapshot
 
-Measured locally on 2026-06-15 with:
+Measured locally on 2026-06-18 with:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
@@ -468,8 +468,10 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 81.53% | 84.38% |
-| `vrm-adapter-bevy` | 92.62% | 94.40% |
+| Workspace total | 75.46% | 77.92% |
+| `vrm-adapter-ash` | 9.90% | 10.56% |
+| `vrm-adapter-bevy` | 74.51% | 75.88% |
+| `vrm-adapter-wgpu` | 0.00% | 0.00% |
 | `vrm-adapter` | 67.11% | 75.34% |
 | `vrm-core` | 70.18% | 77.46% |
 | `vrm-io` | 88.22% | 87.40% |
