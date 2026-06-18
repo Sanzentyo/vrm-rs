@@ -392,6 +392,19 @@ fn run_example_smokes() -> Result<(), String> {
             "--help",
         ],
     )?;
+    run_cmd(
+        "cargo",
+        [
+            "run",
+            "--release",
+            "-p",
+            "vrm-adapter-ash",
+            "--example",
+            "unsafe_device_renderer",
+            "--",
+            "--help",
+        ],
+    )?;
     Ok(())
 }
 
