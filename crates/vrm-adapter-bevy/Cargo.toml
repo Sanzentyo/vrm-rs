@@ -7,6 +7,32 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 bevy.workspace = true
 glam.workspace = true
+thiserror.workspace = true
 vrm-adapter = { path = "../vrm-adapter" }
 vrm-core = { path = "../vrm-core" }
+vrm-io = { path = "../vrm-io", optional = true }
 vrm-runtime = { path = "../vrm-runtime" }
+
+[features]
+default = []
+render = [
+    "dep:vrm-io",
+    "bevy/bevy_color",
+    "bevy/bevy_image",
+    "bevy/bevy_log",
+    "bevy/bevy_mesh",
+    "bevy/bevy_pbr",
+    "bevy/bevy_render",
+]
+viewer = [
+    "render",
+    "bevy/async_executor",
+    "bevy/bevy_core_pipeline",
+    "bevy/bevy_light",
+    "bevy/bevy_window",
+    "bevy/bevy_winit",
+    "bevy/multi_threaded",
+    "bevy/png",
+    "bevy/std",
+    "bevy/tonemapping_luts",
+]

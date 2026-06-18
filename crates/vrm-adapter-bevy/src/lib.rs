@@ -4,6 +4,11 @@
 //! plugin marker types. Runtime systems can build on these without pulling
 //! renderer policy into `vrm-core` or `vrm-adapter`.
 
+#[cfg(feature = "render")]
+pub mod bevy_scene;
+#[cfg(feature = "render")]
+pub use bevy_scene::*;
+
 use bevy::prelude::{
     App, Asset, Assets, ChildOf, Component, Entity, Handle, IntoScheduleConfigs, Plugin,
     Quat as BevyQuat, Query, Res, ResMut, Resource, Transform as BevyTransform, Update,

@@ -17,6 +17,10 @@ ci-external:
 vrma-animation avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/test.vrma" frames="5":
     cargo run --example headless_vrma_animation -- --avatar "{{ avatar }}" --animation "{{ animation }}" --frames "{{ frames }}"
 
+# Display a VRM avatar in Bevy and play a VRMA clip. This is intentionally release-built.
+bevy-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma":
+    cargo run --release --example bevy_vrma_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}"
+
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
 render-parity three_vrm_root="D:/git/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"

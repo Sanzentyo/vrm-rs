@@ -81,5 +81,5 @@ image.workspace = true
 imq = { git = "https://github.com/Sanzentyo/imq.git", rev = "0fdc5263c0c21bd6d7bc55c194e98b593bf83bff", default-features = false }
 pollster.workspace = true
 serde_json.workspace = true
-vrm-adapter-bevy = { path = "crates/vrm-adapter-bevy" }
+vrm-adapter-bevy = { path = "crates/vrm-adapter-bevy", features = ["viewer"] }
 wgpu.workspace = true

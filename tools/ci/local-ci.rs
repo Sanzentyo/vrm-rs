@@ -342,6 +342,17 @@ fn run_example_smokes() -> Result<(), String> {
         "cargo",
         ["run", "--example", "headless_vrma_animation", "--", "--help"],
     )?;
+    run_cmd(
+        "cargo",
+        [
+            "run",
+            "--release",
+            "--example",
+            "bevy_vrma_viewer",
+            "--",
+            "--help",
+        ],
+    )?;
     Ok(())
 }
 
