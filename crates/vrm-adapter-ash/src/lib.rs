@@ -129,6 +129,154 @@ pub struct AshVrmFramePlan {
     pub mtoon_pipelines: Vec<AshMtoonPipelinePlan>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshBufferRole {
+    Vertex,
+    Index,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshBufferUpload {
+    pub role: AshBufferRole,
+    pub usage: vk::BufferUsageFlags,
+    pub stride: u32,
+    pub count: u32,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshTextureResourcePlan {
+    pub upload: AshTextureUpload,
+    pub image_usage: vk::ImageUsageFlags,
+    pub image_layout_after_upload: vk::ImageLayout,
+    pub aspect_mask: vk::ImageAspectFlags,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshDescriptorSetPlan {
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub bindings: Vec<AshResolvedDescriptorBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshResolvedDescriptorBinding {
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub stage_flags: vk::ShaderStageFlags,
+    pub texture_upload_index: Option<usize>,
+    pub sampler: Option<AshSamplerPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshDrawCallPlan {
+    pub primitive_index: usize,
+    pub material: Option<MaterialRef>,
+    pub pipeline_plan_index: Option<usize>,
+    pub descriptor_set_index: Option<usize>,
+    pub vertex_buffer_index: usize,
+    pub index_buffer_index: usize,
+    pub index_count: u32,
+    pub render_order: i32,
+    pub phase_order: i32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AshRendererFrame {
+    pub buffers: Vec<AshBufferUpload>,
+    pub textures: Vec<AshTextureResourcePlan>,
+    pub descriptor_sets: Vec<AshDescriptorSetPlan>,
+    pub draw_calls: Vec<AshDrawCallPlan>,
+}
+
+pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
+    let texture_indices = texture_ref_upload_indices(&plan.texture_uploads);
+    let descriptor_sets = plan
+        .mtoon_pipelines
+        .iter()
+        .enumerate()
+        .map(|(pipeline_plan_index, pipeline)| AshDescriptorSetPlan {
+            material: pipeline.material,
+            pipeline_plan_index,
+            bindings: pipeline
+                .descriptor_bindings
+                .iter()
+                .map(|binding| AshResolvedDescriptorBinding {
+                    binding: binding.binding,
+                    descriptor_type: binding.descriptor_type,
+                    stage_flags: binding.stage_flags,
+                    texture_upload_index: binding
+                        .texture
+                        .and_then(|texture| texture_indices.get(&texture).copied()),
+                    sampler: binding.sampler,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let pipeline_indices = mtoon_base_pipeline_indices(&plan.mtoon_pipelines);
+    let descriptor_indices = descriptor_set_indices(&descriptor_sets);
+    let mut buffers = Vec::with_capacity(plan.primitives.len() * 2);
+    let mut draw_calls = Vec::with_capacity(plan.primitives.len());
+    for (primitive_index, primitive) in plan.primitives.iter().enumerate() {
+        let vertex_buffer_index = buffers.len();
+        buffers.push(AshBufferUpload {
+            role: AshBufferRole::Vertex,
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+            stride: std::mem::size_of::<AshVrmVertex>() as u32,
+            count: primitive.vertices.len() as u32,
+            bytes: bytemuck::cast_slice(&primitive.vertices).to_vec(),
+        });
+        let index_buffer_index = buffers.len();
+        buffers.push(AshBufferUpload {
+            role: AshBufferRole::Index,
+            usage: vk::BufferUsageFlags::INDEX_BUFFER,
+            stride: std::mem::size_of::<u32>() as u32,
+            count: primitive.indices.len() as u32,
+            bytes: bytemuck::cast_slice(&primitive.indices).to_vec(),
+        });
+        let pipeline_plan_index = primitive
+            .material
+            .and_then(|material| pipeline_indices.get(&material).copied());
+        let descriptor_set_index = pipeline_plan_index.and_then(|index| {
+            primitive
+                .material
+                .and_then(|material| descriptor_indices.get(&(material, index)).copied())
+        });
+        let (render_order, phase_order) = pipeline_plan_index
+            .and_then(|index| plan.mtoon_pipelines.get(index))
+            .map(|pipeline| (pipeline.key.render_order, pipeline.key.phase_order))
+            .unwrap_or((2000, 2000));
+        draw_calls.push(AshDrawCallPlan {
+            primitive_index,
+            material: primitive.material,
+            pipeline_plan_index,
+            descriptor_set_index,
+            vertex_buffer_index,
+            index_buffer_index,
+            index_count: primitive.indices.len() as u32,
+            render_order,
+            phase_order,
+        });
+    }
+    draw_calls.sort_by_key(|draw| (draw.render_order, draw.phase_order, draw.primitive_index));
+    AshRendererFrame {
+        buffers,
+        textures: plan
+            .texture_uploads
+            .iter()
+            .cloned()
+            .map(|upload| AshTextureResourcePlan {
+                upload,
+                image_usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                image_layout_after_upload: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+            })
+            .collect(),
+        descriptor_sets,
+        draw_calls,
+    }
+}
+
 pub struct AshVrmFramePlanner {
     loaded: LoadedVrm,
     scene: HeadlessSceneState,
@@ -351,6 +499,33 @@ fn material_texture_upload_indices(texture_uploads: &[AshTextureUpload]) -> Hash
         .collect()
 }
 
+fn texture_ref_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<TextureRef, usize> {
+    texture_uploads
+        .iter()
+        .enumerate()
+        .filter_map(|(upload_index, upload)| upload.texture.map(|texture| (texture, upload_index)))
+        .collect()
+}
+
+fn mtoon_base_pipeline_indices(pipelines: &[AshMtoonPipelinePlan]) -> HashMap<MaterialRef, usize> {
+    pipelines
+        .iter()
+        .enumerate()
+        .filter(|(_, pipeline)| pipeline.key.pass == AshMtoonPass::Base)
+        .map(|(index, pipeline)| (pipeline.material, index))
+        .collect()
+}
+
+fn descriptor_set_indices(
+    descriptor_sets: &[AshDescriptorSetPlan],
+) -> HashMap<(MaterialRef, usize), usize> {
+    descriptor_sets
+        .iter()
+        .enumerate()
+        .map(|(index, set)| ((set.material, set.pipeline_plan_index), index))
+        .collect()
+}
+
 fn cull_mode(mode: MtoonCullMode) -> vk::CullModeFlags {
     match mode {
         MtoonCullMode::Off => vk::CullModeFlags::NONE,
@@ -473,5 +648,57 @@ mod tests {
             bindings[0].descriptor_type,
             vk::DescriptorType::UNIFORM_BUFFER
         );
+    }
+
+    #[test]
+    fn renderer_frame_builds_buffers_and_sorted_draw_calls() {
+        let plan = AshVrmFramePlan {
+            primitives: vec![AshVrmPrimitive {
+                node: NodeRef(0),
+                material: Some(MaterialRef(0)),
+                vertices: vec![AshVrmVertex {
+                    position: [0.0, 0.0, 0.0],
+                    tex_coord_0: [0.0, 0.0],
+                    color_0: [1.0, 1.0, 1.0, 1.0],
+                }],
+                indices: vec![0],
+            }],
+            materials: vec![AshMaterialRecord {
+                material: MaterialRef(0),
+                base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                base_color_texture_upload: None,
+            }],
+            texture_uploads: Vec::new(),
+            mtoon_pipelines: vec![AshMtoonPipelinePlan {
+                material: MaterialRef(0),
+                name: Some("mat".to_owned()),
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                descriptor_bindings: descriptor_bindings(&[]),
+                push_constant_size: 160,
+                alpha_cutoff: 0.5,
+                outline_width: 0.0,
+                base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                emissive_color: [0.0, 0.0, 0.0],
+            }],
+        };
+        let renderer_frame = ash_renderer_frame_from_plan(&plan);
+        assert_eq!(renderer_frame.buffers.len(), 2);
+        assert_eq!(
+            renderer_frame.buffers[0].usage,
+            vk::BufferUsageFlags::VERTEX_BUFFER
+        );
+        assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
+        assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
     }
 }

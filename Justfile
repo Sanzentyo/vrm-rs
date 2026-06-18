@@ -29,6 +29,10 @@ wgpu-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".e
 ash-vrma-frame-plan avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example frame_plan -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
 
+# Demonstrate how an ash renderer edge can turn a VRM frame plan into buffers, images, descriptor sets, pipelines, and draw calls.
+ash-renderer-integration avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
+    cargo run --release -p vrm-adapter-ash --example renderer_integration -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
+
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
 render-parity three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"
