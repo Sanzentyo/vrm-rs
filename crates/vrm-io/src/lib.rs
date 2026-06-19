@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use vrm_core::{
     ExpressionBind, ExpressionName, Feature, HumanBoneName, MtoonMaterial, OutlineWidthMode,
@@ -447,6 +448,64 @@ impl GltfSource {
             .find(|chunk| chunk.kind == GlbChunkKind::Bin)
     }
 
+    pub fn edited_vrm_metadata(&self, patch: &VrmMetadataPatch) -> Result<Value, VrmIoError> {
+        let mut json = self.json.clone();
+        let Some(extensions) = json.get_mut("extensions").and_then(Value::as_object_mut) else {
+            return Err(VrmIoError::SourceWrite {
+                message: "missing glTF root extensions object".to_owned(),
+            });
+        };
+
+        if let Some(vrm1) = extensions.get_mut("VRMC_vrm") {
+            let meta = vrm1
+                .get_mut("meta")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| VrmIoError::SourceWrite {
+                    message: "missing VRMC_vrm.meta object".to_owned(),
+                })?;
+            patch.apply_vrm1(meta);
+            return Ok(json);
+        }
+
+        if let Some(vrm0) = extensions.get_mut("VRM") {
+            let meta = vrm0
+                .get_mut("meta")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| VrmIoError::SourceWrite {
+                    message: "missing VRM.meta object".to_owned(),
+                })?;
+            patch.apply_vrm0(meta);
+            return Ok(json);
+        }
+
+        Err(VrmIoError::SourceWrite {
+            message: "missing VRM metadata extension".to_owned(),
+        })
+    }
+
+    pub fn to_bytes_with_json(&self, json: &Value) -> Result<Vec<u8>, VrmIoError> {
+        match self.format {
+            GltfSourceFormat::Json => {
+                serde_json::to_vec(json).map_err(|source| VrmIoError::SourceWrite {
+                    message: format!("could not serialize glTF JSON: {source}"),
+                })
+            }
+            GltfSourceFormat::Glb { .. } => self.to_glb_bytes_with_json(json),
+        }
+    }
+
+    pub fn save_with_json_atomic(
+        &self,
+        path: impl AsRef<Path>,
+        json: &Value,
+    ) -> Result<(), VrmIoError> {
+        write_atomic(path.as_ref(), &self.to_bytes_with_json(json)?)
+    }
+
+    pub fn save_original_atomic(&self, path: impl AsRef<Path>) -> Result<(), VrmIoError> {
+        write_atomic(path.as_ref(), &self.original_bytes)
+    }
+
     fn from_json_slice(bytes: &[u8]) -> Result<Self, VrmIoError> {
         Ok(Self {
             format: GltfSourceFormat::Json,
@@ -486,9 +545,238 @@ impl GltfSource {
             glb_chunks: chunks,
         })
     }
+
+    fn to_glb_bytes_with_json(&self, json: &Value) -> Result<Vec<u8>, VrmIoError> {
+        let mut json_bytes =
+            serde_json::to_vec(json).map_err(|source| VrmIoError::SourceWrite {
+                message: format!("could not serialize GLB JSON chunk: {source}"),
+            })?;
+        pad_json_chunk(&mut json_bytes);
+
+        let chunks = self
+            .glb_chunks
+            .iter()
+            .map(|chunk| {
+                let bytes = if chunk.kind == GlbChunkKind::Json {
+                    json_bytes.clone()
+                } else {
+                    chunk.bytes.clone()
+                };
+                (chunk.raw_type, bytes)
+            })
+            .collect::<Vec<_>>();
+
+        let total_len = 12
+            + chunks
+                .iter()
+                .map(|(_, bytes)| 8 + bytes.len())
+                .sum::<usize>();
+        if total_len > u32::MAX as usize {
+            return Err(VrmIoError::SourceWrite {
+                message: "GLB output is too large".to_owned(),
+            });
+        }
+
+        let mut output = Vec::with_capacity(total_len);
+        output.extend_from_slice(GLB_MAGIC);
+        output.extend_from_slice(&2u32.to_le_bytes());
+        output.extend_from_slice(&(total_len as u32).to_le_bytes());
+        for (raw_type, bytes) in chunks {
+            output.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            output.extend_from_slice(&raw_type.to_le_bytes());
+            output.extend_from_slice(&bytes);
+        }
+        Ok(output)
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VrmMetadataPatch {
+    pub name: MetadataFieldEdit<String>,
+    pub authors: MetadataFieldEdit<Vec<String>>,
+    pub version: MetadataFieldEdit<String>,
+    pub license_url: MetadataFieldEdit<String>,
+    pub copyright_information: MetadataFieldEdit<String>,
+    pub contact_information: MetadataFieldEdit<String>,
+}
+
+impl VrmMetadataPatch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = MetadataFieldEdit::Set(name.into());
+        self
+    }
+
+    pub fn with_authors(mut self, authors: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.authors = MetadataFieldEdit::Set(authors.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = MetadataFieldEdit::Set(version.into());
+        self
+    }
+
+    pub fn with_license_url(mut self, license_url: impl Into<String>) -> Self {
+        self.license_url = MetadataFieldEdit::Set(license_url.into());
+        self
+    }
+
+    pub fn clear_license_url(mut self) -> Self {
+        self.license_url = MetadataFieldEdit::Clear;
+        self
+    }
+
+    pub fn with_copyright_information(mut self, value: impl Into<String>) -> Self {
+        self.copyright_information = MetadataFieldEdit::Set(value.into());
+        self
+    }
+
+    pub fn clear_copyright_information(mut self) -> Self {
+        self.copyright_information = MetadataFieldEdit::Clear;
+        self
+    }
+
+    pub fn with_contact_information(mut self, value: impl Into<String>) -> Self {
+        self.contact_information = MetadataFieldEdit::Set(value.into());
+        self
+    }
+
+    pub fn clear_contact_information(mut self) -> Self {
+        self.contact_information = MetadataFieldEdit::Clear;
+        self
+    }
+
+    fn apply_vrm1(&self, meta: &mut serde_json::Map<String, Value>) {
+        apply_string_edit(meta, "name", &self.name);
+        apply_string_array_edit(meta, "authors", &self.authors);
+        apply_string_edit(meta, "version", &self.version);
+        apply_string_edit(meta, "licenseUrl", &self.license_url);
+        apply_string_edit(meta, "copyrightInformation", &self.copyright_information);
+        apply_string_edit(meta, "contactInformation", &self.contact_information);
+    }
+
+    fn apply_vrm0(&self, meta: &mut serde_json::Map<String, Value>) {
+        apply_string_edit(meta, "title", &self.name);
+        apply_legacy_author_edit(meta, &self.authors);
+        apply_string_edit(meta, "version", &self.version);
+        apply_string_edit(meta, "otherLicenseUrl", &self.license_url);
+        apply_string_edit(meta, "contactInformation", &self.contact_information);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum MetadataFieldEdit<T> {
+    #[default]
+    Leave,
+    Set(T),
+    Clear,
+}
+
+fn apply_string_edit(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    edit: &MetadataFieldEdit<String>,
+) {
+    match edit {
+        MetadataFieldEdit::Leave => {}
+        MetadataFieldEdit::Set(value) => {
+            object.insert(key.to_owned(), Value::String(value.clone()));
+        }
+        MetadataFieldEdit::Clear => {
+            object.remove(key);
+        }
+    }
+}
+
+fn apply_string_array_edit(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    edit: &MetadataFieldEdit<Vec<String>>,
+) {
+    match edit {
+        MetadataFieldEdit::Leave => {}
+        MetadataFieldEdit::Set(values) => {
+            object.insert(
+                key.to_owned(),
+                Value::Array(values.iter().cloned().map(Value::String).collect()),
+            );
+        }
+        MetadataFieldEdit::Clear => {
+            object.remove(key);
+        }
+    }
+}
+
+fn apply_legacy_author_edit(
+    object: &mut serde_json::Map<String, Value>,
+    edit: &MetadataFieldEdit<Vec<String>>,
+) {
+    match edit {
+        MetadataFieldEdit::Leave => {}
+        MetadataFieldEdit::Set(values) => {
+            object.insert("author".to_owned(), Value::String(values.join(", ")));
+        }
+        MetadataFieldEdit::Clear => {
+            object.remove("author");
+        }
+    }
+}
+
+fn pad_json_chunk(bytes: &mut Vec<u8>) {
+    while !bytes.len().is_multiple_of(4) {
+        bytes.push(b' ');
+    }
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VrmIoError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file_name = path.file_name().ok_or_else(|| VrmIoError::SourceWrite {
+        message: format!("atomic save path has no file name: {}", path.display()),
+    })?;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temp_name = format!(
+        ".{}.tmp.{}.{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        unique
+    );
+    let temp_path = parent.map_or_else(
+        || Path::new(&temp_name).to_path_buf(),
+        |parent| parent.join(&temp_name),
+    );
+
+    let write_result = (|| {
+        let mut file = std::fs::File::create(&temp_path)?;
+        use std::io::Write;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp_path, path)?;
+        Ok::<(), std::io::Error>(())
+    })();
+
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.into());
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GltfSourceFormat {
     Json,
     Glb { version: u32, declared_length: u32 },
@@ -3254,6 +3542,8 @@ pub enum VrmIoError {
     UnknownExpression { name: String },
     #[error("could not preserve source data: {message}")]
     SourcePreservation { message: String },
+    #[error("could not write source data: {message}")]
+    SourceWrite { message: String },
 }
 
 trait ImageFormatExt {
@@ -3686,6 +3976,116 @@ mod tests {
         );
         assert_eq!(source.glb_bin_chunk().unwrap().bytes, vec![9, 8, 7, 6]);
         assert_eq!(loaded.buffers, vec![vec![9, 8, 7, 6]]);
+    }
+
+    #[test]
+    fn metadata_patch_rewrites_gltf_and_atomic_save_preserves_unknown_data() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VENDOR_editor"] = json!({ "kept": true });
+        sample["extensions"]["VRMC_vrm"]["meta"]["licenseUrl"] = json!("https://old.example");
+        sample["extras"] = json!({ "root": "kept" });
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        let edited = loaded
+            .source()
+            .edited_vrm_metadata(
+                &VrmMetadataPatch::new()
+                    .with_name("Edited Avatar")
+                    .with_authors(["alice", "bob"])
+                    .with_version("2.0")
+                    .clear_license_url(),
+            )
+            .unwrap();
+        assert_eq!(
+            edited["extensions"]["VRMC_vrm"]["meta"]["name"],
+            "Edited Avatar"
+        );
+        assert_eq!(
+            edited["extensions"]["VRMC_vrm"]["meta"]["authors"],
+            json!(["alice", "bob"])
+        );
+        assert!(edited["extensions"]["VRMC_vrm"]["meta"]["licenseUrl"].is_null());
+        assert_eq!(edited["extensions"]["VENDOR_editor"]["kept"], true);
+        assert_eq!(edited["extras"]["root"], "kept");
+
+        let bytes = loaded.source().to_bytes_with_json(&edited).unwrap();
+        let reloaded = load_vrm_from_slice(&bytes).unwrap();
+        assert_eq!(reloaded.model().document().meta.name, "Edited Avatar");
+        assert_eq!(
+            reloaded.model().document().meta.authors,
+            vec!["alice".to_owned(), "bob".to_owned()]
+        );
+
+        let path = temp_output_path("edited-source", "gltf");
+        loaded
+            .source()
+            .save_with_json_atomic(&path, &edited)
+            .unwrap();
+        let saved = load_vrm_from_path(&path).unwrap();
+        assert_eq!(saved.model().document().meta.name, "Edited Avatar");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn metadata_patch_rewrites_glb_json_while_preserving_bin_chunk() {
+        let mut sample = generated_vrm1_gltf();
+        sample["buffers"] = json!([{ "byteLength": 4 }]);
+        let loaded = load_vrm_from_slice(&generated_glb(sample, &[1, 3, 5, 7])).unwrap();
+
+        let edited = loaded
+            .source()
+            .edited_vrm_metadata(&VrmMetadataPatch::new().with_name("GLB Edited"))
+            .unwrap();
+        let rewritten = loaded.source().to_bytes_with_json(&edited).unwrap();
+        let reloaded = load_vrm_from_slice(&rewritten).unwrap();
+
+        assert!(matches!(
+            reloaded.source().format,
+            GltfSourceFormat::Glb { .. }
+        ));
+        assert_eq!(reloaded.model().document().meta.name, "GLB Edited");
+        assert_eq!(
+            reloaded.source().glb_bin_chunk().unwrap().bytes,
+            vec![1, 3, 5, 7]
+        );
+        assert_eq!(reloaded.buffers, vec![vec![1, 3, 5, 7]]);
+    }
+
+    #[test]
+    fn metadata_patch_supports_vrm0_legacy_meta_shape() {
+        let source = GltfSource::from_slice(
+            json!({
+                "asset": { "version": "2.0" },
+                "extensions": {
+                    "VRM": {
+                        "exporterVersion": "UniVRM-test",
+                        "specVersion": "0.0",
+                        "meta": {
+                            "title": "Old",
+                            "author": "old author",
+                            "otherLicenseUrl": "https://old.example"
+                        }
+                    }
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let edited = source
+            .edited_vrm_metadata(
+                &VrmMetadataPatch::new()
+                    .with_name("Legacy Edited")
+                    .with_authors(["alice", "bob"])
+                    .clear_license_url(),
+            )
+            .unwrap();
+
+        let meta = &edited["extensions"]["VRM"]["meta"];
+        assert_eq!(meta["title"], "Legacy Edited");
+        assert_eq!(meta["author"], "alice, bob");
+        assert!(meta["otherLicenseUrl"].is_null());
     }
 
     #[test]
@@ -5111,9 +5511,7 @@ mod tests {
 
     fn generated_glb(json: Value, bin: &[u8]) -> Vec<u8> {
         let mut json_bytes = json.to_string().into_bytes();
-        while !json_bytes.len().is_multiple_of(4) {
-            json_bytes.push(b' ');
-        }
+        pad_json_chunk(&mut json_bytes);
         let mut bin_bytes = bin.to_vec();
         while !bin_bytes.len().is_multiple_of(4) {
             bin_bytes.push(0);
@@ -5131,6 +5529,17 @@ mod tests {
         bytes.extend_from_slice(&GLB_BIN_CHUNK_TYPE.to_le_bytes());
         bytes.extend_from_slice(&bin_bytes);
         bytes
+    }
+
+    fn temp_output_path(label: &str, extension: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!(
+            "vrm-rs-{label}-{}-{unique}.{extension}",
+            std::process::id()
+        ))
     }
 
     #[test]

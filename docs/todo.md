@@ -132,6 +132,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
     - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
+    - [x] Foundation: `GltfSource` can patch VRM1/VRM0 metadata, re-encode `.gltf` or `.glb` while preserving non-JSON GLB chunks, and atomically save the edited or original source through a same-directory temp file.
   - [ ] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.
   - [ ] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.
   - [ ] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
