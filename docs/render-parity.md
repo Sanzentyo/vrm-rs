@@ -963,6 +963,7 @@ A source-derived Seed-san owner-tail extraction diagnostic is available through:
 
 ```powershell
 just render-parity-seed-owner-tail-extract
+just render-parity-seed-owner-tail-context-extract
 ```
 
 It reads the current outline-disabled Seed-san owner-id report, resolves the top
@@ -972,15 +973,23 @@ normalized reduced VRM1 glTF fixture to
 fixture keeps the source node/mesh/material/triangle metadata in root `extras`,
 but normalizes the extracted triangles and forces double-sided material policy so
 the local owner comparison is visible and focused on ownership rather than the
-original binary fixture or cull context. The current run under
+original binary fixture or cull context. `--context-radius` can also preserve a
+small source-primitive neighborhood around each selected tail triangle. The
+current isolated run under
 `.external-fixtures/render-parity-seed-owner-tail-extract/` passes exact alpha
 with selected `rgb-visible` PSNR wgpu `72.3162 dB` and Bevy `72.3162 dB`, max
 selected-channel delta `16`, and owner reports showing `47/47` exact shared
 owner matches against three-vrm for both wgpu and Bevy. wgpu-vs-Bevy is exact
-for `49/49` shared owner pixels. This is a useful negative result: the isolated
-top real-model owner-tail triangles do not reproduce the residual once removed
-from their surrounding mesh/material/fill context, so future reductions should
-preserve adjacent primitives, material groups, or the original overlap context.
+for `49/49` shared owner pixels. The context run uses `--context-radius 3`,
+emits `109` source-neighborhood triangles, and passes under
+`.external-fixtures/render-parity-seed-owner-tail-context-extract/` with wgpu
+`85.8817 dB`, Bevy `85.6261 dB`, max selected-channel delta `4`, exact alpha,
+and only `3` wgpu / `5` Bevy owner mismatches out of `249` shared nonzero pixels
+against three-vrm. This is a useful negative result: the isolated top real-model
+owner-tail triangles and a small same-primitive neighborhood do not reproduce
+the full residual once removed from their surrounding mesh/material/fill
+context, so future reductions should preserve adjacent primitives, material
+groups, or the original overlap context.
 
 A same-material multi-UV-island ownership control is available through:
 

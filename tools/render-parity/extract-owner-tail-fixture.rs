@@ -45,6 +45,8 @@ struct Options {
     limit: usize,
     #[arg(long, value_enum, default_value_t = LabelSelection::Both)]
     labels: LabelSelection,
+    #[arg(long, default_value_t = 0)]
+    context_radius: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -106,6 +108,7 @@ struct ExtractedTriangle {
 enum LabelSide {
     Expected,
     Actual,
+    Context,
 }
 
 impl LabelSide {
@@ -113,6 +116,7 @@ impl LabelSide {
         match self {
             Self::Expected => "expected",
             Self::Actual => "actual",
+            Self::Context => "context",
         }
     }
 }
@@ -146,7 +150,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
     let report = serde_json::from_slice::<OwnerReport>(&fs::read(&options.report)?)?;
-    let extracted = extract_triangles(&loaded, &report, options.labels, options.limit)?;
+    let extracted = extract_triangles(
+        &loaded,
+        &report,
+        options.labels,
+        options.limit,
+        options.context_radius,
+    )?;
     if extracted.is_empty() {
         return Err("no owner-tail triangles could be resolved from the report".into());
     }
@@ -169,6 +179,7 @@ fn extract_triangles(
     report: &OwnerReport,
     labels: LabelSelection,
     limit: usize,
+    context_radius: usize,
 ) -> Result<Vec<ExtractedTriangle>, Box<dyn std::error::Error>> {
     let world_matrices = vrm_rs::evaluated_world_matrices(loaded)?;
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
@@ -203,12 +214,95 @@ fn extract_triangles(
                 detail_index,
                 count: detail.count,
                 sample_pixels: detail.sample_pixels.clone(),
-                source,
+                source: source.clone(),
                 vertices: [vertices],
             });
+            if context_radius > 0 {
+                append_context_triangles(
+                    loaded,
+                    &world_matrices,
+                    orientation,
+                    &mut seen,
+                    &mut out,
+                    detail,
+                    detail_index,
+                    &source,
+                    context_radius,
+                )?;
+            }
         }
     }
     Ok(out)
+}
+
+fn append_context_triangles(
+    loaded: &LoadedVrm,
+    world_matrices: &[Mat4],
+    orientation: Mat4,
+    seen: &mut BTreeSet<(&'static str, usize, usize, usize, usize)>,
+    out: &mut Vec<ExtractedTriangle>,
+    detail: &OwnerDetail,
+    detail_index: usize,
+    source: &ResolvedTriangle,
+    radius: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mesh) = loaded.meshes.get(source.mesh_index) else {
+        return Ok(());
+    };
+    let Some(primitive) = mesh.primitives.get(source.primitive_index) else {
+        return Ok(());
+    };
+    let triangle_count = primitive.indices.len() / 3;
+    let start = source.triangle.saturating_sub(radius);
+    let end = source
+        .triangle
+        .saturating_add(radius)
+        .saturating_add(1)
+        .min(triangle_count);
+    for triangle in start..end {
+        if triangle == source.triangle {
+            continue;
+        }
+        let Some(context) = source_triangle(primitive, source, triangle) else {
+            continue;
+        };
+        let key = (
+            LabelSide::Context.as_str(),
+            context.node_index,
+            context.mesh_index,
+            context.primitive_index,
+            context.triangle,
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        let vertices = bake_triangle(loaded, world_matrices, orientation, &context)?;
+        out.push(ExtractedTriangle {
+            label_side: LabelSide::Context,
+            detail_index,
+            count: detail.count,
+            sample_pixels: detail.sample_pixels.clone(),
+            source: context,
+            vertices: [vertices],
+        });
+    }
+    Ok(())
+}
+
+fn source_triangle(
+    primitive: &GltfPrimitiveData,
+    source: &ResolvedTriangle,
+    triangle: usize,
+) -> Option<ResolvedTriangle> {
+    let indices = primitive.indices.chunks_exact(3).nth(triangle)?;
+    Some(ResolvedTriangle {
+        node_index: source.node_index,
+        mesh_index: source.mesh_index,
+        primitive_index: source.primitive_index,
+        material: primitive.material,
+        triangle,
+        indices: [indices[0], indices[1], indices[2]],
+    })
 }
 
 fn selected_labels(labels: LabelSelection, detail: &OwnerDetail) -> Vec<(LabelSide, &OwnerLabel)> {
