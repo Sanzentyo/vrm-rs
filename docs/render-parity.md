@@ -152,7 +152,12 @@ while Ash-vs-three-vrm still contains local expected-only/actual-only and
 gradient/coverage differences. The generated MToon light/color fixture is no
 longer the current Ash blocker: `just render-parity-mtoon-light-ash-generated`
 passes Ash at selected `rgb-interior1px` `59.7573 dB`, max selected-channel
-delta `2`, and all 12 named swatches within `<= 2`.
+delta `2`, and all 12 named swatches within `<= 2`. Ash also now honors the
+renderer-resolved glTF `BLEND` / `MASK` alpha policy in the MToon shader
+uniform, not only in the Vulkan pipeline key. On the source-like transparent
+blend fixture, Ash-vs-wgpu is byte-exact after direct imqraw comparison and
+Ash-vs-three-vrm reports `54.3997 dB` selected `rgb-visible`, max channel delta
+`1`, and exact alpha buckets.
 Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
 fail-under and max-delta threshold arguments to Ash once the current
 texture/material color parity gap is closed.
@@ -1583,7 +1588,13 @@ base-color texture, so the run checks partial-alpha accumulation, texture color
 sampling, and depth-write policy without committing binary sample assets. The
 alpha mismatch tolerance is intentionally zero for this generated fixture, and
 the recipe now fails if selected `rgb-visible` falls below `49 dB`, selected RGB
-channel delta exceeds `2`, or alpha delta is non-zero.
+channel delta exceeds `2`, or alpha delta is non-zero. A focused Ash readback
+rerun for this fixture now reports exact alpha buckets and byte-exact
+Ash-vs-wgpu direct imqraw output after the Ash MToon uniform began consuming
+the renderer-resolved alpha policy. The same local rerun exposed a separate
+current Bevy transparent RGB regression (`30.4930 dB`, max channel delta `13`,
+exact alpha), so treat Bevy transparent RGB separately from the resolved Ash
+alpha blocker when triaging this fixture.
 For a stronger transparent layer-ordering audit, use the high-contrast palette:
 
 ```powershell
@@ -2208,7 +2219,12 @@ without committing binary assets. The 2026-05-30
 `opaque=0`, `partial=65024`, alpha mismatches `0`, wgpu `rgb-visible =
 53.0238 dB` with max channel delta `1`, and Bevy `rgb-visible = 49.7151 dB`
 with max channel delta `2`. This closes the generated source-like transparent
-texture/material blocker. The broader generated transparent run extends this
+texture/material blocker for the then-current wgpu/Bevy path. A 2026-06-20
+focused Ash rerun of the base transparent fixture reports Ash-vs-wgpu
+`Infinity`, max channel delta `0`, alpha max delta `0`, and Ash-vs-three-vrm
+`54.3997 dB` with max channel delta `1`, while the same rerun shows the current
+Bevy output at `30.4930 dB` with exact alpha and a small full-surface RGB
+shift. The broader generated transparent run extends this
 with texture alpha, four mixed-queue layers, and `transparentWithZWrite`; it
 passes with exact alpha buckets, no alpha deltas beyond 1 LSB, and selected
 `rgb-visible` PSNR wgpu `48.5282 dB` / Bevy `48.5944 dB`. The remaining

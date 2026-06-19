@@ -1494,7 +1494,8 @@ impl AshVrmFramePlanner {
                     }
                 }
             };
-            let gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
+            let mut gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
+            apply_renderer_alpha_policy_to_uniform(&mut gpu.uniform, renderer_pipeline);
             let material = Some(plan.material.0);
             let uv_uniform = AshMaterialUvUniform::from_plan(
                 self.loaded
@@ -1665,6 +1666,14 @@ fn ash_gltf_base_uniform(
             ash_renderer_alpha_mode_code(pipeline.alpha_mode),
         ],
     }
+}
+
+fn apply_renderer_alpha_policy_to_uniform(
+    uniform: &mut MtoonGpuUniform,
+    pipeline: vrm_adapter::RendererMaterialPipelinePlan,
+) {
+    uniform.shade_color_factor_cutoff[3] = pipeline.alpha_cutoff;
+    uniform.flags[3] = ash_renderer_alpha_mode_code(pipeline.alpha_mode);
 }
 
 fn ash_material_render_extra_options(
@@ -2800,6 +2809,28 @@ mod tests {
             vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Mask)
         );
         assert_eq!(uniform.flags[1], 1);
+    }
+
+    #[test]
+    fn mtoon_uniform_uses_renderer_alpha_policy_override() {
+        let mut uniform = MtoonGpuUniform::zeroed();
+        uniform.shade_color_factor_cutoff[3] = 0.5;
+        uniform.flags[3] = vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Opaque);
+        let pipeline = vrm_adapter::RendererMaterialPipelinePlan {
+            alpha_mode: RendererMaterialAlphaMode::Blend,
+            alpha_cutoff: 0.25,
+            blend: true,
+            depth_write: false,
+            ..Default::default()
+        };
+
+        apply_renderer_alpha_policy_to_uniform(&mut uniform, pipeline);
+
+        assert_eq!(uniform.shade_color_factor_cutoff[3], 0.25);
+        assert_eq!(
+            uniform.flags[3],
+            vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Blend)
+        );
     }
 
     #[test]
