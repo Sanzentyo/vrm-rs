@@ -14,7 +14,7 @@ use std::{
 };
 use vrm_adapter_ash::{
     AshGraphicsPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
-    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, frame_plan_from_options,
+    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, frame_plan_from_options_with_aspect,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1422,7 +1422,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("dry run: parsed ash unsafe device renderer options");
         return Ok(());
     }
-    let frame_plan = frame_plan_from_options(&options.frame)?;
+    let aspect_ratio = options.width.max(1) as f32 / options.height.max(1) as f32;
+    let frame_plan = frame_plan_from_options_with_aspect(&options.frame, aspect_ratio)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
     let shaders = shader_sources_from_options(&options)?;
     let renderer = UnsafeAshDeviceRenderer::new()?;

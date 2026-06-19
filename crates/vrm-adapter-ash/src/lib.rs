@@ -7,13 +7,13 @@
 
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use glam::Mat4;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform,
-    MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
+    MtoonLightAccumulation, MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass,
+    MtoonSamplerHint, MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
     apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
@@ -41,6 +41,77 @@ pub struct AshVrmFramePlanOptions {
     /// Sample time in seconds.
     #[arg(long, default_value_t = 0.0)]
     pub time: f32,
+    /// Camera Y position for parity captures.
+    #[arg(long, default_value_t = 1.0)]
+    pub camera_y: f32,
+    /// Camera Z distance for parity captures.
+    #[arg(long, default_value_t = 5.0)]
+    pub camera_z: f32,
+    /// Camera look-at target Y for parity captures.
+    #[arg(long, default_value_t = 1.0)]
+    pub target_y: f32,
+    /// Direct light scale packed into the scene uniform.
+    #[arg(long, default_value_t = 1.0)]
+    pub direct_light_scale: f32,
+    /// Directional light red channel.
+    #[arg(long, default_value_t = 1.0)]
+    pub directional_r: f32,
+    /// Directional light green channel.
+    #[arg(long, default_value_t = 1.0)]
+    pub directional_g: f32,
+    /// Directional light blue channel.
+    #[arg(long, default_value_t = 1.0)]
+    pub directional_b: f32,
+    /// MToon exposure for tuned accumulation.
+    #[arg(long, default_value_t = 0.78)]
+    pub mtoon_exposure: f32,
+    /// MToon ambient base for tuned accumulation.
+    #[arg(long, default_value_t = 0.12)]
+    pub mtoon_ambient_base: f32,
+    /// MToon ambient GI scale for tuned accumulation.
+    #[arg(long, default_value_t = 0.20)]
+    pub mtoon_ambient_gi_scale: f32,
+    /// PBR ambient level used by the three-vrm-compatible accumulator.
+    #[arg(long, default_value_t = 0.03183099)]
+    pub pbr_ambient: f32,
+    /// MToon light accumulation mode.
+    #[arg(long, value_enum, default_value_t = AshMtoonLightAccumulation::ThreeVrm)]
+    pub mtoon_light_accumulation: AshMtoonLightAccumulation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum AshMtoonLightAccumulation {
+    Tuned,
+    ThreeVrm,
+}
+
+impl From<AshMtoonLightAccumulation> for MtoonLightAccumulation {
+    fn from(value: AshMtoonLightAccumulation) -> Self {
+        match value {
+            AshMtoonLightAccumulation::Tuned => Self::Tuned,
+            AshMtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
+        }
+    }
+}
+
+impl AshVrmFramePlanOptions {
+    pub fn scene_options(&self, aspect_ratio: f32) -> AshSceneOptions {
+        AshSceneOptions {
+            aspect_ratio,
+            camera_y: self.camera_y,
+            camera_z: self.camera_z,
+            target_y: self.target_y,
+            direct_light_scale: self.direct_light_scale,
+            directional_color: [self.directional_r, self.directional_g, self.directional_b],
+            lighting: MtoonLightingConfig {
+                accumulation: self.mtoon_light_accumulation.into(),
+                exposure: self.mtoon_exposure,
+                ambient_base: self.mtoon_ambient_base,
+                ambient_gi_scale: self.mtoon_ambient_gi_scale,
+                pbr_ambient: self.pbr_ambient,
+            },
+        }
+    }
 }
 
 #[repr(C)]
@@ -254,43 +325,105 @@ pub struct AshSceneUniform {
     pub mtoon_lighting: [f32; 4],
 }
 
-impl AshSceneUniform {
-    pub fn parity_camera(aspect_ratio: f32) -> Self {
-        let aspect_ratio = if aspect_ratio.is_finite() && aspect_ratio > 0.0 {
-            aspect_ratio
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshSceneOptions {
+    pub aspect_ratio: f32,
+    pub camera_y: f32,
+    pub camera_z: f32,
+    pub target_y: f32,
+    pub direct_light_scale: f32,
+    pub directional_color: [f32; 3],
+    pub lighting: MtoonLightingConfig,
+}
+
+impl Default for AshSceneOptions {
+    fn default() -> Self {
+        Self {
+            aspect_ratio: 1.0,
+            camera_y: 1.0,
+            camera_z: 5.0,
+            target_y: 1.0,
+            direct_light_scale: 1.0,
+            directional_color: [1.0, 1.0, 1.0],
+            lighting: MtoonLightingConfig::default(),
+        }
+    }
+}
+
+impl AshSceneOptions {
+    fn sanitized_aspect_ratio(self) -> f32 {
+        if self.aspect_ratio.is_finite() && self.aspect_ratio > 0.0 {
+            self.aspect_ratio
         } else {
             1.0
-        };
-        let eye = glam::Vec3::new(0.0, 1.4, -4.0);
-        let view = ash_parity_camera_view();
-        let projection = Mat4::perspective_rh(30.0_f32.to_radians(), aspect_ratio, 0.1, 20.0);
+        }
+    }
+
+    fn camera_eye(self) -> glam::Vec3 {
+        glam::Vec3::new(0.0, self.camera_y, -self.camera_z)
+    }
+
+    fn camera_target(self) -> glam::Vec3 {
+        glam::Vec3::new(0.0, self.target_y, 0.0)
+    }
+
+    fn view(self) -> Mat4 {
+        Mat4::look_at_rh(self.camera_eye(), self.camera_target(), glam::Vec3::Y)
+    }
+
+    fn projection(self) -> Mat4 {
+        let mut projection = Mat4::perspective_rh(
+            30.0_f32.to_radians(),
+            self.sanitized_aspect_ratio(),
+            0.1,
+            20.0,
+        );
+        projection.y_axis.y *= -1.0;
+        projection
+    }
+
+    fn projection_y_scale(self) -> f32 {
+        1.0 / (0.5 * 30.0_f32.to_radians()).tan()
+    }
+}
+
+impl AshSceneUniform {
+    pub fn parity_camera(aspect_ratio: f32) -> Self {
+        Self::from_scene_options(AshSceneOptions {
+            aspect_ratio,
+            ..Default::default()
+        })
+    }
+
+    pub fn from_scene_options(options: AshSceneOptions) -> Self {
+        let eye = options.camera_eye();
+        let view = options.view();
+        let projection = options.projection();
         let light_dir = glam::Vec3::new(-1.0, 1.0, -1.0).normalize();
         Self {
             view_projection: (projection * view).to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             world_from_view: view.inverse().to_cols_array_2d(),
-            light_dir: [light_dir.x, light_dir.y, light_dir.z, 1.0],
-            light_color: [1.0, 1.0, 1.0, 0.0],
+            light_dir: [
+                light_dir.x,
+                light_dir.y,
+                light_dir.z,
+                options.direct_light_scale,
+            ],
+            light_color: [
+                options.directional_color[0],
+                options.directional_color[1],
+                options.directional_color[2],
+                0.0,
+            ],
             camera_pos: [eye.x, eye.y, eye.z, 1.0],
-            mtoon_lighting: MtoonLightingConfig::default().effective_values().to_array(),
+            mtoon_lighting: options.lighting.effective_values().to_array(),
         }
     }
 
     pub fn bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
-}
-
-fn ash_parity_camera_view() -> Mat4 {
-    Mat4::look_at_rh(
-        glam::Vec3::new(0.0, 1.4, -4.0),
-        glam::Vec3::new(0.0, 1.0, 0.0),
-        glam::Vec3::Y,
-    )
-}
-
-fn ash_parity_projection_y_scale() -> f32 {
-    1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
 impl Default for AshSceneUniform {
@@ -676,6 +809,13 @@ pub struct AshVrmFramePlanner {
     animation: Option<VrmAnimation>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct AshPrimitiveBakeSettings {
+    pass: AshMtoonPass,
+    mtoon_time: f32,
+    scene_options: AshSceneOptions,
+}
+
 impl AshVrmFramePlanner {
     pub fn from_paths(
         avatar: impl Into<PathBuf>,
@@ -705,6 +845,14 @@ impl AshVrmFramePlanner {
     }
 
     pub fn sample_frame(&mut self, time_seconds: f32) -> Result<AshVrmFramePlan, Box<dyn Error>> {
+        self.sample_frame_with_scene_options(time_seconds, AshSceneOptions::default())
+    }
+
+    pub fn sample_frame_with_scene_options(
+        &mut self,
+        time_seconds: f32,
+        scene_options: AshSceneOptions,
+    ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
         if let Some(animation) = &self.animation {
             let time = if animation.duration > f32::EPSILON {
                 time_seconds.rem_euclid(animation.duration)
@@ -724,11 +872,11 @@ impl AshVrmFramePlanner {
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
-            primitives: self.bake_primitives(time_seconds)?,
+            primitives: self.bake_primitives(time_seconds, scene_options)?,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
-            scene_uniform: AshSceneUniform::default(),
+            scene_uniform: AshSceneUniform::from_scene_options(scene_options),
         })
     }
 
@@ -746,7 +894,11 @@ impl AshVrmFramePlanner {
             .collect()
     }
 
-    fn bake_primitives(&self, mtoon_time: f32) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
+    fn bake_primitives(
+        &self,
+        mtoon_time: f32,
+        scene_options: AshSceneOptions,
+    ) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
         let mut primitives = Vec::new();
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
@@ -759,8 +911,11 @@ impl AshVrmFramePlanner {
                     node,
                     mesh,
                     primitive,
-                    AshMtoonPass::Base,
-                    mtoon_time,
+                    AshPrimitiveBakeSettings {
+                        pass: AshMtoonPass::Base,
+                        mtoon_time,
+                        scene_options,
+                    },
                 )?);
                 if self
                     .loaded
@@ -775,8 +930,11 @@ impl AshVrmFramePlanner {
                         node,
                         mesh,
                         primitive,
-                        AshMtoonPass::Outline,
-                        mtoon_time,
+                        AshPrimitiveBakeSettings {
+                            pass: AshMtoonPass::Outline,
+                            mtoon_time,
+                            scene_options,
+                        },
                     )?);
                 }
             }
@@ -790,8 +948,7 @@ impl AshVrmFramePlanner {
         node: &GltfNodeRest,
         mesh: &vrm_io::GltfMeshData,
         primitive: &GltfPrimitiveData,
-        pass: AshMtoonPass,
-        mtoon_time: f32,
+        settings: AshPrimitiveBakeSettings,
     ) -> Result<AshVrmPrimitive, Box<dyn Error>> {
         let morph_weights = active_morph_weights(&self.scene, node_index, node, mesh);
         let world_matrices = self.world_matrices();
@@ -810,7 +967,7 @@ impl AshVrmFramePlanner {
         let alpha_enabled = material
             .map(|material| material.alpha_mode != GltfAlphaMode::Opaque)
             .unwrap_or(false);
-        let source_vertices = match pass {
+        let source_vertices = match settings.pass {
             AshMtoonPass::Base => {
                 primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
             }
@@ -819,14 +976,15 @@ impl AshVrmFramePlanner {
                 &morph_weights,
                 world,
                 skin_matrices.as_deref(),
-                mtoon_time,
+                settings.mtoon_time,
+                settings.scene_options,
             ),
         };
         let vertices = source_vertices
             .ok_or("primitive geometry is inconsistent")?
             .into_iter()
             .map(|vertex| {
-                let alpha = if pass == AshMtoonPass::Outline {
+                let alpha = if settings.pass == AshMtoonPass::Outline {
                     1.0
                 } else if alpha_enabled {
                     base_color[3] * vertex.color_0[3]
@@ -850,7 +1008,7 @@ impl AshVrmFramePlanner {
         Ok(AshVrmPrimitive {
             node: NodeRef(node_index),
             material: primitive.material.map(MaterialRef),
-            pass,
+            pass: settings.pass,
             vertices,
             indices: primitive.indices.clone(),
         })
@@ -863,6 +1021,7 @@ impl AshVrmFramePlanner {
         world: Mat4,
         skin_matrices: Option<&[Mat4]>,
         mtoon_time: f32,
+        scene_options: AshSceneOptions,
     ) -> Option<Vec<vrm_io::GltfTransformedVertex>> {
         let outline = self.loaded.expression_mtoon_outline_plan(
             primitive.material,
@@ -880,8 +1039,8 @@ impl AshVrmFramePlanner {
                 base_width: outline.width_factor,
                 scale: GltfOutlineScale::new(
                     outline.width_mode,
-                    ash_parity_camera_view(),
-                    ash_parity_projection_y_scale(),
+                    scene_options.view(),
+                    scene_options.projection_y_scale(),
                 ),
                 width_texture: width_texture.as_ref(),
                 width_transform: uv_transforms.outline_width,
@@ -981,9 +1140,16 @@ impl AshVrmFramePlanner {
 pub fn frame_plan_from_options(
     options: &AshVrmFramePlanOptions,
 ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
+    frame_plan_from_options_with_aspect(options, 1.0)
+}
+
+pub fn frame_plan_from_options_with_aspect(
+    options: &AshVrmFramePlanOptions,
+    aspect_ratio: f32,
+) -> Result<AshVrmFramePlan, Box<dyn Error>> {
     let animation = (!options.no_animation).then_some(options.animation.clone());
     let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
-    planner.sample_frame(options.time)
+    planner.sample_frame_with_scene_options(options.time, options.scene_options(aspect_ratio))
 }
 
 fn required_texture_refs(
@@ -1331,9 +1497,26 @@ mod tests {
         let uniform = AshSceneUniform::parity_camera(1.0);
         assert_eq!(std::mem::size_of::<AshSceneUniform>(), 256);
         assert_eq!(uniform.bytes().len(), 256);
-        assert_eq!(uniform.camera_pos, [0.0, 1.4, -4.0, 1.0]);
+        assert_eq!(uniform.camera_pos, [0.0, 1.0, -5.0, 1.0]);
         assert_eq!(uniform.light_color, [1.0, 1.0, 1.0, 0.0]);
         assert_ne!(uniform.view_projection, Mat4::IDENTITY.to_cols_array_2d());
+
+        let custom = AshSceneUniform::from_scene_options(AshSceneOptions {
+            aspect_ratio: 2.0,
+            camera_y: 1.25,
+            camera_z: 3.0,
+            target_y: 0.75,
+            direct_light_scale: 0.5,
+            directional_color: [1.0, 0.5, 0.25],
+            lighting: MtoonLightingConfig {
+                pbr_ambient: 0.2,
+                ..Default::default()
+            },
+        });
+        assert_eq!(custom.camera_pos, [0.0, 1.25, -3.0, 1.0]);
+        assert_eq!(custom.light_dir[3], 0.5);
+        assert_eq!(custom.light_color, [1.0, 0.5, 0.25, 0.0]);
+        assert_eq!(custom.mtoon_lighting[3], 0.2);
     }
 
     #[test]

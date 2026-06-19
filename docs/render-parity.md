@@ -76,9 +76,12 @@ RGBA and direct `.imqraw` report writers used by wgpu and Bevy, and recorded in
 The local runner compiles the source-controlled Ash MToon GLSL handoff into
 SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
 `unsafe_device_renderer --vertex-spv --fragment-spv`, so the review path no
-longer compares the built-in color-smoke shader. Pass `--render-ash-visual-gate`
+longer compares the built-in color-smoke shader. The same runner also forwards
+the render camera distance, direct-light scale, directional color, and MToon
+lighting options into Ash, and the Ash projection applies the Vulkan clip-space Y
+flip needed for top-left RGBA review artifacts. Pass `--render-ash-visual-gate`
 with `--render-ash-readback` to apply the same fail-under and max-delta threshold
-arguments to Ash once the current color parity gap is closed.
+arguments to Ash once the current texture/material color parity gap is closed.
 
 For the current source-controlled Ash MToon base shader handoff, run:
 
@@ -107,7 +110,9 @@ outline helper used by the wgpu and Bevy captures, and routes those draws to the
 outline pipeline rather than the base pipeline. It is still not the final visual
 parity shader: Ash is now visible in the full PSNR/visual review harness, but it
 remains non-gating by default until its color accumulation reaches the wgpu/Bevy
-threshold floor.
+threshold floor. The current 128x128 Seed-san smoke has exact opaque-black alpha
+parity and selected `rgb-visible` Ash PSNR `12.7715 dB` after the camera/light
+sync and Vulkan Y-flip fixes.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, Bevy, and
 optionally Ash to emit `.frame000.imqraw` beside their `.rgba.json` artifacts.
