@@ -923,6 +923,36 @@ stable guard for subpixel owner diagnostics while keeping Seed-san's remaining
 gradient-domain blocker classified as a more complex real-topology/UV ownership
 case.
 
+A same-material multi-UV-island ownership control is available through:
+
+```powershell
+just render-parity-uv-island-ownership-generated
+just render-parity-uv-island-ownership-owner-generated
+just render-parity-uv-island-ownership-owner-hotspots
+```
+
+It writes `.external-fixtures/generated/uv-island-ownership.vrm.gltf` with
+three overlapping `huku_bake` mesh nodes that share one MToon material but
+sample separated high-gradient regions of one generated base texture. This is a
+source-like control for the Seed-san class where local material names match but
+nearby UV islands can produce very different base colors. The 2026-06-19
+base-color run under
+`.external-fixtures/render-parity-uv-island-ownership-generated/` passes exact
+alpha parity with selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`57.3121 dB` / Bevy `51.2217 dB` and max selected-channel delta `3`. The top
+`32` hotspot summaries stay on `huku_bake`, match the frontmost material for
+both expected and actual pixels, and have actual colors closer than three-vrm to
+the CPU-sampled frontmost base texture for `32/32` hotspots while exercising
+large local texture gradients (`>=96` for all `32/32`). The owner-id recipe
+keeps wgpu and Bevy exactly identical; each Rust renderer differs from three-vrm
+by only `8/28554` shared nonzero owner pixels, all explained by adjacent or
+touching projected triangles with zero unexplained tail. The owner-hotspot
+projection has `32/32` rendered owners already at frontmost rank 1 at the center
+sample. This narrows the remaining Seed-san blocker away from generic
+same-material UV-island/high-gradient sampling and toward more specific
+real-model topology, draw grouping, or browser fill behavior around dense
+material regions.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
