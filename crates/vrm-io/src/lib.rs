@@ -348,20 +348,16 @@ impl LoadedVrm {
         }
 
         for (name, weight) in requested {
-            let (expression, binary) = if let Some(expression) =
+            let expression = if let Some(expression) =
                 expressions.preset.get(&ExpressionName::from(name.as_str()))
             {
-                (expression, expression.is_binary)
+                expression
             } else if let Some(expression) = expressions.custom.get(&name) {
-                (expression, expression.is_binary)
+                expression
             } else {
                 return Err(VrmIoError::UnknownExpression { name });
             };
-            let effective_weight = if binary {
-                if weight >= 1.0 { 1.0 } else { 0.0 }
-            } else {
-                weight.clamp(0.0, 1.0)
-            };
+            let effective_weight = expression.output_weight(weight);
             for bind in &expression.binds {
                 match bind {
                     ExpressionBind::MorphTarget {
@@ -3445,6 +3441,56 @@ mod tests {
             loaded.expression_render_effects([("missing", 1.0)]),
             Err(VrmIoError::UnknownExpression { name }) if name == "missing"
         ));
+    }
+
+    #[test]
+    fn generated_binary_expression_render_effects_use_vrm_threshold() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_vrm"]["expressions"]["preset"]["blink"]["isBinary"] =
+            json!(true);
+        let bytes = sample.to_string().into_bytes();
+        let loaded = load_vrm_from_slice(&bytes).unwrap();
+        let mesh = GltfMeshData {
+            name: None,
+            weights: vec![0.2],
+            primitives: Vec::new(),
+        };
+
+        let at_boundary = loaded
+            .expression_render_effects([("blink", 0.5)])
+            .expect("binary expression should resolve");
+        assert_eq!(
+            at_boundary.active_morph_weights(2, &loaded.scene.nodes[2], &mesh),
+            vec![0.0]
+        );
+
+        let above_boundary = loaded
+            .expression_render_effects([("blink", 0.5001)])
+            .expect("binary expression should resolve");
+        assert_eq!(
+            above_boundary.active_morph_weights(2, &loaded.scene.nodes[2], &mesh),
+            vec![100.0]
+        );
+
+        let non_finite = loaded
+            .expression_render_effects([("blink", f32::NAN)])
+            .expect("binary expression should resolve");
+        assert_eq!(
+            non_finite.active_morph_weights(2, &loaded.scene.nodes[2], &mesh),
+            vec![0.0]
+        );
+    }
+
+    #[test]
+    fn generated_sample_reports_invalid_expression_shape() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_vrm"]["expressions"]["preset"]["blink"] = json!(false);
+        let bytes = sample.to_string().into_bytes();
+
+        let err = load_vrm_from_slice(&bytes).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("invalid preset expression"));
+        assert!(message.contains("blink"));
     }
 
     #[test]

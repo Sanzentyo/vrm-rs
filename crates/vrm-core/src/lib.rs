@@ -620,6 +620,26 @@ pub struct Expression {
     pub override_mouth: OverrideMode,
 }
 
+impl Expression {
+    pub fn output_weight(&self, weight: f32) -> f32 {
+        let weight = finite_unit(weight);
+        if self.is_binary {
+            if weight > 0.5 { 1.0 } else { 0.0 }
+        } else {
+            weight
+        }
+    }
+
+    pub fn multiplied_output_weight(&self, weight: f32, multiplier: f32) -> f32 {
+        let output = self.output_weight(weight) * finite_unit(multiplier);
+        if self.is_binary && output < 1.0 {
+            0.0
+        } else {
+            output.clamp(0.0, 1.0)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExpressionBind {
     MorphTarget {
@@ -649,11 +669,26 @@ pub enum OverrideMode {
 
 impl OverrideMode {
     pub fn amount(self, weight: f32) -> f32 {
+        let weight = finite_unit(weight);
         match self {
             Self::None => 0.0,
-            Self::Block => weight.clamp(0.0, 1.0),
-            Self::Blend => weight.clamp(0.0, 1.0),
+            Self::Block => {
+                if weight > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Blend => weight,
         }
+    }
+}
+
+fn finite_unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -1115,7 +1150,29 @@ mod tests {
     #[test]
     fn expression_override_amount_is_saturated() {
         assert_eq!(OverrideMode::Block.amount(2.0), 1.0);
+        assert_eq!(OverrideMode::Block.amount(0.25), 1.0);
+        assert_eq!(OverrideMode::Block.amount(0.0), 0.0);
+        assert_eq!(OverrideMode::Blend.amount(0.25), 0.25);
+        assert_eq!(OverrideMode::Blend.amount(f32::NAN), 0.0);
         assert_eq!(OverrideMode::None.amount(1.0), 0.0);
+    }
+
+    #[test]
+    fn expression_output_weight_matches_vrm_binary_rules() {
+        let binary = Expression {
+            is_binary: true,
+            ..Expression::default()
+        };
+        let continuous = Expression::default();
+
+        assert_eq!(binary.output_weight(0.5), 0.0);
+        assert_eq!(binary.output_weight(0.5001), 1.0);
+        assert_eq!(binary.output_weight(f32::NAN), 0.0);
+        assert_eq!(binary.multiplied_output_weight(1.0, 0.75), 0.0);
+        assert_eq!(binary.multiplied_output_weight(1.0, 1.0), 1.0);
+        assert_eq!(continuous.output_weight(1.5), 1.0);
+        assert_eq!(continuous.output_weight(f32::INFINITY), 0.0);
+        assert_eq!(continuous.multiplied_output_weight(0.8, 0.5), 0.4);
     }
 
     #[test]

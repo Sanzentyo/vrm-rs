@@ -84,8 +84,22 @@ impl ExpressionManager {
 
     pub fn set_value(&mut self, name: impl AsRef<str>, weight: f32) {
         if let Some(expression) = self.expressions.get_mut(name.as_ref()) {
-            expression.weight = weight.clamp(0.0, 1.0);
+            expression.weight = expression_input_weight(weight);
         }
+    }
+
+    pub fn set_value_checked(
+        &mut self,
+        name: impl Into<String>,
+        weight: f32,
+    ) -> Result<(), ExpressionError> {
+        let name = name.into();
+        let expression = self
+            .expressions
+            .get_mut(name.as_str())
+            .ok_or_else(|| ExpressionError::UnknownExpression { name: name.clone() })?;
+        expression.weight = expression_input_weight(weight);
+        Ok(())
     }
 
     pub fn value(&self, name: impl AsRef<str>) -> Option<f32> {
@@ -109,7 +123,9 @@ impl ExpressionManager {
                 }
                 AppliedExpression {
                     name: name.clone(),
-                    effective_weight: expression.weight * multiplier,
+                    effective_weight: expression
+                        .expression
+                        .multiplied_output_weight(expression.weight, multiplier),
                     binds: expression.expression.binds.clone(),
                 }
             })
@@ -120,20 +136,26 @@ impl ExpressionManager {
         self.expressions
             .values()
             .fold(WeightMultipliers::default(), |mut acc, expression| {
-                acc.blink -= expression
-                    .expression
-                    .override_blink
-                    .amount(expression.weight);
-                acc.look_at -= expression
-                    .expression
-                    .override_look_at
-                    .amount(expression.weight);
-                acc.mouth -= expression
-                    .expression
-                    .override_mouth
-                    .amount(expression.weight);
+                let output = expression.expression.output_weight(expression.weight);
+                acc.blink -= expression.expression.override_blink.amount(output);
+                acc.look_at -= expression.expression.override_look_at.amount(output);
+                acc.mouth -= expression.expression.override_mouth.amount(output);
                 acc.saturate()
             })
+    }
+}
+
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ExpressionError {
+    #[error("unknown expression: {name}")]
+    UnknownExpression { name: String },
+}
+
+fn expression_input_weight(weight: f32) -> f32 {
+    if weight.is_finite() {
+        weight.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -1311,6 +1333,93 @@ mod tests {
         let frame = sample_vrm_animation(&animation, 0.5);
         assert_eq!(frame.hips_translation, Some(Vec3::new(0.0, 0.5, 0.0)));
         assert_eq!(frame.preset_expressions[&ExpressionName::Blink], 0.5);
+    }
+
+    #[test]
+    fn expression_manager_applies_vrm_binary_and_override_rules() {
+        let mut expressions = ExpressionSet::default();
+        expressions.preset.insert(
+            ExpressionName::Blink,
+            Expression {
+                is_binary: true,
+                ..Expression::default()
+            },
+        );
+        expressions.custom.insert(
+            "softBlocker".to_owned(),
+            Expression {
+                override_blink: OverrideMode::Blend,
+                ..Expression::default()
+            },
+        );
+        let document = VrmDocument {
+            expressions: Feature::Present(expressions),
+            ..VrmDocument::default()
+        };
+        let mut manager = ExpressionManager::from_document(&document);
+
+        manager.set_value("blink", 0.5);
+        manager.set_value("softBlocker", 0.0);
+        let blink = manager
+            .update()
+            .into_iter()
+            .find(|expression| expression.name == "blink")
+            .unwrap();
+        assert_eq!(blink.effective_weight, 0.0);
+
+        manager.set_value("blink", 0.5001);
+        manager.set_value("softBlocker", 0.0);
+        let blink = manager
+            .update()
+            .into_iter()
+            .find(|expression| expression.name == "blink")
+            .unwrap();
+        assert_eq!(blink.effective_weight, 1.0);
+
+        manager.set_value("softBlocker", 0.25);
+        let blink = manager
+            .update()
+            .into_iter()
+            .find(|expression| expression.name == "blink")
+            .unwrap();
+        assert_eq!(blink.effective_weight, 0.0);
+
+        assert!(matches!(
+            manager.set_value_checked("missing", 1.0),
+            Err(ExpressionError::UnknownExpression { name }) if name == "missing"
+        ));
+        manager.set_value_checked("softBlocker", f32::NAN).unwrap();
+        assert_eq!(manager.value("softBlocker"), Some(0.0));
+    }
+
+    #[test]
+    fn expression_manager_block_override_fully_suppresses_category() {
+        let mut expressions = ExpressionSet::default();
+        expressions
+            .preset
+            .insert(ExpressionName::Aa, Expression::default());
+        expressions.custom.insert(
+            "blocker".to_owned(),
+            Expression {
+                override_mouth: OverrideMode::Block,
+                ..Expression::default()
+            },
+        );
+        let document = VrmDocument {
+            expressions: Feature::Present(expressions),
+            ..VrmDocument::default()
+        };
+        let mut manager = ExpressionManager::from_document(&document);
+
+        manager.set_value("aa", 1.0);
+        manager.set_value("blocker", 0.001);
+        let aa = manager
+            .update()
+            .into_iter()
+            .find(|expression| expression.name == "aa")
+            .unwrap();
+
+        assert_eq!(aa.effective_weight, 0.0);
     }
 
     #[test]

@@ -189,7 +189,7 @@ fn map_vrm1(vrm: vrm1::VrmcVrm) -> Result<VrmDocument, BuildError> {
     }
 
     if let Some(expressions) = vrm.expressions {
-        document.expressions = Feature::Present(map_vrm1_expressions(expressions));
+        document.expressions = Feature::Present(map_vrm1_expressions(expressions)?);
     }
 
     Ok(document)
@@ -245,34 +245,35 @@ fn map_vrm1_humanoid(humanoid: vrm1::Humanoid) -> Result<Humanoid, BuildError> {
     Ok(Humanoid { bones })
 }
 
-fn map_vrm1_expressions(expressions: vrm1::Expressions) -> ExpressionSet {
-    ExpressionSet {
-        preset: expressions
-            .preset
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(name, value)| {
-                serde_json::from_value::<vrm1::Expression>(value)
-                    .ok()
-                    .map(|expression| {
-                        (
-                            ExpressionName::from(name.as_str()),
-                            map_expression(expression),
-                        )
-                    })
-            })
-            .collect(),
-        custom: expressions
-            .custom
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(name, value)| {
-                serde_json::from_value::<vrm1::Expression>(value)
-                    .ok()
-                    .map(|expression| (name, map_expression(expression)))
-            })
-            .collect(),
-    }
+fn map_vrm1_expressions(expressions: vrm1::Expressions) -> Result<ExpressionSet, BuildError> {
+    let preset = expressions
+        .preset
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, value)| {
+            let expression =
+                serde_json::from_value::<vrm1::Expression>(value).map_err(|error| {
+                    BuildError::Protocol(format!("invalid preset expression {name:?}: {error}"))
+                })?;
+            Ok((
+                ExpressionName::from(name.as_str()),
+                map_expression(expression),
+            ))
+        })
+        .collect::<Result<_, BuildError>>()?;
+    let custom = expressions
+        .custom
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, value)| {
+            let expression =
+                serde_json::from_value::<vrm1::Expression>(value).map_err(|error| {
+                    BuildError::Protocol(format!("invalid custom expression {name:?}: {error}"))
+                })?;
+            Ok((name, map_expression(expression)))
+        })
+        .collect::<Result<_, BuildError>>()?;
+    Ok(ExpressionSet { preset, custom })
 }
 
 fn map_expression(expression: vrm1::Expression) -> Expression {
