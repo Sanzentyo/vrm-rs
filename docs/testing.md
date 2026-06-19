@@ -160,12 +160,16 @@ opaque-black background makes every pixel visible, `rgb-visible` is the stable
 full-review regression metric but can hide object-body color error behind black
 background pixels. Use `just render-parity-samples-nonblack` for the same
 six-fixture sweep under
-`.external-fixtures/render-parity-samples-nonblack-interior/`; it selects
-`rgb-nonblack-interior1px >= 27.4 dB`, comparing model-body pixels where either
-render has non-zero RGB while dropping the one-pixel silhouette edge. The
-current model-body floor is Seed-san Bevy `27.5065 dB`; Seed-san wgpu is
-`30.0461 dB`, the UV animation sample is wgpu `28.6651 dB` / Bevy
-`28.6173 dB`, and Alicia VRM0 is wgpu `34.4442 dB` / Bevy `34.3709 dB`.
+`.external-fixtures/render-parity-samples-nonblack-interior/`; use
+`just render-parity-samples-nonblack-ash-gated` when Ash should join the same
+gate under `.external-fixtures/render-parity-samples-nonblack-ash-gated/`.
+Both select `rgb-nonblack-interior1px >= 27.4 dB`, comparing model-body pixels
+where either render has non-zero RGB while dropping the one-pixel silhouette
+edge. The current Ash-gated model-body floor is Seed-san Bevy `29.4512 dB`;
+Seed-san wgpu is `30.1229 dB` and Ash `30.1042 dB`, constraint is around
+`29.72-29.74 dB`, UV animation is around `29.56-29.61 dB`, expression samples
+are above `50 dB`, and Alicia VRM0 is wgpu/Ash `34.4442 dB` / Bevy
+`34.3709 dB`.
 Use `just render-parity-samples-shared-body3` for the same six-fixture sweep
 under `.external-fixtures/render-parity-samples-shared-body3/`; it selects
 `rgb-shared-nonblack-interior3px >= 28.5 dB`, comparing only pixels where both
@@ -511,7 +515,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, Ash mip-aware Vulkan texture materialization and mask-alpha parity, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a transparent-background six-fixture real sweep gated at `rgb-all >= 32 dB` for wgpu/Bevy/Ash, a focused real tangentless normal-map sweep gated at `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture breadth beyond the current pair, model-body parity above the current floor, broader real transparent fixture breadth, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, Ash mip-aware Vulkan texture materialization and mask-alpha parity, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a transparent-background six-fixture real sweep gated at `rgb-all >= 32 dB` for wgpu/Bevy/Ash, a focused real tangentless normal-map sweep gated at `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep for wgpu/Bevy/Ash, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture breadth beyond the current pair, model-body parity above the current floor, broader real transparent fixture breadth, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

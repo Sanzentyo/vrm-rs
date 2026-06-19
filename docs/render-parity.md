@@ -1034,6 +1034,12 @@ review background this is the visible RGB surface metric, and it also remains
 useful for explicit transparent alpha-mask audits. Use `rgb-nonblack` for
 opaque-black whole-model diagnostics and `rgb-nonblack-interior1px` when
 one-pixel silhouette/raster edges should be dropped from that diagnostic. Use
+`just render-parity-samples-nonblack-ash-gated` for the current six-fixture
+object-body regression floor with Ash included; it gates
+`rgb-nonblack-interior1px >= 27.4 dB` with exact alpha parity, and the latest
+local run bottoms out at Seed-san Bevy `29.4512 dB` while Ash stays at
+`30.1042 dB` on Seed-san and at or above `29.7370 dB` on the other lower-scored
+real fixtures. Use
 `rgb-visible-interior1px` when transparent interiors must be measured while
 still dropping one-pixel silhouette edges, and use
 `rgb-shared-nonblack-interior1px` when both sides must draw nonblack content
