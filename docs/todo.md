@@ -141,15 +141,16 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
     - [x] Writer options and metadata helpers: compact/pretty JSON output is selectable for `.gltf` and `.glb`, metadata patch byte helpers are public, and metadata patch atomic saves fail before touching the destination when the source shape is unsupported.
   - [x] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.
   - [x] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.
-  - [ ] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
+  - [x] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
     - [x] Foundation: added `vrm-vmc` over `vrm-osc` with typed messages for availability, relative time, root/bone poses, blend values/apply, camera, directional light, unknown-message retention, OSC roundtrip helpers, recursive bundle traversal, parse-before-apply behavior, and transaction hooks with rollback on sink errors.
+    - [x] Breadth pass: VMC now covers controller/key/MIDI input, HMD/controller/tracker device poses including local poses, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official camera/light addresses with legacy alias parsing, and selectable strict vs invalid-message-skipping parse policy.
   - [x] MToon GPU ABI/reference WGSL plus practical Bevy/wgpu/ash resource and pipeline hookups.
     - `MtoonGpuUniform` / `MtoonGpuMaterial` are shared through `vrm-adapter`, `wgpu_mtoon_resource_plans` exposes wgpu-owned resource setup data, ash frame plans emit per-pipeline uniform uploads, and Bevy material plans carry the same uniform into engine-owned assets.
   - [x] Optimizer for unused vertices, joint palette compaction, and empty morph removal.
     - Foundation: `vrm-io::optimize_primitive` validates primitive attribute/index shape, removes degenerate triangles, drops unreferenced vertices, normalizes skin weights, removes empty morph targets, compacts weighted joint palettes, and returns explicit vertex/joint remap reports. `apply_joint_compaction_to_skin` applies the same palette remap to glTF skin data, and the root facade re-exports the preprocessing API.
   - [ ] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
     - [x] Foundation: `vrm-io::resource` now provides data URI and relative file resolution with path traversal rejection, file/data/decode size limits, missing-codec errors, and provider traits/registry for Draco, Meshopt, and KTX2/Basis-style texture decoding without bundling codec dependencies.
-  - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport policy boundaries, and whether `FullMeta` is needed without breaking existing API.
+  - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.
 - [ ] Keep `docs/adapter-guide.md` aligned with public adapter APIs.

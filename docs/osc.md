@@ -4,14 +4,14 @@ This document describes the `vrm-osc` crate added for OSC/VMC-style motion strea
 
 ## Goal
 
-`vrm-osc` provides a local, dependency-free OSC 1.0 codec that can be used by future VMC Protocol integration without pulling `rosc` into the runtime dependency graph. It is deliberately a generic OSC codec rather than a VMC-specific parser.
+`vrm-osc` provides a local, dependency-free OSC 1.0 codec used by the optional `vrm-vmc` VMC Protocol layer without pulling `rosc` into the runtime dependency graph. It is deliberately a generic OSC codec rather than a VMC-specific parser.
 
 The intended stack is:
 
 ```text
 UDP/TCP socket layer          optional, outside this crate
 OSC packet codec             crates/vrm-osc
-VMC Protocol message mapping  future crates/vrm-vmc or adapter layer
+VMC Protocol message mapping  crates/vrm-vmc
 VRM humanoid/runtime apply    vrm-core / vrm-runtime / vrm-adapter
 ```
 
@@ -139,6 +139,8 @@ cargo test -p vrm-osc
 cargo test --features osc
 ```
 
-## Future VMC layer
+## VMC layer
 
-A later VMC crate should depend on `vrm-osc` and translate OSC packets into VMC events, then into `vrm_core` pose/expression types. Keeping OSC generic here prevents VMC-specific assumptions from leaking into the lower-level codec.
+The optional `vrm-vmc` crate depends on `vrm-osc` and translates OSC packets into typed VMC events, then applies them through `VmcRuntimeSink`. It covers the core VMC 3.1 Marionette/Performer message families, recursive bundle traversal, `/VMC/Thru/*` passthrough, and strict or invalid-message-skipping parse policy. Socket ownership, reconnect behavior, authentication, rate limits, and jitter buffers remain application policy rather than part of the codec crate.
+
+Keeping OSC generic here prevents VMC-specific assumptions from leaking into the lower-level packet model.

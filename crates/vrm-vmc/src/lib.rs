@@ -7,10 +7,71 @@ use glam::{Quat, Vec3};
 use thiserror::Error;
 use vrm_osc::{OscMessage, OscPacket, OscType};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VmcTransform {
     pub translation: Vec3,
     pub rotation: Quat,
+}
+
+impl Default for VmcTransform {
+    fn default() -> Self {
+        Self {
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmcDeviceKind {
+    Hmd,
+    Controller,
+    Tracker,
+}
+
+impl VmcDeviceKind {
+    fn address_prefix(self) -> &'static str {
+        match self {
+            Self::Hmd => "/VMC/Ext/Hmd/Pos",
+            Self::Controller => "/VMC/Ext/Con/Pos",
+            Self::Tracker => "/VMC/Ext/Tra/Pos",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmcInputState {
+    Release,
+    Press,
+    Axis,
+    Other(i32),
+}
+
+impl VmcInputState {
+    fn from_raw(value: i32) -> Self {
+        match value {
+            0 => Self::Release,
+            1 => Self::Press,
+            2 => Self::Axis,
+            other => Self::Other(other),
+        }
+    }
+
+    pub fn raw(self) -> i32 {
+        match self {
+            Self::Release => 0,
+            Self::Press => 1,
+            Self::Axis => 2,
+            Self::Other(value) => value,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VmcParsePolicy {
+    #[default]
+    Strict,
+    IgnoreInvalidKnownMessages,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +108,87 @@ pub enum VmcMessage {
         transform: VmcTransform,
         color: Option<[f32; 4]>,
     },
+    ControllerInput {
+        state: VmcInputState,
+        name: String,
+        is_left: bool,
+        is_touch: bool,
+        is_axis: bool,
+        axis: Vec3,
+    },
+    KeyboardInput {
+        state: VmcInputState,
+        name: String,
+        keycode: i32,
+    },
+    MidiNote {
+        state: VmcInputState,
+        channel: i32,
+        note: i32,
+        velocity: f32,
+    },
+    MidiCcValue {
+        knob: i32,
+        value: f32,
+    },
+    MidiCcButton {
+        knob: i32,
+        state: VmcInputState,
+    },
+    DevicePose {
+        kind: VmcDeviceKind,
+        local: bool,
+        serial: String,
+        transform: VmcTransform,
+    },
+    ReceiveEnabled {
+        enabled: bool,
+        port: i32,
+        ip_address: Option<String>,
+    },
+    LocalVrmInfo {
+        path: String,
+        title: String,
+        hash: Option<String>,
+    },
+    RemoteVrmInfo {
+        service: String,
+        json: String,
+    },
+    OptionString(String),
+    SettingColor([f32; 4]),
+    WindowAttribute {
+        is_top_most: bool,
+        is_transparent: bool,
+        window_click_through: bool,
+        hide_border: bool,
+    },
+    ConfigPath(String),
+    SetPeriod {
+        status: i32,
+        root: i32,
+        bone: i32,
+        blend_shape: i32,
+        camera: i32,
+        devices: i32,
+    },
+    EyeTrackingTarget {
+        enabled: bool,
+        position: Vec3,
+    },
+    InformationRequest,
+    ResponseString(String),
+    CalibrationReady,
+    CalibrationExecute {
+        mode: i32,
+    },
+    RequestLoadConfig {
+        path: String,
+    },
+    Shortcut {
+        shortcut: String,
+    },
+    Thru(OscMessage),
     Unknown(OscMessage),
 }
 
@@ -59,8 +201,35 @@ impl VmcMessage {
             "/VMC/Ext/Bone/Pos" => parse_bone_pose(message),
             "/VMC/Ext/Blend/Val" => parse_blend_value(message),
             "/VMC/Ext/Blend/Apply" => parse_no_args(message, Self::BlendApply),
-            "/VMC/Ext/Camera/Pos" => parse_camera_pose(message),
-            "/VMC/Ext/Light/Dir" => parse_light(message),
+            "/VMC/Ext/Cam" | "/VMC/Ext/Camera/Pos" => parse_camera_pose(message),
+            "/VMC/Ext/Light" | "/VMC/Ext/Light/Dir" => parse_light(message),
+            "/VMC/Ext/Con" => parse_controller_input(message),
+            "/VMC/Ext/Key" => parse_keyboard_input(message),
+            "/VMC/Ext/Midi/Note" => parse_midi_note(message),
+            "/VMC/Ext/Midi/CC/Val" => parse_midi_cc_value(message),
+            "/VMC/Ext/Midi/CC/Bit" => parse_midi_cc_button(message),
+            "/VMC/Ext/Hmd/Pos" => parse_device_pose(message, VmcDeviceKind::Hmd, false),
+            "/VMC/Ext/Con/Pos" => parse_device_pose(message, VmcDeviceKind::Controller, false),
+            "/VMC/Ext/Tra/Pos" => parse_device_pose(message, VmcDeviceKind::Tracker, false),
+            "/VMC/Ext/Hmd/Pos/Local" => parse_device_pose(message, VmcDeviceKind::Hmd, true),
+            "/VMC/Ext/Con/Pos/Local" => parse_device_pose(message, VmcDeviceKind::Controller, true),
+            "/VMC/Ext/Tra/Pos/Local" => parse_device_pose(message, VmcDeviceKind::Tracker, true),
+            "/VMC/Ext/Rcv" => parse_receive_enabled(message),
+            "/VMC/Ext/VRM" => parse_local_vrm_info(message),
+            "/VMC/Ext/Remote" => parse_remote_vrm_info(message),
+            "/VMC/Ext/Opt" => parse_option_string(message),
+            "/VMC/Ext/Setting/Color" => parse_setting_color(message),
+            "/VMC/Ext/Setting/Win" => parse_window_attribute(message),
+            "/VMC/Ext/Config" => parse_config_path(message),
+            "/VMC/Ext/Set/Period" => parse_set_period(message),
+            "/VMC/Ext/Set/Eye" => parse_eye_tracking_target(message),
+            "/VMC/Ext/Set/Req" => parse_no_args(message, Self::InformationRequest),
+            "/VMC/Ext/Set/Res" => parse_response_string(message),
+            "/VMC/Ext/Set/Calib/Ready" => parse_no_args(message, Self::CalibrationReady),
+            "/VMC/Ext/Set/Calib/Exec" => parse_calibration_execute(message),
+            "/VMC/Ext/Set/Config" => parse_request_load_config(message),
+            "/VMC/Ext/Set/Shortcut" => parse_shortcut(message),
+            address if address.starts_with("/VMC/Thru/") => Ok(Self::Thru(message.clone())),
             _ => Ok(Self::Unknown(message.clone())),
         }
     }
@@ -110,7 +279,7 @@ impl VmcMessage {
             } => {
                 let mut args = transform_args(name, *transform);
                 args.extend(fov_y_degrees.map(OscType::Float));
-                osc_message("/VMC/Ext/Camera/Pos", args)
+                osc_message("/VMC/Ext/Cam", args)
             }
             Self::DirectionalLight {
                 name,
@@ -121,8 +290,165 @@ impl VmcMessage {
                 if let Some(color) = color {
                     args.extend(color.iter().copied().map(OscType::Float));
                 }
-                osc_message("/VMC/Ext/Light/Dir", args)
+                osc_message("/VMC/Ext/Light", args)
             }
+            Self::ControllerInput {
+                state,
+                name,
+                is_left,
+                is_touch,
+                is_axis,
+                axis,
+            } => osc_message(
+                "/VMC/Ext/Con",
+                vec![
+                    OscType::Int(state.raw()),
+                    OscType::String(name.clone()),
+                    OscType::Int(bool_int(*is_left)),
+                    OscType::Int(bool_int(*is_touch)),
+                    OscType::Int(bool_int(*is_axis)),
+                    OscType::Float(axis.x),
+                    OscType::Float(axis.y),
+                    OscType::Float(axis.z),
+                ],
+            ),
+            Self::KeyboardInput {
+                state,
+                name,
+                keycode,
+            } => osc_message(
+                "/VMC/Ext/Key",
+                vec![
+                    OscType::Int(state.raw()),
+                    OscType::String(name.clone()),
+                    OscType::Int(*keycode),
+                ],
+            ),
+            Self::MidiNote {
+                state,
+                channel,
+                note,
+                velocity,
+            } => osc_message(
+                "/VMC/Ext/Midi/Note",
+                vec![
+                    OscType::Int(state.raw()),
+                    OscType::Int(*channel),
+                    OscType::Int(*note),
+                    OscType::Float(*velocity),
+                ],
+            ),
+            Self::MidiCcValue { knob, value } => osc_message(
+                "/VMC/Ext/Midi/CC/Val",
+                vec![OscType::Int(*knob), OscType::Float(*value)],
+            ),
+            Self::MidiCcButton { knob, state } => osc_message(
+                "/VMC/Ext/Midi/CC/Bit",
+                vec![OscType::Int(*knob), OscType::Int(state.raw())],
+            ),
+            Self::DevicePose {
+                kind,
+                local,
+                serial,
+                transform,
+            } => {
+                let mut address = kind.address_prefix().to_owned();
+                if *local {
+                    address.push_str("/Local");
+                }
+                osc_message(&address, transform_args(serial, *transform))
+            }
+            Self::ReceiveEnabled {
+                enabled,
+                port,
+                ip_address,
+            } => {
+                let mut args = vec![OscType::Int(bool_int(*enabled)), OscType::Int(*port)];
+                args.extend(ip_address.iter().cloned().map(OscType::String));
+                osc_message("/VMC/Ext/Rcv", args)
+            }
+            Self::LocalVrmInfo { path, title, hash } => {
+                let mut args = vec![
+                    OscType::String(path.clone()),
+                    OscType::String(title.clone()),
+                ];
+                args.extend(hash.iter().cloned().map(OscType::String));
+                osc_message("/VMC/Ext/VRM", args)
+            }
+            Self::RemoteVrmInfo { service, json } => osc_message(
+                "/VMC/Ext/Remote",
+                vec![
+                    OscType::String(service.clone()),
+                    OscType::String(json.clone()),
+                ],
+            ),
+            Self::OptionString(option) => {
+                osc_message("/VMC/Ext/Opt", vec![OscType::String(option.clone())])
+            }
+            Self::SettingColor(color) => osc_message(
+                "/VMC/Ext/Setting/Color",
+                color.iter().copied().map(OscType::Float).collect(),
+            ),
+            Self::WindowAttribute {
+                is_top_most,
+                is_transparent,
+                window_click_through,
+                hide_border,
+            } => osc_message(
+                "/VMC/Ext/Setting/Win",
+                vec![
+                    OscType::Int(bool_int(*is_top_most)),
+                    OscType::Int(bool_int(*is_transparent)),
+                    OscType::Int(bool_int(*window_click_through)),
+                    OscType::Int(bool_int(*hide_border)),
+                ],
+            ),
+            Self::ConfigPath(path) => {
+                osc_message("/VMC/Ext/Config", vec![OscType::String(path.clone())])
+            }
+            Self::SetPeriod {
+                status,
+                root,
+                bone,
+                blend_shape,
+                camera,
+                devices,
+            } => osc_message(
+                "/VMC/Ext/Set/Period",
+                vec![
+                    OscType::Int(*status),
+                    OscType::Int(*root),
+                    OscType::Int(*bone),
+                    OscType::Int(*blend_shape),
+                    OscType::Int(*camera),
+                    OscType::Int(*devices),
+                ],
+            ),
+            Self::EyeTrackingTarget { enabled, position } => osc_message(
+                "/VMC/Ext/Set/Eye",
+                vec![
+                    OscType::Int(bool_int(*enabled)),
+                    OscType::Float(position.x),
+                    OscType::Float(position.y),
+                    OscType::Float(position.z),
+                ],
+            ),
+            Self::InformationRequest => osc_message("/VMC/Ext/Set/Req", Vec::new()),
+            Self::ResponseString(response) => {
+                osc_message("/VMC/Ext/Set/Res", vec![OscType::String(response.clone())])
+            }
+            Self::CalibrationReady => osc_message("/VMC/Ext/Set/Calib/Ready", Vec::new()),
+            Self::CalibrationExecute { mode } => {
+                osc_message("/VMC/Ext/Set/Calib/Exec", vec![OscType::Int(*mode)])
+            }
+            Self::RequestLoadConfig { path } => {
+                osc_message("/VMC/Ext/Set/Config", vec![OscType::String(path.clone())])
+            }
+            Self::Shortcut { shortcut } => osc_message(
+                "/VMC/Ext/Set/Shortcut",
+                vec![OscType::String(shortcut.clone())],
+            ),
+            Self::Thru(message) => message.clone(),
             Self::Unknown(message) => message.clone(),
         }
     }
@@ -195,14 +521,162 @@ pub trait VmcRuntimeSink {
         Ok(())
     }
 
+    fn set_controller_input(
+        &mut self,
+        _state: VmcInputState,
+        _name: &str,
+        _is_left: bool,
+        _is_touch: bool,
+        _is_axis: bool,
+        _axis: Vec3,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_keyboard_input(
+        &mut self,
+        _state: VmcInputState,
+        _name: &str,
+        _keycode: i32,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_midi_note(
+        &mut self,
+        _state: VmcInputState,
+        _channel: i32,
+        _note: i32,
+        _velocity: f32,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_midi_cc_value(&mut self, _knob: i32, _value: f32) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_midi_cc_button(&mut self, _knob: i32, _state: VmcInputState) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_device_pose(
+        &mut self,
+        _kind: VmcDeviceKind,
+        _local: bool,
+        _serial: &str,
+        _transform: VmcTransform,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_receive_enabled(
+        &mut self,
+        _enabled: bool,
+        _port: i32,
+        _ip_address: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_local_vrm_info(
+        &mut self,
+        _path: &str,
+        _title: &str,
+        _hash: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_remote_vrm_info(&mut self, _service: &str, _json: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_option_string(&mut self, _option: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_setting_color(&mut self, _color: [f32; 4]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_window_attribute(
+        &mut self,
+        _is_top_most: bool,
+        _is_transparent: bool,
+        _window_click_through: bool,
+        _hide_border: bool,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_config_path(&mut self, _path: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_period(
+        &mut self,
+        _status: i32,
+        _root: i32,
+        _bone: i32,
+        _blend_shape: i32,
+        _camera: i32,
+        _devices: i32,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_eye_tracking_target(
+        &mut self,
+        _enabled: bool,
+        _position: Vec3,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn request_information(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_response_string(&mut self, _response: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn request_calibration_ready(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn request_calibration_execute(&mut self, _mode: i32) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn request_load_config(&mut self, _path: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn call_shortcut(&mut self, _shortcut: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn thru_vmc_message(&mut self, _message: &OscMessage) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn unknown_vmc_message(&mut self, _message: &OscMessage) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
 pub fn collect_packet_messages(packet: &OscPacket) -> Result<Vec<VmcMessage>, VmcError> {
+    collect_packet_messages_with_policy(packet, VmcParsePolicy::Strict)
+}
+
+pub fn collect_packet_messages_with_policy(
+    packet: &OscPacket,
+    policy: VmcParsePolicy,
+) -> Result<Vec<VmcMessage>, VmcError> {
     let mut messages = Vec::new();
-    collect_packet_messages_into(packet, &mut messages)?;
+    collect_packet_messages_into(packet, &mut messages, policy)?;
     Ok(messages)
 }
 
@@ -210,7 +684,18 @@ pub fn apply_packet<S>(sink: &mut S, packet: &OscPacket) -> Result<(), VmcApplyE
 where
     S: VmcRuntimeSink,
 {
-    let messages = collect_packet_messages(packet)?;
+    apply_packet_with_policy(sink, packet, VmcParsePolicy::Strict)
+}
+
+pub fn apply_packet_with_policy<S>(
+    sink: &mut S,
+    packet: &OscPacket,
+    policy: VmcParsePolicy,
+) -> Result<(), VmcApplyError<S::Error>>
+where
+    S: VmcRuntimeSink,
+{
+    let messages = collect_packet_messages_with_policy(packet, policy)?;
     apply_messages(sink, &messages)
 }
 
@@ -281,6 +766,108 @@ where
         } => sink
             .set_directional_light(name, *transform, *color)
             .map_err(VmcApplyError::Sink),
+        VmcMessage::ControllerInput {
+            state,
+            name,
+            is_left,
+            is_touch,
+            is_axis,
+            axis,
+        } => sink
+            .set_controller_input(*state, name, *is_left, *is_touch, *is_axis, *axis)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::KeyboardInput {
+            state,
+            name,
+            keycode,
+        } => sink
+            .set_keyboard_input(*state, name, *keycode)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::MidiNote {
+            state,
+            channel,
+            note,
+            velocity,
+        } => sink
+            .set_midi_note(*state, *channel, *note, *velocity)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::MidiCcValue { knob, value } => sink
+            .set_midi_cc_value(*knob, *value)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::MidiCcButton { knob, state } => sink
+            .set_midi_cc_button(*knob, *state)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::DevicePose {
+            kind,
+            local,
+            serial,
+            transform,
+        } => sink
+            .set_device_pose(*kind, *local, serial, *transform)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::ReceiveEnabled {
+            enabled,
+            port,
+            ip_address,
+        } => sink
+            .set_receive_enabled(*enabled, *port, ip_address.as_deref())
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::LocalVrmInfo { path, title, hash } => sink
+            .set_local_vrm_info(path, title, hash.as_deref())
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::RemoteVrmInfo { service, json } => sink
+            .set_remote_vrm_info(service, json)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::OptionString(option) => {
+            sink.set_option_string(option).map_err(VmcApplyError::Sink)
+        }
+        VmcMessage::SettingColor(color) => {
+            sink.set_setting_color(*color).map_err(VmcApplyError::Sink)
+        }
+        VmcMessage::WindowAttribute {
+            is_top_most,
+            is_transparent,
+            window_click_through,
+            hide_border,
+        } => sink
+            .set_window_attribute(
+                *is_top_most,
+                *is_transparent,
+                *window_click_through,
+                *hide_border,
+            )
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::ConfigPath(path) => sink.set_config_path(path).map_err(VmcApplyError::Sink),
+        VmcMessage::SetPeriod {
+            status,
+            root,
+            bone,
+            blend_shape,
+            camera,
+            devices,
+        } => sink
+            .set_period(*status, *root, *bone, *blend_shape, *camera, *devices)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::EyeTrackingTarget { enabled, position } => sink
+            .set_eye_tracking_target(*enabled, *position)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::InformationRequest => sink.request_information().map_err(VmcApplyError::Sink),
+        VmcMessage::ResponseString(response) => sink
+            .set_response_string(response)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::CalibrationReady => sink
+            .request_calibration_ready()
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::CalibrationExecute { mode } => sink
+            .request_calibration_execute(*mode)
+            .map_err(VmcApplyError::Sink),
+        VmcMessage::RequestLoadConfig { path } => {
+            sink.request_load_config(path).map_err(VmcApplyError::Sink)
+        }
+        VmcMessage::Shortcut { shortcut } => {
+            sink.call_shortcut(shortcut).map_err(VmcApplyError::Sink)
+        }
+        VmcMessage::Thru(message) => sink.thru_vmc_message(message).map_err(VmcApplyError::Sink),
         VmcMessage::Unknown(message) => sink
             .unknown_vmc_message(message)
             .map_err(VmcApplyError::Sink),
@@ -290,14 +877,20 @@ where
 fn collect_packet_messages_into(
     packet: &OscPacket,
     messages: &mut Vec<VmcMessage>,
+    policy: VmcParsePolicy,
 ) -> Result<(), VmcError> {
     match packet {
-        OscPacket::Message(message) => {
-            messages.push(VmcMessage::from_osc_message(message)?);
-        }
+        OscPacket::Message(message) => match VmcMessage::from_osc_message(message) {
+            Ok(message) => messages.push(message),
+            Err(error) => {
+                if policy == VmcParsePolicy::Strict {
+                    return Err(error);
+                }
+            }
+        },
         OscPacket::Bundle(bundle) => {
             for packet in &bundle.content {
-                collect_packet_messages_into(packet, messages)?;
+                collect_packet_messages_into(packet, messages, policy)?;
             }
         }
     }
@@ -358,6 +951,166 @@ fn parse_light(message: &OscMessage) -> Result<VmcMessage, VmcError> {
     })
 }
 
+fn parse_controller_input(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 8)?;
+    Ok(VmcMessage::ControllerInput {
+        state: arg_input_state(message, 0)?,
+        name: arg_string(message, 1)?,
+        is_left: arg_bool_int(message, 2)?,
+        is_touch: arg_bool_int(message, 3)?,
+        is_axis: arg_bool_int(message, 4)?,
+        axis: vec3_at(message, 5)?,
+    })
+}
+
+fn parse_keyboard_input(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 3)?;
+    Ok(VmcMessage::KeyboardInput {
+        state: arg_input_state(message, 0)?,
+        name: arg_string(message, 1)?,
+        keycode: arg_i32(message, 2)?,
+    })
+}
+
+fn parse_midi_note(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 4)?;
+    Ok(VmcMessage::MidiNote {
+        state: arg_input_state(message, 0)?,
+        channel: arg_i32(message, 1)?,
+        note: arg_i32(message, 2)?,
+        velocity: arg_f32(message, 3)?,
+    })
+}
+
+fn parse_midi_cc_value(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 2)?;
+    Ok(VmcMessage::MidiCcValue {
+        knob: arg_i32(message, 0)?,
+        value: arg_f32(message, 1)?,
+    })
+}
+
+fn parse_midi_cc_button(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 2)?;
+    Ok(VmcMessage::MidiCcButton {
+        knob: arg_i32(message, 0)?,
+        state: arg_input_state(message, 1)?,
+    })
+}
+
+fn parse_device_pose(
+    message: &OscMessage,
+    kind: VmcDeviceKind,
+    local: bool,
+) -> Result<VmcMessage, VmcError> {
+    Ok(VmcMessage::DevicePose {
+        kind,
+        local,
+        serial: arg_string(message, 0)?,
+        transform: transform_at(message, 1)?,
+    })
+}
+
+fn parse_receive_enabled(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    Ok(VmcMessage::ReceiveEnabled {
+        enabled: arg_bool_int(message, 0)?,
+        port: arg_i32(message, 1)?,
+        ip_address: optional_string(message, 2)?,
+    })
+}
+
+fn parse_local_vrm_info(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    Ok(VmcMessage::LocalVrmInfo {
+        path: arg_string(message, 0)?,
+        title: arg_string(message, 1)?,
+        hash: optional_string(message, 2)?,
+    })
+}
+
+fn parse_remote_vrm_info(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 2)?;
+    Ok(VmcMessage::RemoteVrmInfo {
+        service: arg_string(message, 0)?,
+        json: arg_string(message, 1)?,
+    })
+}
+
+fn parse_option_string(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::OptionString(arg_string(message, 0)?))
+}
+
+fn parse_setting_color(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 4)?;
+    Ok(VmcMessage::SettingColor([
+        arg_f32(message, 0)?,
+        arg_f32(message, 1)?,
+        arg_f32(message, 2)?,
+        arg_f32(message, 3)?,
+    ]))
+}
+
+fn parse_window_attribute(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 4)?;
+    Ok(VmcMessage::WindowAttribute {
+        is_top_most: arg_bool_int(message, 0)?,
+        is_transparent: arg_bool_int(message, 1)?,
+        window_click_through: arg_bool_int(message, 2)?,
+        hide_border: arg_bool_int(message, 3)?,
+    })
+}
+
+fn parse_config_path(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::ConfigPath(arg_string(message, 0)?))
+}
+
+fn parse_set_period(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 6)?;
+    Ok(VmcMessage::SetPeriod {
+        status: arg_i32(message, 0)?,
+        root: arg_i32(message, 1)?,
+        bone: arg_i32(message, 2)?,
+        blend_shape: arg_i32(message, 3)?,
+        camera: arg_i32(message, 4)?,
+        devices: arg_i32(message, 5)?,
+    })
+}
+
+fn parse_eye_tracking_target(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 4)?;
+    Ok(VmcMessage::EyeTrackingTarget {
+        enabled: arg_bool_int(message, 0)?,
+        position: vec3_at(message, 1)?,
+    })
+}
+
+fn parse_response_string(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::ResponseString(arg_string(message, 0)?))
+}
+
+fn parse_calibration_execute(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::CalibrationExecute {
+        mode: arg_i32(message, 0)?,
+    })
+}
+
+fn parse_request_load_config(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::RequestLoadConfig {
+        path: arg_string(message, 0)?,
+    })
+}
+
+fn parse_shortcut(message: &OscMessage) -> Result<VmcMessage, VmcError> {
+    expect_arg_len(message, 1)?;
+    Ok(VmcMessage::Shortcut {
+        shortcut: arg_string(message, 0)?,
+    })
+}
+
 fn parse_no_args(message: &OscMessage, parsed: VmcMessage) -> Result<VmcMessage, VmcError> {
     expect_arg_len(message, 0)?;
     Ok(parsed)
@@ -379,13 +1132,24 @@ fn vec3_at(message: &OscMessage, start: usize) -> Result<Vec3, VmcError> {
 }
 
 fn quat_at(message: &OscMessage, start: usize) -> Result<Quat, VmcError> {
-    Ok(Quat::from_xyzw(
+    let rotation = Quat::from_xyzw(
         arg_f32(message, start)?,
         arg_f32(message, start + 1)?,
         arg_f32(message, start + 2)?,
         arg_f32(message, start + 3)?,
-    )
-    .normalize())
+    );
+    if !rotation.x.is_finite()
+        || !rotation.y.is_finite()
+        || !rotation.z.is_finite()
+        || !rotation.w.is_finite()
+        || rotation.length_squared() <= f32::EPSILON
+    {
+        return Err(VmcError::InvalidQuaternion {
+            address: message.addr.clone(),
+            index: start,
+        });
+    }
+    Ok(rotation.normalize())
 }
 
 fn optional_vec3(message: &OscMessage, start: usize) -> Result<Option<Vec3>, VmcError> {
@@ -412,6 +1176,13 @@ fn optional_i32(message: &OscMessage, index: usize) -> Result<Option<i32>, VmcEr
         return Ok(None);
     }
     Ok(Some(arg_i32(message, index)?))
+}
+
+fn optional_string(message: &OscMessage, index: usize) -> Result<Option<String>, VmcError> {
+    if message.args.len() <= index {
+        return Ok(None);
+    }
+    Ok(Some(arg_string(message, index)?))
 }
 
 fn optional_f32(message: &OscMessage, index: usize) -> Result<Option<f32>, VmcError> {
@@ -443,6 +1214,14 @@ fn arg_i32(message: &OscMessage, index: usize) -> Result<i32, VmcError> {
             actual: arg_kind(actual),
         }),
     }
+}
+
+fn arg_bool_int(message: &OscMessage, index: usize) -> Result<bool, VmcError> {
+    Ok(arg_i32(message, index)? != 0)
+}
+
+fn arg_input_state(message: &OscMessage, index: usize) -> Result<VmcInputState, VmcError> {
+    Ok(VmcInputState::from_raw(arg_i32(message, index)?))
 }
 
 fn arg_f32(message: &OscMessage, index: usize) -> Result<f32, VmcError> {
@@ -508,6 +1287,10 @@ fn osc_message(addr: &str, args: Vec<OscType>) -> OscMessage {
     }
 }
 
+fn bool_int(value: bool) -> i32 {
+    i32::from(value)
+}
+
 fn arg_kind(arg: &OscType) -> &'static str {
     match arg {
         OscType::Int(_) => "int",
@@ -544,6 +1327,8 @@ pub enum VmcError {
         expected: &'static str,
         actual: &'static str,
     },
+    #[error("{address} quaternion at argument {index} is not finite or has zero length")]
+    InvalidQuaternion { address: String, index: usize },
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -589,6 +1374,168 @@ mod tests {
             }
         );
         assert_eq!(parsed.to_osc_message(), message);
+    }
+
+    #[test]
+    fn roundtrips_vmc31_marionette_and_performer_message_families() {
+        let transform = VmcTransform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::IDENTITY,
+        };
+        let messages = vec![
+            VmcMessage::Available {
+                available: true,
+                calibration_state: Some(3),
+                calibration_mode: Some(1),
+                tracking_status: Some(1),
+            },
+            VmcMessage::RelativeTime(1.25),
+            VmcMessage::RootPose {
+                name: "root".to_owned(),
+                transform,
+                scale: Some(Vec3::splat(1.2)),
+                offset: Some(Vec3::new(0.0, 1.0, 0.0)),
+            },
+            VmcMessage::BonePose {
+                bone: "Head".to_owned(),
+                transform,
+            },
+            VmcMessage::BlendValue {
+                name: "Joy".to_owned(),
+                value: 0.8,
+            },
+            VmcMessage::BlendApply,
+            VmcMessage::CameraPose {
+                name: "Camera".to_owned(),
+                transform,
+                fov_y_degrees: Some(45.0),
+            },
+            VmcMessage::DirectionalLight {
+                name: "Light".to_owned(),
+                transform,
+                color: Some([1.0, 0.8, 0.6, 1.0]),
+            },
+            VmcMessage::ControllerInput {
+                state: VmcInputState::Axis,
+                name: "trigger".to_owned(),
+                is_left: true,
+                is_touch: false,
+                is_axis: true,
+                axis: Vec3::new(0.1, 0.2, 0.3),
+            },
+            VmcMessage::KeyboardInput {
+                state: VmcInputState::Press,
+                name: "Space".to_owned(),
+                keycode: 32,
+            },
+            VmcMessage::MidiNote {
+                state: VmcInputState::Press,
+                channel: 1,
+                note: 64,
+                velocity: 0.7,
+            },
+            VmcMessage::MidiCcValue {
+                knob: 7,
+                value: 0.5,
+            },
+            VmcMessage::MidiCcButton {
+                knob: 8,
+                state: VmcInputState::Release,
+            },
+            VmcMessage::DevicePose {
+                kind: VmcDeviceKind::Hmd,
+                local: false,
+                serial: "hmd-1".to_owned(),
+                transform,
+            },
+            VmcMessage::DevicePose {
+                kind: VmcDeviceKind::Tracker,
+                local: true,
+                serial: "tracker-1".to_owned(),
+                transform,
+            },
+            VmcMessage::ReceiveEnabled {
+                enabled: true,
+                port: 39540,
+                ip_address: Some("127.0.0.1".to_owned()),
+            },
+            VmcMessage::LocalVrmInfo {
+                path: "avatar.vrm".to_owned(),
+                title: "Avatar".to_owned(),
+                hash: Some("abc123".to_owned()),
+            },
+            VmcMessage::RemoteVrmInfo {
+                service: "vroidhub".to_owned(),
+                json: "{\"characterModelId\":\"1\"}".to_owned(),
+            },
+            VmcMessage::OptionString("arbitrary".to_owned()),
+            VmcMessage::SettingColor([0.1, 0.2, 0.3, 1.0]),
+            VmcMessage::WindowAttribute {
+                is_top_most: true,
+                is_transparent: true,
+                window_click_through: false,
+                hide_border: true,
+            },
+            VmcMessage::ConfigPath("profile.json".to_owned()),
+            VmcMessage::SetPeriod {
+                status: 1,
+                root: 2,
+                bone: 3,
+                blend_shape: 4,
+                camera: 5,
+                devices: 6,
+            },
+            VmcMessage::EyeTrackingTarget {
+                enabled: true,
+                position: Vec3::new(0.0, 0.1, 1.0),
+            },
+            VmcMessage::InformationRequest,
+            VmcMessage::ResponseString("ok".to_owned()),
+            VmcMessage::CalibrationReady,
+            VmcMessage::CalibrationExecute { mode: 2 },
+            VmcMessage::RequestLoadConfig {
+                path: "next-profile.json".to_owned(),
+            },
+            VmcMessage::Shortcut {
+                shortcut: "Functions.FreeCamera".to_owned(),
+            },
+            VmcMessage::Thru(OscMessage {
+                addr: "/VMC/Thru/vendor/topic".to_owned(),
+                args: vec![OscType::String("payload".to_owned())],
+            }),
+        ];
+
+        for message in messages {
+            let osc = message.to_osc_message();
+            assert_eq!(VmcMessage::from_osc_message(&osc).unwrap(), message);
+        }
+    }
+
+    #[test]
+    fn parses_legacy_camera_and_light_aliases_but_emits_official_addresses() {
+        let camera = OscMessage {
+            addr: "/VMC/Ext/Camera/Pos".to_owned(),
+            args: transform_args("Camera", VmcTransform::default()),
+        };
+        let light = OscMessage {
+            addr: "/VMC/Ext/Light/Dir".to_owned(),
+            args: transform_args("Light", VmcTransform::default()),
+        };
+
+        assert_eq!(
+            VmcMessage::from_osc_message(&camera)
+                .unwrap()
+                .to_osc_message()
+                .addr,
+            "/VMC/Ext/Cam"
+        );
+        assert_eq!(
+            VmcMessage::from_osc_message(&light)
+                .unwrap()
+                .to_osc_message()
+                .addr,
+            "/VMC/Ext/Light"
+        );
     }
 
     #[test]
@@ -645,6 +1592,79 @@ mod tests {
     }
 
     #[test]
+    fn lenient_parse_policy_skips_invalid_known_messages_before_transaction() {
+        let packet = OscPacket::Bundle(OscBundle {
+            timetag: OscTime::IMMEDIATE,
+            content: vec![
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/T".to_owned(),
+                    args: vec![OscType::Float(1.0)],
+                }),
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/Blend/Apply".to_owned(),
+                    args: vec![OscType::Int(9)],
+                }),
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Thru/vendor/topic".to_owned(),
+                    args: vec![OscType::String("kept".to_owned())],
+                }),
+            ],
+        });
+        let mut sink = RecordingSink::default();
+
+        apply_packet_with_policy(
+            &mut sink,
+            &packet,
+            VmcParsePolicy::IgnoreInvalidKnownMessages,
+        )
+        .unwrap();
+
+        assert_eq!(
+            sink.events,
+            vec!["begin", "time:1", "thru:/VMC/Thru/vendor/topic", "commit"]
+        );
+    }
+
+    #[test]
+    fn zero_length_quaternion_is_invalid_and_lenient_policy_can_skip_it() {
+        let invalid_bone = OscMessage {
+            addr: "/VMC/Ext/Bone/Pos".to_owned(),
+            args: vec![
+                OscType::String("Head".to_owned()),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+                OscType::Float(0.0),
+            ],
+        };
+        assert!(matches!(
+            VmcMessage::from_osc_message(&invalid_bone),
+            Err(VmcError::InvalidQuaternion { .. })
+        ));
+
+        let packet = OscPacket::Bundle(OscBundle {
+            timetag: OscTime::IMMEDIATE,
+            content: vec![
+                OscPacket::Message(invalid_bone),
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/T".to_owned(),
+                    args: vec![OscType::Float(2.0)],
+                }),
+            ],
+        });
+        let messages = collect_packet_messages_with_policy(
+            &packet,
+            VmcParsePolicy::IgnoreInvalidKnownMessages,
+        )
+        .unwrap();
+
+        assert_eq!(messages, vec![VmcMessage::RelativeTime(2.0)]);
+    }
+
+    #[test]
     fn sink_error_rolls_back_transaction() {
         let messages = vec![VmcMessage::RelativeTime(1.0)];
         let mut sink = FailingSink::default();
@@ -654,6 +1674,59 @@ mod tests {
             Err(VmcApplyError::Sink("time failed"))
         ));
         assert_eq!(sink.events, vec!["begin", "time", "rollback"]);
+    }
+
+    #[test]
+    fn extended_messages_apply_to_runtime_sink_in_transaction_order() {
+        let transform = VmcTransform::default();
+        let messages = vec![
+            VmcMessage::DevicePose {
+                kind: VmcDeviceKind::Controller,
+                local: true,
+                serial: "left".to_owned(),
+                transform,
+            },
+            VmcMessage::ControllerInput {
+                state: VmcInputState::Axis,
+                name: "stick".to_owned(),
+                is_left: true,
+                is_touch: true,
+                is_axis: true,
+                axis: Vec3::new(1.0, 0.0, 0.0),
+            },
+            VmcMessage::MidiCcButton {
+                knob: 10,
+                state: VmcInputState::Press,
+            },
+            VmcMessage::EyeTrackingTarget {
+                enabled: true,
+                position: Vec3::new(0.0, 0.0, 1.0),
+            },
+            VmcMessage::Shortcut {
+                shortcut: "Functions.ColorGreen".to_owned(),
+            },
+            VmcMessage::Thru(OscMessage {
+                addr: "/VMC/Thru/vendor/topic".to_owned(),
+                args: vec![OscType::Int(7)],
+            }),
+        ];
+        let mut sink = RecordingSink::default();
+
+        apply_messages(&mut sink, &messages).unwrap();
+
+        assert_eq!(
+            sink.events,
+            vec![
+                "begin",
+                "device:Controller:true:left",
+                "controller:stick:2:true:true:true:1",
+                "midi-bit:10:1",
+                "eye:true:1",
+                "shortcut:Functions.ColorGreen",
+                "thru:/VMC/Thru/vendor/topic",
+                "commit",
+            ]
+        );
     }
 
     #[derive(Default)]
@@ -686,6 +1759,63 @@ mod tests {
 
         fn apply_expressions(&mut self) -> Result<(), Self::Error> {
             self.events.push("apply".to_owned());
+            Ok(())
+        }
+
+        fn set_controller_input(
+            &mut self,
+            state: VmcInputState,
+            name: &str,
+            is_left: bool,
+            is_touch: bool,
+            is_axis: bool,
+            axis: Vec3,
+        ) -> Result<(), Self::Error> {
+            self.events.push(format!(
+                "controller:{name}:{}:{is_left}:{is_touch}:{is_axis}:{}",
+                state.raw(),
+                axis.x
+            ));
+            Ok(())
+        }
+
+        fn set_midi_cc_button(
+            &mut self,
+            knob: i32,
+            state: VmcInputState,
+        ) -> Result<(), Self::Error> {
+            self.events.push(format!("midi-bit:{knob}:{}", state.raw()));
+            Ok(())
+        }
+
+        fn set_device_pose(
+            &mut self,
+            kind: VmcDeviceKind,
+            local: bool,
+            serial: &str,
+            _transform: VmcTransform,
+        ) -> Result<(), Self::Error> {
+            self.events
+                .push(format!("device:{kind:?}:{local}:{serial}"));
+            Ok(())
+        }
+
+        fn set_eye_tracking_target(
+            &mut self,
+            enabled: bool,
+            position: Vec3,
+        ) -> Result<(), Self::Error> {
+            self.events.push(format!("eye:{enabled}:{}", position.z));
+            Ok(())
+        }
+
+        fn call_shortcut(&mut self, shortcut: &str) -> Result<(), Self::Error> {
+            self.events.push(format!("shortcut:{shortcut}"));
+            Ok(())
+        }
+
+        fn thru_vmc_message(&mut self, message: &OscMessage) -> Result<(), Self::Error> {
+            self.events.push(format!("thru:{}", message.addr));
             Ok(())
         }
     }

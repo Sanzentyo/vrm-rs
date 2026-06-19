@@ -23,6 +23,16 @@
   and unknown messages, traverses OSC bundles in wire order, and applies parsed
   messages through `VmcRuntimeSink` with parse-before-apply transaction hooks
   plus rollback on sink errors.
+- Expanded `vrm-vmc` to cover the VMC 3.1 Marionette/Performer message
+  families needed by the extension kit. Typed messages now include
+  controller/key/MIDI input, HMD/controller/tracker poses including local
+  device poses, receive/config/VRM/remote/settings/window/period/eye,
+  calibration, information request/response, shortcut, and `/VMC/Thru/*`
+  passthrough. The encoder now emits the official `/VMC/Ext/Cam` and
+  `/VMC/Ext/Light` addresses while still parsing the earlier crate-local
+  camera/light aliases, and `VmcParsePolicy` lets applications choose strict
+  all-or-nothing packet validation or VMC-style invalid-known-message skipping
+  before transaction application.
 
 ## 2026-06-10
 
@@ -759,7 +769,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 79.93%, and `vrm-adapter-bevy` line coverage is 75.94%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 80.25%, and `vrm-adapter-bevy` line coverage is 75.94%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.
@@ -969,6 +979,6 @@
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot from 2026-06-19 is workspace 79.93% line coverage, with `vrm-adapter-ash` at 43.38%, `vrm-adapter-bevy` at 75.94%, `vrm-adapter-wgpu` at 14.99%, `vrm-adapter` at 77.50%, `vrm-core` at 79.39%, `vrm-diagnostics` at 90.60%, `vrm-io` at 87.58%, `vrm-osc` at 70.53%, `vrm-protocol` at 91.16%, `vrm-runtime` at 93.80%, `vrm-sans-io` at 96.54%, `vrm-vmc` at 51.47%, and facade src/lib.rs at 96.76%.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot from 2026-06-19 is workspace 80.25% line coverage, with `vrm-adapter-ash` at 43.38%, `vrm-adapter-bevy` at 75.94%, `vrm-adapter-wgpu` at 14.99%, `vrm-adapter` at 77.50%, `vrm-core` at 79.39%, `vrm-diagnostics` at 90.60%, `vrm-io` at 87.58%, `vrm-osc` at 70.53%, `vrm-protocol` at 91.16%, `vrm-runtime` at 93.80%, `vrm-sans-io` at 96.54%, `vrm-vmc` at 75.00%, and facade src/lib.rs at 96.76%.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
 - P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.
