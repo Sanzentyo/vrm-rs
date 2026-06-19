@@ -113,6 +113,14 @@ using `dFdx`/`dFdy` and the material-extra view-derivative flag. On Seed-san the
 selected `rgb-visible` PSNR `15.4683 dB`, slightly below the current generated
 tangent default `15.4876 dB`, so this is a parity investigation knob rather
 than the current default path.
+The same parity runner now forwards `--disable-outlines`,
+`--outline-width-scale`, and `--render-mtoon-time` to Ash. The 2026-06-19
+outline-off smoke under
+`target/render-parity-ash-review-128-outline-off-forwarded` confirms the
+release-built Vulkan example records `21` draw plans instead of `31`, with
+exact opaque alpha parity and Ash selected `rgb-visible` PSNR `16.6624 dB`.
+This makes Ash outline diagnostics comparable to wgpu/Bevy/three-vrm without
+making outline-off the default path.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
 the remaining wgpu-equivalent outline/primitive edge coverage and MToon
 material accumulation behavior.

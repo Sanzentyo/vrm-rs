@@ -1313,6 +1313,8 @@ fn capture_ash_readback(
         .arg(options.render_width.to_string())
         .arg("--height")
         .arg(options.render_height.to_string())
+        .arg("--time")
+        .arg(options.render_mtoon_time.to_string())
         .arg("--camera-z")
         .arg(options.render_camera_z.to_string())
         .arg("--direct-light-scale")
@@ -1345,6 +1347,12 @@ fn capture_ash_readback(
         .arg(path(&shaders.vertex_spv))
         .arg("--fragment-spv")
         .arg(path(&shaders.fragment_spv));
+    if options.render_disable_outlines {
+        command.arg("--disable-outlines");
+    }
+    command
+        .arg("--outline-width-scale")
+        .arg(options.render_outline_width_scale.to_string());
     if options.render_disable_normal_maps {
         command.arg("--disable-normal-maps");
     }

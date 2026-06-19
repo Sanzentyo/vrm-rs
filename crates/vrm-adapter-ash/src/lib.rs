@@ -78,6 +78,12 @@ pub struct AshVrmFramePlanOptions {
     /// MToon light accumulation mode.
     #[arg(long, value_enum, default_value_t = AshMtoonLightAccumulation::ThreeVrm)]
     pub mtoon_light_accumulation: AshMtoonLightAccumulation,
+    /// Disable MToon outline primitives for diagnostic renders.
+    #[arg(long)]
+    pub disable_outlines: bool,
+    /// Scalar applied to MToon outline width for diagnostics.
+    #[arg(long, default_value_t = 1.0)]
+    pub outline_width_scale: f32,
     /// Disable normal map contribution for diagnostic renders.
     #[arg(long)]
     pub disable_normal_maps: bool,
@@ -159,6 +165,8 @@ impl AshVrmFramePlanOptions {
     fn render_options(&self) -> AshRenderOptions {
         AshRenderOptions {
             diagnostic_render: self.diagnostic_render,
+            disable_outlines: self.disable_outlines,
+            outline_width_scale: self.outline_width_scale,
             disable_normal_maps: self.disable_normal_maps,
             normal_map_mode: self.normal_map_mode,
             normal_map_scale: self.normal_map_scale,
@@ -169,6 +177,8 @@ impl AshVrmFramePlanOptions {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AshRenderOptions {
     pub diagnostic_render: AshDiagnosticRender,
+    pub disable_outlines: bool,
+    pub outline_width_scale: f32,
     pub disable_normal_maps: bool,
     pub normal_map_mode: AshNormalMapMode,
     pub normal_map_scale: f32,
@@ -178,6 +188,8 @@ impl Default for AshRenderOptions {
     fn default() -> Self {
         Self {
             diagnostic_render: AshDiagnosticRender::Shaded,
+            disable_outlines: false,
+            outline_width_scale: 1.0,
             disable_normal_maps: false,
             normal_map_mode: AshNormalMapMode::GeneratedTangents,
             normal_map_scale: 1.0,
@@ -1074,13 +1086,14 @@ impl AshVrmFramePlanner {
                         AshMtoonPass::Base,
                     ),
                 ));
-                if self
-                    .loaded
-                    .expression_mtoon_outline_plan(
-                        primitive.material,
-                        &GltfExpressionRenderEffects::default(),
-                    )
-                    .is_some()
+                if !render_options.disable_outlines
+                    && self
+                        .loaded
+                        .expression_mtoon_outline_plan(
+                            primitive.material,
+                            &GltfExpressionRenderEffects::default(),
+                        )
+                        .is_some()
                 {
                     let outline = self.bake_primitive(
                         node_index,
@@ -1153,8 +1166,7 @@ impl AshVrmFramePlanner {
                 &morph_weights,
                 world,
                 skin_matrices.as_deref(),
-                settings.mtoon_time,
-                settings.scene_options,
+                settings,
             ),
         };
         let source_vertices = source_vertices
@@ -1212,8 +1224,7 @@ impl AshVrmFramePlanner {
         morph_weights: &[f32],
         world: Mat4,
         skin_matrices: Option<&[Mat4]>,
-        mtoon_time: f32,
-        scene_options: AshSceneOptions,
+        settings: AshPrimitiveBakeSettings,
     ) -> Option<Vec<vrm_io::GltfTransformedVertex>> {
         let outline = self.loaded.expression_mtoon_outline_plan(
             primitive.material,
@@ -1224,15 +1235,15 @@ impl AshVrmFramePlanner {
             .material_outline_width_rgba8_image(primitive.material);
         let uv_transforms = self
             .loaded
-            .material_uv_transforms(primitive.material, mtoon_time);
+            .material_uv_transforms(primitive.material, settings.mtoon_time);
         primitive.outline_vertices(
             morph_weights,
             GltfOutlineVertexSettings {
-                base_width: outline.width_factor,
+                base_width: outline.width_factor * settings.render_options.outline_width_scale,
                 scale: GltfOutlineScale::new(
                     outline.width_mode,
-                    scene_options.view(),
-                    scene_options.projection_y_scale(),
+                    settings.scene_options.view(),
+                    settings.scene_options.projection_y_scale(),
                 ),
                 width_texture: width_texture.as_ref(),
                 width_transform: uv_transforms.outline_width,
@@ -1971,6 +1982,9 @@ mod tests {
             "--normal-map-scale",
             "0.25",
             "--disable-normal-maps",
+            "--disable-outlines",
+            "--outline-width-scale",
+            "0.5",
             "--diagnostic-render",
             "owner-id",
         ]);
@@ -1987,6 +2001,8 @@ mod tests {
         );
         assert_eq!(render_options.normal_map_scale, 0.25);
         assert!(render_options.disable_normal_maps);
+        assert!(render_options.disable_outlines);
+        assert_eq!(render_options.outline_width_scale, 0.5);
         assert_eq!(
             render_options.diagnostic_render,
             AshDiagnosticRender::OwnerId
