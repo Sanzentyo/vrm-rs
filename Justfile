@@ -429,6 +429,11 @@ render-parity-screen-outline-generated three_vrm_root=".external-fixtures/three-
     cargo +nightly -Zscript tools/render-parity/generate-screen-outline-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-screen-outline-generated --render-background transparent --render-alpha-mismatch-tolerance 256 --render-psnr-metric rgb-opaque --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/screen-outline.vrm.gltf
 
+# Generate and render the screen-coordinate outline fixture with Ash in the visual gate.
+render-parity-screen-outline-generated-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-screen-outline-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-screen-outline-generated-ash-gated --render-background transparent --render-alpha-mismatch-tolerance 256 --render-psnr-metric rgb-opaque --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/screen-outline.vrm.gltf
+
 # Generate and render a source-like expression morph fixture.
 render-parity-morph-expression-generated three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-morph-expression-fixture.rs

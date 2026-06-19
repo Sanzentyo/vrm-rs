@@ -1775,6 +1775,7 @@ For a generated screen-coordinate outline audit, run:
 
 ```powershell
 just render-parity-screen-outline-generated
+just render-parity-screen-outline-generated-ash-gated
 ```
 
 This writes `.external-fixtures/generated/screen-outline.vrm.gltf` and renders
@@ -1786,7 +1787,12 @@ metric `rgb-opaque`: pixels where both renderers drew the body or outline are
 compared for color, while the expected one-pixel fill-rule/silhouette alpha
 delta is counted separately. The current result reports alpha mismatches `188`
 with tolerance `256`, selected PSNR wgpu `Infinity` with max selected channel
-delta `0`, and Bevy `53.2689 dB` with max selected channel delta `1`. Review
+delta `0`, and Bevy `53.2689 dB` with max selected channel delta `1`. The
+Ash-gated variant writes
+`.external-fixtures/render-parity-screen-outline-generated-ash-gated/`, includes
+Ash in `--render-ash-visual-gate`, and passes with the same alpha mismatch
+shape: wgpu `Infinity`, Bevy `53.2689 dB`, and Ash `Infinity` on `rgb-opaque`.
+Review
 `.external-fixtures/render-parity-screen-outline-generated/visual-review.html`
 when changing outline expansion, front-face culling, or screen-coordinate width
 logic.
