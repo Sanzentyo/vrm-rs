@@ -1,7 +1,10 @@
 //! Typed VMC message layer over `vrm-osc`.
 //!
-//! The crate keeps transport at the edge: callers decode UDP/TCP with
+//! The crate keeps sockets at the edge: callers decode UDP/TCP with
 //! `vrm-osc`, then use [`VmcMessage::from_osc_message`] or [`apply_packet`].
+//! Applications that want reusable sender/rate/time policy without giving
+//! this crate socket ownership can put packets through [`VmcTransportGate`]
+//! before applying them to a runtime sink.
 
 use glam::{Quat, Vec3};
 use thiserror::Error;
@@ -72,6 +75,295 @@ pub enum VmcParsePolicy {
     #[default]
     Strict,
     IgnoreInvalidKnownMessages,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct VmcSenderId(String);
+
+impl VmcSenderId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for VmcSenderId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for VmcSenderId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmcPacketContext {
+    pub sender: Option<VmcSenderId>,
+    pub received_at_seconds: f64,
+}
+
+impl VmcPacketContext {
+    pub fn anonymous(received_at_seconds: f64) -> Self {
+        Self {
+            sender: None,
+            received_at_seconds,
+        }
+    }
+
+    pub fn from_sender(sender: impl Into<VmcSenderId>, received_at_seconds: f64) -> Self {
+        Self {
+            sender: Some(sender.into()),
+            received_at_seconds,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmcTransportPolicy {
+    pub parse_policy: VmcParsePolicy,
+    pub allowed_senders: Vec<VmcSenderId>,
+    pub max_messages_per_packet: Option<usize>,
+    pub min_packet_interval_seconds: Option<f64>,
+    pub reject_relative_time_rewind: bool,
+    pub max_relative_time_step_seconds: Option<f32>,
+}
+
+impl Default for VmcTransportPolicy {
+    fn default() -> Self {
+        Self {
+            parse_policy: VmcParsePolicy::Strict,
+            allowed_senders: Vec::new(),
+            max_messages_per_packet: None,
+            min_packet_interval_seconds: None,
+            reject_relative_time_rewind: true,
+            max_relative_time_step_seconds: None,
+        }
+    }
+}
+
+impl VmcTransportPolicy {
+    pub fn open() -> Self {
+        Self::default()
+    }
+
+    pub fn parse_policy(mut self, policy: VmcParsePolicy) -> Self {
+        self.parse_policy = policy;
+        self
+    }
+
+    pub fn allowed_senders(mut self, senders: impl IntoIterator<Item = VmcSenderId>) -> Self {
+        self.allowed_senders = senders.into_iter().collect();
+        self
+    }
+
+    pub fn allow_sender(mut self, sender: impl Into<VmcSenderId>) -> Self {
+        self.allowed_senders.push(sender.into());
+        self
+    }
+
+    pub fn max_messages_per_packet(mut self, max: usize) -> Self {
+        self.max_messages_per_packet = Some(max);
+        self
+    }
+
+    pub fn min_packet_interval_seconds(mut self, seconds: f64) -> Self {
+        self.min_packet_interval_seconds = Some(seconds);
+        self
+    }
+
+    pub fn reject_relative_time_rewind(mut self, reject: bool) -> Self {
+        self.reject_relative_time_rewind = reject;
+        self
+    }
+
+    pub fn max_relative_time_step_seconds(mut self, seconds: f32) -> Self {
+        self.max_relative_time_step_seconds = Some(seconds);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmcTransportReport {
+    pub sender: Option<VmcSenderId>,
+    pub received_at_seconds: f64,
+    pub message_count: usize,
+    pub relative_time: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmcAcceptedPacket {
+    pub messages: Vec<VmcMessage>,
+    pub report: VmcTransportReport,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmcTransportGate {
+    policy: VmcTransportPolicy,
+    sender_states: Vec<VmcSenderTransportState>,
+}
+
+impl Default for VmcTransportGate {
+    fn default() -> Self {
+        Self::new(VmcTransportPolicy::default())
+    }
+}
+
+impl VmcTransportGate {
+    pub fn new(policy: VmcTransportPolicy) -> Self {
+        Self {
+            policy,
+            sender_states: Vec::new(),
+        }
+    }
+
+    pub fn policy(&self) -> &VmcTransportPolicy {
+        &self.policy
+    }
+
+    pub fn policy_mut(&mut self) -> &mut VmcTransportPolicy {
+        &mut self.policy
+    }
+
+    pub fn accept_packet(
+        &mut self,
+        context: VmcPacketContext,
+        packet: &OscPacket,
+    ) -> Result<VmcAcceptedPacket, VmcTransportError> {
+        self.ensure_context_allowed(&context)?;
+        let messages = collect_packet_messages_with_policy(packet, self.policy.parse_policy)?;
+        self.ensure_message_count(messages.len())?;
+        let relative_time = self.ensure_sender_timing(&context, &messages)?;
+        let report = VmcTransportReport {
+            sender: context.sender.clone(),
+            received_at_seconds: context.received_at_seconds,
+            message_count: messages.len(),
+            relative_time,
+        };
+        Ok(VmcAcceptedPacket { messages, report })
+    }
+
+    pub fn apply_packet<S>(
+        &mut self,
+        sink: &mut S,
+        context: VmcPacketContext,
+        packet: &OscPacket,
+    ) -> Result<VmcTransportReport, VmcTransportApplyError<S::Error>>
+    where
+        S: VmcRuntimeSink,
+    {
+        let accepted = self.accept_packet(context, packet)?;
+        apply_messages(sink, &accepted.messages).map_err(VmcTransportApplyError::from_apply)?;
+        Ok(accepted.report)
+    }
+
+    fn ensure_context_allowed(&self, context: &VmcPacketContext) -> Result<(), VmcTransportError> {
+        if !context.received_at_seconds.is_finite() {
+            return Err(VmcTransportError::InvalidReceiveTime {
+                received_at_seconds: context.received_at_seconds,
+            });
+        }
+        if self.policy.allowed_senders.is_empty() {
+            return Ok(());
+        }
+        let Some(sender) = &context.sender else {
+            return Err(VmcTransportError::MissingSender);
+        };
+        if self.policy.allowed_senders.contains(sender) {
+            Ok(())
+        } else {
+            Err(VmcTransportError::UnauthorizedSender {
+                sender: sender.clone(),
+            })
+        }
+    }
+
+    fn ensure_message_count(&self, message_count: usize) -> Result<(), VmcTransportError> {
+        if let Some(max) = self.policy.max_messages_per_packet
+            && message_count > max
+        {
+            return Err(VmcTransportError::TooManyMessages {
+                max,
+                actual: message_count,
+            });
+        }
+        Ok(())
+    }
+
+    fn ensure_sender_timing(
+        &mut self,
+        context: &VmcPacketContext,
+        messages: &[VmcMessage],
+    ) -> Result<Option<f32>, VmcTransportError> {
+        let policy = self.policy.clone();
+        let state = self.sender_state_mut(context.sender.clone());
+        if let Some(previous) = state.last_received_at_seconds {
+            if context.received_at_seconds < previous {
+                return Err(VmcTransportError::ReceiveTimeRewind {
+                    previous,
+                    actual: context.received_at_seconds,
+                });
+            }
+            if let Some(min_interval) = policy.min_packet_interval_seconds {
+                let elapsed = context.received_at_seconds - previous;
+                if elapsed + f64::EPSILON < min_interval {
+                    return Err(VmcTransportError::RateLimited {
+                        min_interval_seconds: min_interval,
+                        elapsed_seconds: elapsed,
+                    });
+                }
+            }
+        }
+
+        let relative_time = latest_relative_time(messages)?;
+        if let Some(actual) = relative_time {
+            if let Some(previous) = state.last_relative_time {
+                if policy.reject_relative_time_rewind && actual + f32::EPSILON < previous {
+                    return Err(VmcTransportError::RelativeTimeRewind { previous, actual });
+                }
+                if let Some(max_step) = policy.max_relative_time_step_seconds {
+                    let step = actual - previous;
+                    if step > max_step {
+                        return Err(VmcTransportError::RelativeTimeStepTooLarge { max_step, step });
+                    }
+                }
+            }
+            state.last_relative_time = Some(actual);
+        }
+        state.last_received_at_seconds = Some(context.received_at_seconds);
+        Ok(relative_time)
+    }
+
+    fn sender_state_mut(&mut self, sender: Option<VmcSenderId>) -> &mut VmcSenderTransportState {
+        if let Some(index) = self
+            .sender_states
+            .iter()
+            .position(|state| state.sender == sender)
+        {
+            &mut self.sender_states[index]
+        } else {
+            self.sender_states.push(VmcSenderTransportState {
+                sender,
+                last_received_at_seconds: None,
+                last_relative_time: None,
+            });
+            self.sender_states
+                .last_mut()
+                .expect("sender state was just pushed")
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct VmcSenderTransportState {
+    sender: Option<VmcSenderId>,
+    last_received_at_seconds: Option<f64>,
+    last_relative_time: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -897,6 +1189,22 @@ fn collect_packet_messages_into(
     Ok(())
 }
 
+fn latest_relative_time(messages: &[VmcMessage]) -> Result<Option<f32>, VmcTransportError> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            VmcMessage::RelativeTime(time) => Some(*time),
+            _ => None,
+        })
+        .try_fold(None, |_, time| {
+            if time.is_finite() {
+                Ok(Some(time))
+            } else {
+                Err(VmcTransportError::InvalidRelativeTime { time })
+            }
+        })
+}
+
 fn parse_available(message: &OscMessage) -> Result<VmcMessage, VmcError> {
     let available = arg_i32(message, 0)? != 0;
     Ok(VmcMessage::Available {
@@ -1339,6 +1647,52 @@ pub enum VmcApplyError<E> {
     Sink(E),
 }
 
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum VmcTransportError {
+    #[error(transparent)]
+    Parse(#[from] VmcError),
+    #[error("VMC packet context receive time is not finite: {received_at_seconds}")]
+    InvalidReceiveTime { received_at_seconds: f64 },
+    #[error("VMC transport policy requires a sender id")]
+    MissingSender,
+    #[error("VMC sender is not allowed: {sender:?}")]
+    UnauthorizedSender { sender: VmcSenderId },
+    #[error("VMC packet has too many messages: max {max}, actual {actual}")]
+    TooManyMessages { max: usize, actual: usize },
+    #[error("VMC receive time moved backwards: previous {previous}, actual {actual}")]
+    ReceiveTimeRewind { previous: f64, actual: f64 },
+    #[error(
+        "VMC sender is rate limited: minimum interval {min_interval_seconds}, elapsed {elapsed_seconds}"
+    )]
+    RateLimited {
+        min_interval_seconds: f64,
+        elapsed_seconds: f64,
+    },
+    #[error("VMC relative time is not finite: {time}")]
+    InvalidRelativeTime { time: f32 },
+    #[error("VMC relative time moved backwards: previous {previous}, actual {actual}")]
+    RelativeTimeRewind { previous: f32, actual: f32 },
+    #[error("VMC relative time step is too large: max {max_step}, actual {step}")]
+    RelativeTimeStepTooLarge { max_step: f32, step: f32 },
+}
+
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum VmcTransportApplyError<E> {
+    #[error(transparent)]
+    Transport(#[from] VmcTransportError),
+    #[error("VMC sink error: {0}")]
+    Sink(E),
+}
+
+impl<E> VmcTransportApplyError<E> {
+    fn from_apply(error: VmcApplyError<E>) -> Self {
+        match error {
+            VmcApplyError::Parse(error) => Self::Transport(VmcTransportError::Parse(error)),
+            VmcApplyError::Sink(error) => Self::Sink(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1727,6 +2081,140 @@ mod tests {
                 "commit",
             ]
         );
+    }
+
+    #[test]
+    fn transport_gate_enforces_sender_allow_list_and_message_limit_before_apply() {
+        let packet = OscPacket::Bundle(OscBundle {
+            timetag: OscTime::IMMEDIATE,
+            content: vec![
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/T".to_owned(),
+                    args: vec![OscType::Float(1.0)],
+                }),
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/Blend/Apply".to_owned(),
+                    args: Vec::new(),
+                }),
+            ],
+        });
+        let policy = VmcTransportPolicy::open()
+            .allow_sender("trusted")
+            .max_messages_per_packet(1);
+        let mut gate = VmcTransportGate::new(policy);
+
+        assert!(matches!(
+            gate.accept_packet(VmcPacketContext::anonymous(0.0), &packet),
+            Err(VmcTransportError::MissingSender)
+        ));
+        assert!(matches!(
+            gate.accept_packet(VmcPacketContext::from_sender("other", 0.0), &packet),
+            Err(VmcTransportError::UnauthorizedSender { sender })
+                if sender.as_str() == "other"
+        ));
+        assert!(matches!(
+            gate.accept_packet(VmcPacketContext::from_sender("trusted", 0.0), &packet),
+            Err(VmcTransportError::TooManyMessages { max: 1, actual: 2 })
+        ));
+    }
+
+    #[test]
+    fn transport_gate_rate_limits_per_sender_and_tracks_relative_time() {
+        let packet = OscPacket::Message(OscMessage {
+            addr: "/VMC/Ext/T".to_owned(),
+            args: vec![OscType::Float(1.0)],
+        });
+        let policy = VmcTransportPolicy::open()
+            .min_packet_interval_seconds(0.1)
+            .max_relative_time_step_seconds(0.5);
+        let mut gate = VmcTransportGate::new(policy);
+
+        let accepted = gate
+            .accept_packet(VmcPacketContext::from_sender("sender-a", 1.0), &packet)
+            .unwrap();
+        assert_eq!(accepted.report.message_count, 1);
+        assert_eq!(accepted.report.relative_time, Some(1.0));
+
+        assert!(matches!(
+            gate.accept_packet(VmcPacketContext::from_sender("sender-a", 1.05), &packet),
+            Err(VmcTransportError::RateLimited { .. })
+        ));
+
+        let other_sender = gate
+            .accept_packet(VmcPacketContext::from_sender("sender-b", 1.05), &packet)
+            .unwrap();
+        assert_eq!(
+            other_sender.report.sender.as_ref().map(VmcSenderId::as_str),
+            Some("sender-b")
+        );
+
+        let jump = OscPacket::Message(OscMessage {
+            addr: "/VMC/Ext/T".to_owned(),
+            args: vec![OscType::Float(2.0)],
+        });
+        assert!(matches!(
+            gate.accept_packet(VmcPacketContext::from_sender("sender-a", 1.2), &jump),
+            Err(VmcTransportError::RelativeTimeStepTooLarge {
+                max_step,
+                step
+            }) if (max_step - 0.5).abs() < 0.0001 && (step - 1.0).abs() < 0.0001
+        ));
+    }
+
+    #[test]
+    fn transport_gate_rejects_relative_time_rewind_before_sink_transaction() {
+        let mut gate = VmcTransportGate::default();
+        let first = OscPacket::Message(OscMessage {
+            addr: "/VMC/Ext/T".to_owned(),
+            args: vec![OscType::Float(5.0)],
+        });
+        let rewind = OscPacket::Message(OscMessage {
+            addr: "/VMC/Ext/T".to_owned(),
+            args: vec![OscType::Float(4.0)],
+        });
+        let mut sink = RecordingSink::default();
+
+        gate.apply_packet(&mut sink, VmcPacketContext::anonymous(10.0), &first)
+            .unwrap();
+        assert!(matches!(
+            gate.apply_packet(&mut sink, VmcPacketContext::anonymous(10.1), &rewind),
+            Err(VmcTransportApplyError::Transport(
+                VmcTransportError::RelativeTimeRewind {
+                    previous: 5.0,
+                    actual: 4.0
+                }
+            ))
+        ));
+        assert_eq!(sink.events, vec!["begin", "time:5", "commit"]);
+    }
+
+    #[test]
+    fn transport_gate_lenient_parse_policy_still_applies_all_or_nothing() {
+        let packet = OscPacket::Bundle(OscBundle {
+            timetag: OscTime::IMMEDIATE,
+            content: vec![
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/Blend/Apply".to_owned(),
+                    args: vec![OscType::Int(99)],
+                }),
+                OscPacket::Message(OscMessage {
+                    addr: "/VMC/Ext/T".to_owned(),
+                    args: vec![OscType::Float(3.0)],
+                }),
+            ],
+        });
+        let policy =
+            VmcTransportPolicy::open().parse_policy(VmcParsePolicy::IgnoreInvalidKnownMessages);
+        let mut gate = VmcTransportGate::new(policy);
+        let mut sink = RecordingSink::default();
+
+        let report = gate
+            .apply_packet(&mut sink, VmcPacketContext::anonymous(0.0), &packet)
+            .unwrap();
+
+        assert_eq!(report.message_count, 1);
+        assert_eq!(report.relative_time, Some(3.0));
+        assert_eq!(sink.events, vec!["begin", "time:3", "commit"]);
     }
 
     #[derive(Default)]

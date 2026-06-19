@@ -144,6 +144,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [x] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
     - [x] Foundation: added `vrm-vmc` over `vrm-osc` with typed messages for availability, relative time, root/bone poses, blend values/apply, camera, directional light, unknown-message retention, OSC roundtrip helpers, recursive bundle traversal, parse-before-apply behavior, and transaction hooks with rollback on sink errors.
     - [x] Breadth pass: VMC now covers controller/key/MIDI input, HMD/controller/tracker device poses including local poses, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official camera/light addresses with legacy alias parsing, and selectable strict vs invalid-message-skipping parse policy.
+    - [x] Transport policy boundary: `VmcTransportGate` adds socket-free sender allow lists, per-sender rate limits, packet message limits, relative-time rewind/jump checks, and runtime sink application over the existing parse-before-apply transaction path while leaving UDP/TCP sockets and authentication sources to applications.
   - [x] MToon GPU ABI/reference WGSL plus practical Bevy/wgpu/ash resource and pipeline hookups.
     - `MtoonGpuUniform` / `MtoonGpuMaterial` are shared through `vrm-adapter`, `wgpu_mtoon_resource_plans` exposes wgpu-owned resource setup data, ash frame plans emit per-pipeline uniform uploads, and Bevy material plans carry the same uniform into engine-owned assets.
   - [x] Optimizer for unused vertices, joint palette compaction, and empty morph removal.
@@ -153,6 +154,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
     - [x] Texture provider practicality: texture decode requests now carry source color space and renderer-facing decode options, GPU format capability helpers select BC7/ETC2/ASTC/RGBA fallback preferences, providers can override option-aware decode, and the registry rejects unsupported decoded texture formats after size-limit validation.
   - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
     - [x] VRM0 LookAt curve compatibility: `RangeMap` now preserves VRM0 Unity-style two-key Hermite curve data, sans-IO maps `FirstPersonDegreeMap.curve`, and runtime LookAt expression weights evaluate through the shared curve-aware range mapper.
+    - [x] VMC transport/rate-limit boundary: `vrm-vmc` now provides reusable Sans I/O transport policy gating without owning sockets; authentication identity, network IO, retry, and source-of-trust decisions remain outside the crate.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.
 - [ ] Keep `docs/adapter-guide.md` aligned with public adapter APIs.

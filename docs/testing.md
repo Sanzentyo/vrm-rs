@@ -15,7 +15,7 @@ Current generated coverage:
 - Invalid node reference, invalid extension shape, supported `1.0-beta`, and unsupported per-extension `specVersion` cases through the same generated sample.
 - First-person headless mesh triangle erasure, humanoid pose snapshot diffing, spring extended collider `inside`, generated VRMA warning/error/application policy, MToon descriptor generation, Bevy adapter skeleton compile tests, and Bevy ECS hierarchy readback.
 - Dependency-free OSC packet roundtrips for all supported OSC value variants, nested arrays/bundles, UDP packets, TCP length-prefixed packets, stream-fragment waiting, OSC string padding, and root facade `osc` feature re-export.
-- Typed VMC 3.1 packet coverage for Marionette/Performer motion, camera/light, controller/key/MIDI input, device pose, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official and legacy camera/light address handling, strict parse-before-apply transactions, rollback on sink errors, and lenient invalid-known-message skipping.
+- Typed VMC 3.1 packet coverage for Marionette/Performer motion, camera/light, controller/key/MIDI input, device pose, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official and legacy camera/light address handling, strict parse-before-apply transactions, rollback on sink errors, lenient invalid-known-message skipping, and socket-free transport policy gates for sender allow lists, per-sender rate limits, packet message limits, relative-time rewind/jump checks, and all-or-nothing runtime sink application.
 - `vrm-io` optimizer preprocessing for degenerate triangle removal, unused vertex compaction, stale unused joint data, skin-weight normalization, weighted joint-palette compaction, empty morph target removal, skin palette application, and invalid attribute/index/joint diagnostics.
 - `vrm-io` codec/resource registry behavior for data URI and relative-file path safety, missing codec errors, decoded-size limits, option-aware KTX2/Basis-style texture provider dispatch, source color-space propagation, renderer GPU format capability selection, and unsupported decoded texture format rejection.
 - VRM0 LookAt compatibility for Unity-style two-key Hermite `FirstPersonDegreeMap.curve` preservation, default-linear curve behavior, non-linear curve evaluation, and runtime expression LookAt weight output through the curve-aware range mapper.
@@ -495,7 +495,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.24% | 80.26% |
+| Workspace total | 78.39% | 80.38% |
 | `vrm-adapter-ash` | 37.76% | 43.38% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
@@ -507,7 +507,7 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 | `vrm-protocol` | 93.02% | 91.16% |
 | `vrm-runtime` | 93.17% | 93.92% |
 | `vrm-sans-io` | 93.52% | 96.55% |
-| `vrm-vmc` | 74.42% | 75.00% |
+| `vrm-vmc` | 77.11% | 77.76% |
 | `facade src/lib.rs` | 93.42% | 96.76% |
 
 The current external fixture tests cover recursive fixture discovery, semantic

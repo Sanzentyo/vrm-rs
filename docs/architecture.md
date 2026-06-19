@@ -10,8 +10,10 @@
 - `vrm-adapter`: traits for scene graph, transforms, morph targets, materials, textures, and animation sinks.
 - `vrm-adapter-bevy`: Bevy 0.18.1 registry, descriptor bridge, and runtime plugin config skeleton.
 - `vrm-osc`: dependency-free OSC 1.0 packet codec.
-- `vrm-vmc`: typed VMC message conversion and runtime sink application over
-  `vrm-osc`.
+- `vrm-vmc`: typed VMC message conversion, sender/rate/time policy gating, and
+  runtime sink application over `vrm-osc`. Socket ownership, sender
+  authentication sources, and networking retries stay in applications or engine
+  integrations.
 - `vrm-rs`: facade crate. It re-exports the lower layers and provides `Vrm`, `load_full`, `load_runtime`, `runtime_for`, `driver_for`, `headless_scene_from_loaded`, and `evaluated_world_matrices` so common applications can move from bytes/path loading to resolved documents, runtime events, headless scene staging, and adapter drivers without importing every crate directly.
 
 ## Type State
