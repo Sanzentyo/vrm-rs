@@ -152,6 +152,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
     - [x] Foundation: `vrm-io::resource` now provides data URI and relative file resolution with path traversal rejection, file/data/decode size limits, missing-codec errors, and provider traits/registry for Draco, Meshopt, and KTX2/Basis-style texture decoding without bundling codec dependencies.
     - [x] Texture provider practicality: texture decode requests now carry source color space and renderer-facing decode options, GPU format capability helpers select BC7/ETC2/ASTC/RGBA fallback preferences, providers can override option-aware decode, and the registry rejects unsupported decoded texture formats after size-limit validation.
   - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
+    - [x] VRM0 LookAt curve compatibility: `RangeMap` now preserves VRM0 Unity-style two-key Hermite curve data, sans-IO maps `FirstPersonDegreeMap.curve`, and runtime LookAt expression weights evaluate through the shared curve-aware range mapper.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.
 - [ ] Keep `docs/adapter-guide.md` aligned with public adapter APIs.

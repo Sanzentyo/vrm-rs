@@ -18,6 +18,7 @@ Current generated coverage:
 - Typed VMC 3.1 packet coverage for Marionette/Performer motion, camera/light, controller/key/MIDI input, device pose, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official and legacy camera/light address handling, strict parse-before-apply transactions, rollback on sink errors, and lenient invalid-known-message skipping.
 - `vrm-io` optimizer preprocessing for degenerate triangle removal, unused vertex compaction, stale unused joint data, skin-weight normalization, weighted joint-palette compaction, empty morph target removal, skin palette application, and invalid attribute/index/joint diagnostics.
 - `vrm-io` codec/resource registry behavior for data URI and relative-file path safety, missing codec errors, decoded-size limits, option-aware KTX2/Basis-style texture provider dispatch, source color-space propagation, renderer GPU format capability selection, and unsupported decoded texture format rejection.
+- VRM0 LookAt compatibility for Unity-style two-key Hermite `FirstPersonDegreeMap.curve` preservation, default-linear curve behavior, non-linear curve evaluation, and runtime expression LookAt weight output through the curve-aware range mapper.
 - Policy-aware `vrm-io` loading with structured diagnostics: strict loaders keep fail-fast behavior, lenient loading reports malformed VRM1 expression JSON with a stable path and skips that expression, unknown root extensions are preserved in `GltfSource` while reported as warnings, and existing VRMA/animation warnings are mirrored into `DiagnosticReport`.
 - Preserved-source writer coverage for compact/pretty `.gltf` and `.glb` JSON output, VRM1/VRM0 metadata patch helpers, same-directory atomic save failure behavior, GLB declared-length and chunk-alignment validation, and unknown GLB chunk retention through edits.
 
@@ -494,18 +495,18 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.19% | 80.23% |
+| Workspace total | 78.24% | 80.26% |
 | `vrm-adapter-ash` | 37.76% | 43.38% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
 | `vrm-adapter` | 69.62% | 77.50% |
-| `vrm-core` | 73.86% | 79.39% |
+| `vrm-core` | 75.32% | 79.53% |
 | `vrm-diagnostics` | 87.50% | 90.60% |
 | `vrm-io` | 88.12% | 87.24% |
 | `vrm-osc` | 68.00% | 70.53% |
 | `vrm-protocol` | 93.02% | 91.16% |
-| `vrm-runtime` | 93.06% | 93.80% |
-| `vrm-sans-io` | 93.50% | 96.54% |
+| `vrm-runtime` | 93.17% | 93.92% |
+| `vrm-sans-io` | 93.52% | 96.55% |
 | `vrm-vmc` | 74.42% | 75.00% |
 | `facade src/lib.rs` | 93.42% | 96.76% |
 

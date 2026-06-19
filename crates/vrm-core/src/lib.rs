@@ -519,6 +519,7 @@ pub enum LookAtKind {
 pub struct RangeMap {
     pub input_max_value: f32,
     pub output_scale: f32,
+    pub curve: RangeMapCurve,
 }
 
 impl Default for RangeMap {
@@ -526,8 +527,93 @@ impl Default for RangeMap {
         Self {
             input_max_value: 90.0,
             output_scale: 10.0,
+            curve: RangeMapCurve::Linear,
         }
     }
+}
+
+impl RangeMap {
+    pub fn evaluate(self, input: f32) -> f32 {
+        if self.input_max_value <= f32::EPSILON {
+            return 0.0;
+        }
+        let normalized = (input / self.input_max_value).clamp(0.0, 1.0);
+        self.curve.evaluate(normalized) * self.output_scale
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum RangeMapCurve {
+    #[default]
+    Linear,
+    Vrm0Hermite([f32; 8]),
+}
+
+impl RangeMapCurve {
+    pub const VRM0_LINEAR: [f32; 8] = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0];
+
+    pub fn from_vrm0_curve(curve: [f32; 8]) -> Self {
+        if curve.iter().all(|value| value.is_finite()) {
+            Self::Vrm0Hermite(curve)
+        } else {
+            Self::Linear
+        }
+    }
+
+    pub fn evaluate(self, normalized_input: f32) -> f32 {
+        let input = normalized_input.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => input,
+            Self::Vrm0Hermite(curve) => evaluate_vrm0_hermite_curve(curve, input),
+        }
+    }
+}
+
+fn evaluate_vrm0_hermite_curve(curve: [f32; 8], input: f32) -> f32 {
+    let [
+        time0,
+        value0,
+        _in_tangent0,
+        out_tangent0,
+        time1,
+        value1,
+        in_tangent1,
+        _out_tangent1,
+    ] = curve;
+    if (time1 - time0).abs() <= f32::EPSILON {
+        return if input <= time0 { value0 } else { value1 };
+    }
+    if time1 < time0 {
+        return evaluate_vrm0_hermite_curve(
+            [
+                time1,
+                value1,
+                _out_tangent1,
+                in_tangent1,
+                time0,
+                value0,
+                out_tangent0,
+                _in_tangent0,
+            ],
+            input,
+        );
+    }
+    if input <= time0 {
+        return value0;
+    }
+    if input >= time1 {
+        return value1;
+    }
+
+    let duration = time1 - time0;
+    let t = (input - time0) / duration;
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    h00 * value0 + h10 * duration * out_tangent0 + h01 * value1 + h11 * duration * in_tangent1
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1268,6 +1354,31 @@ mod tests {
             (compatibility.orientation_correction.rotation * Vec3::Z)
                 .abs_diff_eq(Vec3::NEG_Z, 0.0001)
         );
+    }
+
+    #[test]
+    fn range_map_vrm0_default_curve_evaluates_like_linear() {
+        let range = RangeMap {
+            input_max_value: 100.0,
+            output_scale: 2.0,
+            curve: RangeMapCurve::from_vrm0_curve(RangeMapCurve::VRM0_LINEAR),
+        };
+
+        assert!((range.evaluate(50.0) - 1.0).abs() < 0.0001);
+        assert!((range.evaluate(200.0) - 2.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn range_map_vrm0_curve_evaluates_unity_hermite_keys() {
+        let range = RangeMap {
+            input_max_value: 100.0,
+            output_scale: 1.0,
+            curve: RangeMapCurve::from_vrm0_curve([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]),
+        };
+
+        assert!((range.evaluate(25.0) - 0.15625).abs() < 0.0001);
+        assert!((range.evaluate(50.0) - 0.5).abs() < 0.0001);
+        assert!((range.evaluate(75.0) - 0.84375).abs() < 0.0001);
     }
 
     #[test]

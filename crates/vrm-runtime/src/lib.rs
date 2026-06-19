@@ -977,10 +977,7 @@ pub fn calc_look_at_expression_weights(
 }
 
 fn map_range(input: f32, range: RangeMap) -> f32 {
-    if range.input_max_value <= f32::EPSILON {
-        return 0.0;
-    }
-    (input / range.input_max_value).clamp(0.0, 1.0) * range.output_scale
+    range.evaluate(input)
 }
 
 pub fn sample_rotation_track(track: &RotationTrack, time: f32) -> Option<Quat> {
@@ -1663,18 +1660,22 @@ mod tests {
             horizontal_inner: RangeMap {
                 input_max_value: 45.0,
                 output_scale: 1.0,
+                ..RangeMap::default()
             },
             horizontal_outer: RangeMap {
                 input_max_value: 90.0,
                 output_scale: 0.5,
+                ..RangeMap::default()
             },
             vertical_up: RangeMap {
                 input_max_value: 45.0,
                 output_scale: 1.0,
+                ..RangeMap::default()
             },
             vertical_down: RangeMap {
                 input_max_value: 45.0,
                 output_scale: 1.0,
+                ..RangeMap::default()
             },
             ..LookAt::default()
         };
@@ -1685,6 +1686,30 @@ mod tests {
         assert!(weights.get(&ExpressionName::LookUp) > 0.0);
         assert_eq!(weights.get(&ExpressionName::LookLeft), 0.0);
         assert_eq!(weights.get(&ExpressionName::LookDown), 0.0);
+    }
+
+    #[test]
+    fn look_at_expression_weights_use_vrm0_curve_maps() {
+        let look_at = LookAt {
+            kind: LookAtKind::Expression,
+            horizontal_inner: RangeMap {
+                input_max_value: 45.0,
+                output_scale: 1.0,
+                curve: RangeMapCurve::from_vrm0_curve([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]),
+            },
+            horizontal_outer: RangeMap {
+                output_scale: 0.0,
+                ..RangeMap::default()
+            },
+            ..LookAt::default()
+        };
+        let angle = 11.25_f32.to_radians();
+        let direction = Vec3::new(angle.sin(), 0.0, -angle.cos());
+
+        let weights = calc_look_at_expression_weights(&look_at, direction);
+
+        assert!((weights.get(&ExpressionName::LookRight) - 0.15625).abs() < 0.0001);
+        assert_eq!(weights.get(&ExpressionName::LookLeft), 0.0);
     }
 
     #[test]

@@ -267,6 +267,7 @@ fn map_range(range: Option<vrm1::LookAtRangeMap>) -> RangeMap {
     range.map_or_else(RangeMap::default, |range| RangeMap {
         input_max_value: range.input_max_value,
         output_scale: range.output_scale,
+        curve: RangeMapCurve::Linear,
     })
 }
 
@@ -600,6 +601,10 @@ fn map_vrm0_degree_map(range: Option<vrm0::FirstPersonDegreeMap>) -> RangeMap {
     range.map_or_else(RangeMap::default, |range| RangeMap {
         input_max_value: range.x_range.unwrap_or(90.0),
         output_scale: range.y_range.unwrap_or(10.0),
+        curve: range
+            .curve
+            .map(RangeMapCurve::from_vrm0_curve)
+            .unwrap_or_default(),
     })
 }
 
@@ -1944,9 +1949,9 @@ mod tests {
                     ]),
                     look_at_type_name: Some("BlendShape".to_owned()),
                     look_at_horizontal_inner: Some(vrm0::FirstPersonDegreeMap {
+                        curve: Some([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]),
                         x_range: Some(45.0),
                         y_range: Some(12.0),
-                        ..Default::default()
                     }),
                     look_at_horizontal_outer: Some(vrm0::FirstPersonDegreeMap {
                         x_range: Some(60.0),
@@ -1997,6 +2002,10 @@ mod tests {
         assert_eq!(look_at.offset_from_head, Vec3::new(0.0, 0.1, 0.2));
         assert_eq!(look_at.horizontal_inner.input_max_value, 45.0);
         assert_eq!(look_at.horizontal_inner.output_scale, 12.0);
+        assert_eq!(
+            look_at.horizontal_inner.curve,
+            RangeMapCurve::Vrm0Hermite([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
+        );
         assert_eq!(look_at.horizontal_outer.input_max_value, 60.0);
         assert_eq!(look_at.horizontal_outer.output_scale, 15.0);
         assert_eq!(look_at.vertical_down.input_max_value, 90.0);
