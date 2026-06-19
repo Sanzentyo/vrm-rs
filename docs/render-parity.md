@@ -5,6 +5,7 @@ P3 render parity compares three rendering paths:
 - three-vrm reference render.
 - Bevy adapter render.
 - wgpu/custom-engine render.
+- Ash/Vulkan readback render when `--render-ash-readback` is enabled.
 
 Rendered artifacts remain under `.external-fixtures/render-parity/` and are not
 committed. Each renderer should export a source-like RGBA JSON artifact:
@@ -47,8 +48,8 @@ node tools/render-parity/three-vrm-browser-capture.mjs `
   --height 64
 ```
 
-The ash example is not yet a full visual-parity renderer, but its offscreen
-Vulkan readback now emits the same raw artifact shape:
+The ash example now emits the same raw artifact shape as the wgpu and Bevy
+captures:
 
 ```powershell
 just ash-render-parity-readback
@@ -57,8 +58,8 @@ just ash-render-parity-readback
 This writes `.external-fixtures/ash-readback-smoke/ash/Seed-san.frame000.rgba.json`
 and `.external-fixtures/ash-readback-smoke/ash/Seed-san.frame000.imqraw`, then
 uses `verify-imqraw-rgba.rs` to prove both files carry identical RGBA bytes.
-Use this as the ash-side bridge into future direct raw comparisons before
-raising it to the same visual threshold path as wgpu and Bevy.
+Use this as a quick ash-side raw-readback smoke before running the heavier
+multi-fixture gates.
 
 The local render-parity runner can include that bridge beside the normal
 three-vrm/wgpu/Bevy capture set:
@@ -72,7 +73,9 @@ artifacts are written under the selected render-parity directory as
 `ash/<fixture>.frame000.{rgba.json,imqraw,png}`, verified with the same
 imqraw/RGBA byte check, compared against the three-vrm reference with the same
 RGBA and direct `.imqraw` report writers used by wgpu and Bevy, and recorded in
-`review-manifest.json` as a `comparisons[]` entry with `visualParityGate: false`.
+`review-manifest.json` as a `comparisons[]` entry. Add
+`--render-ash-visual-gate` to apply the same selected-PSNR, max-delta, and
+alpha-consistency gate to Ash.
 The local runner compiles the source-controlled Ash MToon GLSL handoff into
 SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
 `unsafe_device_renderer --vertex-spv --fragment-spv`, so the review path no
@@ -82,37 +85,12 @@ lighting knobs into the Ash frame plan. The current Ash path also applies the
 Vulkan clip-space Y flip with the same CCW front-face convention used by the
 wgpu/Bevy parity captures, bakes base color into vertices,
 generates missing tangents, carries per-vertex normal scale and double-sided
-state, binds slot-specific fallback textures, and uses the same UV animation
-rotation direction as the wgpu/Bevy capture shader before readback. Ash also
-accepts the same render-parity `--diagnostic-render` modes and applies the same
-VRM model-orientation boundary to baked world/skinning matrices. It is still
-non-gating: the latest focused Seed-san review artifact is
-`target/render-parity-ash-review-128-oriented-diagnostics`, where Ash reaches
-`15.4876 dB` selected `rgb-visible` PSNR with exact opaque alpha parity while
-wgpu/Bevy remain above `32 dB`. The oriented diagnostic artifacts are
-`target/render-parity-ash-diagnostic-flat-128-oriented` (`22.3215 dB`) and
-`target/render-parity-ash-diagnostic-base-color-128-oriented` (`19.3898 dB`).
-Ash owner-id diagnostics now bake triangle IDs into vertex color after
-draw-order sorting; use `target/render-parity-ash-diagnostic-owner-id-128-sorted`
-(`14.6654 dB`) for the current primitive-ownership review.
-The Ash source shader now matches the wgpu capture shader's direct-light
-multiplier shape; the 128px shaded artifact
-`target/render-parity-ash-review-128-direct-scale` stays at `15.4876 dB`. Do
-not remove the current Ash fragment outline-width mask as a blind wgpu
-alignment step: the 2026-06-19 check under
-`target/render-parity-ash-review-128-outline-color-direct` fell to `15.4337 dB`,
-so the remaining outline blocker is coupled to Ash geometry/fill behavior.
-The CCW front-face correction and vertex-stage outline clip-depth bias close a
-small generated outline guard:
-`.external-fixtures/render-parity-ash-frontface-ccw-smoke/` reports exact
-Ash-vs-three-vrm shaded parity for
-`.external-fixtures/generated/screen-outline.vrm.gltf` at 64px (`Infinity`
-selected `rgb-visible` PSNR, exact alpha), and the outline-disabled base-color
-diagnostic remains exact. The same 64px Seed-san smoke under
-`.external-fixtures/render-parity-ash-seed-frontface-ccw-smoke/` reports exact
-opaque alpha and Ash selected `rgb-visible` PSNR `20.8547 dB`, so Ash is moving
-toward the visual gate but is still non-gating on real material/texture/normal
-parity.
+state, binds slot-specific fallback textures, uploads full mip chains, uses the
+same UV animation rotation direction as the wgpu/Bevy capture shader before
+readback, and writes opaque alpha for both OPAQUE and MASK materials after
+discard. Ash also accepts the same render-parity `--diagnostic-render` modes
+and applies the same VRM model-orientation boundary to baked world/skinning
+matrices.
 Ash now also accepts the same normal-map diagnostic axis as wgpu/Bevy:
 `--normal-map-mode generated-tangents|derivative|view-derivative`,
 `--normal-map-scale`, and `--disable-normal-maps` are forwarded through the
@@ -133,34 +111,20 @@ release-built Vulkan example records `21` draw plans instead of `31`, with
 exact opaque alpha parity and Ash selected `rgb-visible` PSNR `16.6624 dB`.
 This makes Ash outline diagnostics comparable to wgpu/Bevy/three-vrm without
 making outline-off the default path.
-Ash descriptor plans now also derive Vulkan sampler filter, wrap, mipmap mode,
-and LOD clamps from the glTF texture sampler referenced by each material
-texture slot. This aligns the Ash resource handoff with the wgpu/Bevy capture
-paths before further material-color work. The 2026-06-19 Seed-san smoke under
-`target/render-parity-ash-review-128-sampler-policy` preserved exact opaque
-alpha parity and stayed at Ash selected `rgb-visible` PSNR `15.4876 dB`, so the
-change is a compatibility prerequisite rather than the current visible blocker.
-Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
-the remaining wgpu-equivalent local coverage and broader real-fixture color
-behavior. The current 256px Seed-san owner-id smoke has
-exact Ash-vs-wgpu owner coverage (`12665/12665` shared nonzero owners), and the
-focused base-color diagnostic reports Ash-vs-three-vrm `rgbAll` PSNR
-`32.9738 dB` versus wgpu/Bevy around `34.53 dB`. The direct imqraw
-`changedPixels.highDelta` buckets now make that residual easier to triage: large
-Ash-vs-wgpu deltas are a small tail whose shared-nonblack subset is edge-heavy,
-while Ash-vs-three-vrm still contains local expected-only/actual-only and
-gradient/coverage differences. The generated MToon light/color fixture is no
-longer the current Ash blocker: `just render-parity-mtoon-light-ash-generated`
-passes Ash at selected `rgb-interior1px` `59.7573 dB`, max selected-channel
-delta `2`, and all 12 named swatches within `<= 2`. Ash also now honors the
-renderer-resolved glTF `BLEND` / `MASK` alpha policy in the MToon shader
-uniform, not only in the Vulkan pipeline key. On the source-like transparent
-blend fixture, Ash-vs-wgpu is byte-exact after direct imqraw comparison and
-Ash-vs-three-vrm reports `54.3997 dB` selected `rgb-visible`, max channel delta
-`1`, and exact alpha buckets.
-Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
-fail-under and max-delta threshold arguments to Ash once the current
-texture/material color parity gap is closed.
+Ash descriptor plans derive Vulkan sampler filter, wrap, mipmap mode, and LOD
+clamps from the glTF texture sampler referenced by each material texture slot.
+`just render-parity-samples-ash-gated` now gates the opaque-black six-fixture
+sweep with Ash included at `rgb-visible >= 34 dB`; the latest local run passed
+with exact opaque-black alpha parity and Ash selected PSNRs Seed-san `34.6391`,
+Constraint `36.2509`, UV animation `35.6342`, expression samples `55.6968` /
+`55.7181`, and Alicia `35.6238`. `just render-parity-real-transparent-ash-gated`
+does the same for the transparent-background real sweep at `rgb-all >= 32 dB`
+with `64` alpha-mismatch tolerance; the current local run passed with the same
+Ash selected PSNRs and alpha mismatches Seed-san `25`, Constraint `11`, UV
+animation `0`, expression samples `3` / `3`, and Alicia `32`. These gates are
+still current regression floors rather than final compatibility thresholds:
+higher PSNR, broader external fixture breadth, and the remaining local
+edge/material/ownership residuals are still P3 work.
 
 For the current source-controlled Ash MToon base shader handoff, run:
 
