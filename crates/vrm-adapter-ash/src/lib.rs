@@ -914,7 +914,7 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
             phase_order,
         });
     }
-    draw_calls.sort_by_key(|draw| (draw.render_order, draw.phase_order, draw.primitive_index));
+    draw_calls.sort_by_key(|draw| (draw.render_order, draw.primitive_index));
     AshRendererFrame {
         buffers,
         textures: plan
@@ -1295,13 +1295,20 @@ impl AshVrmFramePlanner {
             AshMtoonPass::Base => {
                 primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
             }
-            AshMtoonPass::Outline => self.outline_vertices(
-                primitive,
-                &morph_weights,
-                world,
-                skin_matrices.as_deref(),
-                settings,
-            ),
+            AshMtoonPass::Outline
+                if settings.render_options.diagnostic_render == AshDiagnosticRender::Shaded =>
+            {
+                self.outline_vertices(
+                    primitive,
+                    &morph_weights,
+                    world,
+                    skin_matrices.as_deref(),
+                    settings,
+                )
+            }
+            AshMtoonPass::Outline => {
+                primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
+            }
         };
         let source_vertices = source_vertices
             .as_mut()
@@ -2883,6 +2890,66 @@ mod tests {
             renderer_frame.pipelines[1].key.cull_mode,
             vk::CullModeFlags::FRONT
         );
+    }
+
+    #[test]
+    fn renderer_frame_preserves_source_order_inside_same_render_order() {
+        let vertex = AshVrmVertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coord_0: [0.0, 0.0],
+            color_0: [1.0, 1.0, 1.0, 1.0],
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            normal_scale: 1.0,
+            double_sided: 0.0,
+        };
+        let primitive = |material| AshVrmPrimitive {
+            node: NodeRef(0),
+            material: Some(MaterialRef(material)),
+            pass: AshMtoonPass::Base,
+            vertices: vec![vertex],
+            indices: vec![0],
+        };
+        let pipeline = |material, phase_order| AshMtoonPipelinePlan {
+            material: MaterialRef(material),
+            name: Some(format!("mat-{material}")),
+            key: AshPipelineKey {
+                pass: AshMtoonPass::Base,
+                render_order: 2000,
+                phase_order,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                cull_mode: vk::CullModeFlags::BACK,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_test_enable: true,
+                depth_write_enable: true,
+                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                blend_enable: false,
+            },
+            descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+            uniform: MtoonGpuUniform::zeroed(),
+            uv_uniform: AshMaterialUvUniform::default(),
+            render_extra_uniform: AshMaterialExtraUniform::default(),
+            uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+            alpha_cutoff: 0.5,
+            outline_width: 0.0,
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+            emissive_color: [0.0, 0.0, 0.0],
+        };
+        let plan = AshVrmFramePlan {
+            primitives: vec![primitive(0), primitive(1)],
+            materials: Vec::new(),
+            texture_uploads: Vec::new(),
+            mtoon_pipelines: vec![pipeline(0, 19), pipeline(1, 0)],
+            scene_uniform: AshSceneUniform::default(),
+            diagnostic_owner_ids: Vec::new(),
+        };
+
+        let renderer_frame = ash_renderer_frame_from_plan(&plan);
+
+        assert_eq!(renderer_frame.draw_calls[0].primitive_index, 0);
+        assert_eq!(renderer_frame.draw_calls[1].primitive_index, 1);
+        assert_eq!(renderer_frame.draw_calls[0].phase_order, 19);
+        assert_eq!(renderer_frame.draw_calls[1].phase_order, 0);
     }
 
     #[test]
