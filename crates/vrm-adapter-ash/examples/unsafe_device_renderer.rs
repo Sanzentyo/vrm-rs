@@ -18,7 +18,7 @@ use vrm_adapter_ash::{
     ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
-use vrm_io::GltfMaterialTextureFallback;
+use vrm_io::{GltfAlphaMode, GltfMaterialTextureFallback};
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Materialize a VRM frame plan into real ash Vulkan offscreen draw resources")]
@@ -1427,20 +1427,25 @@ fn ash_diagnostic_owner_ids_json(owners: &[AshDiagnosticOwnerId]) -> Vec<serde_j
                 "id": owner.id,
                 "color": owner.color,
                 "nodeIndex": owner.source.node.0,
-                "nodeName": null,
+                "nodeName": owner.source.node_name.as_deref(),
                 "meshIndex": owner.source.mesh_index,
-                "meshName": null,
+                "meshName": owner.source.mesh_name.as_deref(),
                 "primitiveIndex": owner.source.primitive_index,
                 "materialIndex": owner.source.material.map(|material| material.0),
-                "materialName": null,
+                "materialName": owner.source.material_name.as_deref(),
+                "materialType": "ash-owner-id",
+                "side": ash_material_side_code(owner.source.double_sided),
                 "pass": ash_mtoon_pass_label(owner.source.pass),
                 "renderOrder": owner.source.render_order,
                 "renderPhaseOrder": owner.source.phase_order,
                 "drawIndex": owner.source.draw_index,
                 "frontFace": ash_front_face_label(owner.source.front_face),
                 "cullMode": ash_cull_mode_label(owner.source.cull_mode),
-                "alphaMode": "opaque",
-                "alphaCutoff": 0.5,
+                "alphaMode": ash_alpha_mode_label(owner.source.alpha_mode),
+                "alphaTest": ash_alpha_test(owner.source.alpha_mode, owner.source.alpha_cutoff),
+                "alphaCutoff": owner.source.alpha_cutoff,
+                "transparent": owner.source.alpha_mode == GltfAlphaMode::Blend,
+                "opacity": owner.source.opacity,
                 "depthWrite": owner.source.depth_write,
                 "depthTest": owner.source.depth_test,
                 "depthCompare": ash_compare_op_label(owner.source.depth_compare),
@@ -1471,6 +1476,25 @@ fn ash_mtoon_pass_label(pass: AshMtoonPass) -> &'static str {
         AshMtoonPass::Base => "base",
         AshMtoonPass::Outline => "outline",
     }
+}
+
+fn ash_alpha_mode_label(mode: GltfAlphaMode) -> &'static str {
+    match mode {
+        GltfAlphaMode::Opaque => "opaque",
+        GltfAlphaMode::Mask => "mask",
+        GltfAlphaMode::Blend => "blend",
+    }
+}
+
+fn ash_alpha_test(mode: GltfAlphaMode, cutoff: Option<f32>) -> f32 {
+    match mode {
+        GltfAlphaMode::Mask => cutoff.unwrap_or(0.5),
+        GltfAlphaMode::Opaque | GltfAlphaMode::Blend => 0.0,
+    }
+}
+
+fn ash_material_side_code(double_sided: bool) -> u32 {
+    if double_sided { 2 } else { 0 }
 }
 
 fn ash_cull_mode_label(mode: vk::CullModeFlags) -> &'static str {

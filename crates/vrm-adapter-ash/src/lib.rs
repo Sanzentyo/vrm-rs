@@ -9,7 +9,7 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
 use glam::Mat4;
-use std::{collections::HashMap, error::Error, path::PathBuf};
+use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc};
 use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
@@ -256,13 +256,20 @@ pub struct AshVrmPrimitive {
     pub indices: Vec<u32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AshDiagnosticOwnerSource {
     pub node: NodeRef,
+    pub node_name: Option<Arc<str>>,
     pub mesh_index: usize,
+    pub mesh_name: Option<Arc<str>>,
     pub primitive_index: usize,
     pub material: Option<MaterialRef>,
+    pub material_name: Option<Arc<str>>,
     pub pass: AshMtoonPass,
+    pub alpha_mode: GltfAlphaMode,
+    pub alpha_cutoff: Option<f32>,
+    pub opacity: f32,
+    pub double_sided: bool,
     pub render_order: i32,
     pub phase_order: i32,
     pub draw_index: usize,
@@ -1034,13 +1041,20 @@ struct AshPrimitiveDrawOrder {
     phase_order: i32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct AshPrimitiveSource {
     node: NodeRef,
+    node_name: Option<Arc<str>>,
     mesh_index: usize,
+    mesh_name: Option<Arc<str>>,
     primitive_index: usize,
     material: Option<MaterialRef>,
+    material_name: Option<Arc<str>>,
     pass: AshMtoonPass,
+    alpha_mode: GltfAlphaMode,
+    alpha_cutoff: Option<f32>,
+    opacity: f32,
+    double_sided: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1050,7 +1064,7 @@ struct AshPrimitiveRecord {
     draw_order: AshPrimitiveDrawOrder,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct AshOwnerIdAssignmentContext {
     source: AshPrimitiveSource,
     draw_order: AshPrimitiveDrawOrder,
@@ -1200,13 +1214,13 @@ impl AshVrmFramePlanner {
                     ash_base_draw_order(&self.loaded, primitive.material.map(MaterialRef));
                 primitives.push(AshPrimitiveRecord {
                     primitive: base,
-                    source: AshPrimitiveSource {
-                        node: NodeRef(node_index),
+                    source: ash_primitive_source(
+                        &self.loaded,
+                        node_index,
                         mesh_index,
                         primitive_index,
-                        material: primitive.material.map(MaterialRef),
-                        pass: AshMtoonPass::Base,
-                    },
+                        AshMtoonPass::Base,
+                    ),
                     draw_order: base_draw_order,
                 });
                 if !render_options.disable_outlines
@@ -1234,13 +1248,13 @@ impl AshVrmFramePlanner {
                         ash_outline_draw_order(&self.loaded, primitive.material.map(MaterialRef));
                     primitives.push(AshPrimitiveRecord {
                         primitive: outline,
-                        source: AshPrimitiveSource {
-                            node: NodeRef(node_index),
+                        source: ash_primitive_source(
+                            &self.loaded,
+                            node_index,
                             mesh_index,
                             primitive_index,
-                            material: primitive.material.map(MaterialRef),
-                            pass: AshMtoonPass::Outline,
-                        },
+                            AshMtoonPass::Outline,
+                        ),
                         draw_order: outline_draw_order,
                     });
                 }
@@ -1619,6 +1633,55 @@ fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+fn ash_primitive_source(
+    loaded: &LoadedVrm,
+    node_index: usize,
+    mesh_index: usize,
+    primitive_index: usize,
+    pass: AshMtoonPass,
+) -> AshPrimitiveSource {
+    let node = loaded.scene.nodes.get(node_index);
+    let mesh = loaded.meshes.get(mesh_index);
+    let primitive = mesh.and_then(|mesh| mesh.primitives.get(primitive_index));
+    let material = primitive
+        .and_then(|primitive| primitive.material)
+        .map(MaterialRef);
+    let material_data = material.and_then(|material| loaded.gltf_materials.get(material.0));
+    let alpha_mode = material_data
+        .map(|material| material.alpha_mode)
+        .unwrap_or(GltfAlphaMode::Opaque);
+    AshPrimitiveSource {
+        node: NodeRef(node_index),
+        node_name: node
+            .and_then(|node| node.name.as_deref())
+            .map(Arc::<str>::from),
+        mesh_index,
+        mesh_name: mesh
+            .and_then(|mesh| mesh.name.as_deref())
+            .map(Arc::<str>::from),
+        primitive_index,
+        material,
+        material_name: loaded
+            .material_display_name(material.map(|material| material.0))
+            .map(|name| {
+                let suffix = match pass {
+                    AshMtoonPass::Base => "",
+                    AshMtoonPass::Outline => " (Outline)",
+                };
+                Arc::<str>::from(format!("{name}{suffix}"))
+            }),
+        pass,
+        alpha_mode,
+        alpha_cutoff: material_data.and_then(|material| material.alpha_cutoff),
+        opacity: material_data
+            .map(|material| material.base_color_factor[3])
+            .unwrap_or(1.0),
+        double_sided: material_data
+            .map(|material| material.double_sided)
+            .unwrap_or(false),
+    }
+}
+
 fn ash_model_orientation() -> Mat4 {
     Mat4::from_rotation_y(std::f32::consts::PI)
 }
@@ -1712,7 +1775,7 @@ fn assign_ash_owner_id_triangles(
             &record.primitive.indices,
             next_id,
             AshOwnerIdAssignmentContext {
-                source: record.source,
+                source: record.source.clone(),
                 draw_order: record.draw_order,
                 draw_index,
                 pipeline_key: ash_diagnostic_pipeline_key(record),
@@ -1746,10 +1809,17 @@ fn ash_owner_id_triangles(
             color: ash_owner_id_color_u8(next_id),
             source: AshDiagnosticOwnerSource {
                 node: context.source.node,
+                node_name: context.source.node_name.clone(),
                 mesh_index: context.source.mesh_index,
+                mesh_name: context.source.mesh_name.clone(),
                 primitive_index: context.source.primitive_index,
                 material: context.source.material,
+                material_name: context.source.material_name.clone(),
                 pass: context.source.pass,
+                alpha_mode: context.source.alpha_mode,
+                alpha_cutoff: context.source.alpha_cutoff,
+                opacity: context.source.opacity,
+                double_sided: context.source.double_sided,
                 render_order: context.draw_order.render_order,
                 phase_order: context.draw_order.phase_order,
                 draw_index: context.draw_index,
@@ -2285,6 +2355,23 @@ fn headless_scene_from_loaded(loaded: &LoadedVrm) -> Result<HeadlessSceneState, 
 mod tests {
     use super::*;
 
+    fn test_primitive_source(pass: AshMtoonPass) -> AshPrimitiveSource {
+        AshPrimitiveSource {
+            node: NodeRef(0),
+            node_name: Some(Arc::<str>::from("test-node")),
+            mesh_index: 0,
+            mesh_name: Some(Arc::<str>::from("test-mesh")),
+            primitive_index: 0,
+            material: Some(MaterialRef(0)),
+            material_name: Some(Arc::<str>::from("test-material")),
+            pass,
+            alpha_mode: GltfAlphaMode::Opaque,
+            alpha_cutoff: None,
+            opacity: 1.0,
+            double_sided: false,
+        }
+    }
+
     #[test]
     fn ash_sampler_hint_marks_normal_decode() {
         assert!(sampler_plan(MtoonSamplerHint::NormalMapLinearRepeat).normal_map_decode);
@@ -2539,13 +2626,7 @@ mod tests {
                 vertices: vec![vertex; 3],
                 indices: vec![0, 1, 2],
             },
-            source: AshPrimitiveSource {
-                node: NodeRef(0),
-                mesh_index: 0,
-                primitive_index: 0,
-                material: Some(MaterialRef(0)),
-                pass: AshMtoonPass::Base,
-            },
+            source: test_primitive_source(AshMtoonPass::Base),
             draw_order: AshPrimitiveDrawOrder {
                 render_order,
                 phase_order,
