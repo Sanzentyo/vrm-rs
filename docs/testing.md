@@ -70,7 +70,7 @@ Recommended stable entrypoints:
 | Bevy-independent wgpu release viewer | `just wgpu-vrma-viewer` |
 | ash frame-plan smoke without Vulkan device setup | `just ash-vrma-frame-plan` |
 | ash renderer-edge mock integration | `just ash-renderer-integration` |
-| ash real Vulkan resource materialization | `just ash-unsafe-device-renderer` |
+| ash real Vulkan offscreen drawable materialization | `just ash-unsafe-device-renderer` |
 | Current official sample render sweep | `just render-parity-samples` |
 | Real transparent-background render sweep | `just render-parity-real-transparent` |
 | Raw imqraw Seed-san normal-map cross-check | `just render-parity-imqraw-seed-normal` |
@@ -80,7 +80,7 @@ owner-id recipes are intentionally kept in the Justfile as investigation tools.
 They are not the normal compatibility gate unless a task or regression points at
 that specific slice.
 
-The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, capture-example compile/unit tests, render-tool syntax/self-tests, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, `custom_engine_adapter`, `headless_vrma_animation --help`, `cargo run --release --example bevy_vrma_viewer -- --help`, `cargo run --release -p vrm-adapter-wgpu --example vrma_viewer -- --help`, `cargo run --release -p vrm-adapter-ash --example frame_plan -- --help`, `cargo run --release -p vrm-adapter-ash --example renderer_integration -- --help`, and `cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --help`, so the renderer-neutral skeleton, concrete wgpu-shaped bind-group/render-pipeline mapping, concrete Vulkan-shaped descriptor/pipeline mapping, Bevy-facing MToon material pipeline example, non-Bevy custom-engine runtime adapter flow, renderer-neutral VRMA animation CLI, release-built Bevy viewer entrypoint, release-built Bevy-independent wgpu viewer entrypoint, release-built ash/Vulkan frame-plan entrypoint, release-built ash renderer-edge integration entrypoint, and real ash device materialization entrypoint stay checked by the normal local gate instead of only being compiled. The same default gate also runs `cargo test --example wgpu_render_capture --all-features`, `cargo test --example bevy_render_capture --all-features`, `node --check` for the three-vrm browser capture script, and the Rust render-tool help/self-test commands used by the parity harness.
+The script intentionally fails before running the gate if `.github/workflows/*.yml` or `.github/workflows/*.yaml` is present. The default run is the local replacement for the removed hosted workflow: format check, workspace tests with all features, workspace clippy with warnings denied, non-rendering example smokes, capture-example compile/unit tests, render-tool syntax/self-tests, and the conservative `cargo-llvm-cov` line threshold. The example smokes execute `mtoon_renderer_skeletons`, `wgpu_mtoon_pipeline_materialization`, `ash_mtoon_pipeline_materialization`, `bevy_mtoon_materialization`, `custom_engine_adapter`, `headless_vrma_animation --help`, `cargo run --release --example bevy_vrma_viewer -- --help`, `cargo run --release -p vrm-adapter-wgpu --example vrma_viewer -- --help`, `cargo run --release -p vrm-adapter-ash --example frame_plan -- --help`, `cargo run --release -p vrm-adapter-ash --example renderer_integration -- --help`, and `cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --help`, so the renderer-neutral skeleton, concrete wgpu-shaped bind-group/render-pipeline mapping, concrete Vulkan-shaped descriptor/pipeline mapping, Bevy-facing MToon material pipeline example, non-Bevy custom-engine runtime adapter flow, renderer-neutral VRMA animation CLI, release-built Bevy viewer entrypoint, release-built Bevy-independent wgpu viewer entrypoint, release-built ash/Vulkan frame-plan entrypoint, release-built ash renderer-edge integration entrypoint, and real ash offscreen drawable materialization entrypoint stay checked by the normal local gate instead of only being compiled. The same default gate also runs `cargo test --example wgpu_render_capture --all-features`, `cargo test --example bevy_render_capture --all-features`, `node --check` for the three-vrm browser capture script, and the Rust render-tool help/self-test commands used by the parity harness.
 The Rust script also sets cargo dev/test debug info to level `1` for commands
 it launches. That keeps Windows MSVC PDB files below the observed Bevy-heavy
 debug-info limit without changing runtime behavior, render output, or the
@@ -496,8 +496,8 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.51% | 80.43% |
-| `vrm-adapter-ash` | 37.76% | 43.38% |
+| Workspace total | 78.53% | 80.47% |
+| `vrm-adapter-ash` | 41.06% | 48.44% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
 | `vrm-adapter` | 69.62% | 77.50% |
@@ -605,7 +605,7 @@ Latest VRM0 Alicia expansion:
 12. Bevy spring parity integration is covered by a full `App::update` path that reads ECS transforms, captures `SpringRestMap`, initializes center-space spring state, runs the runtime tick, and writes the solved joint rotation back to a Bevy `Transform`.
 13. Bevy spring parity recapture is covered by a marker-resource test that requests a rest-pose recapture and verifies the captured `SpringRestMap` is rebuilt without callers manually clearing `BevyVrmSpringParityState`.
 14. MToon renderer skeleton coverage now includes `cargo run --example mtoon_renderer_skeletons`, which maps public `MtoonRendererMaterialPlan` and `RendererMaterialPipelinePlan` values into wgpu-like and ash-like pipeline/material tables without renderer dependencies.
-15. Ash/Vulkan materialization coverage now includes `cargo run --example ash_mtoon_pipeline_materialization`, which maps the same public MToon plans into Vulkan-shaped descriptor-set layouts, combined image sampler writes, push constants, rasterization/depth/blend keys, pass shader names, and sorted base/outline draw queues.
+15. Ash/Vulkan materialization coverage now includes `cargo run --example ash_mtoon_pipeline_materialization`, which maps the same public MToon plans into Vulkan-shaped descriptor-set layouts, combined image sampler writes, push constants, rasterization/depth/blend keys, pass shader names, and sorted base/outline draw queues. The `vrm-adapter-ash` crate also tests `ash_renderer_frame_from_plan` producing per-pipeline `AshGraphicsPipelinePlan` values with vertex layout and color/depth formats for the real ash offscreen drawable example.
 16. Bevy hierarchy readback now covers real `ChildOf` ECS hierarchy components, deriving `BevyRuntimeSceneState` parent/child links before spring parity and runtime-driver ticks.
 17. Bevy MToon materialization coverage now includes `cargo run --example bevy_mtoon_materialization`, which maps MToon pass plans and runtime material state into a Bevy-facing asset without shader policy.
 

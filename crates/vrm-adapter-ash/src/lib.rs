@@ -188,6 +188,7 @@ pub struct AshRendererFrame {
     pub buffers: Vec<AshBufferUpload>,
     pub textures: Vec<AshTextureResourcePlan>,
     pub uniforms: Vec<AshUniformUpload>,
+    pub pipelines: Vec<AshGraphicsPipelinePlan>,
     pub descriptor_sets: Vec<AshDescriptorSetPlan>,
     pub draw_calls: Vec<AshDrawCallPlan>,
 }
@@ -197,6 +198,26 @@ pub struct AshUniformUpload {
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshGraphicsPipelinePlan {
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub descriptor_set_index: usize,
+    pub key: AshPipelineKey,
+    pub vertex_stride: u32,
+    pub vertex_attributes: Vec<AshVertexAttributePlan>,
+    pub color_format: vk::Format,
+    pub depth_format: Option<vk::Format>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshVertexAttributePlan {
+    pub location: u32,
+    pub binding: u32,
+    pub format: vk::Format,
+    pub offset: u32,
 }
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
@@ -225,6 +246,26 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
         .collect::<Vec<_>>();
     let pipeline_indices = mtoon_base_pipeline_indices(&plan.mtoon_pipelines);
     let descriptor_indices = descriptor_set_indices(&descriptor_sets);
+    let pipelines = plan
+        .mtoon_pipelines
+        .iter()
+        .enumerate()
+        .filter_map(|(pipeline_plan_index, pipeline)| {
+            descriptor_indices
+                .get(&(pipeline.material, pipeline_plan_index))
+                .copied()
+                .map(|descriptor_set_index| AshGraphicsPipelinePlan {
+                    material: pipeline.material,
+                    pipeline_plan_index,
+                    descriptor_set_index,
+                    key: pipeline.key,
+                    vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
+                    vertex_attributes: ash_vrm_vertex_attributes(),
+                    color_format: vk::Format::R8G8B8A8_UNORM,
+                    depth_format: Some(vk::Format::D32_SFLOAT),
+                })
+        })
+        .collect::<Vec<_>>();
     let mut buffers = Vec::with_capacity(plan.primitives.len() * 2);
     let mut draw_calls = Vec::with_capacity(plan.primitives.len());
     for (primitive_index, primitive) in plan.primitives.iter().enumerate() {
@@ -292,9 +333,33 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                 bytes: pipeline.uniform.bytes().to_vec(),
             })
             .collect(),
+        pipelines,
         descriptor_sets,
         draw_calls,
     }
+}
+
+pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
+    vec![
+        AshVertexAttributePlan {
+            location: 0,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        },
+        AshVertexAttributePlan {
+            location: 1,
+            binding: 0,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, tex_coord_0) as u32,
+        },
+        AshVertexAttributePlan {
+            location: 2,
+            binding: 0,
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, color_0) as u32,
+        },
+    ]
 }
 
 pub struct AshVrmFramePlanner {
@@ -720,9 +785,14 @@ mod tests {
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
         assert_eq!(renderer_frame.uniforms.len(), 1);
+        assert_eq!(renderer_frame.pipelines.len(), 1);
         assert_eq!(
             renderer_frame.uniforms[0].bytes.len(),
             MTOON_GPU_UNIFORM_SIZE
+        );
+        assert_eq!(
+            renderer_frame.pipelines[0].vertex_attributes,
+            ash_vrm_vertex_attributes()
         );
         assert_eq!(
             renderer_frame.buffers[0].usage,

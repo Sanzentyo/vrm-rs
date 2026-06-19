@@ -54,13 +54,10 @@ impl MockAshRenderer {
                 .push((handle, texture.upload.format, texture.upload.extent));
         }
         self.pipelines.clear();
-        for _ in &frame.descriptor_sets {
+        for pipeline in &frame.pipelines {
             let handle = self.alloc_pipeline();
-            self.pipelines.push((
-                handle,
-                vk::PrimitiveTopology::TRIANGLE_LIST,
-                vk::CullModeFlags::BACK,
-            ));
+            self.pipelines
+                .push((handle, pipeline.key.topology, pipeline.key.cull_mode));
         }
         self.descriptor_sets.clear();
         for set in &frame.descriptor_sets {

@@ -2,7 +2,8 @@ use ash::{Entry, vk};
 use clap::Parser;
 use std::{error::Error, ffi::CString, ptr};
 use vrm_adapter_ash::{
-    AshRendererFrame, AshVrmFramePlanOptions, ash_renderer_frame_from_plan, frame_plan_from_options,
+    AshGraphicsPipelinePlan, AshRendererFrame, AshVertexAttributePlan, AshVrmFramePlanOptions,
+    ash_renderer_frame_from_plan, frame_plan_from_options,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -13,15 +14,28 @@ struct Options {
     /// Only print help/parse inputs; useful for CI smoke checks.
     #[arg(long)]
     dry_run: bool,
+    /// Offscreen framebuffer width for the drawable pipeline smoke.
+    #[arg(long, default_value_t = 64)]
+    width: u32,
+    /// Offscreen framebuffer height for the drawable pipeline smoke.
+    #[arg(long, default_value_t = 64)]
+    height: u32,
 }
 
 struct VulkanFrameResources {
     buffers: Vec<VulkanBuffer>,
     images: Vec<VulkanImage>,
+    color_target: VulkanImage,
+    depth_target: VulkanImage,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    shader_modules: Vec<vk::ShaderModule>,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<vk::DescriptorSet>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
+    pipelines: Vec<vk::Pipeline>,
+    command_buffers: Vec<vk::CommandBuffer>,
     command_pool: vk::CommandPool,
 }
 
@@ -35,6 +49,60 @@ struct VulkanImage {
     memory: vk::DeviceMemory,
     view: vk::ImageView,
 }
+
+struct PipelineBuildContext<'a> {
+    render_pass: vk::RenderPass,
+    extent: vk::Extent2D,
+    vertex_shader: vk::ShaderModule,
+    fragment_shader: vk::ShaderModule,
+    pipeline_layouts: &'a [vk::PipelineLayout],
+    entry_point: &'a CString,
+}
+
+struct CommandRecordContext<'a> {
+    command_pool: vk::CommandPool,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    extent: vk::Extent2D,
+    pipelines: &'a [vk::Pipeline],
+    pipeline_layouts: &'a [vk::PipelineLayout],
+    buffers: &'a [VulkanBuffer],
+    descriptor_sets: &'a [vk::DescriptorSet],
+}
+
+const MINIMAL_VERTEX_SPV: &[u32] = &[
+    119734787, 65536, 851979, 39, 0, 131089, 1, 393227, 1, 1280527431, 1685353262, 808793134, 0,
+    196622, 0, 1, 655375, 0, 4, 1852399981, 0, 13, 18, 33, 35, 38, 196611, 2, 450, 655364,
+    1197427783, 1279741775, 1885560645, 1953718128, 1600482425, 1701734764, 1919509599, 1769235301,
+    25974, 524292, 1197427783, 1279741775, 1852399429, 1685417059, 1768185701, 1952671090, 6649449,
+    262149, 4, 1852399981, 0, 393221, 11, 1348430951, 1700164197, 2019914866, 0, 393222, 11, 0,
+    1348430951, 1953067887, 7237481, 458758, 11, 1, 1348430951, 1953393007, 1702521171, 0, 458758,
+    11, 2, 1130327143, 1148217708, 1635021673, 6644590, 458758, 11, 3, 1130327143, 1147956341,
+    1635021673, 6644590, 196613, 13, 0, 327685, 18, 1885302377, 1953067887, 7237481, 327685, 33,
+    1601467759, 1869377379, 114, 327685, 35, 1667198569, 1919904879, 0, 262149, 38, 1969188457,
+    118, 196679, 11, 2, 327752, 11, 0, 11, 0, 327752, 11, 1, 11, 1, 327752, 11, 2, 11, 3, 327752,
+    11, 3, 11, 4, 262215, 18, 30, 0, 262215, 33, 30, 0, 262215, 35, 30, 2, 262215, 38, 30, 1,
+    131091, 2, 196641, 3, 2, 196630, 6, 32, 262167, 7, 6, 4, 262165, 8, 32, 0, 262187, 8, 9, 1,
+    262172, 10, 6, 9, 393246, 11, 7, 6, 10, 10, 262176, 12, 3, 11, 262203, 12, 13, 3, 262165, 14,
+    32, 1, 262187, 14, 15, 0, 262167, 16, 6, 3, 262176, 17, 1, 16, 262203, 17, 18, 1, 262167, 19,
+    6, 2, 262187, 6, 22, 1056964608, 262187, 6, 23, 3204448256, 327724, 19, 24, 22, 23, 262187, 6,
+    26, 0, 262187, 6, 27, 1065353216, 262176, 31, 3, 7, 262203, 31, 33, 3, 262176, 34, 1, 7,
+    262203, 34, 35, 1, 262176, 37, 1, 19, 262203, 37, 38, 1, 327734, 2, 4, 0, 3, 131320, 5, 262205,
+    16, 20, 18, 458831, 19, 21, 20, 20, 0, 1, 327813, 19, 25, 21, 24, 327761, 6, 28, 25, 0, 327761,
+    6, 29, 25, 1, 458832, 7, 30, 28, 29, 26, 27, 327745, 31, 32, 13, 15, 196670, 32, 30, 262205, 7,
+    36, 35, 196670, 33, 36, 65789, 65592,
+];
+
+const MINIMAL_FRAGMENT_SPV: &[u32] = &[
+    119734787, 65536, 851979, 13, 0, 131089, 1, 393227, 1, 1280527431, 1685353262, 808793134, 0,
+    196622, 0, 1, 458767, 4, 4, 1852399981, 0, 9, 11, 196624, 4, 7, 196611, 2, 450, 655364,
+    1197427783, 1279741775, 1885560645, 1953718128, 1600482425, 1701734764, 1919509599, 1769235301,
+    25974, 524292, 1197427783, 1279741775, 1852399429, 1685417059, 1768185701, 1952671090, 6649449,
+    262149, 4, 1852399981, 0, 327685, 9, 1601467759, 1869377379, 114, 327685, 11, 1667198569,
+    1919904879, 0, 262215, 9, 30, 0, 262215, 11, 30, 0, 131091, 2, 196641, 3, 2, 196630, 6, 32,
+    262167, 7, 6, 4, 262176, 8, 3, 7, 262203, 8, 9, 3, 262176, 10, 1, 7, 262203, 10, 11, 1, 327734,
+    2, 4, 0, 3, 131320, 5, 262205, 7, 12, 11, 196670, 9, 12, 65789, 65592,
+];
 
 struct UnsafeAshDeviceRenderer {
     _entry: Entry,
@@ -97,6 +165,7 @@ impl UnsafeAshDeviceRenderer {
     fn materialize_frame(
         &self,
         frame: &AshRendererFrame,
+        extent: vk::Extent2D,
     ) -> Result<VulkanFrameResources, Box<dyn Error>> {
         let command_pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(self.queue_family_index)
@@ -112,13 +181,36 @@ impl UnsafeAshDeviceRenderer {
             .textures
             .iter()
             .map(|texture| {
-                self.create_sampled_image(
+                self.create_image(
                     texture.upload.format,
                     texture.upload.extent,
                     texture.image_usage,
+                    vk::ImageAspectFlags::COLOR,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let color_format = vk::Format::R8G8B8A8_UNORM;
+        let depth_format = vk::Format::D32_SFLOAT;
+        let color_target = self.create_image(
+            color_format,
+            vk::Extent3D {
+                width: extent.width,
+                height: extent.height,
+                depth: 1,
+            },
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        let depth_target = self.create_image(
+            depth_format,
+            vk::Extent3D {
+                width: extent.width,
+                height: extent.height,
+                depth: 1,
+            },
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageAspectFlags::DEPTH,
+        )?;
         let descriptor_set_layouts = frame
             .descriptor_sets
             .iter()
@@ -143,13 +235,47 @@ impl UnsafeAshDeviceRenderer {
                 unsafe { self.device.create_pipeline_layout(&info, None) }
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let render_pass = self.create_render_pass(color_format, depth_format)?;
+        let framebuffer =
+            self.create_framebuffer(render_pass, color_target.view, depth_target.view, extent)?;
+        let vertex_shader = self.create_shader_module(MINIMAL_VERTEX_SPV)?;
+        let fragment_shader = self.create_shader_module(MINIMAL_FRAGMENT_SPV)?;
+        let shader_modules = vec![vertex_shader, fragment_shader];
+        let entry_point = CString::new("main")?;
+        let pipeline_context = PipelineBuildContext {
+            render_pass,
+            extent,
+            vertex_shader,
+            fragment_shader,
+            pipeline_layouts: &pipeline_layouts,
+            entry_point: &entry_point,
+        };
+        let pipelines = self.create_graphics_pipelines(frame, &pipeline_context)?;
+        let command_context = CommandRecordContext {
+            command_pool,
+            render_pass,
+            framebuffer,
+            extent,
+            pipelines: &pipelines,
+            pipeline_layouts: &pipeline_layouts,
+            buffers: &buffers,
+            descriptor_sets: &descriptor_sets,
+        };
+        let command_buffers = self.record_command_buffers(frame, &command_context)?;
         Ok(VulkanFrameResources {
             buffers,
             images,
+            color_target,
+            depth_target,
+            render_pass,
+            framebuffer,
+            shader_modules,
             descriptor_set_layouts,
             descriptor_pool,
             descriptor_sets,
             pipeline_layouts,
+            pipelines,
+            command_buffers,
             command_pool,
         })
     }
@@ -185,11 +311,12 @@ impl UnsafeAshDeviceRenderer {
         Ok(VulkanBuffer { buffer, memory })
     }
 
-    fn create_sampled_image(
+    fn create_image(
         &self,
         format: vk::Format,
         extent: vk::Extent3D,
         usage: vk::ImageUsageFlags,
+        aspect_mask: vk::ImageAspectFlags,
     ) -> Result<VulkanImage, Box<dyn Error>> {
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -216,7 +343,7 @@ impl UnsafeAshDeviceRenderer {
             self.device.bind_image_memory(image, memory, 0)?;
         }
         let subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .aspect_mask(aspect_mask)
             .level_count(1)
             .layer_count(1);
         let view_info = vk::ImageViewCreateInfo::default()
@@ -289,6 +416,286 @@ impl UnsafeAshDeviceRenderer {
         unsafe { self.device.allocate_descriptor_sets(&info) }
     }
 
+    fn create_render_pass(
+        &self,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+    ) -> Result<vk::RenderPass, vk::Result> {
+        let attachments = [
+            vk::AttachmentDescription::default()
+                .format(color_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
+            vk::AttachmentDescription::default()
+                .format(depth_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+        ];
+        let color_attachment = [vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        }];
+        let depth_attachment = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+        let subpass = [vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachment)
+            .depth_stencil_attachment(&depth_attachment)];
+        let dependency = [vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            )
+            .dst_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            )
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            )];
+        let info = vk::RenderPassCreateInfo::default()
+            .attachments(&attachments)
+            .subpasses(&subpass)
+            .dependencies(&dependency);
+        unsafe { self.device.create_render_pass(&info, None) }
+    }
+
+    fn create_framebuffer(
+        &self,
+        render_pass: vk::RenderPass,
+        color_view: vk::ImageView,
+        depth_view: vk::ImageView,
+        extent: vk::Extent2D,
+    ) -> Result<vk::Framebuffer, vk::Result> {
+        let attachments = [color_view, depth_view];
+        let info = vk::FramebufferCreateInfo::default()
+            .render_pass(render_pass)
+            .attachments(&attachments)
+            .width(extent.width)
+            .height(extent.height)
+            .layers(1);
+        unsafe { self.device.create_framebuffer(&info, None) }
+    }
+
+    fn create_shader_module(&self, code: &[u32]) -> Result<vk::ShaderModule, vk::Result> {
+        let info = vk::ShaderModuleCreateInfo::default().code(code);
+        unsafe { self.device.create_shader_module(&info, None) }
+    }
+
+    fn create_graphics_pipelines(
+        &self,
+        frame: &AshRendererFrame,
+        context: &PipelineBuildContext<'_>,
+    ) -> Result<Vec<vk::Pipeline>, Box<dyn Error>> {
+        frame
+            .pipelines
+            .iter()
+            .map(|pipeline| self.create_graphics_pipeline(pipeline, context))
+            .collect()
+    }
+
+    fn create_graphics_pipeline(
+        &self,
+        pipeline: &AshGraphicsPipelinePlan,
+        context: &PipelineBuildContext<'_>,
+    ) -> Result<vk::Pipeline, Box<dyn Error>> {
+        let shader_stages = [
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .module(context.vertex_shader)
+                .name(context.entry_point),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(context.fragment_shader)
+                .name(context.entry_point),
+        ];
+        let layout = context.pipeline_layouts[pipeline.descriptor_set_index];
+        let vertex_binding = [vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: pipeline.vertex_stride,
+            input_rate: vk::VertexInputRate::VERTEX,
+        }];
+        let vertex_attributes = pipeline
+            .vertex_attributes
+            .iter()
+            .map(vertex_attribute_description)
+            .collect::<Vec<_>>();
+        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&vertex_binding)
+            .vertex_attribute_descriptions(&vertex_attributes);
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(pipeline.key.topology)
+            .primitive_restart_enable(false);
+        let viewport = [vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: context.extent.width as f32,
+            height: context.extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
+        let scissor = [vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: context.extent,
+        }];
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewports(&viewport)
+            .scissors(&scissor);
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(pipeline.key.cull_mode)
+            .front_face(pipeline.key.front_face)
+            .line_width(1.0);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(pipeline.key.depth_test_enable)
+            .depth_write_enable(pipeline.key.depth_write_enable)
+            .depth_compare_op(pipeline.key.depth_compare_op);
+        let color_attachment = [vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(pipeline.key.blend_enable)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            )];
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input)
+            .input_assembly_state(&input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&rasterization)
+            .multisample_state(&multisample)
+            .depth_stencil_state(&depth_stencil)
+            .color_blend_state(&color_blend)
+            .layout(layout)
+            .render_pass(context.render_pass)
+            .subpass(0);
+        let pipelines = unsafe {
+            self.device
+                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+        }
+        .map_err(|(_, err)| Box::<dyn Error>::from(err))?;
+        pipelines
+            .into_iter()
+            .next()
+            .ok_or_else(|| "Vulkan returned no graphics pipeline".into())
+    }
+
+    fn record_command_buffers(
+        &self,
+        frame: &AshRendererFrame,
+        context: &CommandRecordContext<'_>,
+    ) -> Result<Vec<vk::CommandBuffer>, Box<dyn Error>> {
+        let allocate_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(context.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffers = unsafe { self.device.allocate_command_buffers(&allocate_info)? };
+        let command_buffer = command_buffers[0];
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        let clear_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 0.0],
+                },
+            },
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
+        let render_area = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: context.extent,
+        };
+        let render_pass_info = vk::RenderPassBeginInfo::default()
+            .render_pass(context.render_pass)
+            .framebuffer(context.framebuffer)
+            .render_area(render_area)
+            .clear_values(&clear_values);
+
+        unsafe {
+            self.device
+                .begin_command_buffer(command_buffer, &begin_info)?;
+            self.device.cmd_begin_render_pass(
+                command_buffer,
+                &render_pass_info,
+                vk::SubpassContents::INLINE,
+            );
+            for draw in &frame.draw_calls {
+                let Some(pipeline_plan_index) = draw.pipeline_plan_index else {
+                    continue;
+                };
+                let Some((pipeline_index, pipeline_plan)) = frame
+                    .pipelines
+                    .iter()
+                    .enumerate()
+                    .find(|(_, pipeline)| pipeline.pipeline_plan_index == pipeline_plan_index)
+                else {
+                    continue;
+                };
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    context.pipelines[pipeline_index],
+                );
+                self.device.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &[context.buffers[draw.vertex_buffer_index].buffer],
+                    &[0],
+                );
+                self.device.cmd_bind_index_buffer(
+                    command_buffer,
+                    context.buffers[draw.index_buffer_index].buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                if let Some(descriptor_set_index) = draw.descriptor_set_index {
+                    self.device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        context.pipeline_layouts[pipeline_plan.descriptor_set_index],
+                        0,
+                        &[context.descriptor_sets[descriptor_set_index]],
+                        &[],
+                    );
+                }
+                self.device
+                    .cmd_draw_indexed(command_buffer, draw.index_count, 1, 0, 0, 0);
+            }
+            self.device.cmd_end_render_pass(command_buffer);
+            self.device.end_command_buffer(command_buffer)?;
+        }
+        Ok(command_buffers)
+    }
+
     fn find_memory_type(
         &self,
         type_bits: u32,
@@ -307,6 +714,14 @@ impl UnsafeAshDeviceRenderer {
         unsafe {
             self.device
                 .destroy_command_pool(resources.command_pool, None);
+            for pipeline in resources.pipelines {
+                self.device.destroy_pipeline(pipeline, None);
+            }
+            for module in resources.shader_modules {
+                self.device.destroy_shader_module(module, None);
+            }
+            self.device.destroy_framebuffer(resources.framebuffer, None);
+            self.device.destroy_render_pass(resources.render_pass, None);
             for layout in resources.pipeline_layouts {
                 self.device.destroy_pipeline_layout(layout, None);
             }
@@ -320,11 +735,32 @@ impl UnsafeAshDeviceRenderer {
                 self.device.destroy_image(image.image, None);
                 self.device.free_memory(image.memory, None);
             }
+            self.device
+                .destroy_image_view(resources.depth_target.view, None);
+            self.device
+                .destroy_image(resources.depth_target.image, None);
+            self.device.free_memory(resources.depth_target.memory, None);
+            self.device
+                .destroy_image_view(resources.color_target.view, None);
+            self.device
+                .destroy_image(resources.color_target.image, None);
+            self.device.free_memory(resources.color_target.memory, None);
             for buffer in resources.buffers {
                 self.device.destroy_buffer(buffer.buffer, None);
                 self.device.free_memory(buffer.memory, None);
             }
         }
+    }
+}
+
+fn vertex_attribute_description(
+    attribute: &AshVertexAttributePlan,
+) -> vk::VertexInputAttributeDescription {
+    vk::VertexInputAttributeDescription {
+        location: attribute.location,
+        binding: attribute.binding,
+        format: attribute.format,
+        offset: attribute.offset,
     }
 }
 
@@ -347,13 +783,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let frame_plan = frame_plan_from_options(&options.frame)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
     let renderer = UnsafeAshDeviceRenderer::new()?;
-    let resources = renderer.materialize_frame(&renderer_frame)?;
+    let resources = renderer.materialize_frame(
+        &renderer_frame,
+        vk::Extent2D {
+            width: options.width.max(1),
+            height: options.height.max(1),
+        },
+    )?;
     println!(
-        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} pipeline layouts, {} draw plans on physical device {:?}",
+        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans on physical device {:?}",
         resources.buffers.len(),
         resources.images.len(),
         resources.descriptor_sets.len(),
-        resources.pipeline_layouts.len(),
+        resources.pipelines.len(),
+        resources.command_buffers.len(),
         renderer_frame.draw_calls.len(),
         renderer.physical_device
     );
