@@ -1551,6 +1551,7 @@ fixture and render it on a transparent background:
 
 ```powershell
 just render-parity-transparent-generated
+just render-parity-transparent-generated-ash-gated
 ```
 
 This writes `.external-fixtures/generated/transparent-blend.vrm.gltf` and
@@ -1570,10 +1571,13 @@ phase/source-order bias to ordinary `BLEND` materials in the Bevy capture path.
 The Ash-inclusive run now passes for wgpu, Bevy, and Ash with exact alpha
 buckets, max selected-channel delta `<= 1`, and selected `rgb-visible` PSNR
 wgpu `54.3997 dB`, Bevy `56.8605 dB`, and Ash `54.3997 dB`.
+`just render-parity-transparent-generated-ash-gated` records this as a normal
+visual gate under `.external-fixtures/render-parity-transparent-generated-ash-gated/`.
 For a stronger transparent layer-ordering audit, use the high-contrast palette:
 
 ```powershell
 just render-parity-transparent-high-contrast
+just render-parity-transparent-high-contrast-ash-gated
 ```
 
 This writes `.external-fixtures/generated/transparent-high-contrast.vrm.gltf`
@@ -1583,9 +1587,11 @@ includes side-by-side PNGs at `three-vrm/`, `wgpu/`, and `bevy/`, amplified
 diff PNGs at `diff/`, PSNR JSON reports at `reports/`, and the review page
 `.external-fixtures/render-parity-transparent-high-contrast/visual-review.html`.
 The current high-contrast transparent result is alpha mismatches `0`, selected
-`rgb-visible` wgpu `53.1994 dB` with max channel delta `1`, and Bevy
-`51.9341 dB` with max channel delta `2`; the recipe now enforces selected
-`rgb-visible >= 51 dB`, selected RGB channel delta `<= 2`, and exact alpha.
+`rgb-visible` wgpu `52.5258 dB` with max channel delta `1`, Bevy
+`51.7899 dB` with max channel delta `2`, and Ash `52.5258 dB` with max channel
+delta `1`; the Ash-gated recipe enforces selected `rgb-visible >= 51 dB`,
+selected RGB channel delta `<= 2`, and exact alpha under
+`.external-fixtures/render-parity-transparent-high-contrast-ash-gated/`.
 Bevy reaches this by injecting a tiny MToon transparent-order tie-break into
 `Transparent3d` before Bevy's phase sort, so equal-depth transparent primitives
 no longer depend on incidental ECS/spawn ordering.

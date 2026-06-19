@@ -431,12 +431,22 @@ render-parity-transparent-generated three_vrm_root=".external-fixtures/three-vrm
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 49 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-blend.vrm.gltf
 
+# Regenerate the base generated transparent material guard with Ash participating in the same visual gate.
+render-parity-transparent-generated-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-generated-ash-gated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 49 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-blend.vrm.gltf
+
 # Transparent-material generated guards.
 
 # Regenerate high-contrast transparent material ordering artifacts for Bevy/wgpu parity debugging.
 render-parity-transparent-high-contrast three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --palette high-contrast --out .external-fixtures/generated/transparent-high-contrast.vrm.gltf
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-high-contrast --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 51 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-high-contrast.vrm.gltf
+
+# Regenerate high-contrast transparent material ordering artifacts with Ash participating in the same visual gate.
+render-parity-transparent-high-contrast-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --palette high-contrast --out .external-fixtures/generated/transparent-high-contrast.vrm.gltf
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-high-contrast-ash-gated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 51 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-high-contrast.vrm.gltf
 
 # Regenerate broader transparent material artifacts with texture alpha and mixed render queues.
 render-parity-transparent-broad three_vrm_root=".external-fixtures/three-vrm":
