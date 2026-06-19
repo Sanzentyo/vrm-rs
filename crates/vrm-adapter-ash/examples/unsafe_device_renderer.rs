@@ -13,9 +13,9 @@ use std::{
     ptr,
 };
 use vrm_adapter_ash::{
-    AshGraphicsPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
-    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
-    frame_plan_from_options_with_aspect,
+    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
+    AshVertexAttributePlan, AshVrmFramePlanOptions, ash_renderer_frame_from_plan,
+    ash_texture_fallback_for_binding, frame_plan_from_options_with_viewport,
 };
 use vrm_io::GltfMaterialTextureFallback;
 
@@ -1348,44 +1348,139 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     })
 }
 
-fn write_rgba_json(
-    path: &Path,
-    options: &Options,
-    frame: &AshRendererFrame,
+struct RgbaJsonArtifact<'a> {
+    options: &'a Options,
+    frame: &'a AshRendererFrame,
+    diagnostic_owner_ids: &'a [AshDiagnosticOwnerId],
     shaders: ShaderSourceKind,
-    readback: &ReadbackFrame,
+    readback: &'a ReadbackFrame,
     width: u32,
     height: u32,
+}
+
+fn write_rgba_json(
+    path: &Path,
+    artifact_input: RgbaJsonArtifact<'_>,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let artifact = json!({
         "generator": "vrm-rs crates/vrm-adapter-ash/examples/unsafe_device_renderer.rs",
-        "fixture": options.frame.avatar.to_string_lossy(),
-        "animation": (!options.frame.no_animation).then(|| options.frame.animation.to_string_lossy().to_string()),
-        "time": options.frame.time,
-        "width": width,
-        "height": height,
+        "fixture": artifact_input.options.frame.avatar.to_string_lossy(),
+        "animation": (!artifact_input.options.frame.no_animation).then(|| artifact_input.options.frame.animation.to_string_lossy().to_string()),
+        "time": artifact_input.options.frame.time,
+        "width": artifact_input.width,
+        "height": artifact_input.height,
         "renderer": {
             "backend": "ash",
             "physicalDevice": "local-vulkan-device",
-            "shaderSource": shader_source_label(shaders),
-            "graphicsPipelines": frame.pipelines.len(),
-            "drawCalls": frame.draw_calls.len(),
+            "shaderSource": shader_source_label(artifact_input.shaders),
+            "graphicsPipelines": artifact_input.frame.pipelines.len(),
+            "drawCalls": artifact_input.frame.draw_calls.len(),
+            "diagnosticOwnerIds": ash_diagnostic_owner_ids_json(artifact_input.diagnostic_owner_ids),
         },
         "readback": {
-            "checksum": format!("{:016x}", readback.checksum),
-            "nonzeroPixels": readback.nonzero_pixels,
+            "checksum": format!("{:016x}", artifact_input.readback.checksum),
+            "nonzeroPixels": artifact_input.readback.nonzero_pixels,
         },
         "format": "rgba8",
-        "rgba": &readback.rgba,
+        "rgba": &artifact_input.readback.rgba,
     });
     fs::write(
         path,
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn ash_diagnostic_owner_ids_json(owners: &[AshDiagnosticOwnerId]) -> Vec<serde_json::Value> {
+    owners
+        .iter()
+        .map(|owner| {
+            let projection = owner.projection;
+            json!({
+                "id": owner.id,
+                "color": owner.color,
+                "nodeIndex": owner.source.node.0,
+                "nodeName": null,
+                "meshIndex": owner.source.mesh_index,
+                "meshName": null,
+                "primitiveIndex": owner.source.primitive_index,
+                "materialIndex": owner.source.material.map(|material| material.0),
+                "materialName": null,
+                "pass": ash_mtoon_pass_label(owner.source.pass),
+                "renderOrder": owner.source.render_order,
+                "renderPhaseOrder": owner.source.phase_order,
+                "drawIndex": owner.source.draw_index,
+                "frontFace": ash_front_face_label(owner.source.front_face),
+                "cullMode": ash_cull_mode_label(owner.source.cull_mode),
+                "alphaMode": "opaque",
+                "alphaCutoff": 0.5,
+                "depthWrite": owner.source.depth_write,
+                "depthTest": owner.source.depth_test,
+                "depthCompare": ash_compare_op_label(owner.source.depth_compare),
+                "blend": owner.source.blend,
+                "triangle": owner.triangle,
+                "indices": owner.indices,
+                "screen": projection.map(|projection| projection.screen),
+                "screenBounds": projection.map(|projection| json!({
+                    "minX": projection.bounds.min_x,
+                    "minY": projection.bounds.min_y,
+                    "maxX": projection.bounds.max_x,
+                    "maxY": projection.bounds.max_y,
+                })),
+                "depth": projection.map(|projection| projection.ndc_depth),
+                "webglDepth": projection.map(|projection| projection.webgl_depth),
+                "depthRange": projection.map(|_| "zero-to-one-ndc"),
+                "screenSignedArea": projection.map(|projection| projection.screen_signed_area),
+                "frontFacing": projection.map(|projection| projection.front_facing),
+                "gpuFrontFacing": projection.map(|projection| projection.gpu_front_facing),
+                "visibleByCullPolicy": projection.map(|projection| projection.visible_by_cull_policy),
+            })
+        })
+        .collect()
+}
+
+fn ash_mtoon_pass_label(pass: AshMtoonPass) -> &'static str {
+    match pass {
+        AshMtoonPass::Base => "base",
+        AshMtoonPass::Outline => "outline",
+    }
+}
+
+fn ash_cull_mode_label(mode: vk::CullModeFlags) -> &'static str {
+    if mode.is_empty() {
+        "off"
+    } else if mode == vk::CullModeFlags::BACK {
+        "back"
+    } else if mode == vk::CullModeFlags::FRONT {
+        "front"
+    } else {
+        "front-and-back"
+    }
+}
+
+fn ash_front_face_label(front_face: vk::FrontFace) -> &'static str {
+    if front_face == vk::FrontFace::COUNTER_CLOCKWISE {
+        "ccw"
+    } else {
+        "cw"
+    }
+}
+
+fn ash_compare_op_label(compare: vk::CompareOp) -> &'static str {
+    match compare {
+        vk::CompareOp::LESS_OR_EQUAL => "less-equal",
+        vk::CompareOp::LESS => "less",
+        vk::CompareOp::GREATER_OR_EQUAL => "greater-equal",
+        vk::CompareOp::GREATER => "greater",
+        vk::CompareOp::ALWAYS => "always",
+        vk::CompareOp::NEVER => "never",
+        vk::CompareOp::EQUAL => "equal",
+        vk::CompareOp::NOT_EQUAL => "not-equal",
+        _ => "unknown",
+    }
 }
 
 fn write_imqraw_rgba8(path: &Path, width: u32, height: u32, rgba: &[u8]) -> io::Result<()> {
@@ -1422,12 +1517,15 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
     });
     write_rgba_json(
         &json_path,
-        options,
-        &AshRendererFrame::default(),
-        ShaderSourceKind::BuiltInSmoke,
-        &readback,
-        width,
-        height,
+        RgbaJsonArtifact {
+            options,
+            frame: &AshRendererFrame::default(),
+            diagnostic_owner_ids: &[],
+            shaders: ShaderSourceKind::BuiltInSmoke,
+            readback: &readback,
+            width,
+            height,
+        },
     )?;
     write_imqraw_rgba8(&imqraw_path, width, height, &rgba)?;
     validate_rgba_json(&json_path, width, height, &rgba)?;
@@ -1519,8 +1617,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("dry run: parsed ash unsafe device renderer options");
         return Ok(());
     }
-    let aspect_ratio = options.width.max(1) as f32 / options.height.max(1) as f32;
-    let frame_plan = frame_plan_from_options_with_aspect(&options.frame, aspect_ratio)?;
+    let frame_plan =
+        frame_plan_from_options_with_viewport(&options.frame, options.width, options.height)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
     let shaders = shader_sources_from_options(&options)?;
     let renderer = UnsafeAshDeviceRenderer::new()?;
@@ -1555,12 +1653,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(path) = &options.out {
             write_rgba_json(
                 path,
-                &options,
-                &renderer_frame,
-                shaders.source,
-                &summary,
-                options.width.max(1),
-                options.height.max(1),
+                RgbaJsonArtifact {
+                    options: &options,
+                    frame: &renderer_frame,
+                    diagnostic_owner_ids: &frame_plan.diagnostic_owner_ids,
+                    shaders: shaders.source,
+                    readback: &summary,
+                    width: options.width.max(1),
+                    height: options.height.max(1),
+                },
             )?;
         }
         if let Some(path) = &options.imqraw_out {

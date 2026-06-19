@@ -11,19 +11,23 @@ use clap::{Parser, ValueEnum};
 use glam::Mat4;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 use vrm_adapter::{
-    HeadlessSceneState, HumanoidPoseRig, MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform,
-    MtoonLightAccumulation, MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass,
-    MtoonSamplerHint, MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
-    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
+    MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
+    MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
+    MtoonTextureSlot, RendererFrontFace, RendererMaterialCullMode, ScreenProjectionBounds,
+    ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
+    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    project_triangle_to_screen, renderer_material_pipeline_plan,
 };
-use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
+use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
-    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
-    GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions, GltfMaterialTextureBinding,
-    GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialTextureSlots,
-    GltfMaterialUvUniformPlan, GltfMinFilter, GltfNodeRest, GltfNormalMapMode, GltfOutlineScale,
-    GltfOutlineVertexSettings, GltfPrimitiveData, GltfSamplerData, GltfTextureData, GltfWrapMode,
-    LoadedVrm, Rgba8SamplingOrigin, generate_tangents, load_vrm_from_path,
+    CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects, GltfMagFilter,
+    GltfMaterialRenderExtraOptions, GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions,
+    GltfMaterialTextureBinding, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
+    GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvUniformPlan, GltfMinFilter,
+    GltfNodeRest, GltfNormalMapMode, GltfOutlineScale, GltfOutlineVertexSettings,
+    GltfPrimitiveData, GltfSamplerData, GltfTextureData, GltfWrapMode, LoadedVrm,
+    Rgba8SamplingOrigin, generate_tangents, load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -145,8 +149,23 @@ impl From<AshNormalMapMode> for GltfNormalMapMode {
 
 impl AshVrmFramePlanOptions {
     pub fn scene_options(&self, aspect_ratio: f32) -> AshSceneOptions {
+        self.scene_options_with_screen_size(
+            aspect_ratio,
+            ScreenProjectionSize {
+                width: aspect_ratio.max(0.0) * 64.0,
+                height: 64.0,
+            },
+        )
+    }
+
+    pub fn scene_options_with_screen_size(
+        &self,
+        aspect_ratio: f32,
+        screen_projection_size: ScreenProjectionSize,
+    ) -> AshSceneOptions {
         AshSceneOptions {
             aspect_ratio,
+            screen_projection_size,
             camera_y: self.camera_y,
             camera_z: self.camera_z,
             target_y: self.target_y,
@@ -237,12 +256,59 @@ pub struct AshVrmPrimitive {
     pub indices: Vec<u32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshDiagnosticOwnerSource {
+    pub node: NodeRef,
+    pub mesh_index: usize,
+    pub primitive_index: usize,
+    pub material: Option<MaterialRef>,
+    pub pass: AshMtoonPass,
+    pub render_order: i32,
+    pub phase_order: i32,
+    pub draw_index: usize,
+    pub cull_mode: vk::CullModeFlags,
+    pub front_face: vk::FrontFace,
+    pub depth_write: bool,
+    pub depth_test: bool,
+    pub depth_compare: vk::CompareOp,
+    pub blend: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshDiagnosticOwnerProjection {
+    pub screen: [[f32; 2]; 3],
+    pub bounds: ScreenProjectionBounds,
+    pub ndc_depth: f32,
+    pub webgl_depth: f32,
+    pub screen_signed_area: f32,
+    pub front_facing: bool,
+    pub gpu_front_facing: bool,
+    pub visible_by_cull_policy: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshDiagnosticOwnerId {
+    pub id: u32,
+    pub color: [u8; 4],
+    pub source: AshDiagnosticOwnerSource,
+    pub triangle: usize,
+    pub indices: [u32; 3],
+    pub projection: Option<AshDiagnosticOwnerProjection>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshTextureUpload {
     pub texture: Option<TextureRef>,
+    pub color_space: GltfMaterialTextureColorSpace,
     pub format: vk::Format,
     pub extent: vk::Extent3D,
     pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshTextureUploadKey {
+    pub texture: TextureRef,
+    pub color_space: GltfMaterialTextureColorSpace,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -278,6 +344,7 @@ pub struct AshDescriptorBindingPlan {
     pub descriptor_type: vk::DescriptorType,
     pub stage_flags: vk::ShaderStageFlags,
     pub texture: Option<TextureRef>,
+    pub color_space: GltfMaterialTextureColorSpace,
     pub sampler: Option<AshSamplerPlan>,
 }
 
@@ -434,6 +501,7 @@ pub struct AshSceneUniform {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AshSceneOptions {
     pub aspect_ratio: f32,
+    pub screen_projection_size: ScreenProjectionSize,
     pub camera_y: f32,
     pub camera_z: f32,
     pub target_y: f32,
@@ -446,6 +514,10 @@ impl Default for AshSceneOptions {
     fn default() -> Self {
         Self {
             aspect_ratio: 1.0,
+            screen_projection_size: ScreenProjectionSize {
+                width: 64.0,
+                height: 64.0,
+            },
             camera_y: 1.0,
             camera_z: 5.0,
             target_y: 1.0,
@@ -462,6 +534,21 @@ impl AshSceneOptions {
             self.aspect_ratio
         } else {
             1.0
+        }
+    }
+
+    fn sanitized_screen_projection_size(self) -> ScreenProjectionSize {
+        if self.screen_projection_size.width.is_finite()
+            && self.screen_projection_size.width > 0.0
+            && self.screen_projection_size.height.is_finite()
+            && self.screen_projection_size.height > 0.0
+        {
+            self.screen_projection_size
+        } else {
+            ScreenProjectionSize {
+                width: self.sanitized_aspect_ratio() * 64.0,
+                height: 64.0,
+            }
         }
     }
 
@@ -545,6 +632,7 @@ pub struct AshVrmFramePlan {
     pub texture_uploads: Vec<AshTextureUpload>,
     pub mtoon_pipelines: Vec<AshMtoonPipelinePlan>,
     pub scene_uniform: AshSceneUniform,
+    pub diagnostic_owner_ids: Vec<AshDiagnosticOwnerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -748,9 +836,14 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                             }
                             _ => pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE,
                         }),
-                    texture_upload_index: binding
-                        .texture
-                        .and_then(|texture| texture_indices.get(&texture).copied()),
+                    texture_upload_index: binding.texture.and_then(|texture| {
+                        texture_indices
+                            .get(&AshTextureUploadKey {
+                                texture,
+                                color_space: binding.color_space,
+                            })
+                            .copied()
+                    }),
                     sampler: binding.sampler,
                 })
                 .collect(),
@@ -941,6 +1034,32 @@ struct AshPrimitiveDrawOrder {
     phase_order: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AshPrimitiveSource {
+    node: NodeRef,
+    mesh_index: usize,
+    primitive_index: usize,
+    material: Option<MaterialRef>,
+    pass: AshMtoonPass,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct AshPrimitiveRecord {
+    primitive: AshVrmPrimitive,
+    source: AshPrimitiveSource,
+    draw_order: AshPrimitiveDrawOrder,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AshOwnerIdAssignmentContext {
+    source: AshPrimitiveSource,
+    draw_order: AshPrimitiveDrawOrder,
+    draw_index: usize,
+    pipeline_key: AshPipelineKey,
+    view_projection: Mat4,
+    scene_options: AshSceneOptions,
+}
+
 impl AshVrmFramePlanner {
     pub fn from_paths(
         avatar: impl Into<PathBuf>,
@@ -1026,17 +1145,15 @@ impl AshVrmFramePlanner {
             self.mtoon_pipeline_plans(time_seconds, scene_options, render_options);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
+        let (primitives, diagnostic_owner_ids) =
+            self.bake_primitives(time_seconds, scene_options, render_options)?;
         Ok(AshVrmFramePlan {
-            primitives: self.bake_primitives(
-                time_seconds,
-                scene_options,
-                render_options,
-                &mtoon_pipelines,
-            )?,
+            primitives,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
             scene_uniform: AshSceneUniform::from_scene_options(scene_options),
+            diagnostic_owner_ids,
         })
     }
 
@@ -1059,16 +1176,14 @@ impl AshVrmFramePlanner {
         mtoon_time: f32,
         scene_options: AshSceneOptions,
         render_options: AshRenderOptions,
-        mtoon_pipelines: &[AshMtoonPipelinePlan],
-    ) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
-        let pipeline_orders = ash_pipeline_draw_orders(mtoon_pipelines);
+    ) -> Result<(Vec<AshVrmPrimitive>, Vec<AshDiagnosticOwnerId>), Box<dyn Error>> {
         let mut primitives = Vec::new();
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
                 continue;
             };
             let mesh = &self.loaded.meshes[mesh_index];
-            for primitive in &mesh.primitives {
+            for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
                 let base = self.bake_primitive(
                     node_index,
                     node,
@@ -1081,14 +1196,19 @@ impl AshVrmFramePlanner {
                         render_options,
                     },
                 )?;
-                primitives.push((
-                    base,
-                    ash_draw_order(
-                        &pipeline_orders,
-                        primitive.material.map(MaterialRef),
-                        AshMtoonPass::Base,
-                    ),
-                ));
+                let base_draw_order =
+                    ash_base_draw_order(&self.loaded, primitive.material.map(MaterialRef));
+                primitives.push(AshPrimitiveRecord {
+                    primitive: base,
+                    source: AshPrimitiveSource {
+                        node: NodeRef(node_index),
+                        mesh_index,
+                        primitive_index,
+                        material: primitive.material.map(MaterialRef),
+                        pass: AshMtoonPass::Base,
+                    },
+                    draw_order: base_draw_order,
+                });
                 if !render_options.disable_outlines
                     && self
                         .loaded
@@ -1110,24 +1230,35 @@ impl AshVrmFramePlanner {
                             render_options,
                         },
                     )?;
-                    primitives.push((
-                        outline,
-                        ash_draw_order(
-                            &pipeline_orders,
-                            primitive.material.map(MaterialRef),
-                            AshMtoonPass::Outline,
-                        ),
-                    ));
+                    let outline_draw_order =
+                        ash_outline_draw_order(&self.loaded, primitive.material.map(MaterialRef));
+                    primitives.push(AshPrimitiveRecord {
+                        primitive: outline,
+                        source: AshPrimitiveSource {
+                            node: NodeRef(node_index),
+                            mesh_index,
+                            primitive_index,
+                            material: primitive.material.map(MaterialRef),
+                            pass: AshMtoonPass::Outline,
+                        },
+                        draw_order: outline_draw_order,
+                    });
                 }
             }
         }
-        if render_options.diagnostic_render == AshDiagnosticRender::OwnerId {
-            assign_ash_owner_id_triangles(&mut primitives);
-        }
-        Ok(primitives
-            .into_iter()
-            .map(|(primitive, _draw_order)| primitive)
-            .collect())
+        let diagnostic_owner_ids =
+            if render_options.diagnostic_render == AshDiagnosticRender::OwnerId {
+                assign_ash_owner_id_triangles(&mut primitives, scene_options)
+            } else {
+                Vec::new()
+            };
+        Ok((
+            primitives
+                .into_iter()
+                .map(|record| record.primitive)
+                .collect(),
+            diagnostic_owner_ids,
+        ))
     }
 
     fn bake_primitive(
@@ -1259,7 +1390,7 @@ impl AshVrmFramePlanner {
 
     fn material_records(
         &self,
-        texture_uploads: &HashMap<TextureRef, usize>,
+        texture_uploads: &HashMap<AshTextureUploadKey, usize>,
     ) -> Vec<AshMaterialRecord> {
         self.loaded
             .gltf_materials
@@ -1272,18 +1403,25 @@ impl AshVrmFramePlanner {
                     .loaded
                     .material_texture_slots(Some(index))
                     .base
-                    .and_then(|texture| texture_uploads.get(&TextureRef(texture)).copied()),
+                    .and_then(|texture| {
+                        texture_uploads
+                            .get(&AshTextureUploadKey {
+                                texture: TextureRef(texture),
+                                color_space: GltfMaterialTextureColorSpace::Srgb,
+                            })
+                            .copied()
+                    }),
             })
             .collect()
     }
 
     fn texture_uploads(&self, pipelines: &[AshMtoonPipelinePlan]) -> Vec<AshTextureUpload> {
-        required_texture_refs(&self.loaded, pipelines)
+        required_texture_uploads(&self.loaded, pipelines)
             .into_iter()
-            .filter_map(|texture| {
+            .filter_map(|key| {
                 self.loaded
-                    .texture_rgba8_image(texture.0)
-                    .map(|image| texture_upload(Some(texture), image))
+                    .texture_rgba8_image(key.texture.0)
+                    .map(|image| texture_upload(Some(key), image))
             })
             .collect()
     }
@@ -1300,6 +1438,36 @@ impl AshVrmFramePlanner {
         )
         .into_iter()
         .map(|plan| {
+            let renderer_pipeline = ash_renderer_pipeline_plan(&self.loaded, Some(plan.material));
+            let key = match plan.pass {
+                MtoonRendererPass::Base => AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: renderer_pipeline.render_order,
+                    phase_order: renderer_pipeline.phase_order,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: ash_renderer_cull_mode(renderer_pipeline.cull_mode),
+                    front_face: vrm_vulkan_front_face(),
+                    depth_test_enable: true,
+                    depth_write_enable: renderer_pipeline.depth_write,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: renderer_pipeline.blend,
+                },
+                MtoonRendererPass::Outline => {
+                    let draw_order = ash_outline_draw_order(&self.loaded, Some(plan.material));
+                    AshPipelineKey {
+                        pass: AshMtoonPass::Outline,
+                        render_order: draw_order.render_order,
+                        phase_order: draw_order.phase_order,
+                        topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                        cull_mode: vk::CullModeFlags::FRONT,
+                        front_face: vrm_vulkan_front_face(),
+                        depth_test_enable: true,
+                        depth_write_enable: true,
+                        depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                        blend_enable: false,
+                    }
+                }
+            };
             let gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
             let material = Some(plan.material.0);
             let uv_uniform = AshMaterialUvUniform::from_plan(
@@ -1321,21 +1489,7 @@ impl AshVrmFramePlanner {
             AshMtoonPipelinePlan {
                 material: plan.material,
                 name: plan.name,
-                key: AshPipelineKey {
-                    pass: match plan.pass {
-                        MtoonRendererPass::Base => AshMtoonPass::Base,
-                        MtoonRendererPass::Outline => AshMtoonPass::Outline,
-                    },
-                    render_order: plan.pipeline.render_order,
-                    phase_order: plan.pipeline.phase_order,
-                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                    cull_mode: cull_mode(plan.pipeline.cull_mode),
-                    front_face: vrm_vulkan_front_face(),
-                    depth_test_enable: plan.pipeline.depth_test,
-                    depth_write_enable: plan.pipeline.depth_write,
-                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                    blend_enable: plan.pipeline.blend,
-                },
+                key,
                 descriptor_bindings: descriptor_bindings(
                     &self.loaded.textures,
                     self.loaded.material_texture_slots(material),
@@ -1344,7 +1498,7 @@ impl AshVrmFramePlanner {
                 uv_uniform,
                 render_extra_uniform,
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
-                alpha_cutoff: plan.shader.cutoff_factor,
+                alpha_cutoff: renderer_pipeline.alpha_cutoff,
                 outline_width: plan.shader.outline_width_factor,
                 base_color_factor: plan.shader.base_color_factor,
                 emissive_color: plan.shader.emissive_color,
@@ -1388,29 +1542,62 @@ pub fn frame_plan_from_options_with_aspect(
     )
 }
 
-fn required_texture_refs(
+pub fn frame_plan_from_options_with_viewport(
+    options: &AshVrmFramePlanOptions,
+    width: u32,
+    height: u32,
+) -> Result<AshVrmFramePlan, Box<dyn Error>> {
+    let width = width.max(1);
+    let height = height.max(1);
+    let aspect_ratio = width as f32 / height as f32;
+    let animation = (!options.no_animation).then_some(options.animation.clone());
+    let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
+    planner.sample_frame_with_full_render_options(
+        options.time,
+        options.scene_options_with_screen_size(
+            aspect_ratio,
+            ScreenProjectionSize::from_pixels(width, height),
+        ),
+        options.render_options(),
+    )
+}
+
+fn required_texture_uploads(
     loaded: &LoadedVrm,
     pipelines: &[AshMtoonPipelinePlan],
-) -> Vec<TextureRef> {
+) -> Vec<AshTextureUploadKey> {
     let mut textures = Vec::new();
     for material in 0..loaded.gltf_materials.len() {
-        if let Some(texture) = loaded.material_texture_slots(Some(material)).base {
-            push_unique_texture(&mut textures, TextureRef(texture));
+        let plan = loaded.material_texture_slots(Some(material)).binding_plan();
+        for binding in plan.bindings {
+            if let Some(texture) = binding.texture {
+                push_unique_texture(
+                    &mut textures,
+                    AshTextureUploadKey {
+                        texture: TextureRef(texture),
+                        color_space: binding.color_space,
+                    },
+                );
+            }
         }
     }
     for pipeline in pipelines {
-        for texture in pipeline
-            .descriptor_bindings
-            .iter()
-            .filter_map(|binding| binding.texture)
-        {
-            push_unique_texture(&mut textures, texture);
+        for binding in &pipeline.descriptor_bindings {
+            if let Some(texture) = binding.texture {
+                push_unique_texture(
+                    &mut textures,
+                    AshTextureUploadKey {
+                        texture,
+                        color_space: binding.color_space,
+                    },
+                );
+            }
         }
     }
     textures
 }
 
-fn push_unique_texture(textures: &mut Vec<TextureRef>, texture: TextureRef) {
+fn push_unique_texture(textures: &mut Vec<AshTextureUploadKey>, texture: AshTextureUploadKey) {
     if !textures.contains(&texture) {
         textures.push(texture);
     }
@@ -1438,64 +1625,144 @@ fn ash_owner_id_color(id: u32) -> [f32; 4] {
     ]
 }
 
-fn ash_pipeline_draw_orders(
-    pipelines: &[AshMtoonPipelinePlan],
-) -> HashMap<(MaterialRef, AshMtoonPass), AshPrimitiveDrawOrder> {
-    pipelines
-        .iter()
-        .map(|pipeline| {
-            (
-                (pipeline.material, pipeline.key.pass),
-                AshPrimitiveDrawOrder {
-                    render_order: pipeline.key.render_order,
-                    phase_order: pipeline.key.phase_order,
-                },
-            )
-        })
-        .collect()
+fn ash_base_draw_order(loaded: &LoadedVrm, material: Option<MaterialRef>) -> AshPrimitiveDrawOrder {
+    let plan = ash_renderer_pipeline_plan(loaded, material);
+    AshPrimitiveDrawOrder {
+        render_order: plan.render_order,
+        phase_order: plan.phase_order,
+    }
 }
 
-fn ash_draw_order(
-    pipeline_orders: &HashMap<(MaterialRef, AshMtoonPass), AshPrimitiveDrawOrder>,
+fn ash_outline_draw_order(
+    loaded: &LoadedVrm,
     material: Option<MaterialRef>,
-    pass: AshMtoonPass,
 ) -> AshPrimitiveDrawOrder {
+    let base = ash_base_draw_order(loaded, material);
+    AshPrimitiveDrawOrder {
+        render_order: base.render_order.saturating_add(1),
+        phase_order: base.phase_order.saturating_add(1),
+    }
+}
+
+fn ash_renderer_pipeline_plan(
+    loaded: &LoadedVrm,
+    material: Option<MaterialRef>,
+) -> vrm_adapter::RendererMaterialPipelinePlan {
+    renderer_material_pipeline_plan(
+        loaded.model().document(),
+        material,
+        MtoonMaterializationOptions::default(),
+        ash_gltf_pipeline_override(loaded, material),
+    )
+}
+
+fn ash_gltf_pipeline_override(
+    loaded: &LoadedVrm,
+    material: Option<MaterialRef>,
+) -> Option<GltfMaterialPipelineOverride> {
     material
-        .and_then(|material| pipeline_orders.get(&(material, pass)).copied())
-        .unwrap_or(AshPrimitiveDrawOrder {
-            render_order: 2000,
-            phase_order: 2000,
+        .and_then(|material| loaded.gltf_materials.get(material.0))
+        .map(|material| GltfMaterialPipelineOverride {
+            alpha_mode: ash_gltf_alpha_mode(material.alpha_mode),
+            alpha_cutoff: material.alpha_cutoff,
+            double_sided: material.double_sided,
         })
 }
 
-fn assign_ash_owner_id_triangles(primitives: &mut [(AshVrmPrimitive, AshPrimitiveDrawOrder)]) {
+fn ash_gltf_alpha_mode(mode: GltfAlphaMode) -> GltfMaterialAlphaMode {
+    match mode {
+        GltfAlphaMode::Opaque => GltfMaterialAlphaMode::Opaque,
+        GltfAlphaMode::Mask => GltfMaterialAlphaMode::Mask,
+        GltfAlphaMode::Blend => GltfMaterialAlphaMode::Blend,
+    }
+}
+
+fn ash_renderer_cull_mode(mode: RendererMaterialCullMode) -> vk::CullModeFlags {
+    match mode {
+        RendererMaterialCullMode::Off => vk::CullModeFlags::NONE,
+        RendererMaterialCullMode::Front => vk::CullModeFlags::FRONT,
+        RendererMaterialCullMode::Back => vk::CullModeFlags::BACK,
+    }
+}
+
+fn assign_ash_owner_id_triangles(
+    primitives: &mut [AshPrimitiveRecord],
+    scene_options: AshSceneOptions,
+) -> Vec<AshDiagnosticOwnerId> {
     let mut ordered_indices = (0..primitives.len()).collect::<Vec<_>>();
     ordered_indices.sort_by_key(|index| {
-        let draw_order = primitives[*index].1;
-        (draw_order.render_order, draw_order.phase_order, *index)
+        let draw_order = primitives[*index].draw_order;
+        (draw_order.render_order, *index)
     });
 
     let mut next_id = 1_u32;
-    for primitive_index in ordered_indices {
-        let primitive = &mut primitives[primitive_index].0;
-        let (vertices, indices, next) =
-            ash_owner_id_triangles(&primitive.vertices, &primitive.indices, next_id);
-        primitive.vertices = vertices;
-        primitive.indices = indices;
+    let mut owners = Vec::new();
+    let view_projection = ash_reference_view_projection(scene_options);
+    for (draw_index, primitive_index) in ordered_indices.into_iter().enumerate() {
+        let record = &mut primitives[primitive_index];
+        let (vertices, indices, next, mut primitive_owners) = ash_owner_id_triangles(
+            &record.primitive.vertices,
+            &record.primitive.indices,
+            next_id,
+            AshOwnerIdAssignmentContext {
+                source: record.source,
+                draw_order: record.draw_order,
+                draw_index,
+                pipeline_key: ash_diagnostic_pipeline_key(record),
+                view_projection,
+                scene_options,
+            },
+        );
+        record.primitive.vertices = vertices;
+        record.primitive.indices = indices;
+        owners.append(&mut primitive_owners);
         next_id = next;
     }
+    owners
 }
 
 fn ash_owner_id_triangles(
     vertices: &[AshVrmVertex],
     indices: &[u32],
     first_id: u32,
-) -> (Vec<AshVrmVertex>, Vec<u32>, u32) {
+    context: AshOwnerIdAssignmentContext,
+) -> (Vec<AshVrmVertex>, Vec<u32>, u32, Vec<AshDiagnosticOwnerId>) {
     let mut expanded_vertices = Vec::with_capacity(indices.len());
     let mut expanded_indices = Vec::with_capacity(indices.len());
+    let mut owners = Vec::with_capacity(indices.len() / 3);
     let mut next_id = first_id;
-    for triangle in indices.chunks_exact(3) {
+    for (triangle_index, triangle) in indices.chunks_exact(3).enumerate() {
         let color = ash_owner_id_color(next_id);
+        let indices = [triangle[0], triangle[1], triangle[2]];
+        owners.push(AshDiagnosticOwnerId {
+            id: next_id,
+            color: ash_owner_id_color_u8(next_id),
+            source: AshDiagnosticOwnerSource {
+                node: context.source.node,
+                mesh_index: context.source.mesh_index,
+                primitive_index: context.source.primitive_index,
+                material: context.source.material,
+                pass: context.source.pass,
+                render_order: context.draw_order.render_order,
+                phase_order: context.draw_order.phase_order,
+                draw_index: context.draw_index,
+                cull_mode: context.pipeline_key.cull_mode,
+                front_face: context.pipeline_key.front_face,
+                depth_write: context.pipeline_key.depth_write_enable,
+                depth_test: context.pipeline_key.depth_test_enable,
+                depth_compare: context.pipeline_key.depth_compare_op,
+                blend: context.pipeline_key.blend_enable,
+            },
+            triangle: triangle_index,
+            indices,
+            projection: ash_owner_triangle_projection(
+                vertices,
+                indices,
+                context.view_projection,
+                context.scene_options,
+                context.pipeline_key.cull_mode,
+            ),
+        });
         for index in triangle {
             if let Some(vertex) = vertices.get(*index as usize) {
                 let mut vertex = *vertex;
@@ -1506,7 +1773,87 @@ fn ash_owner_id_triangles(
         }
         next_id = next_id.saturating_add(1);
     }
-    (expanded_vertices, expanded_indices, next_id)
+    (expanded_vertices, expanded_indices, next_id, owners)
+}
+
+fn ash_owner_id_color_u8(id: u32) -> [u8; 4] {
+    [
+        (id & 0xff) as u8,
+        ((id >> 8) & 0xff) as u8,
+        ((id >> 16) & 0xff) as u8,
+        255,
+    ]
+}
+
+fn ash_reference_view_projection(scene_options: AshSceneOptions) -> Mat4 {
+    Mat4::perspective_rh(
+        30.0_f32.to_radians(),
+        scene_options.sanitized_aspect_ratio(),
+        0.1,
+        20.0,
+    ) * scene_options.view()
+}
+
+fn ash_diagnostic_pipeline_key(record: &AshPrimitiveRecord) -> AshPipelineKey {
+    AshPipelineKey {
+        pass: record.source.pass,
+        render_order: record.draw_order.render_order,
+        phase_order: record.draw_order.phase_order,
+        topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+        cull_mode: match record.source.pass {
+            AshMtoonPass::Base => vk::CullModeFlags::BACK,
+            AshMtoonPass::Outline => vk::CullModeFlags::FRONT,
+        },
+        front_face: vrm_vulkan_front_face(),
+        depth_test_enable: true,
+        depth_write_enable: true,
+        depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+        blend_enable: false,
+    }
+}
+
+fn ash_owner_triangle_projection(
+    vertices: &[AshVrmVertex],
+    indices: [u32; 3],
+    view_projection: Mat4,
+    scene_options: AshSceneOptions,
+    cull_mode: vk::CullModeFlags,
+) -> Option<AshDiagnosticOwnerProjection> {
+    let projection = project_triangle_to_screen::<ZeroToOneDepth>(
+        [
+            vertices.get(indices[0] as usize)?.position,
+            vertices.get(indices[1] as usize)?.position,
+            vertices.get(indices[2] as usize)?.position,
+        ],
+        view_projection,
+        scene_options.sanitized_screen_projection_size(),
+        RendererFrontFace::Ccw,
+    )?;
+    Some(AshDiagnosticOwnerProjection {
+        screen: projection.screen,
+        bounds: projection.bounds,
+        ndc_depth: projection.ndc_depth,
+        webgl_depth: projection.webgl_depth,
+        screen_signed_area: projection.screen_signed_area,
+        front_facing: projection.front_facing,
+        gpu_front_facing: projection.gpu_front_facing,
+        visible_by_cull_policy: ash_visible_by_cull_policy(cull_mode, projection),
+    })
+}
+
+fn ash_visible_by_cull_policy(
+    cull_mode: vk::CullModeFlags,
+    projection: ScreenTriangleProjection,
+) -> bool {
+    if cull_mode.is_empty() {
+        true
+    } else if cull_mode == vk::CullModeFlags::BACK {
+        projection.gpu_front_facing
+    } else if cull_mode == vk::CullModeFlags::FRONT {
+        !projection.gpu_front_facing
+    } else {
+        false
+    }
 }
 
 fn ash_vertex_normal_scales(
@@ -1561,11 +1908,23 @@ fn apply_generated_tangents(
     }
 }
 
-fn texture_ref_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<TextureRef, usize> {
+fn texture_ref_upload_indices(
+    texture_uploads: &[AshTextureUpload],
+) -> HashMap<AshTextureUploadKey, usize> {
     texture_uploads
         .iter()
         .enumerate()
-        .filter_map(|(upload_index, upload)| upload.texture.map(|texture| (texture, upload_index)))
+        .filter_map(|(upload_index, upload)| {
+            upload.texture.map(|texture| {
+                (
+                    AshTextureUploadKey {
+                        texture,
+                        color_space: upload.color_space,
+                    },
+                    upload_index,
+                )
+            })
+        })
         .collect()
 }
 
@@ -1587,14 +1946,6 @@ fn descriptor_set_indices(
         .enumerate()
         .map(|(index, set)| ((set.material, set.pipeline_plan_index), index))
         .collect()
-}
-
-fn cull_mode(mode: MtoonCullMode) -> vk::CullModeFlags {
-    match mode {
-        MtoonCullMode::Off => vk::CullModeFlags::NONE,
-        MtoonCullMode::Front => vk::CullModeFlags::FRONT,
-        MtoonCullMode::Back => vk::CullModeFlags::BACK,
-    }
 }
 
 fn vrm_vulkan_front_face() -> vk::FrontFace {
@@ -1664,6 +2015,7 @@ fn descriptor_bindings(
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
         texture: None,
+        color_space: GltfMaterialTextureColorSpace::Linear,
         sampler: None,
     });
     result.extend(
@@ -1677,6 +2029,7 @@ fn descriptor_bindings(
         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: slots.outline_width.map(TextureRef),
+        color_space: GltfMaterialTextureColorSpace::Linear,
         sampler: Some(sampler_plan_for_texture(
             textures,
             slots.outline_width,
@@ -1694,6 +2047,7 @@ fn descriptor_bindings(
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
         texture: None,
+        color_space: GltfMaterialTextureColorSpace::Linear,
         sampler: None,
     });
     result.push(AshDescriptorBindingPlan {
@@ -1701,6 +2055,7 @@ fn descriptor_bindings(
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
+        color_space: GltfMaterialTextureColorSpace::Linear,
         sampler: None,
     });
     result.push(AshDescriptorBindingPlan {
@@ -1708,6 +2063,7 @@ fn descriptor_bindings(
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
+        color_space: GltfMaterialTextureColorSpace::Linear,
         sampler: None,
     });
     result
@@ -1739,6 +2095,7 @@ fn descriptor_binding_for_texture(
         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: binding.texture.map(TextureRef),
+        color_space: binding.color_space,
         sampler: Some(sampler_plan_for_texture(
             textures,
             binding.texture,
@@ -1842,16 +2199,27 @@ fn ash_mipmap_mode(filter: GltfMinFilter) -> vk::SamplerMipmapMode {
     }
 }
 
-fn texture_upload(texture: Option<TextureRef>, image: CpuRgba8Image) -> AshTextureUpload {
+fn texture_upload(texture: Option<AshTextureUploadKey>, image: CpuRgba8Image) -> AshTextureUpload {
+    let color_space = texture
+        .map(|texture| texture.color_space)
+        .unwrap_or(GltfMaterialTextureColorSpace::Srgb);
     AshTextureUpload {
-        texture,
-        format: vk::Format::R8G8B8A8_UNORM,
+        texture: texture.map(|texture| texture.texture),
+        color_space,
+        format: ash_texture_format(color_space),
         extent: vk::Extent3D {
             width: image.width,
             height: image.height,
             depth: 1,
         },
         rgba: image.rgba,
+    }
+}
+
+fn ash_texture_format(color_space: GltfMaterialTextureColorSpace) -> vk::Format {
+    match color_space {
+        GltfMaterialTextureColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
+        GltfMaterialTextureColorSpace::Linear => vk::Format::R8G8B8A8_UNORM,
     }
 }
 
@@ -2024,6 +2392,7 @@ mod tests {
 
         let custom = AshSceneUniform::from_scene_options(AshSceneOptions {
             aspect_ratio: 2.0,
+            screen_projection_size: ScreenProjectionSize::from_pixels(128, 64),
             camera_y: 1.25,
             camera_z: 3.0,
             target_y: 0.75,
@@ -2038,6 +2407,44 @@ mod tests {
         assert_eq!(custom.light_dir[3], 0.5);
         assert_eq!(custom.light_color, [1.0, 0.5, 0.25, 0.0]);
         assert_eq!(custom.mtoon_lighting[3], 0.2);
+    }
+
+    #[test]
+    fn scene_options_carry_diagnostic_projection_size() {
+        let options = AshVrmFramePlanOptions::parse_from(["test"]);
+        let aspect_only = options.scene_options(2.0);
+        assert_eq!(
+            aspect_only.screen_projection_size,
+            ScreenProjectionSize {
+                width: 128.0,
+                height: 64.0,
+            }
+        );
+
+        let viewport = options
+            .scene_options_with_screen_size(2.0, ScreenProjectionSize::from_pixels(256, 128));
+        assert_eq!(
+            viewport.sanitized_screen_projection_size(),
+            ScreenProjectionSize {
+                width: 256.0,
+                height: 128.0,
+            }
+        );
+
+        let invalid = AshSceneOptions {
+            screen_projection_size: ScreenProjectionSize {
+                width: f32::NAN,
+                height: 0.0,
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            invalid.sanitized_screen_projection_size(),
+            ScreenProjectionSize {
+                width: 64.0,
+                height: 64.0,
+            }
+        );
     }
 
     #[test]
@@ -2113,29 +2520,43 @@ mod tests {
             normal_scale: 1.0,
             double_sided: 0.0,
         };
-        let primitive = |render_order| {
-            (
-                AshVrmPrimitive {
-                    node: NodeRef(0),
-                    material: Some(MaterialRef(0)),
-                    pass: AshMtoonPass::Base,
-                    vertices: vec![vertex; 3],
-                    indices: vec![0, 1, 2],
-                },
-                AshPrimitiveDrawOrder {
-                    render_order,
-                    phase_order: render_order,
-                },
-            )
+        let primitive = |render_order, phase_order| AshPrimitiveRecord {
+            primitive: AshVrmPrimitive {
+                node: NodeRef(0),
+                material: Some(MaterialRef(0)),
+                pass: AshMtoonPass::Base,
+                vertices: vec![vertex; 3],
+                indices: vec![0, 1, 2],
+            },
+            source: AshPrimitiveSource {
+                node: NodeRef(0),
+                mesh_index: 0,
+                primitive_index: 0,
+                material: Some(MaterialRef(0)),
+                pass: AshMtoonPass::Base,
+            },
+            draw_order: AshPrimitiveDrawOrder {
+                render_order,
+                phase_order,
+            },
         };
-        let mut primitives = vec![primitive(3000), primitive(1000)];
+        let mut primitives = vec![primitive(3000, 0), primitive(1000, 99)];
 
-        assign_ash_owner_id_triangles(&mut primitives);
+        let owners = assign_ash_owner_id_triangles(&mut primitives, AshSceneOptions::default());
 
-        assert_eq!(primitives[1].0.vertices[0].color_0, ash_owner_id_color(1));
-        assert_eq!(primitives[0].0.vertices[0].color_0, ash_owner_id_color(2));
-        assert_eq!(primitives[0].0.indices, [0, 1, 2]);
-        assert_eq!(primitives[1].0.indices, [0, 1, 2]);
+        assert_eq!(
+            primitives[1].primitive.vertices[0].color_0,
+            ash_owner_id_color(1)
+        );
+        assert_eq!(
+            primitives[0].primitive.vertices[0].color_0,
+            ash_owner_id_color(2)
+        );
+        assert_eq!(primitives[0].primitive.indices, [0, 1, 2]);
+        assert_eq!(primitives[1].primitive.indices, [0, 1, 2]);
+        assert_eq!(owners[0].id, 1);
+        assert_eq!(owners[0].source.phase_order, 99);
+        assert_eq!(owners[1].id, 2);
     }
 
     #[test]
@@ -2298,6 +2719,7 @@ mod tests {
                 emissive_color: [0.0, 0.0, 0.0],
             }],
             scene_uniform: AshSceneUniform::default(),
+            diagnostic_owner_ids: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
@@ -2446,6 +2868,7 @@ mod tests {
                 pipeline(AshMtoonPass::Outline, 2001, 2001),
             ],
             scene_uniform: AshSceneUniform::default(),
+            diagnostic_owner_ids: Vec::new(),
         };
 
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
@@ -2469,7 +2892,8 @@ mod tests {
             materials: Vec::new(),
             texture_uploads: vec![AshTextureUpload {
                 texture: Some(TextureRef(7)),
-                format: vk::Format::R8G8B8A8_UNORM,
+                color_space: GltfMaterialTextureColorSpace::Srgb,
+                format: vk::Format::R8G8B8A8_SRGB,
                 extent: vk::Extent3D {
                     width: 1,
                     height: 1,
@@ -2498,6 +2922,7 @@ mod tests {
                         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                         texture: None,
+                        color_space: GltfMaterialTextureColorSpace::Linear,
                         sampler: None,
                     },
                     AshDescriptorBindingPlan {
@@ -2505,6 +2930,7 @@ mod tests {
                         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         texture: Some(TextureRef(7)),
+                        color_space: GltfMaterialTextureColorSpace::Srgb,
                         sampler: Some(AshSamplerPlan {
                             mag_filter: vk::Filter::LINEAR,
                             min_filter: vk::Filter::LINEAR,
@@ -2527,6 +2953,7 @@ mod tests {
                 emissive_color: [0.0, 0.0, 0.0],
             }],
             scene_uniform: AshSceneUniform::default(),
+            diagnostic_owner_ids: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.textures.len(), 1);
