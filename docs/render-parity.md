@@ -897,6 +897,32 @@ diagonal material seam, with the dominant transition `material_2 ->
 material_3`. Treat this as the minimal fill-rule/material-ownership guard that
 corresponds to the larger real constraint-sample seam transitions.
 
+A source-like same-material subpixel ownership control is available through:
+
+```powershell
+just render-parity-subpixel-ownership-generated
+just render-parity-subpixel-ownership-owner-generated
+just render-parity-subpixel-ownership-owner-hotspots
+```
+
+It writes `.external-fixtures/generated/subpixel-ownership.vrm.gltf` and keeps
+the material name `huku_bake` while placing high-contrast texture regions across
+near-subpixel triangle seams. The base-color diagnostic currently has exact
+alpha parity, selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`43.8282 dB` / Bevy `43.4195 dB`, and max selected-channel deltas `161` /
+`160`. The new owner-id recipe writes
+`.external-fixtures/render-parity-subpixel-ownership-owner-generated/`; on the
+2026-06-19 run, wgpu and Bevy owner-id images matched exactly, and each differed
+from three-vrm by only `2` of `18276` shared nonzero owner pixels. The hotspot
+owner projection under
+`.external-fixtures/render-parity-subpixel-ownership-generated/` found all
+`32/32` top hotspot rendered owners on `huku_bake`, `28/32` already on the
+center frontmost triangle, and `32/32` recovered to frontmost rank 1 through
+subpixel or one-pixel-neighbor search. This makes the generated fixture a
+stable guard for subpixel owner diagnostics while keeping Seed-san's remaining
+gradient-domain blocker classified as a more complex real-topology/UV ownership
+case.
+
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
 reports wgpu `39.1371 dB` / Bevy `38.9656 dB`, still with max selected-channel
