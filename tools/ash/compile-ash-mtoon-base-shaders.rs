@@ -7,7 +7,7 @@ edition = "2024"
 clap = { version = "4.6.1", features = ["derive"] }
 ---
 
-//! Compile the source-controlled ash MToon smoke GLSL shaders to local SPIR-V artifacts.
+//! Compile the source-controlled ash MToon base GLSL shaders to local SPIR-V artifacts.
 
 use clap::Parser;
 use std::{
@@ -19,15 +19,15 @@ use std::{
 
 #[derive(Clone, Debug, Parser)]
 #[command(
-    name = "compile-ash-mtoon-smoke-shaders",
-    about = "Compile source ash MToon smoke GLSL shaders to local SPIR-V files"
+    name = "compile-ash-mtoon-base-shaders",
+    about = "Compile source ash MToon base GLSL shaders to local SPIR-V files"
 )]
 struct Options {
-    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_smoke.vert.glsl")]
+    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl")]
     vertex: PathBuf,
-    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_smoke.frag.glsl")]
+    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl")]
     fragment: PathBuf,
-    #[arg(long, default_value = "target/ash-mtoon-smoke-shaders")]
+    #[arg(long, default_value = "target/ash-mtoon-base-shaders")]
     out_dir: PathBuf,
     #[arg(long, default_value = "glslangValidator")]
     glslang: PathBuf,
@@ -51,8 +51,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     validate_source(&options.fragment)?;
     fs::create_dir_all(&options.out_dir)?;
     let shaders = CompiledShaders {
-        vertex_spv: options.out_dir.join("mtoon_smoke.vert.spv"),
-        fragment_spv: options.out_dir.join("mtoon_smoke.frag.spv"),
+        vertex_spv: options.out_dir.join("mtoon_base.vert.spv"),
+        fragment_spv: options.out_dir.join("mtoon_base.frag.spv"),
     };
     compile_shader(
         &options.glslang,
@@ -69,7 +69,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     validate_spirv(&shaders.vertex_spv)?;
     validate_spirv(&shaders.fragment_spv)?;
     println!(
-        "compiled ash MToon smoke shaders: {} {}",
+        "compiled ash MToon base shaders: {} {}",
         display_path(&shaders.vertex_spv),
         display_path(&shaders.fragment_spv)
     );

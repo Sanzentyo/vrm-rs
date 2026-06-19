@@ -81,19 +81,22 @@ affect the PSNR threshold until that external shader path is promoted from an
 opt-in experiment into the same checked MToon visual renderer as the wgpu and
 Bevy capture paths.
 
-For the current source-controlled shader handoff smoke, run:
+For the current source-controlled Ash MToon base shader handoff, run:
 
 ```powershell
-just ash-mtoon-smoke-readback
+just ash-mtoon-base-readback
 ```
 
-This compiles `crates/vrm-adapter-ash/shaders/mtoon_smoke.{vert,frag}.glsl`
+This compiles `crates/vrm-adapter-ash/shaders/mtoon_base.{vert,frag}.glsl`
 with `glslangValidator`, writes local SPIR-V under `target/`, feeds those
 modules into `unsafe_device_renderer --vertex-spv --fragment-spv`, and verifies
-the direct `.imqraw` bundle against the `.rgba.json` readback artifact. It is
-still a smoke shader, not the final MToon parity shader, but it proves that the
-stable Ash descriptor slots, external shader module path, Vulkan resources, and
-raw artifact path work together.
+the direct `.imqraw` bundle against the `.rgba.json` readback artifact. The
+shader now consumes the shared MToon uniform ABI, fixed texture slots,
+normal/tangent vertex attributes, UV animation, shade/shading-shift textures,
+alpha mode, and outline-pass flag. It is still not the final visual parity
+shader because Ash does not yet expose the full camera/light/material-extra
+uniform set used by the wgpu and Bevy captures, but it is past the previous
+color-only smoke handoff.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public

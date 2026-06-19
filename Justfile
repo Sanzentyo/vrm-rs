@@ -48,15 +48,22 @@ ash-render-parity-readback avatar=".external-fixtures/official/Seed-san.vrm" ani
     cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}" --width "{{ width }}" --height "{{ height }}" --out "{{ out_dir }}/ash/{{ artifact }}.frame000.rgba.json" --imqraw-out "{{ out_dir }}/ash/{{ artifact }}.frame000.imqraw"
     just imqraw-verify "{{ out_dir }}/ash/{{ artifact }}.frame000.imqraw" "{{ out_dir }}/ash/{{ artifact }}.frame000.rgba.json"
 
-# Compile the source-controlled ash MToon smoke GLSL shaders to local SPIR-V artifacts.
-ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-smoke-shaders":
-    cargo +nightly -Zscript tools/ash/compile-ash-mtoon-smoke-shaders.rs --out-dir "{{ out_dir }}"
+# Compile the source-controlled ash MToon base GLSL shaders to local SPIR-V artifacts.
+ash-mtoon-base-shaders out_dir="target/ash-mtoon-base-shaders":
+    cargo +nightly -Zscript tools/ash/compile-ash-mtoon-base-shaders.rs --out-dir "{{ out_dir }}"
 
-# Compile the ash MToon smoke shaders, run them through the unsafe renderer handoff, and verify raw artifacts.
-ash-mtoon-smoke-readback avatar=".external-fixtures/official/Seed-san.vrm" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san.external-spv" width="32" height="32" shader_dir="target/ash-mtoon-smoke-shaders":
-    just ash-mtoon-smoke-shaders "{{ shader_dir }}"
-    cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --no-animation --width "{{ width }}" --height "{{ height }}" --vertex-spv "{{ shader_dir }}/mtoon_smoke.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_smoke.frag.spv" --out "{{ out_dir }}/{{ artifact }}.frame000.rgba.json" --imqraw-out "{{ out_dir }}/{{ artifact }}.frame000.imqraw"
+# Compile the ash MToon base shaders, run them through the unsafe renderer handoff, and verify raw artifacts.
+ash-mtoon-base-readback avatar=".external-fixtures/official/Seed-san.vrm" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san.external-base" width="32" height="32" shader_dir="target/ash-mtoon-base-shaders":
+    just ash-mtoon-base-shaders "{{ shader_dir }}"
+    cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --no-animation --width "{{ width }}" --height "{{ height }}" --vertex-spv "{{ shader_dir }}/mtoon_base.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.frag.spv" --out "{{ out_dir }}/{{ artifact }}.frame000.rgba.json" --imqraw-out "{{ out_dir }}/{{ artifact }}.frame000.imqraw"
     just imqraw-verify "{{ out_dir }}/{{ artifact }}.frame000.imqraw" "{{ out_dir }}/{{ artifact }}.frame000.rgba.json"
+
+# Backward-compatible aliases for earlier Ash shader handoff notes.
+ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-base-shaders":
+    just ash-mtoon-base-shaders "{{ out_dir }}"
+
+ash-mtoon-smoke-readback avatar=".external-fixtures/official/Seed-san.vrm" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san.external-base" width="32" height="32" shader_dir="target/ash-mtoon-base-shaders":
+    just ash-mtoon-base-readback "{{ avatar }}" "{{ out_dir }}" "{{ artifact }}" "{{ width }}" "{{ height }}" "{{ shader_dir }}"
 
 # Stable render-parity gates.
 

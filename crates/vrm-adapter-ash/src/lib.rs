@@ -45,6 +45,8 @@ pub struct AshVrmVertex {
     pub position: [f32; 3],
     pub tex_coord_0: [f32; 2],
     pub color_0: [f32; 4],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 4],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -359,6 +361,18 @@ pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
             format: vk::Format::R32G32B32A32_SFLOAT,
             offset: std::mem::offset_of!(AshVrmVertex, color_0) as u32,
         },
+        AshVertexAttributePlan {
+            location: 3,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, normal) as u32,
+        },
+        AshVertexAttributePlan {
+            location: 4,
+            binding: 0,
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, tangent) as u32,
+        },
     ]
 }
 
@@ -495,6 +509,8 @@ impl AshVrmFramePlanner {
                         base_color[2] * vertex.color_0[2],
                         alpha,
                     ],
+                    normal: vertex.normal.to_array(),
+                    tangent: vertex.tangent.to_array(),
                 }
             })
             .collect();
@@ -831,6 +847,37 @@ mod tests {
     }
 
     #[test]
+    fn source_mtoon_shader_matches_rust_binding_contract() {
+        let vertex_shader = include_str!("../shaders/mtoon_base.vert.glsl");
+        let fragment_shader = include_str!("../shaders/mtoon_base.frag.glsl");
+
+        for (slot, expected_name) in [
+            (MtoonTextureSlot::Main, "main_texture"),
+            (MtoonTextureSlot::ShadeMultiply, "shade_multiply_texture"),
+            (MtoonTextureSlot::ShadingShift, "shading_shift_texture"),
+            (MtoonTextureSlot::Normal, "normal_texture"),
+            (MtoonTextureSlot::Matcap, "matcap_texture"),
+            (MtoonTextureSlot::RimMultiply, "rim_multiply_texture"),
+            (MtoonTextureSlot::OutlineWidth, "outline_width_texture"),
+            (
+                MtoonTextureSlot::UvAnimationMask,
+                "uv_animation_mask_texture",
+            ),
+        ] {
+            let declaration = format!(
+                "layout(set = 0, binding = {}) uniform sampler2D {expected_name};",
+                ash_mtoon_texture_binding(slot)
+            );
+            assert!(fragment_shader.contains(&declaration));
+        }
+
+        assert!(fragment_shader.contains("layout(set = 0, binding = 0, std140)"));
+        assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
+        assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
+        assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
+    }
+
+    #[test]
     fn renderer_frame_builds_buffers_and_sorted_draw_calls() {
         let plan = AshVrmFramePlan {
             primitives: vec![AshVrmPrimitive {
@@ -840,6 +887,8 @@ mod tests {
                     position: [0.0, 0.0, 0.0],
                     tex_coord_0: [0.0, 0.0],
                     color_0: [1.0, 1.0, 1.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
                 }],
                 indices: vec![0],
             }],
@@ -885,6 +934,8 @@ mod tests {
             renderer_frame.pipelines[0].vertex_attributes,
             ash_vrm_vertex_attributes()
         );
+        assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 5);
+        assert_eq!(renderer_frame.buffers[0].stride, 64);
         assert_eq!(
             renderer_frame.buffers[0].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER

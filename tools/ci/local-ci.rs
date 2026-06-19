@@ -432,11 +432,11 @@ fn run_example_smokes() -> Result<(), String> {
             [
                 "+nightly",
                 "-Zscript",
-                "tools/ash/compile-ash-mtoon-smoke-shaders.rs",
+                "tools/ash/compile-ash-mtoon-base-shaders.rs",
             ],
         )?;
     } else {
-        println!("skipping ash MToon smoke shader compile: glslangValidator is not on PATH");
+        println!("skipping ash MToon base shader compile: glslangValidator is not on PATH");
     }
     Ok(())
 }
