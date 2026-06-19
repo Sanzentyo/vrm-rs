@@ -439,6 +439,11 @@ render-parity-morph-expression-generated three_vrm_root=".external-fixtures/thre
     cargo +nightly -Zscript tools/render-parity/generate-morph-expression-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-morph-expression-generated --render-background transparent --render-alpha-mismatch-tolerance 8 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-expression happy=1.0 --render-fixture .external-fixtures/generated/morph-expression.vrm.gltf
 
+# Generate and render the expression morph fixture with Ash in the visual gate.
+render-parity-morph-expression-generated-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-morph-expression-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-morph-expression-generated-ash-gated --render-background transparent --render-alpha-mismatch-tolerance 8 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-mtoon-light-accumulation three-vrm --render-expression happy=1.0 --render-fixture .external-fixtures/generated/morph-expression.vrm.gltf
+
 # Regenerate a time-advanced MToon UV animation parity artifact.
 render-parity-uv-animation three_vrm_root=".external-fixtures/three-vrm" time="1.0" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-uv-animation --render-mtoon-time {{ time }} --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}" --render-fixture .external-fixtures/official/vrm-specification/samples/VRMC_materials_mtoon_UV_Animation_Test/VRMC_materials_mtoon_UV_Animation_Test.vrm

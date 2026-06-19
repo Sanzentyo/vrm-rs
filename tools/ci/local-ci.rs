@@ -1361,6 +1361,9 @@ fn capture_ash_readback(
         .arg(options.render_normal_map_mode.as_cli_value())
         .arg("--normal-map-scale")
         .arg(options.render_normal_map_scale.to_string());
+    for expression in &options.render_expressions {
+        command.arg("--expression").arg(expression);
+    }
     run_command(command)
 }
 

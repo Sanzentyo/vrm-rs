@@ -105,6 +105,9 @@ pub struct AshVrmFramePlanOptions {
     /// Renderer diagnostic mode for render-parity investigations.
     #[arg(long, value_enum, default_value_t = AshDiagnosticRender::Shaded)]
     pub diagnostic_render: AshDiagnosticRender,
+    /// Expression weights applied before baking renderer vertices/materials.
+    #[arg(long = "expression")]
+    pub expressions: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -1030,6 +1033,7 @@ pub struct AshVrmFramePlanner {
     scene: HeadlessSceneState,
     rig: HumanoidPoseRig,
     animation: Option<VrmAnimation>,
+    expression_effects: GltfExpressionRenderEffects,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1104,7 +1108,17 @@ impl AshVrmFramePlanner {
             scene,
             rig,
             animation,
+            expression_effects: GltfExpressionRenderEffects::default(),
         })
+    }
+
+    pub fn set_expression_weights<I, N>(&mut self, weights: I) -> Result<(), Box<dyn Error>>
+    where
+        I: IntoIterator<Item = (N, f32)>,
+        N: AsRef<str>,
+    {
+        self.expression_effects = self.loaded.expression_render_effects(weights)?;
+        Ok(())
     }
 
     pub fn sample_frame(&mut self, time_seconds: f32) -> Result<AshVrmFramePlan, Box<dyn Error>> {
@@ -1231,10 +1245,7 @@ impl AshVrmFramePlanner {
                 if !render_options.disable_outlines
                     && self
                         .loaded
-                        .expression_mtoon_outline_plan(
-                            primitive.material,
-                            &GltfExpressionRenderEffects::default(),
-                        )
+                        .expression_mtoon_outline_plan(primitive.material, &self.expression_effects)
                         .is_some()
                 {
                     let outline = self.bake_primitive(
@@ -1288,7 +1299,13 @@ impl AshVrmFramePlanner {
         primitive: &GltfPrimitiveData,
         settings: AshPrimitiveBakeSettings,
     ) -> Result<AshVrmPrimitive, Box<dyn Error>> {
-        let morph_weights = active_morph_weights(&self.scene, node_index, node, mesh);
+        let morph_weights = active_morph_weights(
+            &self.scene,
+            &self.expression_effects,
+            node_index,
+            node,
+            mesh,
+        );
         let world_matrices = self.world_matrices();
         let orientation = ash_model_orientation();
         let world = orientation * world_matrices[node_index];
@@ -1298,9 +1315,11 @@ impl AshVrmFramePlanner {
                 .get(skin)
                 .map(|skin| skin.joint_matrices(&self.loaded.scene, &world_matrices, orientation))
         });
-        let shading = self
-            .loaded
-            .material_shading_plan(primitive.material, GltfMaterialShadingOptions::default());
+        let shading = self.loaded.expression_material_shading_plan(
+            primitive.material,
+            GltfMaterialShadingOptions::default(),
+            &self.expression_effects,
+        );
         let normal_scale = if settings.render_options.disable_normal_maps {
             0.0
         } else {
@@ -1386,16 +1405,17 @@ impl AshVrmFramePlanner {
         skin_matrices: Option<&[Mat4]>,
         settings: AshPrimitiveBakeSettings,
     ) -> Option<Vec<vrm_io::GltfTransformedVertex>> {
-        let outline = self.loaded.expression_mtoon_outline_plan(
-            primitive.material,
-            &GltfExpressionRenderEffects::default(),
-        )?;
+        let outline = self
+            .loaded
+            .expression_mtoon_outline_plan(primitive.material, &self.expression_effects)?;
         let width_texture = self
             .loaded
             .material_outline_width_rgba8_image(primitive.material);
-        let uv_transforms = self
-            .loaded
-            .material_uv_transforms(primitive.material, settings.mtoon_time);
+        let uv_transforms = self.loaded.expression_material_uv_transforms(
+            primitive.material,
+            settings.mtoon_time,
+            &self.expression_effects,
+        );
         primitive.outline_vertices(
             morph_weights,
             GltfOutlineVertexSettings {
@@ -1497,14 +1517,32 @@ impl AshVrmFramePlanner {
             let mut gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
             apply_renderer_alpha_policy_to_uniform(&mut gpu.uniform, renderer_pipeline);
             let material = Some(plan.material.0);
+            let expression_shading = self.loaded.expression_material_shading_plan(
+                material,
+                GltfMaterialShadingOptions::default(),
+                &self.expression_effects,
+            );
+            apply_expression_shading_to_mtoon_uniform(
+                &mut gpu.uniform,
+                expression_shading,
+                plan.pass,
+            );
             let uv_uniform = AshMaterialUvUniform::from_plan(
                 self.loaded
-                    .material_uv_transforms(material, mtoon_time)
+                    .expression_material_uv_transforms(
+                        material,
+                        mtoon_time,
+                        &self.expression_effects,
+                    )
                     .uniform_plan(),
             );
             let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
                 self.loaded
-                    .material_shading_plan(material, GltfMaterialShadingOptions::default())
+                    .expression_material_shading_plan(
+                        material,
+                        GltfMaterialShadingOptions::default(),
+                        &self.expression_effects,
+                    )
                     .render_extra_plan(ash_material_render_extra_options(
                         scene_options,
                         render_options,
@@ -1549,6 +1587,7 @@ impl AshVrmFramePlanner {
                         mtoon_time,
                         scene_options,
                         render_options,
+                        &self.expression_effects,
                     )
                 }),
         );
@@ -1562,14 +1601,18 @@ fn ash_gltf_base_pipeline_plan(
     mtoon_time: f32,
     scene_options: AshSceneOptions,
     render_options: AshRenderOptions,
+    expression_effects: &GltfExpressionRenderEffects,
 ) -> AshMtoonPipelinePlan {
     let material_index = Some(material.0);
     let renderer_pipeline = ash_renderer_pipeline_plan(loaded, Some(material));
-    let shading =
-        loaded.material_shading_plan(material_index, GltfMaterialShadingOptions::default());
+    let shading = loaded.expression_material_shading_plan(
+        material_index,
+        GltfMaterialShadingOptions::default(),
+        expression_effects,
+    );
     let uv_uniform = AshMaterialUvUniform::from_plan(
         loaded
-            .material_uv_transforms(material_index, mtoon_time)
+            .expression_material_uv_transforms(material_index, mtoon_time, expression_effects)
             .uniform_plan(),
     );
     let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
@@ -1676,6 +1719,38 @@ fn apply_renderer_alpha_policy_to_uniform(
     uniform.flags[3] = ash_renderer_alpha_mode_code(pipeline.alpha_mode);
 }
 
+fn apply_expression_shading_to_mtoon_uniform(
+    uniform: &mut MtoonGpuUniform,
+    shading: vrm_io::GltfMaterialShadingPlan,
+    pass: MtoonRendererPass,
+) {
+    uniform.base_color_factor = shading.base_color;
+    uniform.shade_color_factor_cutoff[0] = shading.shade_color[0];
+    uniform.shade_color_factor_cutoff[1] = shading.shade_color[1];
+    uniform.shade_color_factor_cutoff[2] = shading.shade_color[2];
+    uniform.emissive_color_outline_width[0] = shading.emissive[0];
+    uniform.emissive_color_outline_width[1] = shading.emissive[1];
+    uniform.emissive_color_outline_width[2] = shading.emissive[2];
+    uniform.shading[2] = shading.shading_shift;
+    uniform.shading[3] = shading.shading_toony;
+    uniform.lighting[0] = shading.shading_shift_texture_scale;
+    uniform.lighting[2] = shading.gi_equalization;
+    uniform.matcap_factor_debug[0] = shading.matcap_factor[0];
+    uniform.matcap_factor_debug[1] = shading.matcap_factor[1];
+    uniform.matcap_factor_debug[2] = shading.matcap_factor[2];
+    uniform.rim_color_lighting_mix[0] = shading.parametric_rim_color[0];
+    uniform.rim_color_lighting_mix[1] = shading.parametric_rim_color[1];
+    uniform.rim_color_lighting_mix[2] = shading.parametric_rim_color[2];
+    uniform.rim_color_lighting_mix[3] = shading.rim_lighting_mix;
+    uniform.rim_params[0] = shading.parametric_rim_fresnel_power;
+    uniform.rim_params[1] = shading.parametric_rim_lift;
+    uniform.flags[1] = u32::from(shading.v0_compat_shade);
+    uniform.flags[2] = match pass {
+        MtoonRendererPass::Base => 0,
+        MtoonRendererPass::Outline => 1,
+    };
+}
+
 fn ash_material_render_extra_options(
     scene_options: AshSceneOptions,
     render_options: AshRenderOptions,
@@ -1703,6 +1778,7 @@ pub fn frame_plan_from_options_with_aspect(
 ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
     let animation = (!options.no_animation).then_some(options.animation.clone());
     let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
+    planner.set_expression_weights(parse_expression_args(&options.expressions)?)?;
     planner.sample_frame_with_full_render_options(
         options.time,
         options.scene_options(aspect_ratio),
@@ -1720,6 +1796,7 @@ pub fn frame_plan_from_options_with_viewport(
     let aspect_ratio = width as f32 / height as f32;
     let animation = (!options.no_animation).then_some(options.animation.clone());
     let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
+    planner.set_expression_weights(parse_expression_args(&options.expressions)?)?;
     planner.sample_frame_with_full_render_options(
         options.time,
         options.scene_options_with_screen_size(
@@ -2472,15 +2549,12 @@ fn animation_from_loaded(loaded: &LoadedVrm) -> Option<VrmAnimation> {
 
 fn active_morph_weights(
     scene: &HeadlessSceneState,
+    expression_effects: &GltfExpressionRenderEffects,
     node_index: usize,
     node: &GltfNodeRest,
     mesh: &vrm_io::GltfMeshData,
 ) -> Vec<f32> {
-    let mut weights = if node.weights.is_empty() {
-        mesh.weights.clone()
-    } else {
-        node.weights.clone()
-    };
+    let mut weights = expression_effects.active_morph_weights(node_index, node, mesh);
     for index in 0..mesh
         .primitives
         .iter()
@@ -2496,6 +2570,20 @@ fn active_morph_weights(
         }
     }
     weights
+}
+
+fn parse_expression_args(args: &[String]) -> Result<Vec<(String, f32)>, Box<dyn Error>> {
+    args.iter()
+        .map(|arg| {
+            let Some((name, weight)) = arg.split_once('=') else {
+                return Err(format!("invalid expression '{arg}', expected name=weight").into());
+            };
+            let weight = weight
+                .parse::<f32>()
+                .map_err(|err| format!("invalid expression weight in '{arg}': {err}"))?;
+            Ok((name.to_owned(), weight))
+        })
+        .collect()
 }
 
 fn headless_scene_from_loaded(loaded: &LoadedVrm) -> Result<HeadlessSceneState, Box<dyn Error>> {
@@ -2834,6 +2922,52 @@ mod tests {
     }
 
     #[test]
+    fn mtoon_uniform_can_apply_expression_shading_values() {
+        let mut uniform = MtoonGpuUniform::zeroed();
+        let shading = vrm_io::GltfMaterialShadingPlan {
+            base_color: [0.9, 0.8, 0.7, 0.6],
+            shade_color: [0.1, 0.2, 0.3, 1.0],
+            shading_shift: -0.25,
+            shading_toony: 0.75,
+            shading_shift_texture_scale: 0.5,
+            gi_equalization: 0.4,
+            emissive: [0.3, 0.2, 0.1],
+            matcap_factor: [0.6, 0.5, 0.4],
+            parametric_rim_color: [0.7, 0.6, 0.5],
+            rim_lighting_mix: 0.25,
+            parametric_rim_fresnel_power: 2.0,
+            parametric_rim_lift: 0.125,
+            normal_scale: 1.0,
+            metallic: 0.0,
+            roughness: 1.0,
+            occlusion_strength: 1.0,
+            pbr_fallback: false,
+            unlit: false,
+            v0_compat_shade: true,
+        };
+
+        apply_expression_shading_to_mtoon_uniform(&mut uniform, shading, MtoonRendererPass::Base);
+
+        assert_eq!(uniform.base_color_factor, [0.9, 0.8, 0.7, 0.6]);
+        assert_eq!(&uniform.shade_color_factor_cutoff[0..3], &[0.1, 0.2, 0.3]);
+        assert_eq!(
+            &uniform.emissive_color_outline_width[0..3],
+            &[0.3, 0.2, 0.1]
+        );
+        assert_eq!(uniform.shading[2], -0.25);
+        assert_eq!(uniform.shading[3], 0.75);
+        assert_eq!(uniform.lighting[0], 0.5);
+        assert_eq!(uniform.lighting[2], 0.4);
+        assert_eq!(&uniform.matcap_factor_debug[0..3], &[0.6, 0.5, 0.4]);
+        assert_eq!(&uniform.rim_color_lighting_mix[0..3], &[0.7, 0.6, 0.5]);
+        assert_eq!(uniform.rim_color_lighting_mix[3], 0.25);
+        assert_eq!(uniform.rim_params[0], 2.0);
+        assert_eq!(uniform.rim_params[1], 0.125);
+        assert_eq!(uniform.flags[1], 1);
+        assert_eq!(uniform.flags[2], 0);
+    }
+
+    #[test]
     fn owner_id_triangles_are_assigned_in_draw_order() {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
@@ -2881,6 +3015,8 @@ mod tests {
     fn render_options_carry_normal_map_diagnostics() {
         let options = AshVrmFramePlanOptions::parse_from([
             "ash-plan",
+            "--expression",
+            "happy=1.0",
             "--normal-map-mode",
             "view-derivative",
             "--normal-map-scale",
@@ -2893,6 +3029,11 @@ mod tests {
             "owner-id",
         ]);
 
+        assert_eq!(options.expressions, vec!["happy=1.0"]);
+        assert_eq!(
+            parse_expression_args(&options.expressions).unwrap(),
+            vec![("happy".to_owned(), 1.0)]
+        );
         let render_options = options.render_options();
 
         assert_eq!(

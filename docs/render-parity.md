@@ -1550,6 +1550,7 @@ For a generated expression morph audit, run:
 
 ```powershell
 just render-parity-morph-expression-generated
+just render-parity-morph-expression-generated-ash-gated
 ```
 
 This writes `.external-fixtures/generated/morph-expression.vrm.gltf` and
@@ -1557,12 +1558,16 @@ renders it into `.external-fixtures/render-parity-morph-expression-generated/`.
 The fixture exposes a VRM1 `happy` expression with a morph target bind, a
 material `color` bind, and a material texture-transform bind over an embedded
 bufferView PNG. The render harness passes `--render-expression happy=1.0`
-through three-vrm, wgpu, and Bevy. The current run has the expected tiny
-fill-rule alpha mismatch (`3`, tolerance `8`), while selected
+through three-vrm, wgpu, Bevy, and the Ash-gated variant. The current run has
+the expected tiny fill-rule alpha mismatch (`3`, tolerance `8`), while selected
 `rgb-interior1px` PSNR is wgpu `58.2703 dB` with max selected channel delta
-`1`, and Bevy `50.8123 dB` with max selected channel delta `2`. This guards
-expression morph, material-color, texture-transform, and binary-weight
-semantics in the concrete render paths without committing binary assets.
+`1`, Bevy `50.8123 dB` with max selected channel delta `2`, and Ash
+`58.2703 dB` with max selected channel delta `1`. This guards expression morph,
+material-color, texture-transform, and binary-weight semantics in the concrete
+render paths without committing binary assets. The Ash path applies the same
+`LoadedVrm::expression_render_effects` result to baked morph vertices,
+MToon/glTF material shading uniforms, texture-transform uniforms, and outline
+planning before the release-built Vulkan readback.
 
 For a license-safe transparent material audit, generate the local source-like
 fixture and render it on a transparent background:
