@@ -141,15 +141,18 @@ paths before further material-color work. The 2026-06-19 Seed-san smoke under
 alpha parity and stayed at Ash selected `rgb-visible` PSNR `15.4876 dB`, so the
 change is a compatibility prerequisite rather than the current visible blocker.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
-the remaining wgpu-equivalent local coverage/gradient ownership and exact MToon
-material accumulation behavior. The current 256px Seed-san owner-id smoke has
+the remaining wgpu-equivalent local coverage and broader real-fixture color
+behavior. The current 256px Seed-san owner-id smoke has
 exact Ash-vs-wgpu owner coverage (`12665/12665` shared nonzero owners), and the
 focused base-color diagnostic reports Ash-vs-three-vrm `rgbAll` PSNR
 `32.9738 dB` versus wgpu/Bevy around `34.53 dB`. The direct imqraw
 `changedPixels.highDelta` buckets now make that residual easier to triage: large
 Ash-vs-wgpu deltas are a small tail whose shared-nonblack subset is edge-heavy,
 while Ash-vs-three-vrm still contains local expected-only/actual-only and
-gradient/coverage differences.
+gradient/coverage differences. The generated MToon light/color fixture is no
+longer the current Ash blocker: `just render-parity-mtoon-light-ash-generated`
+passes Ash at selected `rgb-interior1px` `59.7573 dB`, max selected-channel
+delta `2`, and all 12 named swatches within `<= 2`.
 Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
 fail-under and max-delta threshold arguments to Ash once the current
 texture/material color parity gap is closed.
@@ -1369,6 +1372,9 @@ terms without relying on redistributable binary model assets, run:
 just render-parity-mtoon-light-generated
 ```
 
+Use `just render-parity-mtoon-light-ash-generated` for the same generated
+fixture with supplemental Ash readback and Ash swatch reports.
+
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
 contains twelve opaque MToon quads for forced base lighting, forced shade
@@ -1383,7 +1389,11 @@ one-pixel silhouette/rasterization disagreement does not dominate the shader
 color score. The current run reports selected PSNR wgpu `59.7573 dB` with max
 selected channel delta `2`, and Bevy `51.1653 dB` with max selected channel
 delta `2`; the aggregate recipe now fails if selected channel delta exceeds
-`2`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
+`2`. The Ash variant writes
+`.external-fixtures/render-parity-mtoon-light-ash-generated/`, currently passes
+Ash at selected `rgb-interior1px` `59.7573 dB` with max selected channel delta
+`2`, and keeps Ash non-gating in the review manifest while still enforcing the
+explicit Ash swatch report. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
 disabled for parity while still extracting and applying glTF occlusion to
 non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is

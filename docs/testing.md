@@ -446,8 +446,12 @@ material policy from being flattened into one renderer-global or
 material-global rule. The generated MToon
 light/color fixture now contains 12 swatches, including mid-ramp interpolation
 cases, and the swatch comparator is run after aggregate PSNR to catch per-term
-drift. For direct-light
-isolation, `just render-parity-mtoon-light-direct-generated` disables ambient
+drift. Use `just render-parity-mtoon-light-ash-generated` when the same
+source-like light fixture should also emit Ash readback artifacts and Ash
+swatch reports; the Ash comparison remains non-gating in the review manifest,
+but the recipe verifies aggregate `rgb-interior1px` and named swatch color
+parity for the Vulkan handoff path. For direct-light isolation,
+`just render-parity-mtoon-light-direct-generated` disables ambient
 on both the three-vrm and Rust capture sides while reusing the same generated
 MToon light/color fixture. For ambient-light isolation,
 `just render-parity-mtoon-light-ambient-generated` disables directional light
