@@ -135,8 +135,10 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
     - [x] IO loader policy API: `vrm-io` now exposes `load_vrm_from_slice_with_policy` / `load_vrm_from_path_with_policy` and returns `LoadedVrmWithDiagnostics`, merging sans-IO diagnostics with IO warnings and unknown root-extension preservation warnings while keeping the existing strict loaders unchanged.
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
     - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
+    - [x] Writer acceptance hardening: `GltfSource` validates GLB declared length and chunk alignment up front, preserves unknown GLB chunks through metadata edits, and keeps root unknown extensions/extras intact in generated roundtrip coverage.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
     - [x] Foundation: `GltfSource` can patch VRM1/VRM0 metadata, re-encode `.gltf` or `.glb` while preserving non-JSON GLB chunks, and atomically save the edited or original source through a same-directory temp file.
+    - [x] Writer options and metadata helpers: compact/pretty JSON output is selectable for `.gltf` and `.glb`, metadata patch byte helpers are public, and metadata patch atomic saves fail before touching the destination when the source shape is unsupported.
   - [x] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.
   - [x] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.
   - [ ] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.

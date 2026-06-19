@@ -507,14 +507,33 @@ impl GltfSource {
     }
 
     pub fn to_bytes_with_json(&self, json: &Value) -> Result<Vec<u8>, VrmIoError> {
+        self.to_bytes_with_json_options(json, GltfWriteOptions::default())
+    }
+
+    pub fn to_bytes_with_json_options(
+        &self,
+        json: &Value,
+        options: GltfWriteOptions,
+    ) -> Result<Vec<u8>, VrmIoError> {
         match self.format {
-            GltfSourceFormat::Json => {
-                serde_json::to_vec(json).map_err(|source| VrmIoError::SourceWrite {
-                    message: format!("could not serialize glTF JSON: {source}"),
-                })
-            }
-            GltfSourceFormat::Glb { .. } => self.to_glb_bytes_with_json(json),
+            GltfSourceFormat::Json => serialize_json(json, options.json_format),
+            GltfSourceFormat::Glb { .. } => self.to_glb_bytes_with_json_options(json, options),
         }
+    }
+
+    pub fn to_bytes_with_metadata_patch(
+        &self,
+        patch: &VrmMetadataPatch,
+    ) -> Result<Vec<u8>, VrmIoError> {
+        self.to_bytes_with_metadata_patch_options(patch, GltfWriteOptions::default())
+    }
+
+    pub fn to_bytes_with_metadata_patch_options(
+        &self,
+        patch: &VrmMetadataPatch,
+        options: GltfWriteOptions,
+    ) -> Result<Vec<u8>, VrmIoError> {
+        self.to_bytes_with_json_options(&self.edited_vrm_metadata(patch)?, options)
     }
 
     pub fn save_with_json_atomic(
@@ -523,6 +542,38 @@ impl GltfSource {
         json: &Value,
     ) -> Result<(), VrmIoError> {
         write_atomic(path.as_ref(), &self.to_bytes_with_json(json)?)
+    }
+
+    pub fn save_with_json_options_atomic(
+        &self,
+        path: impl AsRef<Path>,
+        json: &Value,
+        options: GltfWriteOptions,
+    ) -> Result<(), VrmIoError> {
+        write_atomic(
+            path.as_ref(),
+            &self.to_bytes_with_json_options(json, options)?,
+        )
+    }
+
+    pub fn save_with_metadata_patch_atomic(
+        &self,
+        path: impl AsRef<Path>,
+        patch: &VrmMetadataPatch,
+    ) -> Result<(), VrmIoError> {
+        write_atomic(path.as_ref(), &self.to_bytes_with_metadata_patch(patch)?)
+    }
+
+    pub fn save_with_metadata_patch_options_atomic(
+        &self,
+        path: impl AsRef<Path>,
+        patch: &VrmMetadataPatch,
+        options: GltfWriteOptions,
+    ) -> Result<(), VrmIoError> {
+        write_atomic(
+            path.as_ref(),
+            &self.to_bytes_with_metadata_patch_options(patch, options)?,
+        )
     }
 
     pub fn save_original_atomic(&self, path: impl AsRef<Path>) -> Result<(), VrmIoError> {
@@ -569,11 +620,12 @@ impl GltfSource {
         })
     }
 
-    fn to_glb_bytes_with_json(&self, json: &Value) -> Result<Vec<u8>, VrmIoError> {
-        let mut json_bytes =
-            serde_json::to_vec(json).map_err(|source| VrmIoError::SourceWrite {
-                message: format!("could not serialize GLB JSON chunk: {source}"),
-            })?;
+    fn to_glb_bytes_with_json_options(
+        &self,
+        json: &Value,
+        options: GltfWriteOptions,
+    ) -> Result<Vec<u8>, VrmIoError> {
+        let mut json_bytes = serialize_json(json, options.json_format)?;
         pad_json_chunk(&mut json_bytes);
 
         let chunks = self
@@ -611,6 +663,28 @@ impl GltfSource {
         }
         Ok(output)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GltfWriteOptions {
+    pub json_format: GltfJsonFormat,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GltfJsonFormat {
+    #[default]
+    Compact,
+    Pretty,
+}
+
+fn serialize_json(json: &Value, format: GltfJsonFormat) -> Result<Vec<u8>, VrmIoError> {
+    match format {
+        GltfJsonFormat::Compact => serde_json::to_vec(json),
+        GltfJsonFormat::Pretty => serde_json::to_vec_pretty(json),
+    }
+    .map_err(|source| VrmIoError::SourceWrite {
+        message: format!("could not serialize glTF JSON: {source}"),
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -841,15 +915,14 @@ fn parse_glb_chunks(bytes: &[u8]) -> Result<Vec<GlbChunk>, VrmIoError> {
     }
     let declared_length =
         u32::from_le_bytes(bytes[8..12].try_into().expect("slice length checked")) as usize;
-    if declared_length > bytes.len() {
+    if declared_length != bytes.len() {
         return Err(VrmIoError::SourcePreservation {
             message: format!(
-                "GLB declared length {declared_length} exceeds input length {}",
+                "GLB declared length {declared_length} does not match input length {}",
                 bytes.len()
             ),
         });
     }
-
     let mut offset = 12;
     let mut chunks = Vec::new();
     while offset < declared_length {
@@ -868,6 +941,11 @@ fn parse_glb_chunks(bytes: &[u8]) -> Result<Vec<GlbChunk>, VrmIoError> {
                 .try_into()
                 .expect("slice length checked"),
         );
+        if !chunk_len.is_multiple_of(4) {
+            return Err(VrmIoError::SourcePreservation {
+                message: format!("GLB chunk length {chunk_len} is not 4-byte aligned"),
+            });
+        }
         let data_start = offset + 8;
         let data_end =
             data_start
@@ -4129,6 +4207,38 @@ mod tests {
     }
 
     #[test]
+    fn writer_options_pretty_json_round_trip_normalized_document() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VENDOR_lossless"] = json!({ "kept": true });
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        let bytes = loaded
+            .source()
+            .to_bytes_with_json_options(
+                &loaded.source().json,
+                GltfWriteOptions {
+                    json_format: GltfJsonFormat::Pretty,
+                },
+            )
+            .unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            text.contains("\n  "),
+            "pretty writer should include indentation"
+        );
+        let reloaded = load_vrm_from_slice(&bytes).unwrap();
+
+        assert_eq!(
+            reloaded.model().document().meta,
+            loaded.model().document().meta
+        );
+        assert_eq!(
+            reloaded.source().root_extension("VENDOR_lossless").unwrap()["kept"],
+            true
+        );
+    }
+
+    #[test]
     fn metadata_patch_rewrites_glb_json_while_preserving_bin_chunk() {
         let mut sample = generated_vrm1_gltf();
         sample["buffers"] = json!([{ "byteLength": 4 }]);
@@ -4151,6 +4261,99 @@ mod tests {
             vec![1, 3, 5, 7]
         );
         assert_eq!(reloaded.buffers, vec![vec![1, 3, 5, 7]]);
+    }
+
+    #[test]
+    fn metadata_patch_options_preserve_unknown_glb_chunks_and_padding() {
+        const VENDOR_CHUNK: u32 = 0x5858_5858;
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VENDOR_glb"] = json!({ "raw": "kept" });
+        let source = GltfSource::from_slice(&generated_glb_with_chunks(
+            sample,
+            &[
+                (GLB_BIN_CHUNK_TYPE, vec![1, 2, 3]),
+                (VENDOR_CHUNK, vec![9, 8]),
+            ],
+        ))
+        .unwrap();
+
+        let rewritten = source
+            .to_bytes_with_metadata_patch_options(
+                &VrmMetadataPatch::new().with_name("Pretty GLB"),
+                GltfWriteOptions {
+                    json_format: GltfJsonFormat::Pretty,
+                },
+            )
+            .unwrap();
+        let rewritten_source = GltfSource::from_slice(&rewritten).unwrap();
+
+        assert_eq!(
+            rewritten_source.format,
+            GltfSourceFormat::Glb {
+                version: 2,
+                declared_length: rewritten.len() as u32
+            }
+        );
+        assert_eq!(
+            rewritten_source
+                .glb_chunks
+                .iter()
+                .find(|chunk| chunk.raw_type == VENDOR_CHUNK)
+                .unwrap()
+                .bytes,
+            vec![9, 8, 0, 0]
+        );
+        assert_eq!(rewritten.len() % 4, 0);
+        assert_eq!(
+            rewritten_source.json["extensions"]["VRMC_vrm"]["meta"]["name"],
+            "Pretty GLB"
+        );
+        assert!(
+            std::str::from_utf8(&rewritten_source.json_bytes)
+                .unwrap()
+                .contains("\n  ")
+        );
+    }
+
+    #[test]
+    fn metadata_patch_atomic_helper_preserves_original_on_error() {
+        let source = GltfSource::from_slice(br#"{ "asset": { "version": "2.0" } }"#).unwrap();
+        let path = temp_output_path("metadata-patch-atomic", "gltf");
+        fs::write(&path, b"original").unwrap();
+
+        let err = source
+            .save_with_metadata_patch_atomic(
+                &path,
+                &VrmMetadataPatch::new().with_name("Atomic Edited"),
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("missing glTF root extensions object")
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn glb_source_validation_rejects_bad_header_length_and_chunk_alignment() {
+        let sample = generated_vrm1_gltf();
+        let mut bad_declared_len = generated_glb(sample.clone(), &[]);
+        let wrong_len = (bad_declared_len.len() as u32 + 4).to_le_bytes();
+        bad_declared_len[8..12].copy_from_slice(&wrong_len);
+        let err = GltfSource::from_slice(&bad_declared_len).unwrap_err();
+        assert!(err.to_string().contains("does not match input length"));
+
+        let mut unaligned_chunk = Vec::new();
+        unaligned_chunk.extend_from_slice(GLB_MAGIC);
+        unaligned_chunk.extend_from_slice(&2u32.to_le_bytes());
+        unaligned_chunk.extend_from_slice(&23u32.to_le_bytes());
+        unaligned_chunk.extend_from_slice(&3u32.to_le_bytes());
+        unaligned_chunk.extend_from_slice(&GLB_JSON_CHUNK_TYPE.to_le_bytes());
+        unaligned_chunk.extend_from_slice(b"{} ");
+        let err = GltfSource::from_slice(&unaligned_chunk).unwrap_err();
+        assert!(err.to_string().contains("not 4-byte aligned"));
     }
 
     #[test]
@@ -5702,14 +5905,30 @@ mod tests {
     }
 
     fn generated_glb(json: Value, bin: &[u8]) -> Vec<u8> {
+        generated_glb_with_chunks(json, &[(GLB_BIN_CHUNK_TYPE, bin.to_vec())])
+    }
+
+    fn generated_glb_with_chunks(json: Value, chunks: &[(u32, Vec<u8>)]) -> Vec<u8> {
         let mut json_bytes = json.to_string().into_bytes();
         pad_json_chunk(&mut json_bytes);
-        let mut bin_bytes = bin.to_vec();
-        while !bin_bytes.len().is_multiple_of(4) {
-            bin_bytes.push(0);
-        }
+        let padded_chunks = chunks
+            .iter()
+            .map(|(raw_type, bytes)| {
+                let mut bytes = bytes.clone();
+                while !bytes.len().is_multiple_of(4) {
+                    bytes.push(0);
+                }
+                (*raw_type, bytes)
+            })
+            .collect::<Vec<_>>();
 
-        let total_len = 12 + 8 + json_bytes.len() + 8 + bin_bytes.len();
+        let total_len = 12
+            + 8
+            + json_bytes.len()
+            + padded_chunks
+                .iter()
+                .map(|(_, bytes)| 8 + bytes.len())
+                .sum::<usize>();
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(GLB_MAGIC);
         bytes.extend_from_slice(&2u32.to_le_bytes());
@@ -5717,9 +5936,11 @@ mod tests {
         bytes.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&GLB_JSON_CHUNK_TYPE.to_le_bytes());
         bytes.extend_from_slice(&json_bytes);
-        bytes.extend_from_slice(&(bin_bytes.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&GLB_BIN_CHUNK_TYPE.to_le_bytes());
-        bytes.extend_from_slice(&bin_bytes);
+        for (raw_type, chunk_bytes) in padded_chunks {
+            bytes.extend_from_slice(&(chunk_bytes.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&raw_type.to_le_bytes());
+            bytes.extend_from_slice(&chunk_bytes);
+        }
         bytes
     }
 

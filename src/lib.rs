@@ -43,10 +43,11 @@ pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocum
 pub use vrm_io::{
     CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
     DecodedTexturePayload, Diagnostic, DiagnosticPolicy, DiagnosticReport, DiagnosticSeverity,
-    FileResourceReader, JointPaletteCompaction, JsonPath, LoadedVrmWithDiagnostics, MeshCodec,
-    MeshCodecProvider, OptimizeError, OptimizeOptions, OptimizeReport, ResourceData, ResourceError,
-    ResourceLimits, ResourceReader, ResourceSource, TextureCodec, TextureCodecProvider,
-    TextureOutputFormat, VertexRemap, apply_joint_compaction_to_skin, optimize_primitive,
+    FileResourceReader, GltfJsonFormat, GltfSource, GltfWriteOptions, JointPaletteCompaction,
+    JsonPath, LoadedVrmWithDiagnostics, MeshCodec, MeshCodecProvider, OptimizeError,
+    OptimizeOptions, OptimizeReport, ResourceData, ResourceError, ResourceLimits, ResourceReader,
+    ResourceSource, TextureCodec, TextureCodecProvider, TextureOutputFormat, VertexRemap,
+    VrmMetadataPatch, apply_joint_compaction_to_skin, optimize_primitive,
 };
 pub use vrm_io::{
     LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_path_with_policy, load_vrm_from_slice,

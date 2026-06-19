@@ -17,6 +17,7 @@ Current generated coverage:
 - Dependency-free OSC packet roundtrips for all supported OSC value variants, nested arrays/bundles, UDP packets, TCP length-prefixed packets, stream-fragment waiting, OSC string padding, and root facade `osc` feature re-export.
 - `vrm-io` optimizer preprocessing for degenerate triangle removal, unused vertex compaction, stale unused joint data, skin-weight normalization, weighted joint-palette compaction, empty morph target removal, skin palette application, and invalid attribute/index/joint diagnostics.
 - Policy-aware `vrm-io` loading with structured diagnostics: strict loaders keep fail-fast behavior, lenient loading reports malformed VRM1 expression JSON with a stable path and skips that expression, unknown root extensions are preserved in `GltfSource` while reported as warnings, and existing VRMA/animation warnings are mirrored into `DiagnosticReport`.
+- Preserved-source writer coverage for compact/pretty `.gltf` and `.glb` JSON output, VRM1/VRM0 metadata patch helpers, same-directory atomic save failure behavior, GLB declared-length and chunk-alignment validation, and unknown GLB chunk retention through edits.
 
 This keeps licensing simple while still exercising `gltf::import_slice`, extension extraction, sans-IO mapping, validation, and resolved model construction.
 
@@ -491,14 +492,14 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 77.52% | 79.80% |
+| Workspace total | 77.66% | 79.93% |
 | `vrm-adapter-ash` | 37.76% | 43.38% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
 | `vrm-adapter` | 69.62% | 77.50% |
 | `vrm-core` | 73.86% | 79.39% |
 | `vrm-diagnostics` | 87.50% | 90.60% |
-| `vrm-io` | 88.17% | 87.27% |
+| `vrm-io` | 88.38% | 87.58% |
 | `vrm-osc` | 68.00% | 70.53% |
 | `vrm-protocol` | 93.02% | 91.16% |
 | `vrm-runtime` | 93.06% | 93.80% |
