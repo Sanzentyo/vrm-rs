@@ -1298,7 +1298,11 @@ diffuse uses `pbrAmbient`, rim lighting uses the same direct-plus-indirect
 accumulator (`1.0 + pbrAmbient`) as the three-vrm non-physical-light path, and
 the final exposure multiplier is fixed at `1.0` instead of inheriting the old
 PSNR-tuned `0.78` capture coefficient. The older `tuned` mode remains available
-as an explicit diagnostic switch. Re-run the focused exact-light path with:
+as an explicit diagnostic switch. The renderer-neutral reference ABI now also
+exposes `MtoonLitShadeInputs` and `mtoon_lit_shade_rate`, and
+`MTOON_REFERENCE_WGSL` uses the same `linearstep(-feather, feather, dotNL +
+shift)` toon-ramp equation used by three-vrm and by the concrete wgpu, Bevy, and
+Ash capture shaders. Re-run the focused exact-light path with:
 
 ```powershell
 just render-parity-light-three-vrm

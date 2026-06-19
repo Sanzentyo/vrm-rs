@@ -1971,6 +1971,51 @@ impl MtoonLightingValues {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MtoonLitShadeInputs {
+    pub ndotl: f32,
+    pub shading_shift_factor: f32,
+    pub shading_shift_texture_value: f32,
+    pub shading_shift_texture_scale: f32,
+    pub shading_toony_factor: f32,
+}
+
+impl MtoonLitShadeInputs {
+    pub fn from_uniform(
+        uniform: &MtoonGpuUniform,
+        ndotl: f32,
+        shading_shift_texture_value: f32,
+    ) -> Self {
+        Self {
+            ndotl,
+            shading_shift_factor: uniform.shading[2],
+            shading_shift_texture_value,
+            shading_shift_texture_scale: uniform.lighting[0],
+            shading_toony_factor: uniform.shading[3],
+        }
+    }
+
+    pub fn shade_rate(self) -> f32 {
+        let shift = self.shading_shift_factor
+            + self.shading_shift_texture_value * self.shading_shift_texture_scale;
+        mtoon_linearstep(
+            -1.0 + self.shading_toony_factor.clamp(0.0, 1.0),
+            1.0 - self.shading_toony_factor.clamp(0.0, 1.0),
+            self.ndotl + shift,
+        )
+    }
+}
+
+#[inline(always)]
+pub fn mtoon_linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0)
+}
+
+#[inline(always)]
+pub fn mtoon_lit_shade_rate(inputs: MtoonLitShadeInputs) -> f32 {
+    inputs.shade_rate()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MtoonMaterialDescriptor {
     pub material: MaterialRef,
@@ -5951,6 +5996,40 @@ mod tests {
     }
 
     #[test]
+    fn mtoon_lit_shade_rate_matches_three_vrm_linearstep_contract() {
+        let forced_lit = MtoonLitShadeInputs {
+            ndotl: 1.0,
+            shading_shift_factor: 0.0,
+            shading_shift_texture_value: 0.0,
+            shading_shift_texture_scale: 1.0,
+            shading_toony_factor: 0.9,
+        };
+        assert_eq!(mtoon_lit_shade_rate(forced_lit), 1.0);
+
+        let forced_shade = MtoonLitShadeInputs {
+            ndotl: -1.0,
+            ..forced_lit
+        };
+        assert_eq!(mtoon_lit_shade_rate(forced_shade), 0.0);
+
+        let mid_ramp = MtoonLitShadeInputs {
+            ndotl: 0.0,
+            shading_toony_factor: 0.0,
+            ..forced_lit
+        };
+        assert!((mtoon_lit_shade_rate(mid_ramp) - 0.5).abs() <= 0.000_001);
+
+        let shifted_by_texture = MtoonLitShadeInputs {
+            ndotl: -0.25,
+            shading_shift_factor: -0.1,
+            shading_shift_texture_value: 0.5,
+            shading_shift_texture_scale: 0.7,
+            shading_toony_factor: 0.0,
+        };
+        assert!((mtoon_lit_shade_rate(shifted_by_texture) - 0.5).abs() <= 0.000_001);
+    }
+
+    #[test]
     fn mtoon_material_descriptors_include_pipeline_passes_and_parameters() {
         let document = VrmDocument {
             materials: vec![vrm_core::Material {
@@ -6166,6 +6245,19 @@ mod tests {
         assert_eq!(gpu[0].texture_bindings[0].texture_binding, 1);
         assert_eq!(gpu[0].texture_bindings[0].sampler_binding, 2);
         assert_eq!(gpu[0].texture_bindings[1].combined_image_sampler_binding, 2);
+        assert_eq!(
+            MtoonLitShadeInputs::from_uniform(&gpu[0].uniform, -0.25, 0.5),
+            MtoonLitShadeInputs {
+                ndotl: -0.25,
+                shading_shift_factor: 0.0,
+                shading_shift_texture_value: 0.5,
+                shading_shift_texture_scale: 1.0,
+                shading_toony_factor: 0.9,
+            }
+        );
+        assert!(MTOON_REFERENCE_WGSL.contains("fn mtoon_linearstep"));
+        assert!(MTOON_REFERENCE_WGSL.contains("shading_shift_texture_value * uniform.lighting.x"));
+        assert!(!MTOON_REFERENCE_WGSL.contains("smoothstep"));
     }
 
     #[test]

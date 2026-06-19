@@ -41,14 +41,21 @@ fn mtoon_uv_animation(uniform: MtoonGpuUniform, uv: vec2<f32>, time_seconds: f32
     return rotated + vec2<f32>(0.5, 0.5) + scroll;
 }
 
-fn mtoon_lit_shade_rate(uniform: MtoonGpuUniform, ndotl: f32) -> f32 {
-    let shift = uniform.shading.z;
+fn mtoon_lit_shade_rate(
+    uniform: MtoonGpuUniform,
+    ndotl: f32,
+    shading_shift_texture_value: f32,
+) -> f32 {
+    let shift = uniform.shading.z + shading_shift_texture_value * uniform.lighting.x;
     let toony = clamp(uniform.shading.w, 0.0, 1.0);
-    let shifted = clamp(ndotl + shift, 0.0, 1.0);
-    return smoothstep(1.0 - toony, 1.0, shifted);
+    return mtoon_linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
 }
 
 fn mtoon_mix_shade(uniform: MtoonGpuUniform, base_color: vec3<f32>, shade_rate: f32) -> vec3<f32> {
     let shade = uniform.shade_color_factor_cutoff.xyz;
     return mix(shade, base_color, shade_rate);
+}
+
+fn mtoon_linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    return clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
 }
