@@ -867,7 +867,7 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                     vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
                     vertex_attributes: ash_vrm_vertex_attributes(),
                     color_format: vk::Format::R8G8B8A8_UNORM,
-                    depth_format: Some(vk::Format::D32_SFLOAT),
+                    depth_format: Some(ash_reference_depth_format()),
                 })
         })
         .collect::<Vec<_>>();
@@ -1959,6 +1959,10 @@ fn vrm_vulkan_front_face() -> vk::FrontFace {
     vk::FrontFace::COUNTER_CLOCKWISE
 }
 
+pub const fn ash_reference_depth_format() -> vk::Format {
+    vk::Format::D24_UNORM_S8_UINT
+}
+
 pub const fn ash_mtoon_uniform_binding() -> u32 {
     0
 }
@@ -2806,6 +2810,10 @@ mod tests {
         assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
             ash_vrm_vertex_attributes()
+        );
+        assert_eq!(
+            renderer_frame.pipelines[0].depth_format,
+            Some(ash_reference_depth_format())
         );
         assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 7);
         assert_eq!(renderer_frame.buffers[0].stride, 72);

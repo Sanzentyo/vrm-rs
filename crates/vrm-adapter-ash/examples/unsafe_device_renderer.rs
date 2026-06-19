@@ -14,8 +14,9 @@ use std::{
 };
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
-    AshVertexAttributePlan, AshVrmFramePlanOptions, ash_renderer_frame_from_plan,
-    ash_texture_fallback_for_binding, frame_plan_from_options_with_viewport,
+    AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
+    ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
+    frame_plan_from_options_with_viewport,
 };
 use vrm_io::GltfMaterialTextureFallback;
 
@@ -84,6 +85,7 @@ struct VulkanFrameResources {
     readback: VulkanBuffer,
     readback_len: usize,
     command_pool: vk::CommandPool,
+    depth_format: vk::Format,
 }
 
 struct VulkanBuffer {
@@ -328,7 +330,7 @@ impl UnsafeAshDeviceRenderer {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let color_format = vk::Format::R8G8B8A8_UNORM;
-        let depth_format = vk::Format::D32_SFLOAT;
+        let depth_format = self.select_depth_format()?;
         let color_target = self.create_image(
             color_format,
             vk::Extent3D {
@@ -347,7 +349,7 @@ impl UnsafeAshDeviceRenderer {
                 depth: 1,
             },
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            vk::ImageAspectFlags::DEPTH,
+            depth_aspect_mask(depth_format),
         )?;
         let readback_len = extent.width as usize * extent.height as usize * 4;
         let readback = self.create_host_buffer(
@@ -443,6 +445,7 @@ impl UnsafeAshDeviceRenderer {
             readback,
             readback_len,
             command_pool,
+            depth_format,
         })
     }
 
@@ -533,6 +536,25 @@ impl UnsafeAshDeviceRenderer {
             memory,
             view,
         })
+    }
+
+    fn select_depth_format(&self) -> Result<vk::Format, Box<dyn Error>> {
+        [
+            ash_reference_depth_format(),
+            vk::Format::X8_D24_UNORM_PACK32,
+            vk::Format::D32_SFLOAT,
+        ]
+        .into_iter()
+        .find(|format| {
+            let properties = unsafe {
+                self.instance
+                    .get_physical_device_format_properties(self.physical_device, *format)
+            };
+            properties
+                .optimal_tiling_features
+                .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+        })
+        .ok_or_else(|| "no supported Vulkan depth attachment format found".into())
     }
 
     fn create_fallback_textures(&self) -> Result<VulkanFallbackTextures, Box<dyn Error>> {
@@ -1356,6 +1378,7 @@ struct RgbaJsonArtifact<'a> {
     readback: &'a ReadbackFrame,
     width: u32,
     height: u32,
+    depth_format: Option<vk::Format>,
 }
 
 fn write_rgba_json(
@@ -1378,6 +1401,7 @@ fn write_rgba_json(
             "shaderSource": shader_source_label(artifact_input.shaders),
             "graphicsPipelines": artifact_input.frame.pipelines.len(),
             "drawCalls": artifact_input.frame.draw_calls.len(),
+            "depthFormat": artifact_input.depth_format.map(ash_format_label),
             "diagnosticOwnerIds": ash_diagnostic_owner_ids_json(artifact_input.diagnostic_owner_ids),
         },
         "readback": {
@@ -1483,6 +1507,26 @@ fn ash_compare_op_label(compare: vk::CompareOp) -> &'static str {
     }
 }
 
+fn ash_format_label(format: vk::Format) -> &'static str {
+    match format {
+        vk::Format::D24_UNORM_S8_UINT => "D24_UNORM_S8_UINT",
+        vk::Format::X8_D24_UNORM_PACK32 => "X8_D24_UNORM_PACK32",
+        vk::Format::D32_SFLOAT => "D32_SFLOAT",
+        vk::Format::R8G8B8A8_UNORM => "R8G8B8A8_UNORM",
+        vk::Format::R8G8B8A8_SRGB => "R8G8B8A8_SRGB",
+        _ => "UNKNOWN",
+    }
+}
+
+fn depth_aspect_mask(format: vk::Format) -> vk::ImageAspectFlags {
+    match format {
+        vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT => {
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        }
+        _ => vk::ImageAspectFlags::DEPTH,
+    }
+}
+
 fn write_imqraw_rgba8(path: &Path, width: u32, height: u32, rgba: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -1525,6 +1569,7 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
             readback: &readback,
             width,
             height,
+            depth_format: None,
         },
     )?;
     write_imqraw_rgba8(&imqraw_path, width, height, &rgba)?;
@@ -1632,7 +1677,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         options.clear_alpha,
     )?;
     println!(
-        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans, {} shaders on physical device {:?}",
+        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans, {} shaders, depth {}, on physical device {:?}",
         resources.buffers.len(),
         resources.images.len(),
         resources.descriptor_sets.len(),
@@ -1640,6 +1685,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         resources.command_buffers.len(),
         renderer_frame.draw_calls.len(),
         shader_source_label(shaders.source),
+        ash_format_label(resources.depth_format),
         renderer.physical_device
     );
     if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
@@ -1661,6 +1707,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     readback: &summary,
                     width: options.width.max(1),
                     height: options.height.max(1),
+                    depth_format: Some(resources.depth_format),
                 },
             )?;
         }
