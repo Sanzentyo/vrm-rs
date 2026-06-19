@@ -78,12 +78,28 @@ pub struct AshVrmFramePlanOptions {
     /// MToon light accumulation mode.
     #[arg(long, value_enum, default_value_t = AshMtoonLightAccumulation::ThreeVrm)]
     pub mtoon_light_accumulation: AshMtoonLightAccumulation,
+    /// Renderer diagnostic mode for render-parity investigations.
+    #[arg(long, value_enum, default_value_t = AshDiagnosticRender::Shaded)]
+    pub diagnostic_render: AshDiagnosticRender,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum AshMtoonLightAccumulation {
     Tuned,
     ThreeVrm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum AshDiagnosticRender {
+    Shaded,
+    Flat,
+    BaseFactor,
+    BaseColor,
+    BaseColorFlipV,
+    BaseColorRawSrgb,
+    Uv,
+    BaseUv,
+    OwnerId,
 }
 
 impl From<AshMtoonLightAccumulation> for MtoonLightAccumulation {
@@ -111,6 +127,29 @@ impl AshVrmFramePlanOptions {
                 ambient_gi_scale: self.mtoon_ambient_gi_scale,
                 pbr_ambient: self.pbr_ambient,
             },
+        }
+    }
+
+    fn diagnostic_render_extra(&self) -> AshDiagnosticRender {
+        self.diagnostic_render
+    }
+}
+
+impl AshDiagnosticRender {
+    fn flat_flag(self) -> f32 {
+        if self == Self::Flat { 1.0 } else { 0.0 }
+    }
+
+    fn mode_code(self) -> f32 {
+        match self {
+            Self::BaseFactor => -1.0,
+            Self::BaseColor => 1.0,
+            Self::BaseColorFlipV => 2.0,
+            Self::BaseColorRawSrgb => 1.25,
+            Self::Uv => 3.0,
+            Self::BaseUv => 4.0,
+            Self::OwnerId => 5.0,
+            Self::Shaded | Self::Flat => 0.0,
         }
     }
 }
@@ -868,6 +907,19 @@ impl AshVrmFramePlanner {
         time_seconds: f32,
         scene_options: AshSceneOptions,
     ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
+        self.sample_frame_with_render_options(
+            time_seconds,
+            scene_options,
+            AshDiagnosticRender::Shaded,
+        )
+    }
+
+    pub fn sample_frame_with_render_options(
+        &mut self,
+        time_seconds: f32,
+        scene_options: AshSceneOptions,
+        diagnostic_render: AshDiagnosticRender,
+    ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
         if let Some(animation) = &self.animation {
             let time = if animation.duration > f32::EPSILON {
                 time_seconds.rem_euclid(animation.duration)
@@ -883,7 +935,7 @@ impl AshVrmFramePlanner {
             )?;
         }
         self.scene.update_world_transforms()?;
-        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds);
+        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds, diagnostic_render);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
@@ -967,11 +1019,13 @@ impl AshVrmFramePlanner {
     ) -> Result<AshVrmPrimitive, Box<dyn Error>> {
         let morph_weights = active_morph_weights(&self.scene, node_index, node, mesh);
         let world_matrices = self.world_matrices();
-        let world = world_matrices[node_index];
+        let orientation = ash_model_orientation();
+        let world = orientation * world_matrices[node_index];
         let skin_matrices = node.skin.and_then(|skin| {
-            self.loaded.skins.get(skin).map(|skin| {
-                skin.joint_matrices(&self.loaded.scene, &world_matrices, Mat4::IDENTITY)
-            })
+            self.loaded
+                .skins
+                .get(skin)
+                .map(|skin| skin.joint_matrices(&self.loaded.scene, &world_matrices, orientation))
         });
         let shading = self
             .loaded
@@ -1105,7 +1159,11 @@ impl AshVrmFramePlanner {
             .collect()
     }
 
-    fn mtoon_pipeline_plans(&self, mtoon_time: f32) -> Vec<AshMtoonPipelinePlan> {
+    fn mtoon_pipeline_plans(
+        &self,
+        mtoon_time: f32,
+        diagnostic_render: AshDiagnosticRender,
+    ) -> Vec<AshMtoonPipelinePlan> {
         mtoon_renderer_material_plans(
             self.loaded.model().document(),
             MtoonMaterializationOptions::default(),
@@ -1119,12 +1177,14 @@ impl AshVrmFramePlanner {
                     .material_uv_transforms(material, mtoon_time)
                     .uniform_plan(),
             );
-            let render_extra_uniform = AshMaterialExtraUniform::from_plan(
+            let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
                 self.loaded
                     .material_shading_plan(material, GltfMaterialShadingOptions::default())
                     .render_extra_plan(GltfMaterialRenderExtraOptions::default())
                     .uniform_plan(),
             );
+            render_extra_uniform.flags2[2] = diagnostic_render.flat_flag();
+            render_extra_uniform.flags2[3] = diagnostic_render.mode_code();
             AshMtoonPipelinePlan {
                 material: plan.material,
                 name: plan.name,
@@ -1172,7 +1232,11 @@ pub fn frame_plan_from_options_with_aspect(
 ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
     let animation = (!options.no_animation).then_some(options.animation.clone());
     let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
-    planner.sample_frame_with_scene_options(options.time, options.scene_options(aspect_ratio))
+    planner.sample_frame_with_render_options(
+        options.time,
+        options.scene_options(aspect_ratio),
+        options.diagnostic_render_extra(),
+    )
 }
 
 fn required_texture_refs(
@@ -1210,6 +1274,10 @@ fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
         left[2] * right[2],
         left[3] * right[3],
     ]
+}
+
+fn ash_model_orientation() -> Mat4 {
+    Mat4::from_rotation_y(std::f32::consts::PI)
 }
 
 fn ash_vertex_normal_scales(
@@ -1642,6 +1710,15 @@ mod tests {
         assert_eq!(std::mem::size_of::<AshMaterialExtraUniform>(), 64);
         assert_eq!(extra.bytes().len(), 64);
         assert_eq!(extra.pbr_params, [0.0, 1.0, 1.0, 1.0]);
+        assert_eq!(AshDiagnosticRender::Flat.flat_flag(), 1.0);
+        assert_eq!(AshDiagnosticRender::Shaded.flat_flag(), 0.0);
+        assert_eq!(AshDiagnosticRender::BaseFactor.mode_code(), -1.0);
+        assert_eq!(AshDiagnosticRender::BaseColor.mode_code(), 1.0);
+        assert_eq!(AshDiagnosticRender::BaseColorFlipV.mode_code(), 2.0);
+        assert_eq!(AshDiagnosticRender::BaseColorRawSrgb.mode_code(), 1.25);
+        assert_eq!(AshDiagnosticRender::Uv.mode_code(), 3.0);
+        assert_eq!(AshDiagnosticRender::BaseUv.mode_code(), 4.0);
+        assert_eq!(AshDiagnosticRender::OwnerId.mode_code(), 5.0);
     }
 
     #[test]
@@ -1687,6 +1764,9 @@ mod tests {
         assert!(fragment_shader.contains("texture(occlusion_texture, occlusion_uv)"));
         assert!(fragment_shader.contains("srgb_to_linear_color(raw_main_texel.rgb)"));
         assert!(fragment_shader.contains("base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y)"));
+        assert!(fragment_shader.contains("material_extra.flags2.z > 0.5"));
+        assert!(fragment_shader.contains("material_extra.flags2.w > 4.5"));
+        assert!(fragment_shader.contains("material_extra.flags2.w < -0.5"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));
         assert!(fragment_shader.contains("centered.x * c + centered.y * s"));

@@ -82,13 +82,18 @@ lighting knobs into the Ash frame plan. The current Ash path also applies the
 Vulkan clip-space Y flip/front-face pairing, bakes base color into vertices,
 generates missing tangents, carries per-vertex normal scale and double-sided
 state, binds slot-specific fallback textures, and uses the same UV animation
-rotation direction as the wgpu/Bevy capture shader before readback. It is still
+rotation direction as the wgpu/Bevy capture shader before readback. Ash also
+accepts the same render-parity `--diagnostic-render` modes and applies the same
+VRM model-orientation boundary to baked world/skinning matrices. It is still
 non-gating: the latest focused Seed-san review artifact is
-`target/render-parity-ash-review-128-uvanim-rotation`, where Ash reaches
-`13.4959 dB` selected `rgb-visible` PSNR with exact opaque alpha parity while
-wgpu/Bevy remain above `32 dB`. Keep `--render-ash-visual-gate` opt-in until
-the Ash GLSL/resource path gains the remaining wgpu-equivalent texture-presence
-and MToon material accumulation behavior.
+`target/render-parity-ash-review-128-oriented-diagnostics`, where Ash reaches
+`15.4876 dB` selected `rgb-visible` PSNR with exact opaque alpha parity while
+wgpu/Bevy remain above `32 dB`. The oriented diagnostic artifacts are
+`target/render-parity-ash-diagnostic-flat-128-oriented` (`22.3215 dB`) and
+`target/render-parity-ash-diagnostic-base-color-128-oriented` (`19.3898 dB`).
+Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
+the remaining wgpu-equivalent outline/primitive edge coverage and MToon
+material accumulation behavior.
 Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
 fail-under and max-delta threshold arguments to Ash once the current
 texture/material color parity gap is closed.

@@ -232,6 +232,30 @@ void main() {
         discard;
     }
     float opaque_alpha = alpha_mode == 0u ? 1.0 : alpha;
+    if (material_extra.flags2.z > 0.5) {
+        out_color = vec4(vec3(1.0), opaque_alpha);
+        return;
+    }
+    if (material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5) {
+        out_color = output_color(material_extra.owner_color.rgb, opaque_alpha);
+        return;
+    }
+    if (material_extra.flags2.w > 2.5) {
+        if (material_extra.flags2.w > 3.5) {
+            out_color = output_color(vec3(base_sample_uv, 0.0), opaque_alpha);
+            return;
+        }
+        out_color = output_color(vec3(in_tex_coord_0, 0.0), opaque_alpha);
+        return;
+    }
+    if (material_extra.flags2.w < -0.5) {
+        out_color = output_color(in_color_0.rgb, opaque_alpha);
+        return;
+    }
+    if (material_extra.flags2.w > 0.5) {
+        out_color = output_color(diffuse, opaque_alpha);
+        return;
+    }
 
     vec3 normal = mtoon_normal(normal_uv, gl_FrontFacing);
     vec3 light_dir = normalize(scene.light_dir.xyz);

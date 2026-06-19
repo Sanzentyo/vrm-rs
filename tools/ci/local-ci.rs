@@ -1333,6 +1333,8 @@ fn capture_ash_readback(
         .arg(render_light_units(options).pbr_ambient.to_string())
         .arg("--mtoon-light-accumulation")
         .arg(options.render_mtoon_light_accumulation.as_cli_value())
+        .arg("--diagnostic-render")
+        .arg(options.render_diagnostic_mode.as_cli_value())
         .arg("--clear-alpha")
         .arg(render_clear_alpha(options).to_string())
         .arg("--out")
