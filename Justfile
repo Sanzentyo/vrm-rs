@@ -71,7 +71,7 @@ ash-mtoon-smoke-readback avatar=".external-fixtures/official/Seed-san.vrm" out_d
 render-parity three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"
 
-# Regenerate the default render parity artifacts and include validated ash readback artifacts as supplemental captures.
+# Regenerate the default render parity artifacts and include Ash readback as a non-gating comparison.
 render-parity-with-ash-readback three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"
 

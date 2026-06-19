@@ -52,6 +52,8 @@ struct Options {
     #[arg(long)]
     render_ash_readback: bool,
     #[arg(long)]
+    render_ash_visual_gate: bool,
+    #[arg(long)]
     skip_core: bool,
     #[arg(long)]
     skip_coverage: bool,
@@ -323,10 +325,16 @@ fn run(options: Options) -> Result<(), String> {
     if options.external_fixtures {
         run_external_fixture_ci(&options)?;
     }
+    if options.render_ash_visual_gate && !options.render_ash_readback {
+        return Err("--render-ash-visual-gate requires --render-ash-readback".to_owned());
+    }
+
     if options.render_parity {
         run_render_parity_ci(&options)?;
     } else if options.render_ash_readback {
         return Err("--render-ash-readback requires --render-parity".to_owned());
+    } else if options.render_ash_visual_gate {
+        return Err("--render-ash-visual-gate requires --render-parity".to_owned());
     }
 
     Ok(())
@@ -610,6 +618,12 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     }
     prepare_render_output_dirs(options)?;
     let fixtures = render_fixtures(options)?;
+    let comparison_renderers = render_comparison_renderers(options);
+    let ash_shaders = if options.render_ash_readback {
+        Some(compile_ash_mtoon_base_shaders()?)
+    } else {
+        None
+    };
     for fixture in &fixtures {
         capture_three_vrm_reference(options, fixture)?;
         verify_render_imqraw_matches_rgba(options, fixture, "three-vrm")?;
@@ -620,17 +634,19 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         capture_bevy(options, fixture)?;
         verify_render_imqraw_matches_rgba(options, fixture, "bevy")?;
         write_render_png_from_artifact(options, fixture, "bevy")?;
-        verify_render_alpha_consistency(options, fixture)?;
-        compare_render_imqraw_pair(options, fixture, "wgpu")?;
-        compare_render_rgba_json_pair(options, fixture, "wgpu")?;
-        compare_render_imqraw_pair(options, fixture, "bevy")?;
-        compare_render_rgba_json_pair(options, fixture, "bevy")?;
-        write_render_diff_image(options, fixture, "wgpu")?;
-        write_render_diff_image(options, fixture, "bevy")?;
         if options.render_ash_readback {
-            capture_ash_readback(options, fixture)?;
+            let shaders = ash_shaders
+                .as_ref()
+                .ok_or("--render-ash-readback requires compiled ash shaders")?;
+            capture_ash_readback(options, fixture, shaders)?;
             verify_render_imqraw_matches_rgba(options, fixture, "ash")?;
             write_render_png_from_artifact(options, fixture, "ash")?;
+        }
+        verify_render_alpha_consistency(options, fixture)?;
+        for renderer in &comparison_renderers {
+            compare_render_imqraw_pair(options, fixture, renderer.name, renderer.visual_gate)?;
+            compare_render_rgba_json_pair(options, fixture, renderer.name)?;
+            write_render_diff_image(options, fixture, renderer.name)?;
         }
     }
     let summary = render_summary_markdown(options, &fixtures)?;
@@ -638,6 +654,55 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     write_render_review_manifest(options, &fixtures)?;
     write_render_visual_review(options, &fixtures, &summary)?;
     validate_render_review_manifest(options)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RenderComparisonRenderer {
+    name: &'static str,
+    visual_gate: bool,
+}
+
+fn render_comparison_renderers(options: &Options) -> Vec<RenderComparisonRenderer> {
+    let mut renderers = vec![
+        RenderComparisonRenderer {
+            name: "wgpu",
+            visual_gate: true,
+        },
+        RenderComparisonRenderer {
+            name: "bevy",
+            visual_gate: true,
+        },
+    ];
+    if options.render_ash_readback {
+        renderers.push(RenderComparisonRenderer {
+            name: "ash",
+            visual_gate: options.render_ash_visual_gate,
+        });
+    }
+    renderers
+}
+
+#[derive(Clone, Debug)]
+struct AshMtoonShaderPaths {
+    vertex_spv: PathBuf,
+    fragment_spv: PathBuf,
+}
+
+fn compile_ash_mtoon_base_shaders() -> Result<AshMtoonShaderPaths, String> {
+    let out_dir = PathBuf::from("target/render-parity-ash-mtoon-shaders");
+    let mut command = Command::new("cargo");
+    command.args([
+        "+nightly",
+        "-Zscript",
+        "tools/ash/compile-ash-mtoon-base-shaders.rs",
+        "--out-dir",
+        path(&out_dir).as_str(),
+    ]);
+    run_command(command)?;
+    Ok(AshMtoonShaderPaths {
+        vertex_spv: out_dir.join("mtoon_base.vert.spv"),
+        fragment_spv: out_dir.join("mtoon_base.frag.spv"),
+    })
 }
 
 fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
@@ -1227,7 +1292,11 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
     run_command(command)
 }
 
-fn capture_ash_readback(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
+fn capture_ash_readback(
+    options: &Options,
+    fixture: &RenderFixture,
+    shaders: &AshMtoonShaderPaths,
+) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command
         .arg("run")
@@ -1244,11 +1313,24 @@ fn capture_ash_readback(options: &Options, fixture: &RenderFixture) -> Result<()
         .arg(options.render_width.to_string())
         .arg("--height")
         .arg(options.render_height.to_string())
+        .arg("--clear-alpha")
+        .arg(render_clear_alpha(options).to_string())
         .arg("--out")
         .arg(path(&render_artifact(options, fixture, "ash")))
         .arg("--imqraw-out")
-        .arg(path(&render_imqraw_artifact(options, fixture, "ash")));
+        .arg(path(&render_imqraw_artifact(options, fixture, "ash")))
+        .arg("--vertex-spv")
+        .arg(path(&shaders.vertex_spv))
+        .arg("--fragment-spv")
+        .arg(path(&shaders.fragment_spv));
     run_command(command)
+}
+
+fn render_clear_alpha(options: &Options) -> f32 {
+    match options.render_background {
+        RenderBackground::OpaqueBlack => 1.0,
+        RenderBackground::Transparent => 0.0,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1326,6 +1408,7 @@ fn compare_render_imqraw_pair(
     options: &Options,
     fixture: &RenderFixture,
     renderer: &str,
+    visual_gate: bool,
 ) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command.args([
@@ -1341,17 +1424,19 @@ fn compare_render_imqraw_pair(
         "--metric",
         options.render_psnr_metric.as_cli_value(),
     ]);
-    if let Some(fail_under) = options.render_fail_under {
-        command.args(["--fail-under", fail_under.to_string().as_str()]);
-    }
-    if let Some(max_delta) = options.render_max_selected_channel_delta {
-        command.args([
-            "--max-selected-channel-delta",
-            max_delta.to_string().as_str(),
-        ]);
-    }
-    if let Some(max_delta) = options.render_max_alpha_delta {
-        command.args(["--max-alpha-delta", max_delta.to_string().as_str()]);
+    if visual_gate {
+        if let Some(fail_under) = options.render_fail_under {
+            command.args(["--fail-under", fail_under.to_string().as_str()]);
+        }
+        if let Some(max_delta) = options.render_max_selected_channel_delta {
+            command.args([
+                "--max-selected-channel-delta",
+                max_delta.to_string().as_str(),
+            ]);
+        }
+        if let Some(max_delta) = options.render_max_alpha_delta {
+            command.args(["--max-alpha-delta", max_delta.to_string().as_str()]);
+        }
     }
     run_command(command)
 }
@@ -1744,12 +1829,17 @@ fn render_summary_markdown(
     };
     let rows = fixtures
         .iter()
-        .flat_map(|fixture| ["wgpu", "bevy"].map(move |renderer| (fixture, renderer)))
+        .flat_map(|fixture| {
+            render_comparison_renderers(options)
+                .into_iter()
+                .map(move |renderer| (fixture, renderer))
+        })
         .map(|(fixture, renderer)| {
             Ok(RenderSummaryRow {
                 fixture_name: fixture.name.clone(),
-                renderer: renderer.to_owned(),
-                report: render_report_summary(options, fixture, renderer)?,
+                renderer: renderer.name.to_owned(),
+                visual_gate: renderer.visual_gate,
+                report: render_report_summary(options, fixture, renderer.name)?,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1806,43 +1896,32 @@ fn render_review_manifest_fixture(
     options: &Options,
     fixture: &RenderFixture,
 ) -> Result<serde_json::Value, String> {
-    let comparisons = ["wgpu", "bevy"]
+    let comparisons = render_comparison_renderers(options)
         .into_iter()
         .map(|renderer| render_review_manifest_comparison(options, fixture, renderer))
         .collect::<Result<Vec<_>, _>>()?;
-    let supplemental_captures = if options.render_ash_readback {
-        vec![serde_json::json!({
-            "renderer": "ash",
-            "role": "validated-readback-artifact",
-            "visualParityGate": false,
-            "note": "The ash unsafe_device_renderer currently validates Vulkan submit/readback artifact shape; it is not yet part of the wgpu/Bevy visual PSNR threshold.",
-            "capture": render_review_manifest_artifacts(options, fixture, "ash"),
-        })]
-    } else {
-        Vec::new()
-    };
     Ok(serde_json::json!({
         "name": &fixture.name,
         "stem": &fixture.stem,
         "source": path(&fixture.path),
         "reference": render_review_manifest_artifacts(options, fixture, "three-vrm"),
         "comparisons": comparisons,
-        "supplementalCaptures": supplemental_captures,
     }))
 }
 
 fn render_review_manifest_comparison(
     options: &Options,
     fixture: &RenderFixture,
-    renderer: &str,
+    renderer: RenderComparisonRenderer,
 ) -> Result<serde_json::Value, String> {
-    let report = render_report_summary(options, fixture, renderer)?;
+    let report = render_report_summary(options, fixture, renderer.name)?;
     Ok(serde_json::json!({
-        "renderer": renderer,
-        "capture": render_review_manifest_artifacts(options, fixture, renderer),
-        "numericReport": path(&render_imqraw_report(options, fixture, renderer)),
-        "diagnosticReport": path(&render_report(options, fixture, renderer)),
-        "diffPng": path(&render_diff_png(options, fixture, renderer)),
+        "renderer": renderer.name,
+        "visualParityGate": renderer.visual_gate,
+        "capture": render_review_manifest_artifacts(options, fixture, renderer.name),
+        "numericReport": path(&render_imqraw_report(options, fixture, renderer.name)),
+        "diagnosticReport": path(&render_report(options, fixture, renderer.name)),
+        "diffPng": path(&render_diff_png(options, fixture, renderer.name)),
         "summary": {
             "selectedPsnr": report.selected_psnr,
             "maxChannelDelta": report.max_channel_delta,
@@ -1896,6 +1975,7 @@ struct RenderSummaryMeta {
 struct RenderSummaryRow {
     fixture_name: String,
     renderer: String,
+    visual_gate: bool,
     report: RenderReportSummary,
 }
 
@@ -1924,14 +2004,15 @@ fn render_summary_markdown_from_rows(
         meta.alpha_mismatch_tolerance,
         meta.alpha_channel_tolerance,
     ));
-    output.push_str("| Fixture | Renderer | Selected PSNR | Max channel delta | Alpha mismatches | Alpha max delta | Pass |\n");
-    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Fixture | Renderer | Visual gate | Selected PSNR | Max channel delta | Alpha mismatches | Alpha max delta | Pass |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n");
 
     for row in rows {
         output.push_str(&format!(
-            "| `{}` | `{}` | {} | {} | {} | {} | {} |\n",
+            "| `{}` | `{}` | {} | {} | {} | {} | {} | {} |\n",
             row.fixture_name,
             row.renderer,
+            if row.visual_gate { "yes" } else { "no" },
             row.report.selected_psnr,
             row.report.max_channel_delta,
             row.report.alpha_mismatches,
@@ -2033,8 +2114,8 @@ fn write_render_visual_review(
     h1 {{ font-size: 22px; margin-bottom: 4px; }}
     h2 {{ margin-top: 28px; }}
     .meta {{ color: #666; margin-top: 0; }}
-    .grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }}
-    .diff-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }}
+    .diff-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 20px; }}
     figure {{ margin: 0; border: 1px solid #9995; padding: 12px; }}
     img {{ width: 100%; image-rendering: pixelated; background: repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 / 24px 24px; }}
     figcaption {{ font-weight: 600; margin-top: 8px; }}
@@ -2065,6 +2146,66 @@ fn render_visual_review_section(
     options: &Options,
     fixture: &RenderFixture,
 ) -> Result<String, String> {
+    let comparison_renderers = render_comparison_renderers(options);
+    let capture_figures = comparison_renderers
+        .iter()
+        .map(|renderer| {
+            format!(
+                r#"    <figure>
+      <img src="{renderer}/{stem}.frame000.png" alt="{fixture_name} {renderer_label} capture">
+      <figcaption>{renderer_label} capture{gate_note}</figcaption>
+    </figure>"#,
+                fixture_name = html_escape(&fixture.name),
+                renderer = html_escape(renderer.name),
+                renderer_label = html_escape(renderer_label(renderer.name)),
+                stem = html_escape(&fixture.stem),
+                gate_note = if renderer.visual_gate {
+                    ""
+                } else {
+                    " (non-gating)"
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let diff_figures = comparison_renderers
+        .iter()
+        .map(|renderer| {
+            format!(
+                r#"    <figure>
+      <img src="diff/{stem}.{renderer}-vs-three-vrm.diff.png" alt="{fixture_name} {renderer_label} diff heatmap">
+      <figcaption>{renderer_label} diff heatmap (red: RGB, blue: alpha){gate_note}</figcaption>
+    </figure>"#,
+                fixture_name = html_escape(&fixture.name),
+                renderer = html_escape(renderer.name),
+                renderer_label = html_escape(renderer_label(renderer.name)),
+                stem = html_escape(&fixture.stem),
+                gate_note = if renderer.visual_gate {
+                    ""
+                } else {
+                    " (non-gating)"
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reports = comparison_renderers
+        .iter()
+        .map(|renderer| {
+            Ok(format!(
+                r#"  <h3>{renderer_label} vs three-vrm{gate_note}</h3>
+  <pre>{report}</pre>"#,
+                renderer_label = html_escape(renderer_label(renderer.name)),
+                gate_note = if renderer.visual_gate {
+                    ""
+                } else {
+                    " (non-gating)"
+                },
+                report = html_escape(&report_text(options, fixture, renderer.name)?),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join("\n");
     Ok(format!(
         r#"<section>
   <h2>{fixture_name}</h2>
@@ -2073,35 +2214,28 @@ fn render_visual_review_section(
       <img src="three-vrm/{stem}.frame000.png" alt="{fixture_name} three-vrm reference">
       <figcaption>three-vrm reference</figcaption>
     </figure>
-    <figure>
-      <img src="wgpu/{stem}.frame000.png" alt="{fixture_name} wgpu capture">
-      <figcaption>wgpu capture</figcaption>
-    </figure>
-    <figure>
-      <img src="bevy/{stem}.frame000.png" alt="{fixture_name} Bevy capture">
-      <figcaption>Bevy capture</figcaption>
-    </figure>
+{capture_figures}
   </section>
   <section class="diff-grid">
-    <figure>
-      <img src="diff/{stem}.wgpu-vs-three-vrm.diff.png" alt="{fixture_name} wgpu diff heatmap">
-      <figcaption>wgpu diff heatmap (red: RGB, blue: alpha)</figcaption>
-    </figure>
-    <figure>
-      <img src="diff/{stem}.bevy-vs-three-vrm.diff.png" alt="{fixture_name} Bevy diff heatmap">
-      <figcaption>Bevy diff heatmap (red: RGB, blue: alpha)</figcaption>
-    </figure>
+{diff_figures}
   </section>
-  <h3>wgpu vs three-vrm</h3>
-  <pre>{wgpu_report}</pre>
-  <h3>Bevy vs three-vrm</h3>
-  <pre>{bevy_report}</pre>
+{reports}
 </section>"#,
         fixture_name = html_escape(&fixture.name),
         stem = html_escape(&fixture.stem),
-        wgpu_report = html_escape(&report_text(options, fixture, "wgpu")?),
-        bevy_report = html_escape(&report_text(options, fixture, "bevy")?),
+        capture_figures = capture_figures,
+        diff_figures = diff_figures,
+        reports = reports,
     ))
+}
+
+fn renderer_label(renderer: &str) -> &str {
+    match renderer {
+        "bevy" => "Bevy",
+        "wgpu" => "wgpu",
+        "ash" => "Ash",
+        other => other,
+    }
 }
 
 fn report_text(

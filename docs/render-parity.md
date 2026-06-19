@@ -70,16 +70,15 @@ just render-parity-with-ash-readback
 This forwards `--render-ash-readback` to `tools/ci/local-ci.rs`. The ash
 artifacts are written under the selected render-parity directory as
 `ash/<fixture>.frame000.{rgba.json,imqraw,png}`, verified with the same
-imqraw/RGBA byte check, and recorded in `review-manifest.json` as
-`supplementalCaptures`. The ash example already allocates real Vulkan uniform
-buffers, sampled texture images, samplers, descriptor sets, graphics pipelines,
-and offscreen readback resources from the MToon frame plan. It also accepts
-external precompiled SPIR-V through `--vertex-spv` and `--fragment-spv`, so a
-MToon-compatible shader experiment can reuse the same descriptor/resource plan
-without committing shader binaries to the repository. It intentionally does not
-affect the PSNR threshold until that external shader path is promoted from an
-opt-in experiment into the same checked MToon visual renderer as the wgpu and
-Bevy capture paths.
+imqraw/RGBA byte check, compared against the three-vrm reference with the same
+RGBA and direct `.imqraw` report writers used by wgpu and Bevy, and recorded in
+`review-manifest.json` as a `comparisons[]` entry with `visualParityGate: false`.
+The local runner compiles the source-controlled Ash MToon GLSL handoff into
+SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
+`unsafe_device_renderer --vertex-spv --fragment-spv`, so the review path no
+longer compares the built-in color-smoke shader. Pass `--render-ash-visual-gate`
+with `--render-ash-readback` to apply the same fail-under and max-delta threshold
+arguments to Ash once the current color parity gap is closed.
 
 For the current source-controlled Ash MToon base shader handoff, run:
 
@@ -106,11 +105,13 @@ clamping, rim plus matcap composition, and render-extra direct-light scaling. It
 now also emits expanded outline primitives through the same renderer-neutral
 outline helper used by the wgpu and Bevy captures, and routes those draws to the
 outline pipeline rather than the base pipeline. It is still not the final visual
-parity shader: Ash remains supplemental until the full PSNR/visual review harness
-is wired in the same way as wgpu and Bevy.
+parity shader: Ash is now visible in the full PSNR/visual review harness, but it
+remains non-gating by default until its color accumulation reaches the wgpu/Bevy
+threshold floor.
 
-`tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
-emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
+`tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, Bevy, and
+optionally Ash to emit `.frame000.imqraw` beside their `.rgba.json` artifacts.
+The current public
 `imq image` CLI still does not expose the VRM-specific selected-metric gates
 needed by this repository, so the local runner uses the Rust comparator below
 as the authoritative direct-raw numeric gate.

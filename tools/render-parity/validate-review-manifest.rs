@@ -121,6 +121,10 @@ fn validate_comparison(
 ) -> Result<(), Box<dyn Error>> {
     expect_object(comparison, source)?;
     require_string(comparison, "renderer")?;
+    comparison
+        .get("visualParityGate")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{source}.visualParityGate must be a boolean"))?;
     let capture = artifact_group_paths(
         required_object(comparison, "capture", source)?,
         base_dir,

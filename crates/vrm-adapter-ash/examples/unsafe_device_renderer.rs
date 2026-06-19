@@ -34,6 +34,9 @@ struct Options {
     /// Offscreen framebuffer height for the drawable pipeline smoke.
     #[arg(long, default_value_t = 64)]
     height: u32,
+    /// Clear alpha for the offscreen color target.
+    #[arg(long, default_value_t = 0.0)]
+    clear_alpha: f32,
     /// Submit the recorded offscreen draw and read back the color attachment.
     #[arg(long)]
     submit_readback: bool,
@@ -116,6 +119,7 @@ struct CommandRecordContext<'a> {
     fallback_texture_staging: &'a VulkanBuffer,
     color_target: vk::Image,
     readback_buffer: vk::Buffer,
+    clear_alpha: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -241,6 +245,7 @@ impl UnsafeAshDeviceRenderer {
         frame: &AshRendererFrame,
         extent: vk::Extent2D,
         shaders: &ShaderModuleSources,
+        clear_alpha: f32,
     ) -> Result<VulkanFrameResources, Box<dyn Error>> {
         let command_pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(self.queue_family_index)
@@ -381,6 +386,7 @@ impl UnsafeAshDeviceRenderer {
             fallback_texture_staging: &fallback_texture_staging,
             color_target: color_target.image,
             readback_buffer: readback.buffer,
+            clear_alpha,
         };
         let command_buffers = self.record_command_buffers(frame, &command_context)?;
         Ok(VulkanFrameResources {
@@ -848,7 +854,7 @@ impl UnsafeAshDeviceRenderer {
         let clear_values = [
             vk::ClearValue {
                 color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 0.0],
+                    float32: [0.0, 0.0, 0.0, context.clear_alpha.clamp(0.0, 1.0)],
                 },
             },
             vk::ClearValue {
@@ -1427,6 +1433,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             height: options.height.max(1),
         },
         &shaders,
+        options.clear_alpha,
     )?;
     println!(
         "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans, {} shaders on physical device {:?}",
