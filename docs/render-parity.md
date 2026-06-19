@@ -141,8 +141,15 @@ paths before further material-color work. The 2026-06-19 Seed-san smoke under
 alpha parity and stayed at Ash selected `rgb-visible` PSNR `15.4876 dB`, so the
 change is a compatibility prerequisite rather than the current visible blocker.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
-the remaining wgpu-equivalent outline/primitive edge coverage and MToon
-material accumulation behavior.
+the remaining wgpu-equivalent local coverage/gradient ownership and exact MToon
+material accumulation behavior. The current 256px Seed-san owner-id smoke has
+exact Ash-vs-wgpu owner coverage (`12665/12665` shared nonzero owners), and the
+focused base-color diagnostic reports Ash-vs-three-vrm `rgbAll` PSNR
+`32.9738 dB` versus wgpu/Bevy around `34.53 dB`. The direct imqraw
+`changedPixels.highDelta` buckets now make that residual easier to triage: large
+Ash-vs-wgpu deltas are a small tail whose shared-nonblack subset is edge-heavy,
+while Ash-vs-three-vrm still contains local expected-only/actual-only and
+gradient/coverage differences.
 Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
 fail-under and max-delta threshold arguments to Ash once the current
 texture/material color parity gap is closed.
@@ -170,13 +177,12 @@ view-space matcap UVs, glTF emissive texture multiplication, PBR/MToon ambient
 occlusion sampling, unlit and PBR fallback branches, v0-compatible direct light
 clamping, rim plus matcap composition, and render-extra direct-light scaling. It
 now also emits expanded outline primitives through the same renderer-neutral
-outline helper used by the wgpu and Bevy captures, and routes those draws to the
-outline pipeline rather than the base pipeline. It is still not the final visual
-parity shader: Ash is now visible in the full PSNR/visual review harness, but it
-remains non-gating by default until its color accumulation reaches the wgpu/Bevy
-threshold floor. The current 128x128 Seed-san smoke has exact opaque-black alpha
-parity and selected `rgb-visible` Ash PSNR `12.7715 dB` after the camera/light
-sync and Vulkan Y-flip fixes.
+outline helper used by the wgpu and Bevy captures, routes those draws to the
+outline pipeline rather than the base pipeline, and materializes concrete
+glTF-only/PBR base pipelines for non-MToon materials. It is still not the final
+visual parity shader: Ash is now visible in the full PSNR/visual review harness,
+but it remains non-gating by default until its shaded color accumulation reaches
+the wgpu/Bevy threshold floor.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, Bevy, and
 optionally Ash to emit `.frame000.imqraw` beside their `.rgba.json` artifacts.

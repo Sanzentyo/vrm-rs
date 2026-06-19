@@ -18,6 +18,8 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const CHANGE_THRESHOLDS: [u8; 4] = [32, 64, 96, 128];
+
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "compare-imqraw",
@@ -141,6 +143,57 @@ struct AlphaStats {
     mismatches_beyond_one: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ChangedPixelStats {
+    rgba_changed: usize,
+    rgb_changed: usize,
+    alpha_changed: usize,
+    expected_only_rgb: usize,
+    actual_only_rgb: usize,
+    shared_nonblack_rgb_changed: usize,
+    shared_nonblack_interior1px_rgb_changed: usize,
+    shared_nonblack_interior2px_rgb_changed: usize,
+    shared_nonblack_interior3px_rgb_changed: usize,
+    shared_nonblack_flat32_interior1px_rgb_changed: usize,
+    shared_nonblack_gradient_interior1px_rgb_changed: usize,
+    high_delta: [HighDeltaStats; CHANGE_THRESHOLDS.len()],
+}
+
+impl Default for ChangedPixelStats {
+    fn default() -> Self {
+        let mut high_delta = [HighDeltaStats::default(); CHANGE_THRESHOLDS.len()];
+        for (bucket, threshold) in high_delta.iter_mut().zip(CHANGE_THRESHOLDS) {
+            bucket.threshold = threshold;
+        }
+        Self {
+            rgba_changed: 0,
+            rgb_changed: 0,
+            alpha_changed: 0,
+            expected_only_rgb: 0,
+            actual_only_rgb: 0,
+            shared_nonblack_rgb_changed: 0,
+            shared_nonblack_interior1px_rgb_changed: 0,
+            shared_nonblack_interior2px_rgb_changed: 0,
+            shared_nonblack_interior3px_rgb_changed: 0,
+            shared_nonblack_flat32_interior1px_rgb_changed: 0,
+            shared_nonblack_gradient_interior1px_rgb_changed: 0,
+            high_delta,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct HighDeltaStats {
+    threshold: u8,
+    rgb: usize,
+    shared_nonblack_rgb: usize,
+    shared_nonblack_interior1px_rgb: usize,
+    shared_nonblack_interior2px_rgb: usize,
+    shared_nonblack_interior3px_rgb: usize,
+    shared_nonblack_flat32_interior1px_rgb: usize,
+    shared_nonblack_gradient_interior1px_rgb: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct AlphaCounts {
     transparent: usize,
@@ -240,6 +293,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         &[0, 1, 2],
     );
     let alpha = alpha_stats(&expected, &actual);
+    let changed_pixels = changed_pixel_stats(&expected, &actual);
     let selected = select_metric(
         options.metric,
         &[
@@ -286,6 +340,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         "maxChannelDelta": full_image.max_channel_delta,
         "maxPixelDelta": full_image.max_pixel_delta,
         "alpha": alpha_report(alpha),
+        "changedPixels": changed_pixel_report(changed_pixels),
         "rgbAll": metric_report(all_rgb),
         "rgbOpaque": metric_report(opaque_rgb),
         "rgbVisible": metric_report(visible_rgb),
@@ -517,6 +572,137 @@ fn alpha_stats(expected: &RgbaImage, actual: &RgbaImage) -> AlphaStats {
         })
 }
 
+fn changed_pixel_stats(expected: &RgbaImage, actual: &RgbaImage) -> ChangedPixelStats {
+    (0..expected.rgba.len())
+        .step_by(4)
+        .fold(ChangedPixelStats::default(), |mut stats, pixel| {
+            let rgb_changed = rgb_pixel_changed(expected, actual, pixel);
+            let alpha_changed = expected.rgba[pixel + 3] != actual.rgba[pixel + 3];
+            if rgb_changed || alpha_changed {
+                stats.rgba_changed += 1;
+            }
+            if alpha_changed {
+                stats.alpha_changed += 1;
+            }
+            if !rgb_changed {
+                return stats;
+            }
+
+            stats.rgb_changed += 1;
+            let rgb_max_delta = rgb_pixel_max_delta(expected, actual, pixel);
+            let expected_nonblack = pixel_rgb_nonzero(&expected.rgba, pixel);
+            let actual_nonblack = pixel_rgb_nonzero(&actual.rgba, pixel);
+            match (expected_nonblack, actual_nonblack) {
+                (true, false) => {
+                    stats.expected_only_rgb += 1;
+                    count_high_delta(
+                        &mut stats.high_delta,
+                        rgb_max_delta,
+                        HighDeltaDomain::default(),
+                    );
+                }
+                (false, true) => {
+                    stats.actual_only_rgb += 1;
+                    count_high_delta(
+                        &mut stats.high_delta,
+                        rgb_max_delta,
+                        HighDeltaDomain::default(),
+                    );
+                }
+                (true, true) => {
+                    stats.shared_nonblack_rgb_changed += 1;
+                    let interior1 = is_interior_shared_nonblack(expected, actual, pixel);
+                    let interior2 = is_interior_radius(expected, pixel, 2, |neighbor| {
+                        is_shared_nonblack(expected, actual, neighbor)
+                    });
+                    let interior3 = is_interior_radius(expected, pixel, 3, |neighbor| {
+                        is_shared_nonblack(expected, actual, neighbor)
+                    });
+                    let flat32 = is_flat_shared_nonblack_interior(expected, actual, pixel, 1, 32);
+                    let gradient =
+                        is_gradient_shared_nonblack_interior(expected, actual, pixel, 1, 32);
+                    if interior1 {
+                        stats.shared_nonblack_interior1px_rgb_changed += 1;
+                    }
+                    if interior2 {
+                        stats.shared_nonblack_interior2px_rgb_changed += 1;
+                    }
+                    if interior3 {
+                        stats.shared_nonblack_interior3px_rgb_changed += 1;
+                    }
+                    if flat32 {
+                        stats.shared_nonblack_flat32_interior1px_rgb_changed += 1;
+                    }
+                    if gradient {
+                        stats.shared_nonblack_gradient_interior1px_rgb_changed += 1;
+                    }
+                    count_high_delta(
+                        &mut stats.high_delta,
+                        rgb_max_delta,
+                        HighDeltaDomain {
+                            shared_nonblack: true,
+                            interior1,
+                            interior2,
+                            interior3,
+                            flat32,
+                            gradient,
+                        },
+                    );
+                }
+                (false, false) => count_high_delta(
+                    &mut stats.high_delta,
+                    rgb_max_delta,
+                    HighDeltaDomain::default(),
+                ),
+            }
+            stats
+        })
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct HighDeltaDomain {
+    shared_nonblack: bool,
+    interior1: bool,
+    interior2: bool,
+    interior3: bool,
+    flat32: bool,
+    gradient: bool,
+}
+
+fn count_high_delta(
+    high_delta: &mut [HighDeltaStats; CHANGE_THRESHOLDS.len()],
+    rgb_max_delta: u8,
+    domain: HighDeltaDomain,
+) {
+    for (index, threshold) in CHANGE_THRESHOLDS.iter().copied().enumerate() {
+        let bucket = &mut high_delta[index];
+        bucket.threshold = threshold;
+        if rgb_max_delta < threshold {
+            continue;
+        }
+        bucket.rgb += 1;
+        if !domain.shared_nonblack {
+            continue;
+        }
+        bucket.shared_nonblack_rgb += 1;
+        if domain.interior1 {
+            bucket.shared_nonblack_interior1px_rgb += 1;
+        }
+        if domain.interior2 {
+            bucket.shared_nonblack_interior2px_rgb += 1;
+        }
+        if domain.interior3 {
+            bucket.shared_nonblack_interior3px_rgb += 1;
+        }
+        if domain.flat32 {
+            bucket.shared_nonblack_flat32_interior1px_rgb += 1;
+        }
+        if domain.gradient {
+            bucket.shared_nonblack_gradient_interior1px_rgb += 1;
+        }
+    }
+}
+
 impl Default for AlphaStats {
     fn default() -> Self {
         Self {
@@ -580,12 +766,79 @@ fn alpha_report(alpha: AlphaStats) -> Value {
     })
 }
 
+fn changed_pixel_report(stats: ChangedPixelStats) -> Value {
+    let shared_edge_1px =
+        stats.shared_nonblack_rgb_changed - stats.shared_nonblack_interior1px_rgb_changed;
+    let shared_edge_2px =
+        stats.shared_nonblack_rgb_changed - stats.shared_nonblack_interior2px_rgb_changed;
+    let shared_edge_3px =
+        stats.shared_nonblack_rgb_changed - stats.shared_nonblack_interior3px_rgb_changed;
+    json!({
+        "scope": "changed pixels; RGB-domain fields exclude alpha-only changes",
+        "rgba": stats.rgba_changed,
+        "rgb": stats.rgb_changed,
+        "alpha": stats.alpha_changed,
+        "expectedOnlyRgb": stats.expected_only_rgb,
+        "actualOnlyRgb": stats.actual_only_rgb,
+        "sharedNonblackRgb": stats.shared_nonblack_rgb_changed,
+        "sharedNonblackInterior1pxRgb": stats.shared_nonblack_interior1px_rgb_changed,
+        "sharedNonblackInterior2pxRgb": stats.shared_nonblack_interior2px_rgb_changed,
+        "sharedNonblackInterior3pxRgb": stats.shared_nonblack_interior3px_rgb_changed,
+        "sharedNonblackEdgeBand1pxRgb": shared_edge_1px,
+        "sharedNonblackEdgeBand2pxRgb": shared_edge_2px,
+        "sharedNonblackEdgeBand3pxRgb": shared_edge_3px,
+        "sharedNonblackEdgeBand1pxRatio": ratio_value(shared_edge_1px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackEdgeBand2pxRatio": ratio_value(shared_edge_2px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackEdgeBand3pxRatio": ratio_value(shared_edge_3px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackEdgeBand1pxRatioOfSharedNonblackRgb": ratio_value(shared_edge_1px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackEdgeBand2pxRatioOfSharedNonblackRgb": ratio_value(shared_edge_2px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackEdgeBand3pxRatioOfSharedNonblackRgb": ratio_value(shared_edge_3px, stats.shared_nonblack_rgb_changed),
+        "sharedNonblackFlat32Interior1pxRgb": stats.shared_nonblack_flat32_interior1px_rgb_changed,
+        "sharedNonblackGradientInterior1pxRgb": stats.shared_nonblack_gradient_interior1px_rgb_changed,
+        "highDelta": stats.high_delta.map(high_delta_report),
+    })
+}
+
+fn high_delta_report(stats: HighDeltaStats) -> Value {
+    let edge1 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior1px_rgb;
+    let edge2 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior2px_rgb;
+    let edge3 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior3px_rgb;
+    json!({
+        "scope": "changed RGB pixels whose max RGB channel delta is at least maxChannelDeltaGte",
+        "maxChannelDeltaGte": stats.threshold,
+        "rgb": stats.rgb,
+        "sharedNonblackRgb": stats.shared_nonblack_rgb,
+        "sharedNonblackInterior1pxRgb": stats.shared_nonblack_interior1px_rgb,
+        "sharedNonblackInterior2pxRgb": stats.shared_nonblack_interior2px_rgb,
+        "sharedNonblackInterior3pxRgb": stats.shared_nonblack_interior3px_rgb,
+        "sharedNonblackEdgeBand1pxRgb": edge1,
+        "sharedNonblackEdgeBand2pxRgb": edge2,
+        "sharedNonblackEdgeBand3pxRgb": edge3,
+        "sharedNonblackEdgeBand1pxRatio": ratio_value(edge1, stats.shared_nonblack_rgb),
+        "sharedNonblackEdgeBand2pxRatio": ratio_value(edge2, stats.shared_nonblack_rgb),
+        "sharedNonblackEdgeBand3pxRatio": ratio_value(edge3, stats.shared_nonblack_rgb),
+        "sharedNonblackEdgeBand1pxRatioOfSharedNonblackRgb": ratio_value(edge1, stats.shared_nonblack_rgb),
+        "sharedNonblackEdgeBand2pxRatioOfSharedNonblackRgb": ratio_value(edge2, stats.shared_nonblack_rgb),
+        "sharedNonblackEdgeBand3pxRatioOfSharedNonblackRgb": ratio_value(edge3, stats.shared_nonblack_rgb),
+        "sharedNonblackFlat32Interior1pxRgb": stats.shared_nonblack_flat32_interior1px_rgb,
+        "sharedNonblackGradientInterior1pxRgb": stats.shared_nonblack_gradient_interior1px_rgb,
+    })
+}
+
 fn alpha_counts_report(counts: AlphaCounts) -> Value {
     json!({
         "transparent": counts.transparent,
         "opaque": counts.opaque,
         "partial": counts.partial,
     })
+}
+
+fn ratio_value(numerator: usize, denominator: usize) -> Value {
+    if denominator == 0 {
+        Value::Null
+    } else {
+        json!(numerator as f64 / denominator as f64)
+    }
 }
 
 fn psnr_value(psnr: Option<f64>) -> Value {
@@ -696,6 +949,17 @@ fn is_gradient_shared_nonblack_interior(
 fn rgb_max_delta(rgba: &[u8], left: usize, right: usize) -> u8 {
     (0..3)
         .map(|channel| rgba[left + channel].abs_diff(rgba[right + channel]))
+        .max()
+        .unwrap_or(0)
+}
+
+fn rgb_pixel_changed(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> bool {
+    (0..3).any(|channel| expected.rgba[pixel + channel] != actual.rgba[pixel + channel])
+}
+
+fn rgb_pixel_max_delta(expected: &RgbaImage, actual: &RgbaImage, pixel: usize) -> u8 {
+    (0..3)
+        .map(|channel| expected.rgba[pixel + channel].abs_diff(actual.rgba[pixel + channel]))
         .max()
         .unwrap_or(0)
 }

@@ -116,6 +116,15 @@ beside their `.rgba.json` artifacts. Check them with
 same VRM domains as `compare-psnr.mjs`. The render parity runner uses the
 `.imqraw-rust.json` reports as the numeric gate and still writes `.psnr.json`
 reports as `.rgba.json` diagnostics.
+The direct imqraw report also includes a `changedPixels` section with RGB/RGBA
+changed-pixel counts, expected-only/actual-only nonblack pixels,
+shared-nonblack interior bands at 1/2/3px, flat32/gradient interiors, and
+`highDelta` buckets for max channel deltas `>=32`, `>=64`, `>=96`, and
+`>=128`. Fields named `*Rgb` are scoped to pixels whose RGB channels changed and
+therefore exclude alpha-only drift; edge-band ratios are also reported as
+`*RatioOfSharedNonblackRgb` to make their denominator explicit. Use those fields
+to distinguish broad material/color regressions from local raster edge or
+dense-gradient ownership residuals before changing shader logic.
 It also runs `tools/render-parity/verify-imqraw-rgba.rs` for each three-vrm,
 wgpu, and Bevy capture, so the numeric-gate `.imqraw` bytes must match the
 `.rgba.json` bytes used for PNGs, diff heatmaps, and diagnostic reports.
