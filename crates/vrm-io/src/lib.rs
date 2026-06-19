@@ -33,7 +33,8 @@ pub use resource::{
     CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
     DecodedTexturePayload, FileResourceReader, MeshCodec, MeshCodecProvider, ResourceData,
     ResourceError, ResourceLimits, ResourceReader, ResourceSource, TextureCodec,
-    TextureCodecProvider, TextureOutputFormat,
+    TextureCodecProvider, TextureColorSpace, TextureDecodeOptions, TextureFormatCapabilities,
+    TextureOutputFormat,
 };
 
 #[derive(Clone, Debug)]

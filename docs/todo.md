@@ -148,8 +148,9 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
     - `MtoonGpuUniform` / `MtoonGpuMaterial` are shared through `vrm-adapter`, `wgpu_mtoon_resource_plans` exposes wgpu-owned resource setup data, ash frame plans emit per-pipeline uniform uploads, and Bevy material plans carry the same uniform into engine-owned assets.
   - [x] Optimizer for unused vertices, joint palette compaction, and empty morph removal.
     - Foundation: `vrm-io::optimize_primitive` validates primitive attribute/index shape, removes degenerate triangles, drops unreferenced vertices, normalizes skin weights, removes empty morph targets, compacts weighted joint palettes, and returns explicit vertex/joint remap reports. `apply_joint_compaction_to_skin` applies the same palette remap to glTF skin data, and the root facade re-exports the preprocessing API.
-  - [ ] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
+  - [x] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
     - [x] Foundation: `vrm-io::resource` now provides data URI and relative file resolution with path traversal rejection, file/data/decode size limits, missing-codec errors, and provider traits/registry for Draco, Meshopt, and KTX2/Basis-style texture decoding without bundling codec dependencies.
+    - [x] Texture provider practicality: texture decode requests now carry source color space and renderer-facing decode options, GPU format capability helpers select BC7/ETC2/ASTC/RGBA fallback preferences, providers can override option-aware decode, and the registry rejects unsupported decoded texture formats after size-limit validation.
   - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.

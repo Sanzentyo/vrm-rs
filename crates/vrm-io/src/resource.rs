@@ -94,6 +94,7 @@ pub struct CompressedTexturePayload {
     pub codec: TextureCodec,
     pub bytes: Vec<u8>,
     pub declared_decoded_bytes: Option<usize>,
+    pub source_color_space: TextureColorSpace,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +106,13 @@ pub struct DecodedTexturePayload {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextureColorSpace {
+    Linear,
+    #[default]
+    Srgb,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextureOutputFormat {
     Rgba8Unorm,
@@ -113,6 +121,180 @@ pub enum TextureOutputFormat {
     Bc7RgbaSrgb,
     Etc2Rgba8,
     Astc4x4Rgba,
+}
+
+impl TextureOutputFormat {
+    pub fn color_space(self) -> TextureColorSpace {
+        match self {
+            Self::Rgba8Srgb | Self::Bc7RgbaSrgb => TextureColorSpace::Srgb,
+            Self::Rgba8Unorm | Self::Bc7RgbaUnorm | Self::Etc2Rgba8 | Self::Astc4x4Rgba => {
+                TextureColorSpace::Linear
+            }
+        }
+    }
+
+    pub fn is_gpu_compressed(self) -> bool {
+        matches!(
+            self,
+            Self::Bc7RgbaUnorm | Self::Bc7RgbaSrgb | Self::Etc2Rgba8 | Self::Astc4x4Rgba
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextureDecodeOptions {
+    pub accepted_formats: Vec<TextureOutputFormat>,
+    pub fallback_formats: Vec<TextureOutputFormat>,
+    pub require_gpu_compressed: bool,
+}
+
+impl Default for TextureDecodeOptions {
+    fn default() -> Self {
+        Self {
+            accepted_formats: Vec::new(),
+            fallback_formats: vec![
+                TextureOutputFormat::Rgba8Srgb,
+                TextureOutputFormat::Rgba8Unorm,
+            ],
+            require_gpu_compressed: false,
+        }
+    }
+}
+
+impl TextureDecodeOptions {
+    pub fn any() -> Self {
+        Self::default()
+    }
+
+    pub fn accepted_formats(
+        mut self,
+        formats: impl IntoIterator<Item = TextureOutputFormat>,
+    ) -> Self {
+        self.accepted_formats = formats.into_iter().collect();
+        self
+    }
+
+    pub fn fallback_formats(
+        mut self,
+        formats: impl IntoIterator<Item = TextureOutputFormat>,
+    ) -> Self {
+        self.fallback_formats = formats.into_iter().collect();
+        self
+    }
+
+    pub fn require_gpu_compressed(mut self, value: bool) -> Self {
+        self.require_gpu_compressed = value;
+        self
+    }
+
+    pub fn accepts(&self, format: TextureOutputFormat) -> bool {
+        let accepted = self.accepted_formats.is_empty() || self.accepted_formats.contains(&format);
+        accepted && (!self.require_gpu_compressed || format.is_gpu_compressed())
+    }
+
+    pub fn first_accepted(
+        &self,
+        formats: impl IntoIterator<Item = TextureOutputFormat>,
+    ) -> Option<TextureOutputFormat> {
+        formats.into_iter().find(|format| self.accepts(*format))
+    }
+
+    fn ensure_decoded(&self, decoded: &DecodedTexturePayload) -> Result<(), ResourceError> {
+        if self.accepts(decoded.format) {
+            Ok(())
+        } else {
+            Err(ResourceError::UnsupportedTextureFormat {
+                format: decoded.format,
+            })
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextureFormatCapabilities {
+    pub rgba8_unorm: bool,
+    pub rgba8_srgb: bool,
+    pub bc7: bool,
+    pub etc2: bool,
+    pub astc_4x4: bool,
+}
+
+impl TextureFormatCapabilities {
+    pub fn widely_supported() -> Self {
+        Self {
+            rgba8_unorm: true,
+            rgba8_srgb: true,
+            bc7: false,
+            etc2: false,
+            astc_4x4: false,
+        }
+    }
+
+    pub fn desktop_with_bc7() -> Self {
+        Self {
+            bc7: true,
+            ..Self::widely_supported()
+        }
+    }
+
+    pub fn mobile_with_etc2() -> Self {
+        Self {
+            etc2: true,
+            ..Self::widely_supported()
+        }
+    }
+
+    pub fn mobile_with_astc() -> Self {
+        Self {
+            astc_4x4: true,
+            ..Self::widely_supported()
+        }
+    }
+
+    pub fn preferred_formats(self, color_space: TextureColorSpace) -> Vec<TextureOutputFormat> {
+        let mut formats = Vec::new();
+        match color_space {
+            TextureColorSpace::Srgb => {
+                if self.bc7 {
+                    formats.push(TextureOutputFormat::Bc7RgbaSrgb);
+                }
+                if self.astc_4x4 {
+                    formats.push(TextureOutputFormat::Astc4x4Rgba);
+                }
+                if self.etc2 {
+                    formats.push(TextureOutputFormat::Etc2Rgba8);
+                }
+                if self.rgba8_srgb {
+                    formats.push(TextureOutputFormat::Rgba8Srgb);
+                }
+                if self.rgba8_unorm {
+                    formats.push(TextureOutputFormat::Rgba8Unorm);
+                }
+            }
+            TextureColorSpace::Linear => {
+                if self.bc7 {
+                    formats.push(TextureOutputFormat::Bc7RgbaUnorm);
+                }
+                if self.astc_4x4 {
+                    formats.push(TextureOutputFormat::Astc4x4Rgba);
+                }
+                if self.etc2 {
+                    formats.push(TextureOutputFormat::Etc2Rgba8);
+                }
+                if self.rgba8_unorm {
+                    formats.push(TextureOutputFormat::Rgba8Unorm);
+                }
+                if self.rgba8_srgb {
+                    formats.push(TextureOutputFormat::Rgba8Srgb);
+                }
+            }
+        }
+        formats
+    }
+
+    pub fn decode_options(self, color_space: TextureColorSpace) -> TextureDecodeOptions {
+        TextureDecodeOptions::default().accepted_formats(self.preferred_formats(color_space))
+    }
 }
 
 pub trait MeshCodecProvider {
@@ -129,6 +311,16 @@ pub trait TextureCodecProvider {
         &self,
         payload: &CompressedTexturePayload,
     ) -> Result<DecodedTexturePayload, ResourceError>;
+
+    fn decode_texture_with_options(
+        &self,
+        payload: &CompressedTexturePayload,
+        options: &TextureDecodeOptions,
+    ) -> Result<DecodedTexturePayload, ResourceError> {
+        let decoded = self.decode_texture(payload)?;
+        options.ensure_decoded(&decoded)?;
+        Ok(decoded)
+    }
 }
 
 #[derive(Default)]
@@ -210,6 +402,14 @@ impl CodecRegistry {
         &self,
         payload: &CompressedTexturePayload,
     ) -> Result<DecodedTexturePayload, ResourceError> {
+        self.decode_texture_with_options(payload, &TextureDecodeOptions::default())
+    }
+
+    pub fn decode_texture_with_options(
+        &self,
+        payload: &CompressedTexturePayload,
+        options: &TextureDecodeOptions,
+    ) -> Result<DecodedTexturePayload, ResourceError> {
         ensure_payload_size(
             payload.bytes.len(),
             self.limits.max_file_bytes,
@@ -224,12 +424,13 @@ impl CodecRegistry {
                 .ok_or(ResourceError::MissingTextureCodec {
                     codec: payload.codec,
                 })?;
-        let decoded = provider.decode_texture(payload)?;
+        let decoded = provider.decode_texture_with_options(payload, options)?;
         ensure_payload_size(
             decoded.bytes.len(),
             self.limits.max_decoded_bytes,
             "texture codec output",
         )?;
+        options.ensure_decoded(&decoded)?;
         Ok(decoded)
     }
 }
@@ -274,6 +475,8 @@ pub enum ResourceError {
     MissingMeshCodec { codec: MeshCodec },
     #[error("missing texture codec provider: {codec:?}")]
     MissingTextureCodec { codec: TextureCodec },
+    #[error("texture codec produced unsupported output format: {format:?}")]
+    UnsupportedTextureFormat { format: TextureOutputFormat },
     #[error("codec provider failed: {message}")]
     CodecProvider { message: String },
     #[error(transparent)]
@@ -519,6 +722,27 @@ mod tests {
                 bytes: payload.bytes.clone(),
             })
         }
+
+        fn decode_texture_with_options(
+            &self,
+            payload: &CompressedTexturePayload,
+            options: &TextureDecodeOptions,
+        ) -> Result<DecodedTexturePayload, ResourceError> {
+            let format = options
+                .first_accepted([
+                    TextureOutputFormat::Bc7RgbaSrgb,
+                    TextureOutputFormat::Etc2Rgba8,
+                    TextureOutputFormat::Rgba8Srgb,
+                ])
+                .unwrap_or(TextureOutputFormat::Rgba8Srgb);
+            Ok(DecodedTexturePayload {
+                format,
+                width: 1,
+                height: 1,
+                mip_levels: 1,
+                bytes: payload.bytes.clone(),
+            })
+        }
     }
 
     #[test]
@@ -623,6 +847,7 @@ mod tests {
                 codec: TextureCodec::Ktx2Basis,
                 bytes: vec![1, 2, 3],
                 declared_decoded_bytes: None,
+                source_color_space: TextureColorSpace::Srgb,
             }),
             Err(ResourceError::MissingTextureCodec {
                 codec: TextureCodec::Ktx2Basis
@@ -656,9 +881,10 @@ mod tests {
                 codec: TextureCodec::Ktx2Basis,
                 bytes: vec![9, 8, 7, 6],
                 declared_decoded_bytes: Some(4),
+                source_color_space: TextureColorSpace::Srgb,
             })
             .unwrap();
-        assert_eq!(texture.format, TextureOutputFormat::Rgba8Srgb);
+        assert_eq!(texture.format, TextureOutputFormat::Bc7RgbaSrgb);
 
         assert!(matches!(
             registry.decode_mesh(&CompressedMeshPayload {
@@ -670,6 +896,46 @@ mod tests {
                 kind: "mesh codec output",
                 actual: 5,
                 limit: 4,
+            })
+        ));
+    }
+
+    #[test]
+    fn texture_decode_options_select_backend_supported_gpu_formats() {
+        let mut registry = CodecRegistry::default();
+        registry.register_texture(EchoTextureCodec);
+        let payload = CompressedTexturePayload {
+            codec: TextureCodec::Ktx2Basis,
+            bytes: vec![1, 2, 3, 4],
+            declared_decoded_bytes: Some(4),
+            source_color_space: TextureColorSpace::Srgb,
+        };
+
+        let desktop = TextureFormatCapabilities::desktop_with_bc7()
+            .decode_options(payload.source_color_space)
+            .require_gpu_compressed(true);
+        let decoded = registry
+            .decode_texture_with_options(&payload, &desktop)
+            .unwrap();
+        assert_eq!(decoded.format, TextureOutputFormat::Bc7RgbaSrgb);
+        assert_eq!(decoded.format.color_space(), TextureColorSpace::Srgb);
+        assert!(decoded.format.is_gpu_compressed());
+
+        let mobile = TextureFormatCapabilities::mobile_with_etc2()
+            .decode_options(TextureColorSpace::Linear)
+            .require_gpu_compressed(true);
+        let decoded = registry
+            .decode_texture_with_options(&payload, &mobile)
+            .unwrap();
+        assert_eq!(decoded.format, TextureOutputFormat::Etc2Rgba8);
+
+        let unsupported = TextureDecodeOptions::default()
+            .accepted_formats([TextureOutputFormat::Astc4x4Rgba])
+            .require_gpu_compressed(true);
+        assert!(matches!(
+            registry.decode_texture_with_options(&payload, &unsupported),
+            Err(ResourceError::UnsupportedTextureFormat {
+                format: TextureOutputFormat::Rgba8Srgb
             })
         ));
     }

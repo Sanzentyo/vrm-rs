@@ -46,8 +46,9 @@ pub use vrm_io::{
     FileResourceReader, GltfJsonFormat, GltfSource, GltfWriteOptions, JointPaletteCompaction,
     JsonPath, LoadedVrmWithDiagnostics, MeshCodec, MeshCodecProvider, OptimizeError,
     OptimizeOptions, OptimizeReport, ResourceData, ResourceError, ResourceLimits, ResourceReader,
-    ResourceSource, TextureCodec, TextureCodecProvider, TextureOutputFormat, VertexRemap,
-    VrmMetadataPatch, apply_joint_compaction_to_skin, optimize_primitive,
+    ResourceSource, TextureCodec, TextureCodecProvider, TextureColorSpace, TextureDecodeOptions,
+    TextureFormatCapabilities, TextureOutputFormat, VertexRemap, VrmMetadataPatch,
+    apply_joint_compaction_to_skin, optimize_primitive,
 };
 pub use vrm_io::{
     LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_path_with_policy, load_vrm_from_slice,
