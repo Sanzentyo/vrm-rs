@@ -18,7 +18,7 @@ use glam::Mat4;
 use png::{BitDepth, ColorType, Encoder};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -47,6 +47,8 @@ struct Options {
     labels: LabelSelection,
     #[arg(long, default_value_t = 0)]
     context_radius: usize,
+    #[arg(long, default_value_t = 0)]
+    context_shared_vertex_depth: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -156,6 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         options.labels,
         options.limit,
         options.context_radius,
+        options.context_shared_vertex_depth,
     )?;
     if extracted.is_empty() {
         return Err("no owner-tail triangles could be resolved from the report".into());
@@ -180,6 +183,7 @@ fn extract_triangles(
     labels: LabelSelection,
     limit: usize,
     context_radius: usize,
+    context_shared_vertex_depth: usize,
 ) -> Result<Vec<ExtractedTriangle>, Box<dyn std::error::Error>> {
     let world_matrices = vrm_rs::evaluated_world_matrices(loaded)?;
     let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
@@ -230,6 +234,19 @@ fn extract_triangles(
                     context_radius,
                 )?;
             }
+            if context_shared_vertex_depth > 0 {
+                append_shared_vertex_context_triangles(
+                    loaded,
+                    &world_matrices,
+                    orientation,
+                    &mut seen,
+                    &mut out,
+                    detail,
+                    detail_index,
+                    &source,
+                    context_shared_vertex_depth,
+                )?;
+            }
         }
     }
     Ok(out)
@@ -263,6 +280,92 @@ fn append_context_triangles(
         if triangle == source.triangle {
             continue;
         }
+        let Some(context) = source_triangle(primitive, source, triangle) else {
+            continue;
+        };
+        let key = (
+            LabelSide::Context.as_str(),
+            context.node_index,
+            context.mesh_index,
+            context.primitive_index,
+            context.triangle,
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        let vertices = bake_triangle(loaded, world_matrices, orientation, &context)?;
+        out.push(ExtractedTriangle {
+            label_side: LabelSide::Context,
+            detail_index,
+            count: detail.count,
+            sample_pixels: detail.sample_pixels.clone(),
+            source: context,
+            vertices: [vertices],
+        });
+    }
+    Ok(())
+}
+
+fn append_shared_vertex_context_triangles(
+    loaded: &LoadedVrm,
+    world_matrices: &[Mat4],
+    orientation: Mat4,
+    seen: &mut BTreeSet<(&'static str, usize, usize, usize, usize)>,
+    out: &mut Vec<ExtractedTriangle>,
+    detail: &OwnerDetail,
+    detail_index: usize,
+    source: &ResolvedTriangle,
+    depth: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mesh) = loaded.meshes.get(source.mesh_index) else {
+        return Ok(());
+    };
+    let Some(primitive) = mesh.primitives.get(source.primitive_index) else {
+        return Ok(());
+    };
+    let triangles = primitive
+        .indices
+        .chunks_exact(3)
+        .map(|indices| [indices[0], indices[1], indices[2]])
+        .collect::<Vec<_>>();
+    if source.triangle >= triangles.len() {
+        return Ok(());
+    }
+
+    let mut vertex_to_triangles = BTreeMap::<u32, Vec<usize>>::new();
+    for (triangle, indices) in triangles.iter().enumerate() {
+        for index in indices {
+            vertex_to_triangles
+                .entry(*index)
+                .or_default()
+                .push(triangle);
+        }
+    }
+
+    let mut visited = BTreeSet::from([source.triangle]);
+    let mut selected = BTreeSet::new();
+    let mut queue = VecDeque::from([(source.triangle, 0usize)]);
+    while let Some((triangle, distance)) = queue.pop_front() {
+        if distance >= depth {
+            continue;
+        }
+        let Some(indices) = triangles.get(triangle) else {
+            continue;
+        };
+        for index in indices {
+            let Some(neighbors) = vertex_to_triangles.get(index) else {
+                continue;
+            };
+            for neighbor in neighbors {
+                if visited.insert(*neighbor) {
+                    selected.insert(*neighbor);
+                    queue.push_back((*neighbor, distance + 1));
+                }
+            }
+        }
+    }
+
+    for triangle in selected {
         let Some(context) = source_triangle(primitive, source, triangle) else {
             continue;
         };
