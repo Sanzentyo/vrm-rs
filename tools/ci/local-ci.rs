@@ -426,6 +426,18 @@ fn run_example_smokes() -> Result<(), String> {
             "target/ash-artifact-self-test/ash-self-test.frame000.imqraw",
         ],
     )?;
+    if program_is_available("glslangValidator") {
+        run_cmd(
+            "cargo",
+            [
+                "+nightly",
+                "-Zscript",
+                "tools/ash/compile-ash-mtoon-smoke-shaders.rs",
+            ],
+        )?;
+    } else {
+        println!("skipping ash MToon smoke shader compile: glslangValidator is not on PATH");
+    }
     Ok(())
 }
 

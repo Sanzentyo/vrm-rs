@@ -81,6 +81,20 @@ affect the PSNR threshold until that external shader path is promoted from an
 opt-in experiment into the same checked MToon visual renderer as the wgpu and
 Bevy capture paths.
 
+For the current source-controlled shader handoff smoke, run:
+
+```powershell
+just ash-mtoon-smoke-readback
+```
+
+This compiles `crates/vrm-adapter-ash/shaders/mtoon_smoke.{vert,frag}.glsl`
+with `glslangValidator`, writes local SPIR-V under `target/`, feeds those
+modules into `unsafe_device_renderer --vertex-spv --fragment-spv`, and verifies
+the direct `.imqraw` bundle against the `.rgba.json` readback artifact. It is
+still a smoke shader, not the final MToon parity shader, but it proves that the
+stable Ash descriptor slots, external shader module path, Vulkan resources, and
+raw artifact path work together.
+
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
 `imq image` CLI still does not expose the VRM-specific selected-metric gates

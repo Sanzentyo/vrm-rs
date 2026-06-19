@@ -12,9 +12,9 @@ use glam::Mat4;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform,
-    MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint, MtoonTextureBindingPlan,
-    WorldMatrixAccess, WorldTransformUpdate, apply_vrma_animation_frame_with_look_at,
-    mtoon_renderer_material_plans,
+    MtoonMaterializationOptions, MtoonRendererPass, MtoonRendererTextureRefs, MtoonSamplerHint,
+    MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
+    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
@@ -563,7 +563,7 @@ impl AshVrmFramePlanner {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: plan.pipeline.blend,
                 },
-                descriptor_bindings: descriptor_bindings(&plan.texture_bindings),
+                descriptor_bindings: descriptor_bindings(&gpu.textures),
                 uniform: gpu.uniform,
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: plan.shader.cutoff_factor,
@@ -647,28 +647,85 @@ fn cull_mode(mode: MtoonCullMode) -> vk::CullModeFlags {
     }
 }
 
-fn descriptor_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<AshDescriptorBindingPlan> {
-    let mut result = Vec::with_capacity(bindings.len() + 1);
+pub const fn ash_mtoon_uniform_binding() -> u32 {
+    0
+}
+
+pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
+    match slot {
+        MtoonTextureSlot::Main => 1,
+        MtoonTextureSlot::ShadeMultiply => 2,
+        MtoonTextureSlot::ShadingShift => 3,
+        MtoonTextureSlot::Normal => 4,
+        MtoonTextureSlot::Matcap => 5,
+        MtoonTextureSlot::RimMultiply => 6,
+        MtoonTextureSlot::OutlineWidth => 7,
+        MtoonTextureSlot::UvAnimationMask => 8,
+    }
+}
+
+fn descriptor_bindings(textures: &MtoonRendererTextureRefs) -> Vec<AshDescriptorBindingPlan> {
+    let mut result = Vec::with_capacity(ASH_MTOON_TEXTURE_SLOTS.len() + 1);
     result.push(AshDescriptorBindingPlan {
-        binding: 0,
+        binding: ash_mtoon_uniform_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
         texture: None,
         sampler: None,
     });
     result.extend(
-        bindings
+        ASH_MTOON_TEXTURE_SLOTS
             .iter()
-            .enumerate()
-            .map(|(index, binding)| AshDescriptorBindingPlan {
-                binding: index as u32 + 1,
+            .copied()
+            .map(|slot| AshDescriptorBindingPlan {
+                binding: ash_mtoon_texture_binding(slot),
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                texture: Some(binding.texture),
-                sampler: Some(sampler_plan(binding.sampler)),
+                texture: texture_for_slot(textures, slot),
+                sampler: Some(sampler_plan(sampler_hint_for_slot(slot))),
             }),
     );
     result
+}
+
+const ASH_MTOON_TEXTURE_SLOTS: [MtoonTextureSlot; 8] = [
+    MtoonTextureSlot::Main,
+    MtoonTextureSlot::ShadeMultiply,
+    MtoonTextureSlot::ShadingShift,
+    MtoonTextureSlot::Normal,
+    MtoonTextureSlot::Matcap,
+    MtoonTextureSlot::RimMultiply,
+    MtoonTextureSlot::OutlineWidth,
+    MtoonTextureSlot::UvAnimationMask,
+];
+
+fn texture_for_slot(
+    textures: &MtoonRendererTextureRefs,
+    slot: MtoonTextureSlot,
+) -> Option<TextureRef> {
+    match slot {
+        MtoonTextureSlot::Main => textures.main,
+        MtoonTextureSlot::ShadeMultiply => textures.shade_multiply,
+        MtoonTextureSlot::ShadingShift => textures.shading_shift,
+        MtoonTextureSlot::Normal => textures.normal,
+        MtoonTextureSlot::Matcap => textures.matcap,
+        MtoonTextureSlot::RimMultiply => textures.rim_multiply,
+        MtoonTextureSlot::OutlineWidth => textures.outline_width,
+        MtoonTextureSlot::UvAnimationMask => textures.uv_animation_mask,
+    }
+}
+
+fn sampler_hint_for_slot(slot: MtoonTextureSlot) -> MtoonSamplerHint {
+    match slot {
+        MtoonTextureSlot::Normal => MtoonSamplerHint::NormalMapLinearRepeat,
+        MtoonTextureSlot::Main
+        | MtoonTextureSlot::ShadeMultiply
+        | MtoonTextureSlot::ShadingShift
+        | MtoonTextureSlot::Matcap
+        | MtoonTextureSlot::RimMultiply
+        | MtoonTextureSlot::OutlineWidth
+        | MtoonTextureSlot::UvAnimationMask => MtoonSamplerHint::LinearRepeat,
+    }
 }
 
 fn sampler_plan(hint: MtoonSamplerHint) -> AshSamplerPlan {
@@ -754,13 +811,23 @@ mod tests {
 
     #[test]
     fn descriptor_bindings_start_with_uniform_buffer() {
-        let bindings = descriptor_bindings(&[]);
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].binding, 0);
+        let bindings = descriptor_bindings(&MtoonRendererTextureRefs::default());
+        assert_eq!(bindings.len(), 9);
+        assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
         assert_eq!(
             bindings[0].descriptor_type,
             vk::DescriptorType::UNIFORM_BUFFER
         );
+        assert_eq!(
+            bindings[1].binding,
+            ash_mtoon_texture_binding(MtoonTextureSlot::Main)
+        );
+        assert_eq!(bindings[1].texture, None);
+        assert_eq!(
+            bindings[4].binding,
+            ash_mtoon_texture_binding(MtoonTextureSlot::Normal)
+        );
+        assert!(bindings[4].sampler.unwrap().normal_map_decode);
     }
 
     #[test]
@@ -797,7 +864,7 @@ mod tests {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: false,
                 },
-                descriptor_bindings: descriptor_bindings(&[]),
+                descriptor_bindings: descriptor_bindings(&MtoonRendererTextureRefs::default()),
                 uniform: MtoonGpuUniform::zeroed(),
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: 0.5,
