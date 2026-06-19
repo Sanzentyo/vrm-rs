@@ -627,9 +627,7 @@ fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
     for primitive in primitives {
         let original_indices = mesh_indices_u32(&primitive.mesh);
         primitive.owner_ids.clear();
-        primitive
-            .mesh
-            .try_duplicate_vertices()
+        duplicate_mesh_vertices_in_index_order(&mut primitive.mesh, &original_indices)
             .expect("owner-id diagnostic mesh should be writable before render extraction");
         let vertex_count = primitive.mesh.count_vertices();
         let mut colors = Vec::with_capacity(vertex_count);
@@ -662,6 +660,76 @@ fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
             }
         }
     }
+}
+
+fn duplicate_mesh_vertices_in_index_order(
+    mesh: &mut Mesh,
+    indices: &[u32],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if mesh.indices().is_none() {
+        return Ok(());
+    }
+    for (_, values) in mesh.attributes_mut() {
+        duplicate_attribute_values_in_index_order(values, indices)?;
+    }
+    mesh.remove_indices();
+    Ok(())
+}
+
+fn duplicate_attribute_values_in_index_order(
+    values: &mut VertexAttributeValues,
+    indices: &[u32],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn duplicate<T: Copy>(
+        values: &[T],
+        indices: &[u32],
+    ) -> Result<Vec<T>, Box<dyn Error + Send + Sync>> {
+        indices
+            .iter()
+            .map(|index| {
+                values
+                    .get(*index as usize)
+                    .copied()
+                    .ok_or_else(|| format!("mesh index {index} is out of bounds").into())
+            })
+            .collect()
+    }
+
+    #[expect(
+        clippy::match_same_arms,
+        reason = "Each VertexAttributeValues variant has distinct vertex-format semantics."
+    )]
+    match values {
+        VertexAttributeValues::Float32(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float32x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float32x3(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32x3(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32x3(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float32x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint16x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm16x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint16x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm16x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint16x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm16x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint16x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm16x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint8x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm8x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint8x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm8x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint8x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm8x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint8x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm8x4(items) => *items = duplicate(items, indices)?,
+    }
+    Ok(())
 }
 
 fn mesh_indices_u32(mesh: &Mesh) -> Vec<u32> {
@@ -2353,6 +2421,35 @@ mod tests {
         assert_eq!(
             bevy_render_alpha_mode(AlphaMode::Mask(0.5)),
             AlphaMode::Mask(0.5)
+        );
+    }
+
+    #[test]
+    fn owner_id_unindexing_preserves_index_buffer_order() {
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        );
+        mesh.insert_indices(Indices::U32(vec![2, 0, 1]));
+
+        duplicate_mesh_vertices_in_index_order(&mut mesh, &[2, 0, 1]).unwrap();
+
+        assert!(mesh.indices().is_none());
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .and_then(VertexAttributeValues::as_float3)
+            .unwrap();
+        assert_eq!(
+            positions,
+            &[[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
         );
     }
 
