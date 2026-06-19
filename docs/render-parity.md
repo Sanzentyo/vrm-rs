@@ -98,10 +98,14 @@ view-projection, camera position, light direction/color, and MToon lighting
 accumulation. It also exposes the same packed material-extra and UV-transform
 uniform surfaces used by the wgpu and Bevy captures, so transformed base, shade,
 shading-shift, normal, matcap, rim, and UV-animation-mask sampling can be driven
-through the same IO-derived plans. It is still not the final visual parity shader:
-Ash remains supplemental until outline, normal, rim, and exact three-vrm
-light/color accumulation behavior are covered by the same PSNR/visual review
-language as wgpu and Bevy.
+through the same IO-derived plans. The fragment shader also uses the closer
+capture-side MToon accumulation shape: linear-to-sRGB output correction,
+view-space matcap UVs, unlit and PBR fallback branches, v0-compatible direct
+light clamping, rim plus matcap composition, and render-extra direct-light
+scaling. It is still not the final visual parity shader: Ash remains
+supplemental until outline geometry/policy, glTF emissive/occlusion texture
+slots, and the full PSNR/visual review harness are wired in the same way as wgpu
+and Bevy.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public

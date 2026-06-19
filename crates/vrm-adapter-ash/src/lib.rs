@@ -1244,6 +1244,12 @@ mod tests {
         assert!(fragment_shader.contains("layout(set = 0, binding = 11, std140)"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));
+        assert!(fragment_shader.contains("pbr_direct("));
+        assert!(fragment_shader.contains("output_color(color"));
+        assert!(fragment_shader.contains("matcap_uv_from_view(normal)"));
+        assert!(fragment_shader.contains("gl_FrontFacing"));
+        assert!(fragment_shader.contains("material_extra.flags.x > 0.5"));
+        assert!(fragment_shader.contains("material_extra.flags2.x > 0.5"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
