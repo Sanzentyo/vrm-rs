@@ -18,10 +18,11 @@ use vrm_adapter::{
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
-    CpuRgba8Image, GltfAlphaMode, GltfMaterialRenderExtraOptions,
+    CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects, GltfMaterialRenderExtraOptions,
     GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions, GltfMaterialTextureBinding,
     GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvUniformPlan, GltfNodeRest,
-    GltfPrimitiveData, LoadedVrm, load_vrm_from_path,
+    GltfOutlineScale, GltfOutlineVertexSettings, GltfPrimitiveData, LoadedVrm, Rgba8SamplingOrigin,
+    load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -56,6 +57,7 @@ pub struct AshVrmVertex {
 pub struct AshVrmPrimitive {
     pub node: NodeRef,
     pub material: Option<MaterialRef>,
+    pub pass: AshMtoonPass,
     pub vertices: Vec<AshVrmVertex>,
     pub indices: Vec<u32>,
 }
@@ -75,7 +77,7 @@ pub struct AshMaterialRecord {
     pub base_color_texture_upload: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AshMtoonPass {
     Base,
     Outline,
@@ -260,7 +262,7 @@ impl AshSceneUniform {
             1.0
         };
         let eye = glam::Vec3::new(0.0, 1.4, -4.0);
-        let view = Mat4::look_at_rh(eye, glam::Vec3::new(0.0, 1.0, 0.0), glam::Vec3::Y);
+        let view = ash_parity_camera_view();
         let projection = Mat4::perspective_rh(30.0_f32.to_radians(), aspect_ratio, 0.1, 20.0);
         let light_dir = glam::Vec3::new(-1.0, 1.0, -1.0).normalize();
         Self {
@@ -277,6 +279,18 @@ impl AshSceneUniform {
     pub fn bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
+}
+
+fn ash_parity_camera_view() -> Mat4 {
+    Mat4::look_at_rh(
+        glam::Vec3::new(0.0, 1.4, -4.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::Y,
+    )
+}
+
+fn ash_parity_projection_y_scale() -> f32 {
+    1.0 / (0.5 * 30.0_f32.to_radians()).tan()
 }
 
 impl Default for AshSceneUniform {
@@ -503,7 +517,7 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                 .collect(),
         })
         .collect::<Vec<_>>();
-    let pipeline_indices = mtoon_base_pipeline_indices(&plan.mtoon_pipelines);
+    let pipeline_indices = mtoon_pipeline_indices(&plan.mtoon_pipelines);
     let descriptor_indices = descriptor_set_indices(&descriptor_sets);
     let pipelines = plan
         .mtoon_pipelines
@@ -546,7 +560,7 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
         });
         let pipeline_plan_index = primitive
             .material
-            .and_then(|material| pipeline_indices.get(&material).copied());
+            .and_then(|material| pipeline_indices.get(&(material, primitive.pass)).copied());
         let descriptor_set_index = pipeline_plan_index.and_then(|index| {
             primitive
                 .material
@@ -710,7 +724,7 @@ impl AshVrmFramePlanner {
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
-            primitives: self.bake_primitives()?,
+            primitives: self.bake_primitives(time_seconds)?,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
@@ -732,7 +746,7 @@ impl AshVrmFramePlanner {
             .collect()
     }
 
-    fn bake_primitives(&self) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
+    fn bake_primitives(&self, mtoon_time: f32) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
         let mut primitives = Vec::new();
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
@@ -740,7 +754,31 @@ impl AshVrmFramePlanner {
             };
             let mesh = &self.loaded.meshes[mesh_index];
             for primitive in &mesh.primitives {
-                primitives.push(self.bake_primitive(node_index, node, mesh, primitive)?);
+                primitives.push(self.bake_primitive(
+                    node_index,
+                    node,
+                    mesh,
+                    primitive,
+                    AshMtoonPass::Base,
+                    mtoon_time,
+                )?);
+                if self
+                    .loaded
+                    .expression_mtoon_outline_plan(
+                        primitive.material,
+                        &GltfExpressionRenderEffects::default(),
+                    )
+                    .is_some()
+                {
+                    primitives.push(self.bake_primitive(
+                        node_index,
+                        node,
+                        mesh,
+                        primitive,
+                        AshMtoonPass::Outline,
+                        mtoon_time,
+                    )?);
+                }
             }
         }
         Ok(primitives)
@@ -752,6 +790,8 @@ impl AshVrmFramePlanner {
         node: &GltfNodeRest,
         mesh: &vrm_io::GltfMeshData,
         primitive: &GltfPrimitiveData,
+        pass: AshMtoonPass,
+        mtoon_time: f32,
     ) -> Result<AshVrmPrimitive, Box<dyn Error>> {
         let morph_weights = active_morph_weights(&self.scene, node_index, node, mesh);
         let world_matrices = self.world_matrices();
@@ -770,12 +810,25 @@ impl AshVrmFramePlanner {
         let alpha_enabled = material
             .map(|material| material.alpha_mode != GltfAlphaMode::Opaque)
             .unwrap_or(false);
-        let vertices = primitive
-            .transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
+        let source_vertices = match pass {
+            AshMtoonPass::Base => {
+                primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
+            }
+            AshMtoonPass::Outline => self.outline_vertices(
+                primitive,
+                &morph_weights,
+                world,
+                skin_matrices.as_deref(),
+                mtoon_time,
+            ),
+        };
+        let vertices = source_vertices
             .ok_or("primitive geometry is inconsistent")?
             .into_iter()
             .map(|vertex| {
-                let alpha = if alpha_enabled {
+                let alpha = if pass == AshMtoonPass::Outline {
+                    1.0
+                } else if alpha_enabled {
                     base_color[3] * vertex.color_0[3]
                 } else {
                     1.0
@@ -797,9 +850,46 @@ impl AshVrmFramePlanner {
         Ok(AshVrmPrimitive {
             node: NodeRef(node_index),
             material: primitive.material.map(MaterialRef),
+            pass,
             vertices,
             indices: primitive.indices.clone(),
         })
+    }
+
+    fn outline_vertices(
+        &self,
+        primitive: &GltfPrimitiveData,
+        morph_weights: &[f32],
+        world: Mat4,
+        skin_matrices: Option<&[Mat4]>,
+        mtoon_time: f32,
+    ) -> Option<Vec<vrm_io::GltfTransformedVertex>> {
+        let outline = self.loaded.expression_mtoon_outline_plan(
+            primitive.material,
+            &GltfExpressionRenderEffects::default(),
+        )?;
+        let width_texture = self
+            .loaded
+            .material_outline_width_rgba8_image(primitive.material);
+        let uv_transforms = self
+            .loaded
+            .material_uv_transforms(primitive.material, mtoon_time);
+        primitive.outline_vertices(
+            morph_weights,
+            GltfOutlineVertexSettings {
+                base_width: outline.width_factor,
+                scale: GltfOutlineScale::new(
+                    outline.width_mode,
+                    ash_parity_camera_view(),
+                    ash_parity_projection_y_scale(),
+                ),
+                width_texture: width_texture.as_ref(),
+                width_transform: uv_transforms.outline_width,
+                width_texture_origin: Rgba8SamplingOrigin::TopLeft,
+            },
+            world,
+            skin_matrices,
+        )
     }
 
     fn material_records(
@@ -932,12 +1022,13 @@ fn texture_ref_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<T
         .collect()
 }
 
-fn mtoon_base_pipeline_indices(pipelines: &[AshMtoonPipelinePlan]) -> HashMap<MaterialRef, usize> {
+fn mtoon_pipeline_indices(
+    pipelines: &[AshMtoonPipelinePlan],
+) -> HashMap<(MaterialRef, AshMtoonPass), usize> {
     pipelines
         .iter()
         .enumerate()
-        .filter(|(_, pipeline)| pipeline.key.pass == AshMtoonPass::Base)
-        .map(|(index, pipeline)| (pipeline.material, index))
+        .map(|(index, pipeline)| ((pipeline.material, pipeline.key.pass), index))
         .collect()
 }
 
@@ -1317,6 +1408,7 @@ mod tests {
             primitives: vec![AshVrmPrimitive {
                 node: NodeRef(0),
                 material: Some(MaterialRef(0)),
+                pass: AshMtoonPass::Base,
                 vertices: vec![AshVrmVertex {
                     position: [0.0, 0.0, 0.0],
                     tex_coord_0: [0.0, 0.0],
@@ -1446,6 +1538,78 @@ mod tests {
         );
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+    }
+
+    #[test]
+    fn renderer_frame_routes_outline_primitives_to_outline_pipeline() {
+        let vertex = AshVrmVertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coord_0: [0.0, 0.0],
+            color_0: [1.0, 1.0, 1.0, 1.0],
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+        };
+        let primitive = |pass| AshVrmPrimitive {
+            node: NodeRef(0),
+            material: Some(MaterialRef(0)),
+            pass,
+            vertices: vec![vertex],
+            indices: vec![0],
+        };
+        let pipeline = |pass, render_order, phase_order| AshMtoonPipelinePlan {
+            material: MaterialRef(0),
+            name: Some(format!("{pass:?}")),
+            key: AshPipelineKey {
+                pass,
+                render_order,
+                phase_order,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                cull_mode: match pass {
+                    AshMtoonPass::Base => vk::CullModeFlags::BACK,
+                    AshMtoonPass::Outline => vk::CullModeFlags::FRONT,
+                },
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_test_enable: true,
+                depth_write_enable: true,
+                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                blend_enable: false,
+            },
+            descriptor_bindings: descriptor_bindings(GltfMaterialTextureSlots::default()),
+            uniform: MtoonGpuUniform::zeroed(),
+            uv_uniform: AshMaterialUvUniform::default(),
+            render_extra_uniform: AshMaterialExtraUniform::default(),
+            uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+            alpha_cutoff: 0.5,
+            outline_width: 0.01,
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+            emissive_color: [0.0, 0.0, 0.0],
+        };
+        let plan = AshVrmFramePlan {
+            primitives: vec![
+                primitive(AshMtoonPass::Base),
+                primitive(AshMtoonPass::Outline),
+            ],
+            materials: Vec::new(),
+            texture_uploads: Vec::new(),
+            mtoon_pipelines: vec![
+                pipeline(AshMtoonPass::Base, 2000, 2000),
+                pipeline(AshMtoonPass::Outline, 2001, 2001),
+            ],
+            scene_uniform: AshSceneUniform::default(),
+        };
+
+        let renderer_frame = ash_renderer_frame_from_plan(&plan);
+
+        assert_eq!(renderer_frame.draw_calls.len(), 2);
+        assert_eq!(renderer_frame.pipelines.len(), 2);
+        assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
+        assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+        assert_eq!(renderer_frame.draw_calls[1].pipeline_plan_index, Some(1));
+        assert_eq!(renderer_frame.draw_calls[1].descriptor_set_index, Some(1));
+        assert_eq!(
+            renderer_frame.pipelines[1].key.cull_mode,
+            vk::CullModeFlags::FRONT
+        );
     }
 
     #[test]

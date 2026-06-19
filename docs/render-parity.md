@@ -103,9 +103,11 @@ capture-side MToon accumulation shape: linear-to-SRGB output correction,
 view-space matcap UVs, glTF emissive texture multiplication, PBR/MToon ambient
 occlusion sampling, unlit and PBR fallback branches, v0-compatible direct light
 clamping, rim plus matcap composition, and render-extra direct-light scaling. It
-is still not the final visual parity shader: Ash remains supplemental until
-outline geometry/policy and the full PSNR/visual review harness are wired in the
-same way as wgpu and Bevy.
+now also emits expanded outline primitives through the same renderer-neutral
+outline helper used by the wgpu and Bevy captures, and routes those draws to the
+outline pipeline rather than the base pipeline. It is still not the final visual
+parity shader: Ash remains supplemental until the full PSNR/visual review harness
+is wired in the same way as wgpu and Bevy.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
