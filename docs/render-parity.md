@@ -1011,6 +1011,24 @@ diagnostic is intentionally a working guard rather than final parity evidence,
 because tiny generated-owner color changes can move the PSNR while the owner
 tail classification is the actual signal.
 
+The Bevy capture also has owner-id-only isolation switches for this class of
+tail:
+
+```powershell
+--disable-owner-id-depth-bias
+--disable-owner-id-phase-order
+```
+
+They do not affect the ordinary shaded capture path. On the current topology
+extract, disabling owner-id depth bias alone does not change Bevy-vs-wgpu
+unexplained gaps (`41`), disabling Bevy's owner-id phase order reduces them to
+`35`, and disabling both reduces them to `31`. The same split is visible against
+three-vrm (`46 -> 40 -> 36`). The generated split-ownership owner guard remains
+exact against wgpu with both switches enabled (`33120/33120` exact shared owner
+pixels), so the switches are useful for diagnosing Bevy's small-triangle
+owner-id phase-order artifact before deciding whether the default owner-id path
+should suppress those Bevy-specific ordering aids.
+
 A same-material multi-UV-island ownership control is available through:
 
 ```powershell

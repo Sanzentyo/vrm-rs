@@ -169,6 +169,10 @@ struct CaptureOptions {
     expressions: Vec<String>,
     #[arg(long, value_enum, default_value_t = DiagnosticRender::Shaded)]
     diagnostic_render: DiagnosticRender,
+    #[arg(long)]
+    disable_owner_id_depth_bias: bool,
+    #[arg(long)]
+    disable_owner_id_phase_order: bool,
     #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
     front_face: CaptureFrontFace,
 }
@@ -577,8 +581,10 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
-    for primitive in &mut primitives {
-        primitive.apply_phase_order_depth_bias();
+    if should_apply_owner_id_depth_bias(options) {
+        for primitive in &mut primitives {
+            primitive.apply_phase_order_depth_bias();
+        }
     }
     if options.diagnostic_render == DiagnosticRender::OwnerId {
         assign_owner_id_triangles(&mut primitives);
@@ -590,13 +596,14 @@ fn spawn_vrm_meshes(
     });
 
     for primitive in primitives {
+        let phase_order = owner_id_phase_order_offset(options, &primitive);
         let mesh = meshes.add(primitive.mesh);
         match primitive.material {
             BevyPrimitiveMaterial::Mtoon(material) => {
                 commands.spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mtoon_materials.add(material)),
-                    BevyMtoonPhaseOrder(primitive.transparent_order_offset),
+                    BevyMtoonPhaseOrder(phase_order),
                     Transform::IDENTITY,
                 ));
             }
@@ -786,6 +793,8 @@ fn diagnostic_owner_ids(
                     "depthCompare": "greater-equal",
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
+                    "bevyPhaseOrderOffset": primitive.transparent_order_offset,
+                    "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(options, primitive),
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
@@ -852,6 +861,20 @@ fn bevy_primitive_depth_write(primitive: &BevyPrimitive) -> bool {
 fn bevy_primitive_depth_bias(primitive: &BevyPrimitive) -> f32 {
     match &primitive.material {
         BevyPrimitiveMaterial::Mtoon(material) => material.depth_bias,
+    }
+}
+
+fn should_apply_owner_id_depth_bias(options: &CaptureOptions) -> bool {
+    options.diagnostic_render != DiagnosticRender::OwnerId || !options.disable_owner_id_depth_bias
+}
+
+fn owner_id_phase_order_offset(options: &CaptureOptions, primitive: &BevyPrimitive) -> f32 {
+    if options.diagnostic_render == DiagnosticRender::OwnerId
+        && options.disable_owner_id_phase_order
+    {
+        0.0
+    } else {
+        primitive.transparent_order_offset
     }
 }
 
@@ -2306,6 +2329,8 @@ fn write_capture(
         "normalMapMode": options.normal_map_mode.as_str(),
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
+        "disableOwnerIdDepthBias": options.disable_owner_id_depth_bias,
+        "disableOwnerIdPhaseOrder": options.disable_owner_id_phase_order,
         "frontFace": options.front_face.as_str(),
         "renderer": {
             "backend": "bevy",
