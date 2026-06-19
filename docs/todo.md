@@ -132,6 +132,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [x] Expression conformance slice: binary expression threshold uses `> 0.5`, non-finite input becomes `0`, `block` fully suppresses a category when its source output is positive, `blend` scales by source output, binary targets collapse to `0` when category multipliers make them fractional, renderer-facing expression effects use the same rule, unknown expression writes have a checked API, and malformed VRM1 expression JSON is an error instead of being silently dropped.
   - [ ] Structured diagnostics and strict/lenient load policy.
     - [x] Foundation: added `vrm-diagnostics` with typed severity, policy, JSON path, and report APIs, and connected VRM1 expression parsing so strict mode errors with structured diagnostics while lenient mode reports and skips malformed expressions.
+    - [x] IO loader policy API: `vrm-io` now exposes `load_vrm_from_slice_with_policy` / `load_vrm_from_path_with_policy` and returns `LoadedVrmWithDiagnostics`, merging sans-IO diagnostics with IO warnings and unknown root-extension preservation warnings while keeping the existing strict loaders unchanged.
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
     - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.

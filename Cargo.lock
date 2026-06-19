@@ -4207,6 +4207,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "vrm-core",
+ "vrm-diagnostics",
  "vrm-protocol",
  "vrm-sans-io",
 ]

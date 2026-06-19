@@ -16,6 +16,9 @@ use vrm_core::{
     Resolved, RotationTrack, ScalarTrack, TextureRef, TextureTransform2d, Transform,
     TranslationTrack, VrmAnimation, VrmKind, VrmModel,
 };
+pub use vrm_diagnostics::{
+    Diagnostic, DiagnosticPolicy, DiagnosticReport, DiagnosticSeverity, JsonPath,
+};
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
     parse_root_extensions,
@@ -45,6 +48,12 @@ pub struct LoadedVrm {
     pub buffers: Vec<Vec<u8>>,
     pub images: Vec<ImageData>,
     pub warnings: Vec<VrmIoWarning>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadedVrmWithDiagnostics {
+    pub loaded: LoadedVrm,
+    pub diagnostics: DiagnosticReport,
 }
 
 impl LoadedVrm {
@@ -2497,6 +2506,61 @@ pub enum VrmIoWarning {
     IgnoredAnimationChannel { node: usize, message: String },
 }
 
+impl VrmIoWarning {
+    #[must_use]
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        match self {
+            Self::MissingSpecVersion { extension, assumed } => Diagnostic::warning(
+                "vrm.extension.missing_spec_version",
+                extension_spec_version_path(extension),
+                format!("{extension} is missing specVersion; assuming {assumed}"),
+            ),
+            Self::DraftSpecVersion { extension, version } => Diagnostic::warning(
+                "vrm.extension.draft_spec_version",
+                extension_spec_version_path(extension),
+                format!("{extension} uses draft specVersion {version}"),
+            ),
+            Self::UnknownSpecVersion { extension, version } => Diagnostic::warning(
+                "vrm.extension.unknown_spec_version",
+                extension_spec_version_path(extension),
+                format!("{extension} uses unknown specVersion {version}"),
+            ),
+            Self::IgnoredAnimationChannel { node, message } => Diagnostic::warning(
+                "vrm.animation.ignored_channel",
+                JsonPath::root().child("animations"),
+                format!("ignored animation channel targeting node {node}: {message}"),
+            ),
+        }
+    }
+}
+
+fn extension_path(extension: &str) -> JsonPath {
+    JsonPath::root().child("extensions").child(extension)
+}
+
+fn extension_spec_version_path(extension: &str) -> JsonPath {
+    extension_path(extension).child("specVersion")
+}
+
+fn append_warning_diagnostics(warnings: &[VrmIoWarning], diagnostics: &mut DiagnosticReport) {
+    for warning in warnings {
+        diagnostics.push(warning.to_diagnostic());
+    }
+}
+
+fn append_unknown_extension_diagnostics(
+    bundle: &ExtensionBundle,
+    diagnostics: &mut DiagnosticReport,
+) {
+    for name in bundle.unknown.keys() {
+        diagnostics.warning(
+            "vrm.extension.unknown",
+            extension_path(name),
+            format!("unknown root extension {name} was preserved in the source sidecar"),
+        );
+    }
+}
+
 fn extract_meshes(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<GltfMeshData> {
     document
         .meshes()
@@ -2776,6 +2840,13 @@ fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
 }
 
 pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
+    load_vrm_from_slice_with_policy(bytes, DiagnosticPolicy::Strict).map(|load| load.loaded)
+}
+
+pub fn load_vrm_from_slice_with_policy(
+    bytes: &[u8],
+    diagnostic_policy: DiagnosticPolicy,
+) -> Result<LoadedVrmWithDiagnostics, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
     let source = GltfSource::from_slice(bytes)?;
     let scene = GltfSceneRest::from_document(&document);
@@ -2785,6 +2856,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let textures = extract_textures(&document);
     let root_extensions = extension_map(document.as_json().extensions.as_ref());
     let mut warnings = vrma_extension_warnings(&root_extensions);
+    let mut diagnostics = DiagnosticReport::new();
     let mut bundle = parse_root_extensions(&root_extensions)?;
     extract_node_constraints(&document, &mut bundle)?;
     extract_mtoon_materials(&document, &mut bundle)?;
@@ -2792,6 +2864,8 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     extract_khr_emissive_strengths(&document, &mut bundle)?;
     validate_vrmc_extension_versions(&bundle)?;
     let vrma_animations = extract_vrma_animations(&document, &buffers, &bundle, &mut warnings)?;
+    append_unknown_extension_diagnostics(&bundle, &mut diagnostics);
+    append_warning_diagnostics(&warnings, &mut diagnostics);
 
     let image_data = images
         .into_iter()
@@ -2806,10 +2880,13 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
 
     let node_count = document.nodes().count();
     let material_count = document.materials().count();
-    let mut asset = ValidatedAssetBuilder::new()
+    let build = ValidatedAssetBuilder::new()
         .with_node_count(node_count)
         .with_material_count(material_count)
-        .build(bundle)?;
+        .with_diagnostic_policy(diagnostic_policy)
+        .build_with_diagnostics(bundle)?;
+    diagnostics.merge(build.diagnostics);
+    let mut asset = build.value;
     merge_gltf_material_params_into_mtoon(&mut asset.document.materials, &gltf_materials);
     expand_vrm0_spring_roots(&mut asset.document, &scene);
     if let Some(animations) = vrma_animations {
@@ -2821,17 +2898,20 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     }
     let model = asset.resolve();
 
-    Ok(LoadedVrm {
-        model,
-        source,
-        scene,
-        meshes,
-        skins,
-        gltf_materials,
-        textures,
-        buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
-        images: image_data,
-        warnings,
+    Ok(LoadedVrmWithDiagnostics {
+        loaded: LoadedVrm {
+            model,
+            source,
+            scene,
+            meshes,
+            skins,
+            gltf_materials,
+            textures,
+            buffers: buffers.into_iter().map(|buffer| buffer.0).collect(),
+            images: image_data,
+            warnings,
+        },
+        diagnostics,
     })
 }
 
@@ -3388,6 +3468,14 @@ fn node_from_value(value: &Value) -> Option<usize> {
 pub fn load_vrm_from_path(path: impl AsRef<Path>) -> Result<LoadedVrm, VrmIoError> {
     let bytes = std::fs::read(path)?;
     load_vrm_from_slice(&bytes)
+}
+
+pub fn load_vrm_from_path_with_policy(
+    path: impl AsRef<Path>,
+    diagnostic_policy: DiagnosticPolicy,
+) -> Result<LoadedVrmWithDiagnostics, VrmIoError> {
+    let bytes = std::fs::read(path)?;
+    load_vrm_from_slice_with_policy(&bytes, diagnostic_policy)
 }
 
 fn extension_map<T>(source: Option<&T>) -> ExtensionMap
@@ -4150,6 +4238,96 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("invalid preset expression"));
         assert!(message.contains("blink"));
+    }
+
+    #[test]
+    fn lenient_load_reports_invalid_expression_diagnostic_and_keeps_loading() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_vrm"]["expressions"]["preset"]["blink"] = json!(false);
+        let bytes = sample.to_string().into_bytes();
+
+        let loaded = load_vrm_from_slice_with_policy(&bytes, DiagnosticPolicy::Lenient).unwrap();
+
+        assert!(loaded.diagnostics.has_errors());
+        let diagnostic = loaded
+            .diagnostics
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code == "vrm.expression.invalid_shape")
+            .unwrap();
+        assert_eq!(
+            diagnostic.path.as_str(),
+            "$.extensions.VRMC_vrm.expressions.preset.blink"
+        );
+        assert_eq!(
+            loaded.loaded.model().document().meta.name,
+            "Generated Test Avatar"
+        );
+        let expressions = loaded
+            .loaded
+            .model()
+            .document()
+            .expressions
+            .as_ref()
+            .unwrap();
+        assert!(!expressions.preset.contains_key(&ExpressionName::Blink));
+    }
+
+    #[test]
+    fn load_with_policy_reports_unknown_extension_without_losing_source() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VENDOR_lossless"] = json!({ "nested": { "kept": true } });
+        let bytes = sample.to_string().into_bytes();
+
+        let loaded = load_vrm_from_slice_with_policy(&bytes, DiagnosticPolicy::Strict).unwrap();
+
+        assert_eq!(
+            loaded
+                .loaded
+                .source()
+                .root_extension("VENDOR_lossless")
+                .unwrap()["nested"]["kept"],
+            true
+        );
+        let diagnostic = loaded
+            .diagnostics
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code == "vrm.extension.unknown")
+            .unwrap();
+        assert_eq!(diagnostic.path.as_str(), "$.extensions.VENDOR_lossless");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn load_with_policy_mirrors_io_warnings_as_structured_diagnostics() {
+        let mut sample = generated_vrma_gltf();
+        sample["extensions"]["VRMC_vrm_animation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("specVersion");
+
+        let loaded = load_vrm_from_slice_with_policy(
+            sample.to_string().as_bytes(),
+            DiagnosticPolicy::Strict,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            loaded.loaded.warnings(),
+            [VrmIoWarning::MissingSpecVersion { extension, assumed }]
+                if extension == "VRMC_vrm_animation" && assumed == "1.0"
+        ));
+        let diagnostic = loaded
+            .diagnostics
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code == "vrm.extension.missing_spec_version")
+            .unwrap();
+        assert_eq!(
+            diagnostic.path.as_str(),
+            "$.extensions.VRMC_vrm_animation.specVersion"
+        );
     }
 
     #[test]

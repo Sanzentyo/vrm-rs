@@ -42,12 +42,16 @@ use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{
     CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
-    DecodedTexturePayload, FileResourceReader, JointPaletteCompaction, MeshCodec,
+    DecodedTexturePayload, Diagnostic, DiagnosticPolicy, DiagnosticReport, DiagnosticSeverity,
+    FileResourceReader, JointPaletteCompaction, JsonPath, LoadedVrmWithDiagnostics, MeshCodec,
     MeshCodecProvider, OptimizeError, OptimizeOptions, OptimizeReport, ResourceData, ResourceError,
     ResourceLimits, ResourceReader, ResourceSource, TextureCodec, TextureCodecProvider,
     TextureOutputFormat, VertexRemap, apply_joint_compaction_to_skin, optimize_primitive,
 };
-pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
+pub use vrm_io::{
+    LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_path_with_policy, load_vrm_from_slice,
+    load_vrm_from_slice_with_policy,
+};
 pub use vrm_runtime::{
     AnimationActionOptions, AnimationBlendMode, AnimationLoopMode, AnimationMixerError,
     AnimationMixerFrame, BoneMask, DeltaTime, RootMotionPolicy, Runtime, RuntimeEvents,
@@ -170,9 +174,25 @@ pub fn load_full(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     load_vrm_from_slice(bytes)
 }
 
+/// Parse, validate, and resolve while collecting structured diagnostics.
+pub fn load_full_with_policy(
+    bytes: &[u8],
+    diagnostic_policy: DiagnosticPolicy,
+) -> Result<LoadedVrmWithDiagnostics, VrmIoError> {
+    load_vrm_from_slice_with_policy(bytes, diagnostic_policy)
+}
+
 /// Parse, validate, and resolve a VRM/VRMA file while keeping IO details.
 pub fn load_full_path(path: impl AsRef<Path>) -> Result<LoadedVrm, VrmIoError> {
     load_vrm_from_path(path)
+}
+
+/// Parse, validate, and resolve a VRM/VRMA file while collecting diagnostics.
+pub fn load_full_path_with_policy(
+    path: impl AsRef<Path>,
+    diagnostic_policy: DiagnosticPolicy,
+) -> Result<LoadedVrmWithDiagnostics, VrmIoError> {
+    load_vrm_from_path_with_policy(path, diagnostic_policy)
 }
 
 /// Parse, validate, resolve, and initialize runtime state from bytes.
@@ -272,6 +292,28 @@ mod tests {
             load_runtime(b"not gltf"),
             Err(VrmIoError::Gltf(_))
         ));
+    }
+
+    #[test]
+    fn facade_exposes_policy_load_diagnostics() {
+        let mut sample: serde_json::Value = serde_json::from_str(&generated_vrm1_gltf()).unwrap();
+        sample["extensions"]["VENDOR_facade"] = serde_json::json!({ "kept": true });
+
+        let loaded =
+            load_full_with_policy(sample.to_string().as_bytes(), DiagnosticPolicy::Strict).unwrap();
+
+        assert_eq!(
+            loaded
+                .loaded
+                .source()
+                .root_extension("VENDOR_facade")
+                .unwrap()["kept"],
+            true
+        );
+        assert!(loaded.diagnostics.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == "vrm.extension.unknown"
+                && diagnostic.path.as_str() == "$.extensions.VENDOR_facade"
+        }));
     }
 
     #[test]

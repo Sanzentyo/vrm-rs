@@ -13,5 +13,6 @@ serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 vrm-core = { path = "../vrm-core" }
+vrm-diagnostics = { path = "../vrm-diagnostics" }
 vrm-protocol = { path = "../vrm-protocol" }
 vrm-sans-io = { path = "../vrm-sans-io" }
