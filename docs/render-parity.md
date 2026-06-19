@@ -1029,6 +1029,15 @@ pixels), so the switches are useful for diagnosing Bevy's small-triangle
 owner-id phase-order artifact before deciding whether the default owner-id path
 should suppress those Bevy-specific ordering aids.
 
+Do not globally shrink or remove the Bevy owner-id phase-order offset yet. A
+`1e-8` phase-order offset matches the topology no-bias improvement, but it
+regresses generated source-order guards that prove equal-depth MToon ordering:
+dense ownership gains `5913` Bevy-vs-wgpu mismatches, uv-island gains `9594`,
+and split ownership gains `1728`. Full no-bias is also unsafe for
+primitive-group, dense, and uv-island. The current `1e-6` offset remains the
+default because it preserves those source-order controls; the no-bias switches
+are an isolation tool for the source-derived topology tail.
+
 A same-material multi-UV-island ownership control is available through:
 
 ```powershell

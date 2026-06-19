@@ -69,6 +69,7 @@ use vrm_io::{
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
+const BEVY_PHASE_ORDER_OFFSET_SCALE: f32 = 0.000001;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse();
@@ -1890,7 +1891,7 @@ fn projection_y_scale() -> f32 {
 }
 
 fn material_transparent_order_offset(phase_order: i32, draw_order: i32) -> f32 {
-    phase_order as f32 * 0.000001 + draw_order as f32 * 0.000001
+    (phase_order as f32 + draw_order as f32) * BEVY_PHASE_ORDER_OFFSET_SCALE
 }
 
 fn bevy_source_order_offset(
