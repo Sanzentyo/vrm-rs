@@ -18,6 +18,20 @@ layout(set = 0, binding = 9, std140) uniform AshSceneUniform {
     vec4 mtoon_lighting;
 } scene;
 
+layout(set = 0, binding = 0, std140) uniform MtoonGpuUniform {
+    vec4 base_color_factor;
+    vec4 shade_color_factor_cutoff;
+    vec4 emissive_color_outline_width;
+    vec4 shading;
+    vec4 lighting;
+    vec4 matcap_factor_debug;
+    vec4 rim_color_lighting_mix;
+    vec4 rim_params;
+    vec4 outline_color_lighting_mix;
+    vec4 uv_animation;
+    uvec4 flags;
+} mtoon;
+
 layout(location = 0) out vec2 out_tex_coord_0;
 layout(location = 1) out vec4 out_color_0;
 layout(location = 2) out vec3 out_normal;
@@ -35,4 +49,7 @@ void main() {
     out_normal_scale = in_normal_scale;
     out_double_sided = in_double_sided;
     gl_Position = scene.view_projection * vec4(in_position, 1.0);
+    if (mtoon.flags.z == 1u) {
+        gl_Position.z += 0.000001 * gl_Position.w;
+    }
 }

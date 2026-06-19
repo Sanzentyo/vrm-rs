@@ -79,7 +79,8 @@ SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
 longer compares the built-in color-smoke shader. The same runner also forwards
 the render camera distance, direct-light scale, directional color, and MToon
 lighting knobs into the Ash frame plan. The current Ash path also applies the
-Vulkan clip-space Y flip/front-face pairing, bakes base color into vertices,
+Vulkan clip-space Y flip with the same CCW front-face convention used by the
+wgpu/Bevy parity captures, bakes base color into vertices,
 generates missing tangents, carries per-vertex normal scale and double-sided
 state, binds slot-specific fallback textures, and uses the same UV animation
 rotation direction as the wgpu/Bevy capture shader before readback. Ash also
@@ -101,6 +102,17 @@ not remove the current Ash fragment outline-width mask as a blind wgpu
 alignment step: the 2026-06-19 check under
 `target/render-parity-ash-review-128-outline-color-direct` fell to `15.4337 dB`,
 so the remaining outline blocker is coupled to Ash geometry/fill behavior.
+The CCW front-face correction and vertex-stage outline clip-depth bias close a
+small generated outline guard:
+`.external-fixtures/render-parity-ash-frontface-ccw-smoke/` reports exact
+Ash-vs-three-vrm shaded parity for
+`.external-fixtures/generated/screen-outline.vrm.gltf` at 64px (`Infinity`
+selected `rgb-visible` PSNR, exact alpha), and the outline-disabled base-color
+diagnostic remains exact. The same 64px Seed-san smoke under
+`.external-fixtures/render-parity-ash-seed-frontface-ccw-smoke/` reports exact
+opaque alpha and Ash selected `rgb-visible` PSNR `20.8547 dB`, so Ash is moving
+toward the visual gate but is still non-gating on real material/texture/normal
+parity.
 Ash now also accepts the same normal-map diagnostic axis as wgpu/Bevy:
 `--normal-map-mode generated-tangents|derivative|view-derivative`,
 `--normal-map-scale`, and `--disable-normal-maps` are forwarded through the

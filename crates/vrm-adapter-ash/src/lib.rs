@@ -1022,7 +1022,8 @@ impl AshVrmFramePlanner {
             )?;
         }
         self.scene.update_world_transforms()?;
-        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds, render_options);
+        let mtoon_pipelines =
+            self.mtoon_pipeline_plans(time_seconds, scene_options, render_options);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
@@ -1290,6 +1291,7 @@ impl AshVrmFramePlanner {
     fn mtoon_pipeline_plans(
         &self,
         mtoon_time: f32,
+        scene_options: AshSceneOptions,
         render_options: AshRenderOptions,
     ) -> Vec<AshMtoonPipelinePlan> {
         mtoon_renderer_material_plans(
@@ -1308,11 +1310,10 @@ impl AshVrmFramePlanner {
             let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
                 self.loaded
                     .material_shading_plan(material, GltfMaterialShadingOptions::default())
-                    .render_extra_plan(GltfMaterialRenderExtraOptions {
-                        view_derivative_normals: render_options.normal_map_mode
-                            == AshNormalMapMode::ViewDerivative,
-                        ..Default::default()
-                    })
+                    .render_extra_plan(ash_material_render_extra_options(
+                        scene_options,
+                        render_options,
+                    ))
                     .uniform_plan(),
             );
             render_extra_uniform.flags2[2] = render_options.diagnostic_render.flat_flag();
@@ -1350,6 +1351,21 @@ impl AshVrmFramePlanner {
             }
         })
         .collect()
+    }
+}
+
+fn ash_material_render_extra_options(
+    scene_options: AshSceneOptions,
+    render_options: AshRenderOptions,
+) -> GltfMaterialRenderExtraOptions {
+    GltfMaterialRenderExtraOptions {
+        light_accumulation: match scene_options.lighting.accumulation {
+            MtoonLightAccumulation::Tuned => vrm_io::GltfMtoonLightAccumulation::Tuned,
+            MtoonLightAccumulation::ThreeVrm => vrm_io::GltfMtoonLightAccumulation::ThreeVrm,
+        },
+        derivative_normals: render_options.normal_map_mode == AshNormalMapMode::Derivative,
+        view_derivative_normals: render_options.normal_map_mode == AshNormalMapMode::ViewDerivative,
+        direct_light_scale: scene_options.direct_light_scale,
     }
 }
 
@@ -1582,7 +1598,7 @@ fn cull_mode(mode: MtoonCullMode) -> vk::CullModeFlags {
 }
 
 fn vrm_vulkan_front_face() -> vk::FrontFace {
-    vk::FrontFace::CLOCKWISE
+    vk::FrontFace::COUNTER_CLOCKWISE
 }
 
 pub const fn ash_mtoon_uniform_binding() -> u32 {
@@ -2050,6 +2066,43 @@ mod tests {
     }
 
     #[test]
+    fn render_extra_options_preserve_scene_light_policy() {
+        let scene_options = AshSceneOptions {
+            direct_light_scale: 0.25,
+            lighting: MtoonLightingConfig {
+                accumulation: MtoonLightAccumulation::Tuned,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let derivative = ash_material_render_extra_options(
+            scene_options,
+            AshRenderOptions {
+                normal_map_mode: AshNormalMapMode::Derivative,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            derivative.light_accumulation,
+            vrm_io::GltfMtoonLightAccumulation::Tuned
+        );
+        assert!(derivative.derivative_normals);
+        assert!(!derivative.view_derivative_normals);
+        assert_eq!(derivative.direct_light_scale, 0.25);
+
+        let view_derivative = ash_material_render_extra_options(
+            scene_options,
+            AshRenderOptions {
+                normal_map_mode: AshNormalMapMode::ViewDerivative,
+                ..Default::default()
+            },
+        );
+        assert!(!view_derivative.derivative_normals);
+        assert!(view_derivative.view_derivative_normals);
+    }
+
+    #[test]
     fn owner_id_triangles_are_assigned_in_draw_order() {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
@@ -2185,11 +2238,14 @@ mod tests {
         assert!(fragment_shader.contains("scene.world_from_view"));
         assert!(fragment_shader.contains("material_extra.flags.x > 0.5"));
         assert!(fragment_shader.contains("material_extra.flags2.x > 0.5"));
+        assert!(vertex_shader.contains("layout(set = 0, binding = 0, std140)"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
         assert!(vertex_shader.contains("layout(location = 5) in float in_normal_scale;"));
         assert!(vertex_shader.contains("layout(location = 6) in float in_double_sided;"));
+        assert!(vertex_shader.contains("mtoon.flags.z == 1u"));
+        assert!(vertex_shader.contains("gl_Position.z += 0.000001 * gl_Position.w"));
     }
 
     #[test]
