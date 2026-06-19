@@ -187,6 +187,7 @@ enum OwnerIdPhaseOrderPolicy {
     Full,
     Off,
     OverlapArea,
+    OverlapTriangle,
 }
 
 impl OwnerIdPhaseOrderPolicy {
@@ -195,6 +196,7 @@ impl OwnerIdPhaseOrderPolicy {
             Self::Full => "full",
             Self::Off => "off",
             Self::OverlapArea => "overlap-area",
+            Self::OverlapTriangle => "overlap-triangle",
         }
     }
 }
@@ -711,8 +713,8 @@ fn configure_owner_id_phase_order_offsets(
                 primitive.phase_order_offset_applied = 0.0;
             }
         }
-        OwnerIdPhaseOrderPolicy::OverlapArea => {
-            let keep_offsets = owner_id_phase_order_overlap_mask(primitives, options);
+        OwnerIdPhaseOrderPolicy::OverlapArea | OwnerIdPhaseOrderPolicy::OverlapTriangle => {
+            let keep_offsets = owner_id_phase_order_overlap_mask(primitives, options, policy);
             for (primitive, keep_offset) in primitives.iter_mut().zip(keep_offsets) {
                 primitive.phase_order_offset_applied = if keep_offset {
                     primitive.transparent_order_offset
@@ -727,6 +729,7 @@ fn configure_owner_id_phase_order_offsets(
 fn owner_id_phase_order_overlap_mask(
     primitives: &[BevyPrimitive],
     options: &CaptureOptions,
+    policy: OwnerIdPhaseOrderPolicy,
 ) -> Vec<bool> {
     let view_projection = diagnostic_view_projection(options);
     let size = ScreenProjectionSize::from_pixels(options.width, options.height);
@@ -759,11 +762,12 @@ fn owner_id_phase_order_overlap_mask(
             }
         })
         .collect::<Vec<_>>();
-    owner_id_phase_order_overlap_mask_from_groups(&groups)
+    owner_id_phase_order_overlap_mask_from_groups(&groups, policy)
 }
 
 fn owner_id_phase_order_overlap_mask_from_groups(
     groups: &[OwnerIdPhaseOrderProjectionGroup],
+    policy: OwnerIdPhaseOrderPolicy,
 ) -> Vec<bool> {
     let mut keep_offsets = vec![false; groups.len()];
     for (left_index, left) in groups.iter().enumerate() {
@@ -777,7 +781,7 @@ fn owner_id_phase_order_overlap_mask_from_groups(
             {
                 continue;
             }
-            if owner_id_phase_order_groups_overlap(left, right) {
+            if owner_id_phase_order_groups_overlap(left, right, policy) {
                 keep_offsets[left_index] = true;
                 keep_offsets[right_index] = true;
             }
@@ -789,15 +793,32 @@ fn owner_id_phase_order_overlap_mask_from_groups(
 fn owner_id_phase_order_groups_overlap(
     left: &OwnerIdPhaseOrderProjectionGroup,
     right: &OwnerIdPhaseOrderProjectionGroup,
+    policy: OwnerIdPhaseOrderPolicy,
 ) -> bool {
     left.projections.iter().any(|left_projection| {
         right.projections.iter().any(|right_projection| {
-            screen_bounds_overlap_area(left_projection.bounds, right_projection.bounds)
-                >= OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD
+            owner_id_phase_order_projections_overlap(left_projection, right_projection, policy)
                 && (left_projection.webgl_depth - right_projection.webgl_depth).abs()
                     <= OWNER_ID_PHASE_ORDER_DEPTH_TOLERANCE
         })
     })
+}
+
+fn owner_id_phase_order_projections_overlap(
+    left: &ScreenTriangleProjection,
+    right: &ScreenTriangleProjection,
+    policy: OwnerIdPhaseOrderPolicy,
+) -> bool {
+    match policy {
+        OwnerIdPhaseOrderPolicy::Full | OwnerIdPhaseOrderPolicy::Off => false,
+        OwnerIdPhaseOrderPolicy::OverlapArea => {
+            screen_bounds_overlap_area(left.bounds, right.bounds)
+                >= OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD
+        }
+        OwnerIdPhaseOrderPolicy::OverlapTriangle => {
+            screen_triangles_have_area_overlap(left.screen, right.screen)
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -818,6 +839,101 @@ fn screen_bounds_overlap_area(left: ScreenProjectionBounds, right: ScreenProject
     let width = (left.max_x.min(right.max_x) - left.min_x.max(right.min_x)).max(0.0);
     let height = (left.max_y.min(right.max_y) - left.min_y.max(right.min_y)).max(0.0);
     width * height
+}
+
+fn screen_triangles_have_area_overlap(left: [[f32; 2]; 3], right: [[f32; 2]; 3]) -> bool {
+    const EPSILON: f32 = 1.0e-4;
+    triangle_intersection_area(left, right) > EPSILON
+}
+
+fn triangle_intersection_area(subject: [[f32; 2]; 3], clip: [[f32; 2]; 3]) -> f32 {
+    const EPSILON: f32 = 1.0e-6;
+    let clip_area = orient_2d(clip[0], clip[1], clip[2]);
+    if clip_area.abs() <= EPSILON {
+        return 0.0;
+    }
+    let winding = clip_area.signum();
+    let mut polygon = subject.to_vec();
+    for [edge_start, edge_end] in triangle_edges(clip) {
+        polygon = clip_polygon_to_half_plane(&polygon, edge_start, edge_end, winding);
+        if polygon.len() < 3 {
+            return 0.0;
+        }
+    }
+    polygon_area(&polygon).abs()
+}
+
+fn clip_polygon_to_half_plane(
+    polygon: &[[f32; 2]],
+    edge_start: [f32; 2],
+    edge_end: [f32; 2],
+    winding: f32,
+) -> Vec<[f32; 2]> {
+    const EPSILON: f32 = 1.0e-6;
+    let Some(mut previous) = polygon.last().copied() else {
+        return Vec::new();
+    };
+    let mut previous_inside = orient_2d(edge_start, edge_end, previous) * winding >= -EPSILON;
+    let mut clipped = Vec::with_capacity(polygon.len() + 1);
+    for &current in polygon {
+        let current_inside = orient_2d(edge_start, edge_end, current) * winding >= -EPSILON;
+        if current_inside != previous_inside
+            && let Some(intersection) =
+                line_segment_intersection_with_line(previous, current, edge_start, edge_end)
+        {
+            clipped.push(intersection);
+        }
+        if current_inside {
+            clipped.push(current);
+        }
+        previous = current;
+        previous_inside = current_inside;
+    }
+    clipped
+}
+
+fn line_segment_intersection_with_line(
+    start: [f32; 2],
+    end: [f32; 2],
+    line_start: [f32; 2],
+    line_end: [f32; 2],
+) -> Option<[f32; 2]> {
+    const EPSILON: f32 = 1.0e-6;
+    let segment = [end[0] - start[0], end[1] - start[1]];
+    let line = [line_end[0] - line_start[0], line_end[1] - line_start[1]];
+    let denominator = cross_2d(segment, line);
+    if denominator.abs() <= EPSILON {
+        return None;
+    }
+    let to_line = [line_start[0] - start[0], line_start[1] - start[1]];
+    let t = cross_2d(to_line, line) / denominator;
+    Some([start[0] + t * segment[0], start[1] + t * segment[1]])
+}
+
+fn triangle_edges(triangle: [[f32; 2]; 3]) -> impl Iterator<Item = [[f32; 2]; 2]> {
+    [
+        [triangle[0], triangle[1]],
+        [triangle[1], triangle[2]],
+        [triangle[2], triangle[0]],
+    ]
+    .into_iter()
+}
+
+fn polygon_area(polygon: &[[f32; 2]]) -> f32 {
+    polygon
+        .iter()
+        .zip(polygon.iter().cycle().skip(1))
+        .map(|(left, right)| cross_2d(*left, *right))
+        .sum::<f32>()
+        * 0.5
+}
+
+fn orient_2d(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
+    cross_2d([b[0] - a[0], b[1] - a[1]], [c[0] - a[0], c[1] - a[1]])
+}
+
+fn cross_2d(a: [f32; 2], b: [f32; 2]) -> f32 {
+    a[0] * b[1] - a[1] * b[0]
 }
 
 fn duplicate_mesh_vertices_in_index_order(
@@ -2604,8 +2720,74 @@ mod tests {
         ];
 
         assert_eq!(
-            owner_id_phase_order_overlap_mask_from_groups(&groups),
+            owner_id_phase_order_overlap_mask_from_groups(
+                &groups,
+                OwnerIdPhaseOrderPolicy::OverlapArea
+            ),
             vec![true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn owner_id_triangle_overlap_policy_rejects_shared_edges() {
+        let groups = vec![
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[0.0, 0.0], [4.0, 0.0], [0.0, 4.0]],
+                0.5,
+            ),
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[4.0, 0.0], [4.0, 4.0], [0.0, 4.0]],
+                0.5005,
+            ),
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[8.0, 0.0], [12.0, 0.0], [8.0, 4.0]],
+                0.5,
+            ),
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[9.0, 1.0], [13.0, 1.0], [9.0, 5.0]],
+                0.5005,
+            ),
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[16.0, 0.0], [20.0, 0.0], [16.0, 4.0]],
+                0.5,
+            ),
+            owner_phase_triangle_group(
+                19.0,
+                Some(1),
+                3000,
+                [[16.0, 0.0], [20.0, 0.0], [16.0, 4.0]],
+                0.5005,
+            ),
+        ];
+
+        assert_eq!(
+            owner_id_phase_order_overlap_mask_from_groups(
+                &groups,
+                OwnerIdPhaseOrderPolicy::OverlapArea
+            ),
+            vec![true, true, true, true, true, true]
+        );
+        assert_eq!(
+            owner_id_phase_order_overlap_mask_from_groups(
+                &groups,
+                OwnerIdPhaseOrderPolicy::OverlapTriangle
+            ),
+            vec![false, false, true, true, true, true]
         );
     }
 
@@ -2676,6 +2858,29 @@ mod tests {
                     max_x,
                     max_y,
                 },
+                ndc_depth: webgl_depth,
+                webgl_depth,
+                screen_signed_area: 1.0,
+                front_facing: true,
+                gpu_front_facing: true,
+            }],
+        }
+    }
+
+    fn owner_phase_triangle_group(
+        offset_units: f32,
+        material: Option<usize>,
+        render_order: i32,
+        screen: [[f32; 2]; 3],
+        webgl_depth: f32,
+    ) -> OwnerIdPhaseOrderProjectionGroup {
+        OwnerIdPhaseOrderProjectionGroup {
+            render_order,
+            material,
+            transparent_order_offset: offset_units * BEVY_PHASE_ORDER_OFFSET_SCALE,
+            projections: vec![ScreenTriangleProjection {
+                screen,
+                bounds: ScreenProjectionBounds::from_triangle(screen),
                 ndc_depth: webgl_depth,
                 webgl_depth,
                 screen_signed_area: 1.0,

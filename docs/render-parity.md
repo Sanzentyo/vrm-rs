@@ -1060,6 +1060,7 @@ The Bevy capture also exposes an experimental overlap-localized policy:
 
 ```powershell
 --owner-id-phase-order-policy overlap-area
+--owner-id-phase-order-policy overlap-triangle
 ```
 
 This keeps owner-id phase offsets only when same-material, same-render-order
@@ -1068,9 +1069,26 @@ near-equal depth. The topology experiment under
 `.external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-overlap-phase/`
 shows why this is not the default fix: nonzero actual phase-offset tail pixels
 drop from `40` to `32`, but the Bevy-vs-wgpu unexplained tail returns to `41`.
-That rejects simple overlap-area localization and keeps the next investigation
-on Bevy render-phase distance/order behavior or a more explicit owner-id
-diagnostic draw-order path.
+`overlap-triangle` is stricter: it rejects shared-edge/contact-only pairs and
+requires positive screen-area triangle intersection while still accepting
+identical or contained triangles. It improves the compact topology Bevy-vs-wgpu
+tail to `35`, with `19/35` residual tail pixels still carrying a nonzero Bevy
+phase offset, but it regresses source-order controls that must remain exact:
+dense ownership `0 -> 5883` mismatches and split ownership `0 -> 1728` while
+UV-island ownership remains exact. That rejects overlap localization as a
+default fix and keeps the next investigation on Bevy render-phase distance/order
+behavior or a more explicit owner-id diagnostic draw-order path.
+
+The compact topology recipe can reproduce these phase-policy experiments
+without regenerating the wgpu baseline:
+
+```powershell
+just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-current-phase full
+just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-triangle-phase overlap-triangle
+```
+
+For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
+with `--render-owner-id-phase-order-policy`.
 
 A same-material multi-UV-island ownership control is available through:
 
