@@ -130,6 +130,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [ ] Structured diagnostics and strict/lenient load policy.
     - [x] Foundation: added `vrm-diagnostics` with typed severity, policy, JSON path, and report APIs, and connected VRM1 expression parsing so strict mode errors with structured diagnostics while lenient mode reports and skips malformed expressions.
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
+    - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
   - [ ] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.
   - [ ] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.

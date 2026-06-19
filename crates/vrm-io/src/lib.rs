@@ -21,6 +21,7 @@ use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 #[derive(Clone, Debug)]
 pub struct LoadedVrm {
     model: VrmModel<Resolved>,
+    pub source: GltfSource,
     pub scene: GltfSceneRest,
     pub meshes: Vec<GltfMeshData>,
     pub skins: Vec<GltfSkinData>,
@@ -42,6 +43,10 @@ impl LoadedVrm {
 
     pub fn warnings(&self) -> &[VrmIoWarning] {
         &self.warnings
+    }
+
+    pub fn source(&self) -> &GltfSource {
+        &self.source
     }
 
     pub fn scene(&self) -> &GltfSceneRest {
@@ -398,6 +403,184 @@ impl LoadedVrm {
 
         Ok(result)
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GltfSource {
+    pub format: GltfSourceFormat,
+    pub original_bytes: Vec<u8>,
+    pub json_bytes: Vec<u8>,
+    pub json: Value,
+    pub glb_chunks: Vec<GlbChunk>,
+}
+
+impl GltfSource {
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, VrmIoError> {
+        if is_glb(bytes) {
+            Self::from_glb_slice(bytes)
+        } else {
+            Self::from_json_slice(bytes)
+        }
+    }
+
+    pub fn root_extensions(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.json.get("extensions")?.as_object()
+    }
+
+    pub fn root_extension(&self, name: &str) -> Option<&Value> {
+        self.root_extensions()?.get(name)
+    }
+
+    pub fn root_extras(&self) -> Option<&Value> {
+        self.json.get("extras")
+    }
+
+    pub fn glb_json_chunk(&self) -> Option<&GlbChunk> {
+        self.glb_chunks
+            .iter()
+            .find(|chunk| chunk.kind == GlbChunkKind::Json)
+    }
+
+    pub fn glb_bin_chunk(&self) -> Option<&GlbChunk> {
+        self.glb_chunks
+            .iter()
+            .find(|chunk| chunk.kind == GlbChunkKind::Bin)
+    }
+
+    fn from_json_slice(bytes: &[u8]) -> Result<Self, VrmIoError> {
+        Ok(Self {
+            format: GltfSourceFormat::Json,
+            original_bytes: bytes.to_vec(),
+            json_bytes: bytes.to_vec(),
+            json: serde_json::from_slice(bytes).map_err(|source| {
+                VrmIoError::SourcePreservation {
+                    message: format!("invalid glTF JSON source: {source}"),
+                }
+            })?,
+            glb_chunks: Vec::new(),
+        })
+    }
+
+    fn from_glb_slice(bytes: &[u8]) -> Result<Self, VrmIoError> {
+        let chunks = parse_glb_chunks(bytes)?;
+        let json_chunk = chunks
+            .iter()
+            .find(|chunk| chunk.kind == GlbChunkKind::Json)
+            .ok_or_else(|| VrmIoError::SourcePreservation {
+                message: "missing GLB JSON chunk".to_owned(),
+            })?;
+        Ok(Self {
+            format: GltfSourceFormat::Glb {
+                version: u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked")),
+                declared_length: u32::from_le_bytes(
+                    bytes[8..12].try_into().expect("slice length checked"),
+                ),
+            },
+            original_bytes: bytes.to_vec(),
+            json_bytes: json_chunk.bytes.clone(),
+            json: serde_json::from_slice(&json_chunk.bytes).map_err(|source| {
+                VrmIoError::SourcePreservation {
+                    message: format!("invalid GLB JSON chunk: {source}"),
+                }
+            })?,
+            glb_chunks: chunks,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GltfSourceFormat {
+    Json,
+    Glb { version: u32, declared_length: u32 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlbChunk {
+    pub kind: GlbChunkKind,
+    pub raw_type: u32,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlbChunkKind {
+    Json,
+    Bin,
+    Unknown(u32),
+}
+
+const GLB_MAGIC: &[u8; 4] = b"glTF";
+const GLB_JSON_CHUNK_TYPE: u32 = 0x4E4F_534A;
+const GLB_BIN_CHUNK_TYPE: u32 = 0x004E_4942;
+
+fn is_glb(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && &bytes[..4] == GLB_MAGIC
+}
+
+fn parse_glb_chunks(bytes: &[u8]) -> Result<Vec<GlbChunk>, VrmIoError> {
+    if bytes.len() < 12 {
+        return Err(VrmIoError::SourcePreservation {
+            message: "GLB source is shorter than the 12-byte header".to_owned(),
+        });
+    }
+    let version = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
+    if version != 2 {
+        return Err(VrmIoError::SourcePreservation {
+            message: format!("unsupported GLB version for source preservation: {version}"),
+        });
+    }
+    let declared_length =
+        u32::from_le_bytes(bytes[8..12].try_into().expect("slice length checked")) as usize;
+    if declared_length > bytes.len() {
+        return Err(VrmIoError::SourcePreservation {
+            message: format!(
+                "GLB declared length {declared_length} exceeds input length {}",
+                bytes.len()
+            ),
+        });
+    }
+
+    let mut offset = 12;
+    let mut chunks = Vec::new();
+    while offset < declared_length {
+        if declared_length - offset < 8 {
+            return Err(VrmIoError::SourcePreservation {
+                message: "truncated GLB chunk header".to_owned(),
+            });
+        }
+        let chunk_len = u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("slice length checked"),
+        ) as usize;
+        let raw_type = u32::from_le_bytes(
+            bytes[offset + 4..offset + 8]
+                .try_into()
+                .expect("slice length checked"),
+        );
+        let data_start = offset + 8;
+        let data_end =
+            data_start
+                .checked_add(chunk_len)
+                .ok_or_else(|| VrmIoError::SourcePreservation {
+                    message: "GLB chunk length overflow".to_owned(),
+                })?;
+        if data_end > declared_length {
+            return Err(VrmIoError::SourcePreservation {
+                message: "GLB chunk extends beyond declared length".to_owned(),
+            });
+        }
+        chunks.push(GlbChunk {
+            kind: match raw_type {
+                GLB_JSON_CHUNK_TYPE => GlbChunkKind::Json,
+                GLB_BIN_CHUNK_TYPE => GlbChunkKind::Bin,
+                other => GlbChunkKind::Unknown(other),
+            },
+            raw_type,
+            bytes: bytes[data_start..data_end].to_vec(),
+        });
+        offset = data_end;
+    }
+    Ok(chunks)
 }
 
 impl GltfSceneRest {
@@ -2292,6 +2475,7 @@ fn vrma_extension_warnings(extensions: &ExtensionMap) -> Vec<VrmIoWarning> {
 
 pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
     let (document, buffers, images) = gltf::import_slice(bytes)?;
+    let source = GltfSource::from_slice(bytes)?;
     let scene = GltfSceneRest::from_document(&document);
     let meshes = extract_meshes(&document, &buffers);
     let skins = extract_skins(&document, &buffers);
@@ -2337,6 +2521,7 @@ pub fn load_vrm_from_slice(bytes: &[u8]) -> Result<LoadedVrm, VrmIoError> {
 
     Ok(LoadedVrm {
         model,
+        source,
         scene,
         meshes,
         skins,
@@ -3067,6 +3252,8 @@ pub enum VrmIoError {
     MissingExpressions,
     #[error("unknown render expression: {name}")]
     UnknownExpression { name: String },
+    #[error("could not preserve source data: {message}")]
+    SourcePreservation { message: String },
 }
 
 trait ImageFormatExt {
@@ -3441,6 +3628,64 @@ mod tests {
             loaded.expression_render_effects([("missing", 1.0)]),
             Err(VrmIoError::UnknownExpression { name }) if name == "missing"
         ));
+    }
+
+    #[test]
+    fn generated_gltf_preserves_source_json_extensions_and_extras() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VENDOR_lossless"] = json!({
+            "nested": { "kept": true },
+            "array": [1, 2, 3]
+        });
+        sample["extras"] = json!({
+            "authoringTool": "unit-test",
+            "note": { "preserve": "root extras" }
+        });
+        let bytes = sample.to_string().into_bytes();
+
+        let loaded = load_vrm_from_slice(&bytes).unwrap();
+        let source = loaded.source();
+
+        assert_eq!(source.format, GltfSourceFormat::Json);
+        assert_eq!(source.original_bytes, bytes);
+        assert_eq!(source.json_bytes, source.original_bytes);
+        assert_eq!(
+            source.root_extension("VENDOR_lossless").unwrap()["nested"]["kept"],
+            true
+        );
+        assert_eq!(source.root_extras().unwrap()["authoringTool"], "unit-test");
+        assert!(source.glb_chunks.is_empty());
+    }
+
+    #[test]
+    fn generated_glb_preserves_json_and_bin_chunks() {
+        let mut sample = generated_vrm1_gltf();
+        sample["buffers"] = json!([{ "byteLength": 4 }]);
+        sample["extensions"]["VENDOR_glb"] = json!({ "raw": "kept" });
+        sample["extras"] = json!({ "glb": true });
+        let glb = generated_glb(sample, &[9, 8, 7, 6]);
+
+        let loaded = load_vrm_from_slice(&glb).unwrap();
+        let source = loaded.source();
+
+        assert_eq!(
+            source.format,
+            GltfSourceFormat::Glb {
+                version: 2,
+                declared_length: glb.len() as u32
+            }
+        );
+        assert_eq!(source.original_bytes, glb);
+        assert_eq!(source.root_extension("VENDOR_glb").unwrap()["raw"], "kept");
+        assert_eq!(source.root_extras().unwrap()["glb"], true);
+        assert_eq!(source.glb_chunks.len(), 2);
+        assert_eq!(source.glb_json_chunk().unwrap().kind, GlbChunkKind::Json);
+        assert_eq!(
+            source.glb_json_chunk().unwrap().raw_type,
+            GLB_JSON_CHUNK_TYPE
+        );
+        assert_eq!(source.glb_bin_chunk().unwrap().bytes, vec![9, 8, 7, 6]);
+        assert_eq!(loaded.buffers, vec![vec![9, 8, 7, 6]]);
     }
 
     #[test]
@@ -4862,6 +5107,30 @@ mod tests {
                 }
             }
         })
+    }
+
+    fn generated_glb(json: Value, bin: &[u8]) -> Vec<u8> {
+        let mut json_bytes = json.to_string().into_bytes();
+        while !json_bytes.len().is_multiple_of(4) {
+            json_bytes.push(b' ');
+        }
+        let mut bin_bytes = bin.to_vec();
+        while !bin_bytes.len().is_multiple_of(4) {
+            bin_bytes.push(0);
+        }
+
+        let total_len = 12 + 8 + json_bytes.len() + 8 + bin_bytes.len();
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(GLB_MAGIC);
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&(total_len as u32).to_le_bytes());
+        bytes.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&GLB_JSON_CHUNK_TYPE.to_le_bytes());
+        bytes.extend_from_slice(&json_bytes);
+        bytes.extend_from_slice(&(bin_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&GLB_BIN_CHUNK_TYPE.to_le_bytes());
+        bytes.extend_from_slice(&bin_bytes);
+        bytes
     }
 
     #[test]
