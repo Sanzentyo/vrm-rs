@@ -136,6 +136,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
     - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
     - [x] Writer acceptance hardening: `GltfSource` validates GLB declared length and chunk alignment up front, preserves unknown GLB chunks through metadata edits, and keeps root unknown extensions/extras intact in generated roundtrip coverage.
+    - [x] Full metadata access: `GltfSource::vrm_full_metadata` returns typed VRM1/VRM0 protocol metadata plus the raw metadata JSON so applications can inspect complete author/license/permission fields and unknown raw fields without copying them into normalized runtime core.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
     - [x] Foundation: `GltfSource` can patch VRM1/VRM0 metadata, re-encode `.gltf` or `.glb` while preserving non-JSON GLB chunks, and atomically save the edited or original source through a same-directory temp file.
     - [x] Writer options and metadata helpers: compact/pretty JSON output is selectable for `.gltf` and `.glb`, metadata patch byte helpers are public, and metadata patch atomic saves fail before touching the destination when the source shape is unsupported.
@@ -152,9 +153,10 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [x] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
     - [x] Foundation: `vrm-io::resource` now provides data URI and relative file resolution with path traversal rejection, file/data/decode size limits, missing-codec errors, and provider traits/registry for Draco, Meshopt, and KTX2/Basis-style texture decoding without bundling codec dependencies.
     - [x] Texture provider practicality: texture decode requests now carry source color space and renderer-facing decode options, GPU format capability helpers select BC7/ETC2/ASTC/RGBA fallback preferences, providers can override option-aware decode, and the registry rejects unsupported decoded texture formats after size-limit validation.
-  - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
+  - [x] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport socket/rate-limit policy boundaries, and whether `FullMeta` is needed without breaking existing API.
     - [x] VRM0 LookAt curve compatibility: `RangeMap` now preserves VRM0 Unity-style two-key Hermite curve data, sans-IO maps `FirstPersonDegreeMap.curve`, and runtime LookAt expression weights evaluate through the shared curve-aware range mapper.
     - [x] VMC transport/rate-limit boundary: `vrm-vmc` now provides reusable Sans I/O transport policy gating without owning sockets; authentication identity, network IO, retry, and source-of-trust decisions remain outside the crate.
+    - [x] FullMeta decision: full metadata stays out of normalized runtime `Meta` to avoid a breaking core-model expansion; `VrmFullMetadata` exposes typed VRM1/VRM0 protocol meta and raw preserved JSON from `GltfSource`.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.
 - [ ] Keep `docs/adapter-guide.md` aligned with public adapter APIs.

@@ -47,7 +47,7 @@ pub use vrm_io::{
     JsonPath, LoadedVrmWithDiagnostics, MeshCodec, MeshCodecProvider, OptimizeError,
     OptimizeOptions, OptimizeReport, ResourceData, ResourceError, ResourceLimits, ResourceReader,
     ResourceSource, TextureCodec, TextureCodecProvider, TextureColorSpace, TextureDecodeOptions,
-    TextureFormatCapabilities, TextureOutputFormat, VertexRemap, VrmMetadataPatch,
+    TextureFormatCapabilities, TextureOutputFormat, VertexRemap, VrmFullMetadata, VrmMetadataPatch,
     apply_joint_compaction_to_skin, optimize_primitive,
 };
 pub use vrm_io::{
@@ -316,6 +316,10 @@ mod tests {
             diagnostic.code == "vrm.extension.unknown"
                 && diagnostic.path.as_str() == "$.extensions.VENDOR_facade"
         }));
+        assert!(matches!(
+            loaded.loaded.source().vrm_full_metadata().unwrap(),
+            VrmFullMetadata::Vrm1 { .. }
+        ));
     }
 
     #[test]

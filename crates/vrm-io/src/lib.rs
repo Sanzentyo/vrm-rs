@@ -21,7 +21,7 @@ pub use vrm_diagnostics::{
 };
 use vrm_protocol::{
     ExtensionBundle, ExtensionMap, NodeConstraintExtension, ProtocolError, VrmExtension,
-    parse_root_extensions,
+    parse_root_extensions, vrm0, vrm1,
 };
 use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
@@ -460,6 +460,40 @@ impl GltfSource {
         self.json.get("extras")
     }
 
+    pub fn vrm_full_metadata(&self) -> Result<VrmFullMetadata, VrmIoError> {
+        if let Some(vrm1_extension) = self.root_extension("VRMC_vrm") {
+            let raw = vrm1_extension.get("meta").cloned().ok_or_else(|| {
+                VrmIoError::SourcePreservation {
+                    message: "missing VRMC_vrm.meta".to_owned(),
+                }
+            })?;
+            let meta = serde_json::from_value::<vrm1::Meta>(raw.clone()).map_err(|source| {
+                VrmIoError::SourcePreservation {
+                    message: format!("could not deserialize VRMC_vrm.meta: {source}"),
+                }
+            })?;
+            return Ok(VrmFullMetadata::Vrm1 { meta, raw });
+        }
+
+        if let Some(vrm0_extension) = self.root_extension("VRM") {
+            let raw = vrm0_extension.get("meta").cloned().ok_or_else(|| {
+                VrmIoError::SourcePreservation {
+                    message: "missing VRM.meta".to_owned(),
+                }
+            })?;
+            let meta = serde_json::from_value::<vrm0::Meta>(raw.clone()).map_err(|source| {
+                VrmIoError::SourcePreservation {
+                    message: format!("could not deserialize VRM.meta: {source}"),
+                }
+            })?;
+            return Ok(VrmFullMetadata::Vrm0 { meta, raw });
+        }
+
+        Err(VrmIoError::SourcePreservation {
+            message: "missing VRM metadata extension".to_owned(),
+        })
+    }
+
     pub fn glb_json_chunk(&self) -> Option<&GlbChunk> {
         self.glb_chunks
             .iter()
@@ -663,6 +697,48 @@ impl GltfSource {
             output.extend_from_slice(&bytes);
         }
         Ok(output)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum VrmFullMetadata {
+    Vrm1 { meta: vrm1::Meta, raw: Value },
+    Vrm0 { meta: vrm0::Meta, raw: Value },
+}
+
+impl VrmFullMetadata {
+    pub fn raw(&self) -> &Value {
+        match self {
+            Self::Vrm1 { raw, .. } | Self::Vrm0 { raw, .. } => raw,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Vrm1 { meta, .. } => Some(meta.name.as_str()),
+            Self::Vrm0 { meta, .. } => meta.title.as_deref(),
+        }
+    }
+
+    pub fn authors(&self) -> Vec<&str> {
+        match self {
+            Self::Vrm1 { meta, .. } => meta.authors.iter().map(String::as_str).collect(),
+            Self::Vrm0 { meta, .. } => meta.author.as_deref().into_iter().collect(),
+        }
+    }
+
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Self::Vrm1 { meta, .. } => meta.version.as_deref(),
+            Self::Vrm0 { meta, .. } => meta.version.as_deref(),
+        }
+    }
+
+    pub fn license_url(&self) -> Option<&str> {
+        match self {
+            Self::Vrm1 { meta, .. } => meta.license_url.as_deref(),
+            Self::Vrm0 { meta, .. } => meta.other_license_url.as_deref(),
+        }
     }
 }
 
@@ -4205,6 +4281,122 @@ mod tests {
         let saved = load_vrm_from_path(&path).unwrap();
         assert_eq!(saved.model().document().meta.name, "Edited Avatar");
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn full_metadata_reads_vrm1_typed_meta_without_losing_raw_fields() {
+        let mut sample = generated_vrm1_gltf();
+        sample["extensions"]["VRMC_vrm"]["meta"]["version"] = json!("1.2.3");
+        sample["extensions"]["VRMC_vrm"]["meta"]["licenseUrl"] =
+            json!("https://license.example/vrm1");
+        sample["extensions"]["VRMC_vrm"]["meta"]["extensions"] =
+            json!({ "VENDOR_meta": { "kept": true } });
+        sample["extensions"]["VRMC_vrm"]["meta"]["extras"] = json!({ "note": "kept" });
+        sample["extensions"]["VRMC_vrm"]["meta"]["vendorUnknown"] = json!("raw-only");
+        let loaded = load_vrm_from_slice(sample.to_string().as_bytes()).unwrap();
+
+        let metadata = loaded.source().vrm_full_metadata().unwrap();
+
+        assert_eq!(metadata.name(), Some("Generated Test Avatar"));
+        assert_eq!(metadata.authors(), vec!["vrm-rs"]);
+        assert_eq!(metadata.version(), Some("1.2.3"));
+        assert_eq!(metadata.license_url(), Some("https://license.example/vrm1"));
+        assert_eq!(metadata.raw()["vendorUnknown"], "raw-only");
+        match metadata {
+            VrmFullMetadata::Vrm1 { meta, raw } => {
+                assert_eq!(
+                    meta.extensions.unwrap()["VENDOR_meta"]["kept"],
+                    Value::Bool(true)
+                );
+                assert_eq!(meta.extras.unwrap()["note"], "kept");
+                assert_eq!(raw["extras"]["note"], "kept");
+            }
+            VrmFullMetadata::Vrm0 { .. } => panic!("generated sample should be VRM1"),
+        }
+    }
+
+    #[test]
+    fn full_metadata_reads_vrm0_legacy_meta_without_normalizing_into_core() {
+        let source = GltfSource::from_slice(
+            json!({
+                "asset": { "version": "2.0" },
+                "extensions": {
+                    "VRM": {
+                        "exporterVersion": "UniVRM-test",
+                        "specVersion": "0.0",
+                        "meta": {
+                            "title": "Legacy Avatar",
+                            "version": "0.51",
+                            "author": "legacy author",
+                            "contactInformation": "contact@example",
+                            "reference": "reference text",
+                            "texture": 3,
+                            "allowedUserName": "Everyone",
+                            "violentUsageName": "Disallow",
+                            "sexualUsageName": "Allow",
+                            "commercialUsageName": "Allow",
+                            "otherPermissionUrl": "https://permission.example",
+                            "licenseName": "Other",
+                            "otherLicenseUrl": "https://license.example/vrm0",
+                            "vendorUnknown": { "raw": true }
+                        }
+                    }
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let metadata = source.vrm_full_metadata().unwrap();
+
+        assert_eq!(metadata.name(), Some("Legacy Avatar"));
+        assert_eq!(metadata.authors(), vec!["legacy author"]);
+        assert_eq!(metadata.version(), Some("0.51"));
+        assert_eq!(metadata.license_url(), Some("https://license.example/vrm0"));
+        assert_eq!(metadata.raw()["vendorUnknown"]["raw"], true);
+        match metadata {
+            VrmFullMetadata::Vrm0 { meta, raw } => {
+                assert_eq!(meta.texture, Some(3));
+                assert_eq!(meta.allowed_user_name.as_deref(), Some("Everyone"));
+                assert_eq!(raw["reference"], "reference text");
+            }
+            VrmFullMetadata::Vrm1 { .. } => panic!("legacy sample should be VRM0"),
+        }
+    }
+
+    #[test]
+    fn full_metadata_reports_missing_or_malformed_meta_without_source_mutation() {
+        let source = GltfSource::from_slice(br#"{ "asset": { "version": "2.0" } }"#).unwrap();
+        assert!(
+            source
+                .vrm_full_metadata()
+                .unwrap_err()
+                .to_string()
+                .contains("missing VRM metadata extension")
+        );
+
+        let source = GltfSource::from_slice(
+            json!({
+                "asset": { "version": "2.0" },
+                "extensions": {
+                    "VRMC_vrm": {
+                        "specVersion": "1.0",
+                        "meta": { "authors": ["missing required name"] }
+                    }
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(
+            source
+                .vrm_full_metadata()
+                .unwrap_err()
+                .to_string()
+                .contains("could not deserialize VRMC_vrm.meta")
+        );
     }
 
     #[test]

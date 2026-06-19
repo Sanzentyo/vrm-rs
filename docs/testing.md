@@ -18,6 +18,7 @@ Current generated coverage:
 - Typed VMC 3.1 packet coverage for Marionette/Performer motion, camera/light, controller/key/MIDI input, device pose, receive/config/VRM/remote/settings/window/period/eye/calibration/shortcut messages, `/VMC/Thru/*` passthrough, official and legacy camera/light address handling, strict parse-before-apply transactions, rollback on sink errors, lenient invalid-known-message skipping, and socket-free transport policy gates for sender allow lists, per-sender rate limits, packet message limits, relative-time rewind/jump checks, and all-or-nothing runtime sink application.
 - `vrm-io` optimizer preprocessing for degenerate triangle removal, unused vertex compaction, stale unused joint data, skin-weight normalization, weighted joint-palette compaction, empty morph target removal, skin palette application, and invalid attribute/index/joint diagnostics.
 - `vrm-io` codec/resource registry behavior for data URI and relative-file path safety, missing codec errors, decoded-size limits, option-aware KTX2/Basis-style texture provider dispatch, source color-space propagation, renderer GPU format capability selection, and unsupported decoded texture format rejection.
+- Full metadata source-preservation coverage for `GltfSource::vrm_full_metadata`, including VRM1 typed author/license fields plus meta extensions/extras and unknown raw fields, VRM0 legacy author/license/permission fields plus unknown raw fields, missing/malformed metadata errors, and root facade `VrmFullMetadata` re-export.
 - VRM0 LookAt compatibility for Unity-style two-key Hermite `FirstPersonDegreeMap.curve` preservation, default-linear curve behavior, non-linear curve evaluation, and runtime expression LookAt weight output through the curve-aware range mapper.
 - Policy-aware `vrm-io` loading with structured diagnostics: strict loaders keep fail-fast behavior, lenient loading reports malformed VRM1 expression JSON with a stable path and skips that expression, unknown root extensions are preserved in `GltfSource` while reported as warnings, and existing VRMA/animation warnings are mirrored into `DiagnosticReport`.
 - Preserved-source writer coverage for compact/pretty `.gltf` and `.glb` JSON output, VRM1/VRM0 metadata patch helpers, same-directory atomic save failure behavior, GLB declared-length and chunk-alignment validation, and unknown GLB chunk retention through edits.
@@ -495,20 +496,20 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 78.39% | 80.38% |
+| Workspace total | 78.51% | 80.43% |
 | `vrm-adapter-ash` | 37.76% | 43.38% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
 | `vrm-adapter` | 69.62% | 77.50% |
 | `vrm-core` | 75.32% | 79.53% |
 | `vrm-diagnostics` | 87.50% | 90.60% |
-| `vrm-io` | 88.12% | 87.24% |
+| `vrm-io` | 88.29% | 87.25% |
 | `vrm-osc` | 68.00% | 70.53% |
 | `vrm-protocol` | 93.02% | 91.16% |
 | `vrm-runtime` | 93.17% | 93.92% |
 | `vrm-sans-io` | 93.52% | 96.55% |
 | `vrm-vmc` | 77.11% | 77.76% |
-| `facade src/lib.rs` | 93.42% | 96.76% |
+| `facade src/lib.rs` | 93.26% | 96.78% |
 
 The current external fixture tests cover recursive fixture discovery, semantic
 IO loading including the Alicia VRM0 compatibility sample, adapter spring rest
