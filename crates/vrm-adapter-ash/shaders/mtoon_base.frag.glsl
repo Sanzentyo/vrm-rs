@@ -62,6 +62,8 @@ layout(location = 1) in vec4 in_color_0;
 layout(location = 2) in vec3 in_normal;
 layout(location = 3) in vec4 in_tangent;
 layout(location = 4) in vec3 in_world_position;
+layout(location = 5) in float in_normal_scale;
+layout(location = 6) in float in_double_sided;
 
 layout(location = 0) out vec4 out_color;
 
@@ -154,8 +156,8 @@ vec2 mtoon_uv_animation(vec2 uv) {
     float c = cos(rotation);
     float s = sin(rotation);
     vec2 rotated = vec2(
-        centered.x * c - centered.y * s,
-        centered.x * s + centered.y * c
+        centered.x * c + centered.y * s,
+        -centered.x * s + centered.y * c
     );
     return rotated + vec2(0.5, 0.5) + scroll;
 }
@@ -167,14 +169,18 @@ float mtoon_lit_shade_rate(float ndotl, float shift_texel) {
 }
 
 vec3 mtoon_normal(vec2 uv, bool front_facing) {
-    float face_sign = front_facing ? 1.0 : -1.0;
+    float face_sign = (front_facing || in_double_sided < 0.5) ? 1.0 : -1.0;
     vec3 geometric_normal = normalize(in_normal) * face_sign;
+    if (in_normal_scale == 0.0) {
+        return geometric_normal;
+    }
+    float normal_scale = abs(in_normal_scale);
     vec3 tangent = normalize(in_tangent.xyz) * face_sign;
     vec3 bitangent = normalize(cross(geometric_normal, tangent) * in_tangent.w) * face_sign;
     vec3 sampled = texture(normal_texture, uv).xyz;
     vec3 tangent_normal = vec3(
-        sampled.x * 2.0 - 1.0,
-        1.0 - sampled.y * 2.0,
+        (sampled.x * 2.0 - 1.0) * normal_scale,
+        (1.0 - sampled.y * 2.0) * normal_scale,
         sampled.z * 2.0 - 1.0
     );
     return normalize(

@@ -123,6 +123,8 @@ pub struct AshVrmVertex {
     pub color_0: [f32; 4],
     pub normal: [f32; 3],
     pub tangent: [f32; 4],
+    pub normal_scale: f32,
+    pub double_sided: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -800,6 +802,18 @@ pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
             format: vk::Format::R32G32B32A32_SFLOAT,
             offset: std::mem::offset_of!(AshVrmVertex, tangent) as u32,
         },
+        AshVertexAttributePlan {
+            location: 5,
+            binding: 0,
+            format: vk::Format::R32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, normal_scale) as u32,
+        },
+        AshVertexAttributePlan {
+            location: 6,
+            binding: 0,
+            format: vk::Format::R32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, double_sided) as u32,
+        },
     ]
 }
 
@@ -962,6 +976,10 @@ impl AshVrmFramePlanner {
         let shading = self
             .loaded
             .material_shading_plan(primitive.material, GltfMaterialShadingOptions::default());
+        let double_sided = primitive
+            .material
+            .and_then(|index| self.loaded.gltf_materials.get(index))
+            .is_some_and(|material| material.double_sided);
         let mut source_vertices = match settings.pass {
             AshMtoonPass::Base => {
                 primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
@@ -978,12 +996,20 @@ impl AshVrmFramePlanner {
         let source_vertices = source_vertices
             .as_mut()
             .ok_or("primitive geometry is inconsistent")?;
+        let mut normal_scales =
+            ash_vertex_normal_scales(primitive, source_vertices.len(), shading.normal_scale);
         if settings.pass == AshMtoonPass::Base {
-            apply_generated_tangents(primitive, source_vertices, shading.normal_scale);
+            apply_generated_tangents(
+                primitive,
+                source_vertices,
+                shading.normal_scale,
+                &mut normal_scales,
+            );
         }
         let vertices = source_vertices
             .iter()
-            .map(|vertex| {
+            .zip(normal_scales)
+            .map(|(vertex, normal_scale)| {
                 let color = if settings.pass == AshMtoonPass::Outline {
                     [1.0, 1.0, 1.0, 1.0]
                 } else if shading.pbr_fallback {
@@ -997,6 +1023,8 @@ impl AshVrmFramePlanner {
                     color_0: color,
                     normal: vertex.normal.to_array(),
                     tangent: vertex.tangent.to_array(),
+                    normal_scale,
+                    double_sided: if double_sided { 1.0 } else { 0.0 },
                 }
             })
             .collect();
@@ -1184,10 +1212,22 @@ fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+fn ash_vertex_normal_scales(
+    primitive: &GltfPrimitiveData,
+    vertex_count: usize,
+    normal_scale: f32,
+) -> Vec<f32> {
+    let normal_plan = primitive.normal_map_plan(normal_scale, GltfNormalMapMode::GeneratedTangents);
+    (0..vertex_count)
+        .map(|index| normal_plan.vertex_normal_scale(primitive.tangents.get(index).is_some()))
+        .collect()
+}
+
 fn apply_generated_tangents(
     primitive: &GltfPrimitiveData,
     vertices: &mut [vrm_io::GltfTransformedVertex],
     normal_scale: f32,
+    normal_scales: &mut [f32],
 ) {
     let normal_plan = primitive.normal_map_plan(normal_scale, GltfNormalMapMode::GeneratedTangents);
     if !normal_plan.should_generate_tangents() {
@@ -1210,9 +1250,14 @@ fn apply_generated_tangents(
     else {
         return;
     };
-    for (vertex, tangent) in vertices.iter_mut().zip(generated.tangents) {
+    for ((vertex, normal_scale), tangent) in vertices
+        .iter_mut()
+        .zip(normal_scales.iter_mut())
+        .zip(generated.tangents)
+    {
         if let Some(tangent) = tangent {
             vertex.tangent = tangent.into();
+            *normal_scale = normal_plan.normal_scale;
         }
     }
 }
@@ -1302,7 +1347,9 @@ pub const fn ash_material_texture_binding(slot: GltfMaterialTextureSlot) -> u32 
 
 pub const fn ash_texture_fallback_for_binding(binding: u32) -> Option<GltfMaterialTextureFallback> {
     match binding {
-        1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 12 | 13 => Some(GltfMaterialTextureFallback::White),
+        1 | 2 | 6 | 7 | 8 | 12 | 13 => Some(GltfMaterialTextureFallback::White),
+        3 | 5 => Some(GltfMaterialTextureFallback::Black),
+        4 => Some(GltfMaterialTextureFallback::NeutralNormal),
         _ => None,
     }
 }
@@ -1532,13 +1579,13 @@ mod tests {
             ash_texture_fallback_for_binding(ash_material_texture_binding(
                 GltfMaterialTextureSlot::Normal
             )),
-            Some(GltfMaterialTextureFallback::White)
+            Some(GltfMaterialTextureFallback::NeutralNormal)
         );
         assert_eq!(
             ash_texture_fallback_for_binding(ash_material_texture_binding(
                 GltfMaterialTextureSlot::ShadingShift
             )),
-            Some(GltfMaterialTextureFallback::White)
+            Some(GltfMaterialTextureFallback::Black)
         );
         assert_eq!(
             ash_texture_fallback_for_binding(ash_material_texture_binding(
@@ -1642,15 +1689,21 @@ mod tests {
         assert!(fragment_shader.contains("base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y)"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));
+        assert!(fragment_shader.contains("centered.x * c + centered.y * s"));
+        assert!(fragment_shader.contains("-centered.x * s + centered.y * c"));
         assert!(fragment_shader.contains("pbr_direct("));
         assert!(fragment_shader.contains("output_color(color"));
         assert!(fragment_shader.contains("matcap_uv_from_view(normal)"));
         assert!(fragment_shader.contains("gl_FrontFacing"));
+        assert!(fragment_shader.contains("in_normal_scale == 0.0"));
+        assert!(fragment_shader.contains("front_facing || in_double_sided < 0.5"));
         assert!(fragment_shader.contains("material_extra.flags.x > 0.5"));
         assert!(fragment_shader.contains("material_extra.flags2.x > 0.5"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
+        assert!(vertex_shader.contains("layout(location = 5) in float in_normal_scale;"));
+        assert!(vertex_shader.contains("layout(location = 6) in float in_double_sided;"));
     }
 
     #[test]
@@ -1666,6 +1719,8 @@ mod tests {
                     color_0: [1.0, 1.0, 1.0, 1.0],
                     normal: [0.0, 0.0, 1.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
+                    normal_scale: 1.0,
+                    double_sided: 0.0,
                 }],
                 indices: vec![0],
             }],
@@ -1781,8 +1836,8 @@ mod tests {
             renderer_frame.pipelines[0].vertex_attributes,
             ash_vrm_vertex_attributes()
         );
-        assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 5);
-        assert_eq!(renderer_frame.buffers[0].stride, 64);
+        assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 7);
+        assert_eq!(renderer_frame.buffers[0].stride, 72);
         assert_eq!(
             renderer_frame.buffers[0].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER
@@ -1799,6 +1854,8 @@ mod tests {
             color_0: [1.0, 1.0, 1.0, 1.0],
             normal: [0.0, 0.0, 1.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
+            normal_scale: 1.0,
+            double_sided: 0.0,
         };
         let primitive = |pass| AshVrmPrimitive {
             node: NodeRef(0),

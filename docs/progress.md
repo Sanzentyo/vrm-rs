@@ -9,15 +9,18 @@
   frames from world/skinned position/normal/UV data for tangentless normal-map
   primitives. The unsafe Ash renderer also materializes explicit fallback
   texture resources and uses UNORM sampled images for the source GLSL handoff.
-  The current 128px Seed-san review run under
-  `target/render-parity-ash-review-128-whitefallback` reports Ash selected
-  `rgb-visible` PSNR `13.4213 dB` with exact opaque alpha parity; this is an
+  A follow-up pass added `normal_scale` and `double_sided` to the Ash vertex
+  ABI, made the GLSL normal path skip normal-texture sampling when scale is
+  zero, and re-enabled slot-specific white/black/neutral-normal fallback
+  textures. The Ash GLSL UV animation rotation now matches the wgpu/Bevy
+  capture shader as well. The current 128px Seed-san review run under
+  `target/render-parity-ash-review-128-uvanim-rotation` reports Ash selected
+  `rgb-visible` PSNR `13.4959 dB` with exact opaque alpha parity; this is an
   improvement over the prior `12.7715-13.0798 dB` camera/clip-space slice but
-  remains far below the wgpu/Bevy `32+ dB` gate. Slot-specific black/neutral
-  normal fallback was tested but worsened the current Ash shader output, so the
-  Ash helper currently keeps white-compatible fallback semantics until the
-  shader carries texture-presence/normal-scale flags equivalent to the wgpu
-  capture path.
+  remains far below the wgpu/Bevy `32+ dB` gate. The next Ash blocker is now
+  narrower: remaining MToon material/color accumulation and texture-presence
+  semantics in the source GLSL/resource path, not camera, alpha, basic normal
+  scale, or raw readback plumbing.
 - Added `vrm-adapter::VrmRuntimePipeline`, a persistent renderer-agnostic
   runtime driver wrapper that owns `vrm-runtime::Runtime`, fixed-step
   accumulation, optional spring rest/state, VRM0 orientation once-only state,
@@ -785,7 +788,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 80.37%, and `vrm-adapter-bevy` line coverage is 75.94%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 80.29%, and `vrm-adapter-bevy` line coverage is 75.94%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.

@@ -5,6 +5,8 @@ layout(location = 1) in vec2 in_tex_coord_0;
 layout(location = 2) in vec4 in_color_0;
 layout(location = 3) in vec3 in_normal;
 layout(location = 4) in vec4 in_tangent;
+layout(location = 5) in float in_normal_scale;
+layout(location = 6) in float in_double_sided;
 
 layout(set = 0, binding = 9, std140) uniform AshSceneUniform {
     mat4 view_projection;
@@ -21,6 +23,8 @@ layout(location = 1) out vec4 out_color_0;
 layout(location = 2) out vec3 out_normal;
 layout(location = 3) out vec4 out_tangent;
 layout(location = 4) out vec3 out_world_position;
+layout(location = 5) out float out_normal_scale;
+layout(location = 6) out float out_double_sided;
 
 void main() {
     out_tex_coord_0 = in_tex_coord_0;
@@ -28,5 +32,7 @@ void main() {
     out_normal = normalize(in_normal);
     out_tangent = vec4(normalize(in_tangent.xyz), in_tangent.w);
     out_world_position = in_position;
+    out_normal_scale = in_normal_scale;
+    out_double_sided = in_double_sided;
     gl_Position = scene.view_projection * vec4(in_position, 1.0);
 }
