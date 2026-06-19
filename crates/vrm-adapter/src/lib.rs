@@ -28,11 +28,11 @@ use vrm_core::{
 };
 use vrm_runtime::{
     AimConstraintInput, AppliedExpression, CenterSpringParticleState, CenterSpringRuntimeState,
-    ConstraintRestState, DeltaTime, RuntimeEvents, SpringJointParityInput, SpringJointRestState,
-    SpringJointSimulationInput, SpringParticleState, SpringRuntimeState, VrmAnimationFrame,
-    collider_shape_in_simulation_space, solve_aim_constraint, solve_roll_constraint,
-    solve_rotation_constraint, solve_spring_joint_rotation, step_spring_joint,
-    step_spring_joint_parity,
+    ConstraintRestState, DeltaTime, Runtime, RuntimeEvents, SpringJointParityInput,
+    SpringJointRestState, SpringJointSimulationInput, SpringParticleState, SpringRuntimeState,
+    VrmAnimationFrame, collider_shape_in_simulation_space, solve_aim_constraint,
+    solve_roll_constraint, solve_rotation_constraint, solve_spring_joint_rotation,
+    step_spring_joint, step_spring_joint_parity,
 };
 
 pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
@@ -2582,6 +2582,53 @@ impl<'a> VrmRuntimeDriver<'a> {
         apply_emissive_strengths(target, self.document)?;
         apply_first_person_annotations(target, self.document, self.view_mode)
     }
+
+    pub fn tick_with_spring_parity_and_look_at<T, E>(
+        &mut self,
+        target: &mut T,
+        spring: Option<(&SpringRestMap, &mut CenterSpringRuntimeState)>,
+    ) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>
+            + WorldTransformAccess<Error = E>
+            + WorldMatrixAccess<Error = E>
+            + WorldTransformUpdate<Error = E>
+            + SceneGraph<Error = E>
+            + ConstraintRestAccess<Error = E>
+            + MorphTargetAccess<Error = E>
+            + MaterialAccess<Error = E>
+            + MtoonPipelineAccess<Error = E>
+            + VisibilityAccess<Error = E>
+            + LookAtAccess<Error = E>,
+    {
+        if self.apply_vrm0_orientation
+            && !self.vrm0_orientation_applied
+            && let Some(root) = self.root
+        {
+            apply_vrm0_orientation_compensation(target, self.document, root)?;
+            self.vrm0_orientation_applied = true;
+        }
+        if let Some(frame) = self.animation_frame {
+            apply_animation_frame_with_look_at(target, self.document, frame)?;
+        }
+        if let Some(events) = self.runtime_events {
+            for expression in &events.expressions {
+                apply_expression_binds(target, expression)?;
+            }
+            apply_node_constraints(target, &events.constraints)?;
+            if let (Feature::Present(system), Some((rest, state))) =
+                (&self.document.spring_bone, spring)
+            {
+                target
+                    .update_world_transforms()
+                    .map_err(AdapterError::Target)?;
+                step_spring_bone_system_parity(target, system, rest, state, events.delta)?;
+            }
+        }
+        apply_mtoon_pipeline_hints(target, self.document)?;
+        apply_emissive_strengths(target, self.document)?;
+        apply_first_person_annotations(target, self.document, self.view_mode)
+    }
 }
 
 pub fn apply_expression_binds<T, E>(
@@ -2624,6 +2671,353 @@ pub enum ViewMode {
     FirstPerson,
     #[default]
     ThirdPerson,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RuntimePipelineOptions {
+    pub fixed_delta: DeltaTime,
+    pub max_substeps: usize,
+    pub view_mode: ViewMode,
+    pub apply_vrm0_orientation: bool,
+}
+
+impl Default for RuntimePipelineOptions {
+    fn default() -> Self {
+        Self {
+            fixed_delta: DeltaTime(1.0 / 60.0),
+            max_substeps: 4,
+            view_mode: ViewMode::ThirdPerson,
+            apply_vrm0_orientation: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimePipelineStage {
+    Vrm0Orientation,
+    AnimationFrame,
+    LookAt,
+    RuntimeUpdate,
+    Expressions,
+    NodeConstraints,
+    SpringBone,
+    MtoonPipeline,
+    EmissiveStrength,
+    FirstPersonVisibility,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RuntimeStageReport {
+    pub stage: RuntimePipelineStage,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimePipelineReport {
+    pub requested_delta: DeltaTime,
+    pub consumed_delta: DeltaTime,
+    pub fixed_delta: DeltaTime,
+    pub substeps: usize,
+    pub accumulator: DeltaTime,
+    pub dropped_substeps: usize,
+    pub stages: Vec<RuntimeStageReport>,
+}
+
+impl RuntimePipelineReport {
+    fn new(requested_delta: DeltaTime, fixed_delta: DeltaTime, accumulator: DeltaTime) -> Self {
+        Self {
+            requested_delta,
+            consumed_delta: DeltaTime(0.0),
+            fixed_delta,
+            substeps: 0,
+            accumulator,
+            dropped_substeps: 0,
+            stages: Vec::new(),
+        }
+    }
+
+    fn push_stage(&mut self, stage: RuntimePipelineStage, count: usize) {
+        self.stages.push(RuntimeStageReport { stage, count });
+    }
+
+    pub fn stage_count(&self, stage: RuntimePipelineStage) -> usize {
+        self.stages
+            .iter()
+            .filter(|entry| entry.stage == stage)
+            .map(|entry| entry.count)
+            .sum()
+    }
+}
+
+#[derive(Debug)]
+pub struct VrmRuntimePipeline<'a> {
+    document: &'a VrmDocument,
+    runtime: Runtime,
+    options: RuntimePipelineOptions,
+    root: Option<NodeRef>,
+    accumulator: f32,
+    vrm0_orientation_applied: bool,
+    spring_rest: Option<SpringRestMap>,
+    spring_state: Option<CenterSpringRuntimeState>,
+}
+
+impl<'a> VrmRuntimePipeline<'a> {
+    pub fn new(document: &'a VrmDocument) -> Self {
+        Self::with_options(document, RuntimePipelineOptions::default())
+    }
+
+    pub fn with_options(document: &'a VrmDocument, options: RuntimePipelineOptions) -> Self {
+        Self {
+            document,
+            runtime: Runtime::from_document(document),
+            options,
+            root: None,
+            accumulator: 0.0,
+            vrm0_orientation_applied: false,
+            spring_rest: None,
+            spring_state: None,
+        }
+    }
+
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        &mut self.runtime
+    }
+
+    pub fn options(&self) -> RuntimePipelineOptions {
+        self.options
+    }
+
+    pub fn set_options(&mut self, options: RuntimePipelineOptions) {
+        self.options = options;
+    }
+
+    pub fn set_root(&mut self, root: Option<NodeRef>) {
+        self.root = root;
+        self.vrm0_orientation_applied = false;
+    }
+
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.options.view_mode = mode;
+    }
+
+    pub fn spring_rest(&self) -> Option<&SpringRestMap> {
+        self.spring_rest.as_ref()
+    }
+
+    pub fn spring_state(&self) -> Option<&CenterSpringRuntimeState> {
+        self.spring_state.as_ref()
+    }
+
+    pub fn spring_state_mut(&mut self) -> Option<&mut CenterSpringRuntimeState> {
+        self.spring_state.as_mut()
+    }
+
+    pub fn capture_spring_rest<T, E>(&mut self, target: &T) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E> + WorldTransformAccess<Error = E> + SceneGraph<Error = E>,
+    {
+        if let Feature::Present(system) = &self.document.spring_bone {
+            let rest = SpringRestMap::capture(target, system)?;
+            let state = rest.runtime_state(system);
+            self.spring_rest = Some(rest);
+            self.spring_state = Some(state);
+        }
+        Ok(())
+    }
+
+    pub fn reset_spring_state(&mut self) {
+        if let (Feature::Present(system), Some(rest)) =
+            (&self.document.spring_bone, &self.spring_rest)
+        {
+            self.spring_state = Some(rest.runtime_state(system));
+        }
+    }
+
+    pub fn tick<T, E>(
+        &mut self,
+        target: &mut T,
+        delta: DeltaTime,
+        animation_frame: Option<&VrmAnimationFrame>,
+    ) -> Result<RuntimePipelineReport, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>
+            + WorldTransformAccess<Error = E>
+            + WorldMatrixAccess<Error = E>
+            + WorldTransformUpdate<Error = E>
+            + SceneGraph<Error = E>
+            + ConstraintRestAccess<Error = E>
+            + MorphTargetAccess<Error = E>
+            + MaterialAccess<Error = E>
+            + MtoonPipelineAccess<Error = E>
+            + VisibilityAccess<Error = E>
+            + LookAtAccess<Error = E>,
+    {
+        let fixed_delta = normalized_fixed_delta(self.options.fixed_delta);
+        let mut report =
+            RuntimePipelineReport::new(delta, fixed_delta, DeltaTime(self.accumulator));
+        let substeps = self.consume_substeps(delta, &mut report);
+
+        if substeps == 0 {
+            let events = self
+                .runtime
+                .update(DeltaTime(0.0))
+                .map_err(AdapterError::Runtime)?;
+            self.apply_step(target, &events, animation_frame, false, &mut report)?;
+            return Ok(report);
+        }
+
+        for _ in 0..substeps {
+            let events = self
+                .runtime
+                .update(fixed_delta)
+                .map_err(AdapterError::Runtime)?;
+            self.apply_step(target, &events, animation_frame, true, &mut report)?;
+            report.substeps += 1;
+            report.consumed_delta.0 += fixed_delta.0;
+        }
+        report.accumulator = DeltaTime(self.accumulator);
+        Ok(report)
+    }
+
+    fn consume_substeps(&mut self, delta: DeltaTime, report: &mut RuntimePipelineReport) -> usize {
+        self.accumulator += sanitized_seconds(delta);
+        let fixed = normalized_fixed_delta(self.options.fixed_delta).0;
+        let available = (self.accumulator / fixed).floor() as usize;
+        let max_substeps = self.options.max_substeps.max(1);
+        let substeps = available.min(max_substeps);
+        self.accumulator -= substeps as f32 * fixed;
+        report.dropped_substeps = available.saturating_sub(substeps);
+        if report.dropped_substeps > 0 {
+            self.accumulator = 0.0;
+        }
+        report.accumulator = DeltaTime(self.accumulator);
+        substeps
+    }
+
+    fn apply_step<T, E>(
+        &mut self,
+        target: &mut T,
+        events: &RuntimeEvents,
+        animation_frame: Option<&VrmAnimationFrame>,
+        step_spring: bool,
+        report: &mut RuntimePipelineReport,
+    ) -> Result<(), AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>
+            + WorldTransformAccess<Error = E>
+            + WorldMatrixAccess<Error = E>
+            + WorldTransformUpdate<Error = E>
+            + SceneGraph<Error = E>
+            + ConstraintRestAccess<Error = E>
+            + MorphTargetAccess<Error = E>
+            + MaterialAccess<Error = E>
+            + MtoonPipelineAccess<Error = E>
+            + VisibilityAccess<Error = E>
+            + LookAtAccess<Error = E>,
+    {
+        self.push_static_stage_reports(animation_frame, events, step_spring, report);
+        let mut driver = VrmRuntimeDriver::new(self.document)
+            .with_runtime_events(events)
+            .with_view_mode(self.options.view_mode)
+            .with_vrm0_orientation(self.options.apply_vrm0_orientation);
+        if let Some(frame) = animation_frame {
+            driver = driver.with_animation_frame(frame);
+        }
+        if let Some(root) = self.root {
+            driver = driver.with_root(root);
+        }
+        driver.vrm0_orientation_applied = self.vrm0_orientation_applied;
+
+        let spring = if step_spring {
+            self.spring_rest.as_ref().zip(self.spring_state.as_mut())
+        } else {
+            None
+        };
+        driver.tick_with_spring_parity_and_look_at(target, spring)?;
+        self.vrm0_orientation_applied = driver.vrm0_orientation_applied;
+        Ok(())
+    }
+
+    fn push_static_stage_reports(
+        &self,
+        animation_frame: Option<&VrmAnimationFrame>,
+        events: &RuntimeEvents,
+        step_spring: bool,
+        report: &mut RuntimePipelineReport,
+    ) {
+        if self.options.apply_vrm0_orientation
+            && !self.vrm0_orientation_applied
+            && self.root.is_some()
+        {
+            report.push_stage(RuntimePipelineStage::Vrm0Orientation, 1);
+        }
+        if let Some(frame) = animation_frame {
+            report.push_stage(RuntimePipelineStage::AnimationFrame, 1);
+            report.push_stage(
+                RuntimePipelineStage::LookAt,
+                usize::from(frame.look_at.is_some()),
+            );
+        }
+        report.push_stage(RuntimePipelineStage::RuntimeUpdate, 1);
+        report.push_stage(RuntimePipelineStage::Expressions, events.expressions.len());
+        report.push_stage(
+            RuntimePipelineStage::NodeConstraints,
+            events.constraints.len(),
+        );
+        report.push_stage(
+            RuntimePipelineStage::SpringBone,
+            usize::from(step_spring) * events.springs.len(),
+        );
+        report.push_stage(
+            RuntimePipelineStage::MtoonPipeline,
+            mtoon_material_count(self.document),
+        );
+        report.push_stage(
+            RuntimePipelineStage::EmissiveStrength,
+            self.document.materials.len(),
+        );
+        report.push_stage(
+            RuntimePipelineStage::FirstPersonVisibility,
+            first_person_annotation_count(self.document),
+        );
+    }
+}
+
+fn normalized_fixed_delta(delta: DeltaTime) -> DeltaTime {
+    let seconds = sanitized_seconds(delta);
+    if seconds > f32::EPSILON {
+        DeltaTime(seconds)
+    } else {
+        DeltaTime(1.0 / 60.0)
+    }
+}
+
+fn sanitized_seconds(delta: DeltaTime) -> f32 {
+    if delta.0.is_finite() {
+        delta.0.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn mtoon_material_count(document: &VrmDocument) -> usize {
+    document
+        .materials
+        .iter()
+        .filter(|material| matches!(material.mtoon, Feature::Present(_)))
+        .count()
+}
+
+fn first_person_annotation_count(document: &VrmDocument) -> usize {
+    document
+        .first_person
+        .as_ref()
+        .map(|first_person| first_person.mesh_annotations.len())
+        .unwrap_or(0)
 }
 
 pub fn apply_first_person_annotations<T, E>(
@@ -3596,6 +3990,8 @@ where
 pub enum AdapterError<E> {
     #[error("target adapter error: {0}")]
     Target(E),
+    #[error("runtime error: {0}")]
+    Runtime(vrm_runtime::RuntimeError),
     #[error("spring joint state is missing for spring {spring_index}, joint {joint_index}")]
     InvalidSpringJoint {
         spring_index: usize,
@@ -7161,6 +7557,153 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn runtime_pipeline_keeps_visual_passes_observable_between_fixed_steps() {
+        let document = VrmDocument {
+            first_person: Feature::Present(FirstPerson {
+                mesh_annotations: vec![FirstPersonMeshAnnotation {
+                    node: NodeRef(8),
+                    kind: FirstPersonAnnotation::FirstPersonOnly,
+                }],
+            }),
+            expressions: Feature::Present(ExpressionSet {
+                preset: [(
+                    ExpressionName::Blink,
+                    Expression {
+                        binds: vec![ExpressionBind::MorphTarget {
+                            node: NodeRef(8),
+                            index: 0,
+                            weight: 100.0,
+                        }],
+                        ..Expression::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                custom: Default::default(),
+            }),
+            materials: vec![Material {
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    ..MtoonMaterial::default()
+                }),
+                ..Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+        let frame = VrmAnimationFrame {
+            look_at: Some(Quat::from_rotation_x(0.25)),
+            ..VrmAnimationFrame::default()
+        };
+        let mut pipeline = VrmRuntimePipeline::with_options(
+            &document,
+            RuntimePipelineOptions {
+                fixed_delta: DeltaTime(1.0),
+                max_substeps: 2,
+                view_mode: ViewMode::ThirdPerson,
+                apply_vrm0_orientation: true,
+            },
+        );
+        pipeline
+            .runtime_mut()
+            .expression_manager
+            .set_value("blink", 0.25);
+        let mut mock = Mock::default();
+
+        let report = pipeline
+            .tick(&mut mock, DeltaTime(0.5), Some(&frame))
+            .unwrap();
+
+        assert_eq!(report.substeps, 0);
+        assert_eq!(report.consumed_delta, DeltaTime(0.0));
+        assert_eq!(report.accumulator, DeltaTime(0.5));
+        assert_eq!(report.stage_count(RuntimePipelineStage::RuntimeUpdate), 1);
+        assert_eq!(report.stage_count(RuntimePipelineStage::LookAt), 1);
+        assert_eq!(report.stage_count(RuntimePipelineStage::Expressions), 1);
+        assert_eq!(
+            report.stage_count(RuntimePipelineStage::FirstPersonVisibility),
+            1
+        );
+        assert_eq!(report.stage_count(RuntimePipelineStage::MtoonPipeline), 1);
+        assert_eq!(mock.look_at_rotations, vec![Quat::from_rotation_x(0.25)]);
+        assert_eq!(mock.morphs, vec![(NodeRef(8), 0, 25.0)]);
+        assert_eq!(mock.visibility, vec![(NodeRef(8), false)]);
+        assert_eq!(mock.emissive_intensities, vec![(MaterialRef(0), 2.0)]);
+
+        let report = pipeline
+            .tick(&mut mock, DeltaTime(2.5), Some(&frame))
+            .unwrap();
+
+        assert_eq!(report.substeps, 2);
+        assert_eq!(report.consumed_delta, DeltaTime(2.0));
+        assert_eq!(report.dropped_substeps, 1);
+        assert_eq!(report.accumulator, DeltaTime(0.0));
+        assert_eq!(report.stage_count(RuntimePipelineStage::RuntimeUpdate), 2);
+        assert_eq!(report.stage_count(RuntimePipelineStage::LookAt), 2);
+        assert_eq!(mock.look_at_rotations.len(), 3);
+    }
+
+    #[test]
+    fn runtime_pipeline_captures_and_steps_spring_parity_state() {
+        let document = VrmDocument {
+            spring_bone: Feature::Present(SpringBoneSystem {
+                springs: vec![Spring {
+                    joints: vec![vrm_core::SpringJoint {
+                        node: NodeRef(2),
+                        stiffness: 0.0,
+                        gravity_power: 1.0,
+                        gravity_dir: Vec3::X,
+                        drag_force: 1.0,
+                        ..vrm_core::SpringJoint::default()
+                    }],
+                    ..Spring::default()
+                }],
+                ..SpringBoneSystem::default()
+            }),
+            ..VrmDocument::default()
+        };
+        let mut mock = Mock {
+            parents: [(NodeRef(3), NodeRef(2)), (NodeRef(2), NodeRef(1))]
+                .into_iter()
+                .collect(),
+            local_transforms: [(NodeRef(2), Transform::default())].into_iter().collect(),
+            world_transforms: [
+                (NodeRef(1), Transform::default()),
+                (NodeRef(2), Transform::default()),
+                (
+                    NodeRef(3),
+                    Transform {
+                        translation: Vec3::Y,
+                        ..Transform::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Mock::default()
+        };
+        let mut pipeline = VrmRuntimePipeline::with_options(
+            &document,
+            RuntimePipelineOptions {
+                fixed_delta: DeltaTime(1.0),
+                max_substeps: 4,
+                view_mode: ViewMode::ThirdPerson,
+                apply_vrm0_orientation: true,
+            },
+        );
+        pipeline.capture_spring_rest(&mock).unwrap();
+
+        let report = pipeline.tick(&mut mock, DeltaTime(1.0), None).unwrap();
+
+        assert_eq!(report.substeps, 1);
+        assert_eq!(report.stage_count(RuntimePipelineStage::SpringBone), 1);
+        assert!(pipeline.spring_rest().is_some());
+        assert!(pipeline.spring_state().is_some());
+        assert!(mock.world_updates >= 1);
+        assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
     }
 
     #[test]

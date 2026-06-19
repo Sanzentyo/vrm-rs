@@ -30,7 +30,10 @@ use std::path::Path;
 
 pub use glam::Mat4;
 use thiserror::Error;
-pub use vrm_adapter::{HeadlessAdapterError, HeadlessSceneState, VrmRuntimeDriver};
+pub use vrm_adapter::{
+    HeadlessAdapterError, HeadlessSceneState, RuntimePipelineOptions, RuntimePipelineReport,
+    RuntimePipelineStage, RuntimeStageReport, VrmRuntimeDriver, VrmRuntimePipeline,
+};
 use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};

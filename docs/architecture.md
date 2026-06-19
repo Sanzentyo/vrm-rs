@@ -61,6 +61,14 @@ Runtime math remains renderer-agnostic. Engine adapters are expected to provide 
 - LookAt exposes azimuth/altitude calculation and expression-weight mapping for `lookLeft`, `lookRight`, `lookUp`, and `lookDown`.
 - MToon exposes renderer hints such as render order and outline enablement, but not backend-specific shader generation.
 - Adapter code provides `HumanoidPoseRig` and pose snapshots for raw/normalized pose workflows, headless first-person mesh planning, MToon material descriptors and renderer material plans, `LookAtAccess` for VRMA lookAt writeback, and `VrmRuntimeDriver` for engines that want one high-level tick over animation frames, runtime events, constraints, spring bone, first-person visibility, VRM0 orientation compatibility, and material hints. `HumanoidPoseRig` follows three-vrm's normalized humanoid hierarchy, including thumb metacarpal/proximal parenting. VRMA humanoid application uses normalized pose writeback before raw engine transforms are mutated, matching three-vrm's animation clip flow. `tick_with_spring_parity` is the preferred high-level spring path when the engine can provide an initial `SpringRestMap`.
+- `VrmRuntimePipeline` wraps the driver for applications that want persistent
+  state instead of rebuilding orchestration by hand. It owns the
+  renderer-independent runtime managers, fixed-step accumulator,
+  optional `SpringRestMap`/`CenterSpringRuntimeState`, view mode, root node, and
+  VRM0 orientation once-only flag. Each tick returns a `RuntimePipelineReport`
+  with consumed time, dropped fixed substeps, accumulator remainder, and stage
+  counts for animation, lookAt, runtime events, expressions, constraints,
+  spring, MToon, emissive strength, and first-person visibility.
 - MToon pipeline data is exposed as pass hints for renderer-side pipeline selection; shader generation remains outside `vrm-core`.
 - The concrete render-capture examples share the public `RendererMaterialPipelinePlan` through a backend-neutral `CaptureMaterialPlan` alias for MToon/glTF alpha mode, culling, depth-write, blend, render-order, phase-order, and transparent-order decisions. wgpu and Bevy keep only the final API-specific conversion at the edge, which keeps material policy parity testable without tying the rules to one renderer.
 
