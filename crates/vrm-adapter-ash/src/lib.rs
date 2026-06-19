@@ -1930,6 +1930,8 @@ mod tests {
         assert!(fragment_shader.contains("-centered.x * s + centered.y * c"));
         assert!(fragment_shader.contains("pbr_direct("));
         assert!(fragment_shader.contains("output_color(color"));
+        assert!(fragment_shader.contains("scene.light_color.rgb * scene.light_dir.w;"));
+        assert!(!fragment_shader.contains("material_extra.pbr_params.w"));
         assert!(fragment_shader.contains("matcap_uv_from_view(normal)"));
         assert!(fragment_shader.contains("gl_FrontFacing"));
         assert!(fragment_shader.contains("in_normal_scale == 0.0"));

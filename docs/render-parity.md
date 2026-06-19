@@ -94,6 +94,13 @@ wgpu/Bevy remain above `32 dB`. The oriented diagnostic artifacts are
 Ash owner-id diagnostics now bake triangle IDs into vertex color after
 draw-order sorting; use `target/render-parity-ash-diagnostic-owner-id-128-sorted`
 (`14.6654 dB`) for the current primitive-ownership review.
+The Ash source shader now matches the wgpu capture shader's direct-light
+multiplier shape; the 128px shaded artifact
+`target/render-parity-ash-review-128-direct-scale` stays at `15.4876 dB`. Do
+not remove the current Ash fragment outline-width mask as a blind wgpu
+alignment step: the 2026-06-19 check under
+`target/render-parity-ash-review-128-outline-color-direct` fell to `15.4337 dB`,
+so the remaining outline blocker is coupled to Ash geometry/fill behavior.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
 the remaining wgpu-equivalent outline/primitive edge coverage and MToon
 material accumulation behavior.

@@ -298,7 +298,7 @@ void main() {
     float shift_texel = texture(shading_shift_texture, shading_shift_uv).r;
     float shade_rate = mtoon_lit_shade_rate(ndotl, shift_texel);
     vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture(shade_multiply_texture, shade_uv).rgb;
-    vec3 direct = mix(shade, diffuse, shade_rate) * scene.light_color.rgb * scene.light_dir.w * material_extra.pbr_params.w;
+    vec3 direct = mix(shade, diffuse, shade_rate) * scene.light_color.rgb * scene.light_dir.w;
     if (material_extra.flags.x > 0.5) {
         direct = min(direct, diffuse);
     }

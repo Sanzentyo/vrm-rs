@@ -26,7 +26,11 @@
   `14.6654 dB` instead of the prior black owner-color output. The next Ash
   blocker is now narrower: remaining outline/primitive edge coverage plus MToon
   texture/material accumulation in the source GLSL/resource path, not model
-  orientation, camera, alpha, basic normal scale, or raw readback plumbing.
+  orientation, camera, alpha, basic normal scale, or raw readback plumbing. A
+  follow-up shader pass aligned the direct-light multiplier with the wgpu shader
+  without moving the 128px shaded PSNR (`15.4876 dB`); removing the Ash fragment
+  outline-width mask was tried and reverted because it lowered the same smoke to
+  `15.4337 dB`.
 - Added `vrm-adapter::VrmRuntimePipeline`, a persistent renderer-agnostic
   runtime driver wrapper that owns `vrm-runtime::Runtime`, fixed-step
   accumulation, optional spring rest/state, VRM0 orientation once-only state,
