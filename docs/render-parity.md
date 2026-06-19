@@ -1039,6 +1039,14 @@ Bevy phase value. A refreshed topology Bevy-vs-wgpu summary under
 has tail `40`, with all `40` unexplained pixels carrying nonzero actual Bevy
 phase offset and mean/max `0.00001900`.
 
+To regenerate just that current-phase diagnostic after
+`render-parity-seed-owner-tail-topology-extract` has produced the reduced
+fixture and wgpu baseline:
+
+```powershell
+just render-parity-seed-owner-tail-topology-current-phase-summary
+```
+
 Do not globally shrink or remove the Bevy owner-id phase-order offset yet. A
 `1e-8` phase-order offset matches the topology no-bias improvement, but it
 regresses generated source-order guards that prove equal-depth MToon ordering:
