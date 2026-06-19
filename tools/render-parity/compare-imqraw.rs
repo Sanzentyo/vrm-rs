@@ -186,6 +186,8 @@ impl Default for ChangedPixelStats {
 struct HighDeltaStats {
     threshold: u8,
     rgb: usize,
+    expected_only_rgb: usize,
+    actual_only_rgb: usize,
     shared_nonblack_rgb: usize,
     shared_nonblack_interior1px_rgb: usize,
     shared_nonblack_interior2px_rgb: usize,
@@ -598,7 +600,10 @@ fn changed_pixel_stats(expected: &RgbaImage, actual: &RgbaImage) -> ChangedPixel
                     count_high_delta(
                         &mut stats.high_delta,
                         rgb_max_delta,
-                        HighDeltaDomain::default(),
+                        HighDeltaDomain {
+                            expected_only: true,
+                            ..HighDeltaDomain::default()
+                        },
                     );
                 }
                 (false, true) => {
@@ -606,7 +611,10 @@ fn changed_pixel_stats(expected: &RgbaImage, actual: &RgbaImage) -> ChangedPixel
                     count_high_delta(
                         &mut stats.high_delta,
                         rgb_max_delta,
-                        HighDeltaDomain::default(),
+                        HighDeltaDomain {
+                            actual_only: true,
+                            ..HighDeltaDomain::default()
+                        },
                     );
                 }
                 (true, true) => {
@@ -646,6 +654,7 @@ fn changed_pixel_stats(expected: &RgbaImage, actual: &RgbaImage) -> ChangedPixel
                             interior3,
                             flat32,
                             gradient,
+                            ..HighDeltaDomain::default()
                         },
                     );
                 }
@@ -661,6 +670,8 @@ fn changed_pixel_stats(expected: &RgbaImage, actual: &RgbaImage) -> ChangedPixel
 
 #[derive(Clone, Copy, Debug, Default)]
 struct HighDeltaDomain {
+    expected_only: bool,
+    actual_only: bool,
     shared_nonblack: bool,
     interior1: bool,
     interior2: bool,
@@ -681,6 +692,12 @@ fn count_high_delta(
             continue;
         }
         bucket.rgb += 1;
+        if domain.expected_only {
+            bucket.expected_only_rgb += 1;
+        }
+        if domain.actual_only {
+            bucket.actual_only_rgb += 1;
+        }
         if !domain.shared_nonblack {
             continue;
         }
@@ -803,11 +820,19 @@ fn high_delta_report(stats: HighDeltaStats) -> Value {
     let edge1 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior1px_rgb;
     let edge2 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior2px_rgb;
     let edge3 = stats.shared_nonblack_rgb - stats.shared_nonblack_interior3px_rgb;
+    let coverage_only = stats.expected_only_rgb + stats.actual_only_rgb;
     json!({
         "scope": "changed RGB pixels whose max RGB channel delta is at least maxChannelDeltaGte",
         "maxChannelDeltaGte": stats.threshold,
         "rgb": stats.rgb,
+        "expectedOnlyRgb": stats.expected_only_rgb,
+        "actualOnlyRgb": stats.actual_only_rgb,
+        "coverageOnlyRgb": coverage_only,
+        "expectedOnlyRatioOfRgb": ratio_value(stats.expected_only_rgb, stats.rgb),
+        "actualOnlyRatioOfRgb": ratio_value(stats.actual_only_rgb, stats.rgb),
+        "coverageOnlyRatioOfRgb": ratio_value(coverage_only, stats.rgb),
         "sharedNonblackRgb": stats.shared_nonblack_rgb,
+        "sharedNonblackRatioOfRgb": ratio_value(stats.shared_nonblack_rgb, stats.rgb),
         "sharedNonblackInterior1pxRgb": stats.shared_nonblack_interior1px_rgb,
         "sharedNonblackInterior2pxRgb": stats.shared_nonblack_interior2px_rgb,
         "sharedNonblackInterior3pxRgb": stats.shared_nonblack_interior3px_rgb,

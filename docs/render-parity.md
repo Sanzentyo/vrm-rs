@@ -200,7 +200,12 @@ coverage-only pixels and `shared-nonblack-interior1px` or
 `shared-nonblack-interior2px` for material/UV/body-color deltas that should
 ignore silhouette and background classification noise. Use
 `shared-nonblack-interior3px` for the stricter Seed-san base-UV residual slice
-after edge ownership has already been identified. The convenience recipe
+after edge ownership has already been identified. The direct `.imqraw-rust.json`
+gate reports also expose `changedPixels.highDelta[]` coverage-only and
+shared-nonblack ratios at `>=32`, `>=64`, `>=96`, and `>=128` channel deltas, so
+large errors can be sorted into one-sided coverage/ownership versus
+same-pixel material/color residuals before opening per-pixel hotspot reports.
+The convenience recipe
 `just render-parity-imqraw-seed-normal-deltas` writes wgpu and Bevy reports for
 the current real normal-map Seed-san artifacts. The 2026-06-10 Seed-san report
 shows no alpha deltas, but max RGB delta `255` inside visible/interior pixels:
