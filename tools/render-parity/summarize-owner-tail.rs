@@ -93,6 +93,8 @@ struct OwnerLabelSummary {
     indices: Option<Vec<u64>>,
     render_order: Option<i64>,
     render_phase_order: Option<i64>,
+    bevy_phase_order_offset: Option<f64>,
+    bevy_phase_order_offset_applied: Option<f64>,
     draw_index: Option<u64>,
     front_face: Option<String>,
     cull_mode: Option<String>,
@@ -261,6 +263,8 @@ fn label_summary(value: &Value) -> OwnerLabelSummary {
             .map(|indices| indices.iter().filter_map(Value::as_u64).collect()),
         render_order: i64_field(value, "render_order"),
         render_phase_order: i64_field(value, "render_phase_order"),
+        bevy_phase_order_offset: f64_field(value, "bevy_phase_order_offset"),
+        bevy_phase_order_offset_applied: f64_field(value, "bevy_phase_order_offset_applied"),
         draw_index: u64_field(value, "draw_index"),
         front_face: string_field(value, "front_face"),
         cull_mode: string_field(value, "cull_mode"),
@@ -506,6 +510,46 @@ fn markdown_report(report: &OwnerTailReport) -> String {
     write_projection_gap_count(&mut output, report, "both_small_bounds_area_le_1px");
     write_projection_gap_count(&mut output, report, "either_small_bounds_area_le_4px");
     write_projection_gap_count(&mut output, report, "both_small_bounds_area_le_4px");
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "with_expected_bevy_phase_order_offset_applied",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "expected_bevy_phase_order_offset_applied_nonzero",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "mean_expected_bevy_phase_order_offset_applied",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "max_expected_bevy_phase_order_offset_applied",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "with_actual_bevy_phase_order_offset_applied",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "actual_bevy_phase_order_offset_applied_nonzero",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "mean_actual_bevy_phase_order_offset_applied",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "max_actual_bevy_phase_order_offset_applied",
+    );
 
     output.push_str("\n## Top Unexplained Material Transitions\n\n");
     output.push_str("| Count | Expected | Actual | Relation |\n|---:|---|---|---|\n");
@@ -548,8 +592,12 @@ fn markdown_report(report: &OwnerTailReport) -> String {
 }
 
 fn label_cell(label: &OwnerLabelSummary) -> String {
+    let bevy_phase = label
+        .bevy_phase_order_offset_applied
+        .map(|value| format!(" / bevy_phase={value:.8}"))
+        .unwrap_or_default();
     format!(
-        "{} / {} / tri{} / material={} / draw{}",
+        "{} / {} / tri{} / material={} / draw{}{}",
         label.pass.as_deref().unwrap_or("unknown"),
         label.mesh_name.as_deref().unwrap_or("unknown"),
         label
@@ -561,6 +609,7 @@ fn label_cell(label: &OwnerLabelSummary) -> String {
             .draw_index
             .map(|value| value.to_string())
             .unwrap_or_else(|| "?".to_owned()),
+        bevy_phase,
     )
 }
 
@@ -593,6 +642,16 @@ fn write_projection_gap_count(output: &mut String, report: &OwnerTailReport, lab
             .get(label)
             .and_then(Value::as_u64),
     );
+}
+
+fn write_projection_gap_value(output: &mut String, report: &OwnerTailReport, label: &str) {
+    if let Some(value) = report
+        .unexplained_projection_gap_summary
+        .get(label)
+        .and_then(Value::as_f64)
+    {
+        output.push_str(&format!("| `{label}` | {value:.8} |\n"));
+    }
 }
 
 fn text_field(value: &Value, key: &str) -> String {
@@ -639,7 +698,8 @@ fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn std::error::Err
 }
 
 fn self_test() -> Result<(), Box<dyn std::error::Error>> {
-    let value = serde_json::json!({
+    let value = serde_json::from_str::<Value>(
+        r#"{
         "expected": "reference.imqraw",
         "actual": "candidate.imqraw",
         "width": 2,
@@ -677,7 +737,11 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "either_small_bounds_area_le_1px": 0,
             "both_small_bounds_area_le_1px": 0,
             "either_small_bounds_area_le_4px": 2,
-            "both_small_bounds_area_le_4px": 2
+            "both_small_bounds_area_le_4px": 2,
+            "with_actual_bevy_phase_order_offset_applied": 1,
+            "actual_bevy_phase_order_offset_applied_nonzero": 1,
+            "mean_actual_bevy_phase_order_offset_applied": 0.000019,
+            "max_actual_bevy_phase_order_offset_applied": 0.000019
         },
         "top_unexplained_material_transitions": [{
             "expected_pass": "outline",
@@ -716,12 +780,15 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "indices": [4, 5, 6],
                 "render_order": 2000,
                 "render_phase_order": 19,
+                "bevy_phase_order_offset": 0.000019,
+                "bevy_phase_order_offset_applied": 0.000019,
                 "draw_index": 11,
                 "webgl_depth": 0.49
             },
             "sample_pixels": [{"x": 1, "y": 1}]
         }]
-    });
+    }"#,
+    )?;
     let report = summarize_report(Path::new("owner.json"), &value, 16)?;
     assert_eq!(
         report
@@ -747,5 +814,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("pixel_inside_both_screen_bounds"));
     assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));
     assert!(markdown.contains("either_small_bounds_area_le_4px"));
+    assert!(markdown.contains("actual_bevy_phase_order_offset_applied_nonzero"));
+    assert!(markdown.contains("bevy_phase=0.00001900"));
     Ok(())
 }

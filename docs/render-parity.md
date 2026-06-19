@@ -1026,8 +1026,18 @@ unexplained gaps (`41`), disabling Bevy's owner-id phase order reduces them to
 three-vrm (`46 -> 40 -> 36`). The generated split-ownership owner guard remains
 exact against wgpu with both switches enabled (`33120/33120` exact shared owner
 pixels), so the switches are useful for diagnosing Bevy's small-triangle
-owner-id phase-order artifact before deciding whether the default owner-id path
-should suppress those Bevy-specific ordering aids.
+owner-id phase-order artifact.
+
+The owner comparison layer now carries that Bevy-specific metadata into compact
+reports. `compare-owner-id-images.rs` preserves `bevyPhaseOrderOffset` and
+`bevyPhaseOrderOffsetApplied` as snake-case owner-label fields, and the
+`unexplained_projection_gap_summary` aggregates expected/actual applied-offset
+counts, nonzero counts, means, and maxima. `summarize-owner-tail.rs` prints the
+same fields in `Projection Gap Shape` and annotates detail rows with the applied
+Bevy phase value. A refreshed topology Bevy-vs-wgpu summary under
+`.external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-current-phase/`
+has tail `40`, with all `40` unexplained pixels carrying nonzero actual Bevy
+phase offset and mean/max `0.00001900`.
 
 Do not globally shrink or remove the Bevy owner-id phase-order offset yet. A
 `1e-8` phase-order offset matches the topology no-bias improvement, but it

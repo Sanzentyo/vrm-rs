@@ -325,6 +325,8 @@ struct OwnerLabel {
     indices: Option<[u64; 3]>,
     render_order: Option<i64>,
     render_phase_order: Option<i64>,
+    bevy_phase_order_offset: Option<f64>,
+    bevy_phase_order_offset_applied: Option<f64>,
     draw_index: Option<u64>,
     material_type: Option<String>,
     front_face: Option<String>,
@@ -408,6 +410,14 @@ struct OwnerProjectionGapSummary {
     max_area_ratio: Option<f64>,
     mean_abs_webgl_depth_delta: Option<f64>,
     max_abs_webgl_depth_delta: Option<f64>,
+    with_expected_bevy_phase_order_offset_applied: u64,
+    expected_bevy_phase_order_offset_applied_nonzero: u64,
+    mean_expected_bevy_phase_order_offset_applied: Option<f64>,
+    max_expected_bevy_phase_order_offset_applied: Option<f64>,
+    with_actual_bevy_phase_order_offset_applied: u64,
+    actual_bevy_phase_order_offset_applied_nonzero: u64,
+    mean_actual_bevy_phase_order_offset_applied: Option<f64>,
+    max_actual_bevy_phase_order_offset_applied: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -455,6 +465,14 @@ struct OwnerProjectionGapAccumulator {
     area_ratio_max: f64,
     depth_delta_sum: f64,
     depth_delta_max: f64,
+    expected_bevy_phase_order_offset_applied_count: u64,
+    expected_bevy_phase_order_offset_applied_nonzero: u64,
+    expected_bevy_phase_order_offset_applied_sum: f64,
+    expected_bevy_phase_order_offset_applied_max: f64,
+    actual_bevy_phase_order_offset_applied_count: u64,
+    actual_bevy_phase_order_offset_applied_nonzero: u64,
+    actual_bevy_phase_order_offset_applied_sum: f64,
+    actual_bevy_phase_order_offset_applied_max: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -1826,6 +1844,7 @@ impl OwnerProjectionGapAccumulator {
             self.depth_delta_sum += delta;
             self.depth_delta_max = self.depth_delta_max.max(delta);
         }
+        self.add_bevy_phase_order_offsets(expected, actual);
     }
 
     fn into_summary(self) -> OwnerProjectionGapSummary {
@@ -1877,6 +1896,51 @@ impl OwnerProjectionGapAccumulator {
             max_area_ratio: some_if_count(self.area_ratio_max, self.with_screen_bounds),
             mean_abs_webgl_depth_delta: mean(self.depth_delta_sum, self.with_depth),
             max_abs_webgl_depth_delta: some_if_count(self.depth_delta_max, self.with_depth),
+            with_expected_bevy_phase_order_offset_applied: self
+                .expected_bevy_phase_order_offset_applied_count,
+            expected_bevy_phase_order_offset_applied_nonzero: self
+                .expected_bevy_phase_order_offset_applied_nonzero,
+            mean_expected_bevy_phase_order_offset_applied: mean(
+                self.expected_bevy_phase_order_offset_applied_sum,
+                self.expected_bevy_phase_order_offset_applied_count,
+            ),
+            max_expected_bevy_phase_order_offset_applied: some_if_count(
+                self.expected_bevy_phase_order_offset_applied_max,
+                self.expected_bevy_phase_order_offset_applied_count,
+            ),
+            with_actual_bevy_phase_order_offset_applied: self
+                .actual_bevy_phase_order_offset_applied_count,
+            actual_bevy_phase_order_offset_applied_nonzero: self
+                .actual_bevy_phase_order_offset_applied_nonzero,
+            mean_actual_bevy_phase_order_offset_applied: mean(
+                self.actual_bevy_phase_order_offset_applied_sum,
+                self.actual_bevy_phase_order_offset_applied_count,
+            ),
+            max_actual_bevy_phase_order_offset_applied: some_if_count(
+                self.actual_bevy_phase_order_offset_applied_max,
+                self.actual_bevy_phase_order_offset_applied_count,
+            ),
+        }
+    }
+
+    fn add_bevy_phase_order_offsets(&mut self, expected: &OwnerLabel, actual: &OwnerLabel) {
+        if let Some(offset) = expected.bevy_phase_order_offset_applied {
+            self.expected_bevy_phase_order_offset_applied_count += 1;
+            self.expected_bevy_phase_order_offset_applied_nonzero +=
+                u64::from(offset.abs() > f64::EPSILON);
+            self.expected_bevy_phase_order_offset_applied_sum += offset;
+            self.expected_bevy_phase_order_offset_applied_max = self
+                .expected_bevy_phase_order_offset_applied_max
+                .max(offset.abs());
+        }
+        if let Some(offset) = actual.bevy_phase_order_offset_applied {
+            self.actual_bevy_phase_order_offset_applied_count += 1;
+            self.actual_bevy_phase_order_offset_applied_nonzero +=
+                u64::from(offset.abs() > f64::EPSILON);
+            self.actual_bevy_phase_order_offset_applied_sum += offset;
+            self.actual_bevy_phase_order_offset_applied_max = self
+                .actual_bevy_phase_order_offset_applied_max
+                .max(offset.abs());
         }
     }
 
@@ -2166,6 +2230,10 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         indices: owner_indices(value.get("indices")),
         render_order: value.get("renderOrder").and_then(Value::as_i64),
         render_phase_order: value.get("renderPhaseOrder").and_then(Value::as_i64),
+        bevy_phase_order_offset: value.get("bevyPhaseOrderOffset").and_then(Value::as_f64),
+        bevy_phase_order_offset_applied: value
+            .get("bevyPhaseOrderOffsetApplied")
+            .and_then(Value::as_f64),
         draw_index: value.get("drawIndex").and_then(Value::as_u64),
         material_type: string_field(value, "materialType"),
         front_face: string_field(value, "frontFace"),
@@ -2220,6 +2288,13 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 
 fn display_path(path: &Path) -> String {
     path.display().to_string()
+}
+
+fn assert_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() <= 0.000000001,
+        "expected {actual} to be close to {expected}"
+    );
 }
 
 fn self_test() -> Result<(), Box<dyn Error>> {
@@ -2307,6 +2382,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 depth_write: Some(true),
                 render_order: Some(2001),
                 render_phase_order: Some(19),
+                bevy_phase_order_offset: Some(0.000019),
+                bevy_phase_order_offset_applied: Some(0.000019),
                 draw_index: Some(8),
                 screen_bounds: Some(OwnerScreenBounds {
                     min_x: 1.0,
@@ -2331,6 +2408,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 depth_write: Some(false),
                 render_order: Some(2000),
                 render_phase_order: Some(18),
+                bevy_phase_order_offset: Some(0.000018),
+                bevy_phase_order_offset_applied: Some(0.0),
                 draw_index: Some(4),
                 screen_bounds: Some(OwnerScreenBounds {
                     min_x: 2.0,
@@ -2639,6 +2718,32 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .unexplained_projection_gap_summary
             .mean_center_distance_pixels,
         Some(3.5)
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .with_actual_bevy_phase_order_offset_applied,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .actual_bevy_phase_order_offset_applied_nonzero,
+        1
+    );
+    assert_close(
+        report
+            .unexplained_projection_gap_summary
+            .mean_actual_bevy_phase_order_offset_applied
+            .unwrap_or_default(),
+        0.0000095,
+    );
+    assert_close(
+        report
+            .unexplained_projection_gap_summary
+            .max_actual_bevy_phase_order_offset_applied
+            .unwrap_or_default(),
+        0.000019,
     );
     assert_eq!(report.top_unexplained_expected_to_actual_details.len(), 2);
     assert_eq!(
