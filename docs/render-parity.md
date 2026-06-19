@@ -1625,6 +1625,7 @@ For transparent texture-alpha coverage with non-identity glTF
 
 ```powershell
 just render-parity-transparent-texture-transform
+just render-parity-transparent-texture-transform-ash-gated
 ```
 
 This writes
@@ -1637,10 +1638,14 @@ apply offset/scale `KHR_texture_transform` values before blending. The recipe
 keeps exact alpha-bucket parity, allows only a 2-LSB alpha-channel tolerance for
 linear texture-sampling roundoff at transformed texel boundaries, and fails if
 selected `rgb-visible` falls below `47 dB`, selected RGB channel delta exceeds
-`4`, or alpha delta exceeds `2`. The current run has identical alpha buckets
-for all three renderers (`transparent=512`, `opaque=0`, `partial=65024`).
-Selected `rgb-visible` PSNR is wgpu `49.1446 dB` with max selected channel
-delta `3`, and Bevy `47.2056 dB` with max selected channel delta `4`.
+`4`, or alpha delta exceeds `2`. `just
+render-parity-transparent-texture-transform-ash-gated` adds Ash to the same
+visual gate and writes
+`.external-fixtures/render-parity-transparent-texture-transform-ash-gated/`.
+The current Ash-gated run has identical alpha buckets for all four captures
+(`transparent=512`, `opaque=0`, `partial=65024`) and passes at wgpu
+`53.4205 dB`, Bevy `49.0270 dB`, and Ash `53.4205 dB`, with selected-channel
+delta `<= 4` and alpha max delta `<= 2`.
 
 For a broader queue/lighting matrix that combines texture transforms,
 `transparentWithZWrite`, forced shade, rim, and emissive strength in one
@@ -1648,6 +1653,7 @@ overlapping stack, use:
 
 ```powershell
 just render-parity-transparent-queue-matrix
+just render-parity-transparent-queue-matrix-ash-gated
 ```
 
 This writes `.external-fixtures/generated/transparent-queue-matrix.vrm.gltf`
@@ -1657,11 +1663,14 @@ to catch ordering or alpha-rounding regressions that pass the narrower
 texture-transform and lighted guards in isolation. The recipe uses transparent
 background, exact `three-vrm` MToon light accumulation, selected `rgb-visible`,
 and a `48 dB` floor while bounding selected RGB channel delta to `<= 4` and
-alpha max delta to `<= 2`. The current run has identical alpha buckets
-(`transparent=512`, `opaque=0`, `partial=65024`) for all three renderers and
-only 1-LSB alpha rounding. Selected `rgb-visible` PSNR is wgpu `53.0342 dB`
-with max selected channel delta `2`, and Bevy `48.4839 dB` with max selected
-channel delta `3`.
+alpha max delta to `<= 2`. `just
+render-parity-transparent-queue-matrix-ash-gated` adds Ash to the same visual
+gate and writes `.external-fixtures/render-parity-transparent-queue-matrix-ash-gated/`.
+The current Ash-gated run has identical alpha buckets (`transparent=512`,
+`opaque=0`, `partial=65024`) for all four captures and only 1-LSB alpha
+rounding. Selected `rgb-visible` PSNR is wgpu `53.0342 dB`, Bevy
+`48.4839 dB`, and Ash `53.0342 dB`, with selected-channel delta `<= 4` and
+alpha max delta `<= 2`.
 
 For transparent layers that also exercise MToon lighting, rim color, texture
 alpha, `transparentWithZWrite`, and `KHR_materials_emissive_strength`, use:
@@ -1694,6 +1703,7 @@ For same-render-order transparent layers at different depths, use:
 
 ```powershell
 just render-parity-transparent-depth-stack
+just render-parity-transparent-depth-stack-ash-gated
 ```
 
 This writes
@@ -1704,17 +1714,21 @@ but different depths, and one middle layer uses an embedded base-color PNG with
 texture alpha. The recipe keeps `--render-alpha-mismatch-tolerance 0` and
 allows only 1-LSB alpha channel rounding. It now also fails if selected
 `rgb-visible` falls below `49 dB`, selected RGB channel delta exceeds `2`, or
-alpha delta exceeds `1`. The current run has identical alpha buckets for all
-three renderers (`transparent=31672`, `opaque=0`, `partial=33864`) and no alpha
-deltas beyond 1. Selected `rgb-visible` PSNR is wgpu `49.9331 dB` with max
-selected channel delta `2`, and Bevy `51.8518 dB` with max selected channel
-delta `2`.
+alpha delta exceeds `1`. `just render-parity-transparent-depth-stack-ash-gated`
+adds Ash to the same visual gate and writes
+`.external-fixtures/render-parity-transparent-depth-stack-ash-gated/`. The
+current Ash-gated run has identical alpha buckets for all four captures
+(`transparent=31672`, `opaque=0`, `partial=33864`) and no alpha deltas beyond
+1. Selected `rgb-visible` PSNR is wgpu `54.3614 dB`, Bevy `50.6890 dB`, and
+Ash `54.3614 dB`, with selected-channel delta `<= 2` and alpha max delta
+`<= 1`.
 
 For alpha-mode and cutoff coverage across OPAQUE, MASK, and BLEND MToon
 materials, use:
 
 ```powershell
 just render-parity-transparent-alpha-modes
+just render-parity-transparent-alpha-modes-ash-gated
 ```
 
 This writes
@@ -1724,12 +1738,14 @@ contains four separated swatches: an OPAQUE material whose base alpha must be
 forced to `1.0`, a MASK material that passes only because it uses a custom
 `alphaCutoff = 0.25`, a MASK material that fails because it uses
 `alphaCutoff = 0.70`, and a BLEND material whose `alphaCutoff` must be ignored.
-The current run has identical alpha buckets for all three renderers
-(`transparent=37904`, `opaque=19184`, `partial=8448`) and zero alpha
-mismatches. Selected `rgb-visible` PSNR is wgpu `47.4970 dB` and Bevy
-`48.0126 dB`, both with max selected channel delta `2`. The recipe now enforces
-selected `rgb-visible >= 47 dB`, selected RGB channel delta `<= 2`, and exact
-alpha.
+`just render-parity-transparent-alpha-modes-ash-gated` adds Ash to the same
+visual gate and writes
+`.external-fixtures/render-parity-transparent-alpha-modes-ash-gated/`. The
+current Ash-gated run has identical alpha buckets for all four captures
+(`transparent=37904`, `opaque=19184`, `partial=8448`), zero alpha mismatches,
+and selected `rgb-visible = Infinity` for wgpu, Bevy, and Ash. The recipe now
+enforces selected `rgb-visible >= 47 dB`, selected RGB channel delta `<= 2`,
+and exact alpha.
 
 For a generated screen-coordinate outline audit, run:
 
