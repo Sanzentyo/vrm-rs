@@ -959,6 +959,29 @@ and Ash, while each Rust renderer differs from three-vrm by only `37` of
 a regression guard for dense same-material source ordering, but also shows the
 remaining Seed-san tail is still more specific than this generated topology.
 
+A source-derived Seed-san owner-tail extraction diagnostic is available through:
+
+```powershell
+just render-parity-seed-owner-tail-extract
+```
+
+It reads the current outline-disabled Seed-san owner-id report, resolves the top
+unexplained base-pass labels back into the external `Seed-san.vrm`, and writes a
+normalized reduced VRM1 glTF fixture to
+`.external-fixtures/generated/seed-owner-tail-extract.vrm.gltf`. The generated
+fixture keeps the source node/mesh/material/triangle metadata in root `extras`,
+but normalizes the extracted triangles and forces double-sided material policy so
+the local owner comparison is visible and focused on ownership rather than the
+original binary fixture or cull context. The current run under
+`.external-fixtures/render-parity-seed-owner-tail-extract/` passes exact alpha
+with selected `rgb-visible` PSNR wgpu `72.3162 dB` and Bevy `72.3162 dB`, max
+selected-channel delta `16`, and owner reports showing `47/47` exact shared
+owner matches against three-vrm for both wgpu and Bevy. wgpu-vs-Bevy is exact
+for `49/49` shared owner pixels. This is a useful negative result: the isolated
+top real-model owner-tail triangles do not reproduce the residual once removed
+from their surrounding mesh/material/fill context, so future reductions should
+preserve adjacent primitives, material groups, or the original overlap context.
+
 A same-material multi-UV-island ownership control is available through:
 
 ```powershell
