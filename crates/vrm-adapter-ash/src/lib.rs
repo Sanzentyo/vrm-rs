@@ -413,13 +413,14 @@ impl AshVrmFramePlanner {
             )?;
         }
         self.scene.update_world_transforms()?;
-        let texture_uploads = self.texture_uploads();
-        let material_texture_uploads = material_texture_upload_indices(&texture_uploads);
+        let mtoon_pipelines = self.mtoon_pipeline_plans();
+        let texture_uploads = self.texture_uploads(&mtoon_pipelines);
+        let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
             primitives: self.bake_primitives()?,
-            materials: self.material_records(&material_texture_uploads),
+            materials: self.material_records(&texture_upload_indices),
             texture_uploads,
-            mtoon_pipelines: self.mtoon_pipeline_plans(),
+            mtoon_pipelines,
         })
     }
 
@@ -505,7 +506,10 @@ impl AshVrmFramePlanner {
         })
     }
 
-    fn material_records(&self, texture_uploads: &HashMap<usize, usize>) -> Vec<AshMaterialRecord> {
+    fn material_records(
+        &self,
+        texture_uploads: &HashMap<TextureRef, usize>,
+    ) -> Vec<AshMaterialRecord> {
         self.loaded
             .gltf_materials
             .iter()
@@ -513,20 +517,22 @@ impl AshVrmFramePlanner {
             .map(|(index, material)| AshMaterialRecord {
                 material: MaterialRef(index),
                 base_color_factor: material.base_color_factor,
-                base_color_texture_upload: texture_uploads.get(&index).copied(),
+                base_color_texture_upload: self
+                    .loaded
+                    .material_texture_slots(Some(index))
+                    .base
+                    .and_then(|texture| texture_uploads.get(&TextureRef(texture)).copied()),
             })
             .collect()
     }
 
-    fn texture_uploads(&self) -> Vec<AshTextureUpload> {
-        self.loaded
-            .gltf_materials
-            .iter()
-            .enumerate()
-            .filter_map(|(index, _)| {
+    fn texture_uploads(&self, pipelines: &[AshMtoonPipelinePlan]) -> Vec<AshTextureUpload> {
+        required_texture_refs(&self.loaded, pipelines)
+            .into_iter()
+            .filter_map(|texture| {
                 self.loaded
-                    .material_base_texture_rgba8_image(Some(index))
-                    .map(|image| texture_upload(Some(TextureRef(index)), image))
+                    .texture_rgba8_image(texture.0)
+                    .map(|image| texture_upload(Some(texture), image))
             })
             .collect()
     }
@@ -578,14 +584,32 @@ pub fn frame_plan_from_options(
     planner.sample_frame(options.time)
 }
 
-fn material_texture_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<usize, usize> {
-    texture_uploads
-        .iter()
-        .enumerate()
-        .filter_map(|(upload_index, upload)| {
-            upload.texture.map(|texture| (texture.0, upload_index))
-        })
-        .collect()
+fn required_texture_refs(
+    loaded: &LoadedVrm,
+    pipelines: &[AshMtoonPipelinePlan],
+) -> Vec<TextureRef> {
+    let mut textures = Vec::new();
+    for material in 0..loaded.gltf_materials.len() {
+        if let Some(texture) = loaded.material_texture_slots(Some(material)).base {
+            push_unique_texture(&mut textures, TextureRef(texture));
+        }
+    }
+    for pipeline in pipelines {
+        for texture in pipeline
+            .descriptor_bindings
+            .iter()
+            .filter_map(|binding| binding.texture)
+        {
+            push_unique_texture(&mut textures, texture);
+        }
+    }
+    textures
+}
+
+fn push_unique_texture(textures: &mut Vec<TextureRef>, texture: TextureRef) {
+    if !textures.contains(&texture) {
+        textures.push(texture);
+    }
 }
 
 fn texture_ref_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<TextureRef, usize> {
@@ -800,5 +824,78 @@ mod tests {
         );
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+    }
+
+    #[test]
+    fn renderer_frame_resolves_texture_descriptor_uploads() {
+        let plan = AshVrmFramePlan {
+            primitives: Vec::new(),
+            materials: Vec::new(),
+            texture_uploads: vec![AshTextureUpload {
+                texture: Some(TextureRef(7)),
+                format: vk::Format::R8G8B8A8_SRGB,
+                extent: vk::Extent3D {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                },
+                rgba: vec![255, 255, 255, 255],
+            }],
+            mtoon_pipelines: vec![AshMtoonPipelinePlan {
+                material: MaterialRef(0),
+                name: Some("textured".to_owned()),
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                descriptor_bindings: vec![
+                    AshDescriptorBindingPlan {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        texture: None,
+                        sampler: None,
+                    },
+                    AshDescriptorBindingPlan {
+                        binding: 1,
+                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        texture: Some(TextureRef(7)),
+                        sampler: Some(AshSamplerPlan {
+                            mag_filter: vk::Filter::LINEAR,
+                            min_filter: vk::Filter::LINEAR,
+                            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                            address_mode_u: vk::SamplerAddressMode::REPEAT,
+                            address_mode_v: vk::SamplerAddressMode::REPEAT,
+                            normal_map_decode: false,
+                        }),
+                    },
+                ],
+                uniform: MtoonGpuUniform::zeroed(),
+                uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+                alpha_cutoff: 0.5,
+                outline_width: 0.0,
+                base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                emissive_color: [0.0, 0.0, 0.0],
+            }],
+        };
+        let renderer_frame = ash_renderer_frame_from_plan(&plan);
+        assert_eq!(renderer_frame.textures.len(), 1);
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[1].texture_upload_index,
+            Some(0)
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[1].descriptor_type,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+        );
     }
 }

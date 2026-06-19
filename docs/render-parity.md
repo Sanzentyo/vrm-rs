@@ -71,9 +71,12 @@ This forwards `--render-ash-readback` to `tools/ci/local-ci.rs`. The ash
 artifacts are written under the selected render-parity directory as
 `ash/<fixture>.frame000.{rgba.json,imqraw,png}`, verified with the same
 imqraw/RGBA byte check, and recorded in `review-manifest.json` as
-`supplementalCaptures`. They intentionally do not affect the PSNR threshold
-until the ash example grows from a minimal drawable/readback path into the same
-MToon visual renderer as the wgpu and Bevy capture paths.
+`supplementalCaptures`. The ash example already allocates real Vulkan uniform
+buffers, sampled texture images, samplers, descriptor sets, graphics pipelines,
+and offscreen readback resources from the MToon frame plan. It intentionally
+does not affect the PSNR threshold until its shader path grows from the current
+minimal color-only smoke shader into the same MToon visual renderer as the wgpu
+and Bevy capture paths.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public

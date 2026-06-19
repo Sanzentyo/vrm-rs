@@ -13,8 +13,8 @@ use std::{
     ptr,
 };
 use vrm_adapter_ash::{
-    AshGraphicsPipelinePlan, AshRendererFrame, AshVertexAttributePlan, AshVrmFramePlanOptions,
-    ash_renderer_frame_from_plan, frame_plan_from_options,
+    AshGraphicsPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
+    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, frame_plan_from_options,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -48,6 +48,11 @@ struct Options {
 struct VulkanFrameResources {
     buffers: Vec<VulkanBuffer>,
     images: Vec<VulkanImage>,
+    texture_staging_buffers: Vec<VulkanBuffer>,
+    fallback_texture: VulkanImage,
+    fallback_texture_staging: VulkanBuffer,
+    uniform_buffers: Vec<VulkanBuffer>,
+    samplers: Vec<vk::Sampler>,
     color_target: VulkanImage,
     depth_target: VulkanImage,
     render_pass: vk::RenderPass,
@@ -93,6 +98,10 @@ struct CommandRecordContext<'a> {
     pipeline_layouts: &'a [vk::PipelineLayout],
     buffers: &'a [VulkanBuffer],
     descriptor_sets: &'a [vk::DescriptorSet],
+    texture_images: &'a [VulkanImage],
+    texture_staging_buffers: &'a [VulkanBuffer],
+    fallback_texture: &'a VulkanImage,
+    fallback_texture_staging: &'a VulkanBuffer,
     color_target: vk::Image,
     readback_buffer: vk::Buffer,
 }
@@ -229,6 +238,32 @@ impl UnsafeAshDeviceRenderer {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let texture_staging_buffers = frame
+            .textures
+            .iter()
+            .map(|texture| {
+                self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &texture.upload.rgba)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fallback_texture = self.create_image(
+            vk::Format::R8G8B8A8_SRGB,
+            vk::Extent3D {
+                width: 1,
+                height: 1,
+                depth: 1,
+            },
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        let fallback_texture_staging =
+            self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &[255, 255, 255, 255])?;
+        let uniform_buffers = frame
+            .uniforms
+            .iter()
+            .map(|uniform| {
+                self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let color_format = vk::Format::R8G8B8A8_UNORM;
         let depth_format = vk::Format::D32_SFLOAT;
         let color_target = self.create_image(
@@ -272,6 +307,15 @@ impl UnsafeAshDeviceRenderer {
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let descriptor_sets =
             self.allocate_descriptor_sets(descriptor_pool, &descriptor_set_layouts)?;
+        let samplers = self.create_samplers(frame)?;
+        self.update_descriptor_sets(
+            frame,
+            &descriptor_sets,
+            &uniform_buffers,
+            &images,
+            &fallback_texture,
+            &samplers,
+        )?;
         let pipeline_layouts = descriptor_set_layouts
             .iter()
             .map(|layout| {
@@ -305,6 +349,10 @@ impl UnsafeAshDeviceRenderer {
             pipeline_layouts: &pipeline_layouts,
             buffers: &buffers,
             descriptor_sets: &descriptor_sets,
+            texture_images: &images,
+            texture_staging_buffers: &texture_staging_buffers,
+            fallback_texture: &fallback_texture,
+            fallback_texture_staging: &fallback_texture_staging,
             color_target: color_target.image,
             readback_buffer: readback.buffer,
         };
@@ -312,6 +360,11 @@ impl UnsafeAshDeviceRenderer {
         Ok(VulkanFrameResources {
             buffers,
             images,
+            texture_staging_buffers,
+            fallback_texture,
+            fallback_texture_staging,
+            uniform_buffers,
+            samplers,
             color_target,
             depth_target,
             render_pass,
@@ -473,6 +526,94 @@ impl UnsafeAshDeviceRenderer {
             .descriptor_pool(pool)
             .set_layouts(layouts);
         unsafe { self.device.allocate_descriptor_sets(&info) }
+    }
+
+    fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {
+        frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .map(|binding| self.create_sampler(binding.sampler.unwrap_or(default_sampler_plan())))
+            .collect()
+    }
+
+    fn create_sampler(&self, plan: AshSamplerPlan) -> Result<vk::Sampler, vk::Result> {
+        let info = vk::SamplerCreateInfo::default()
+            .mag_filter(plan.mag_filter)
+            .min_filter(plan.min_filter)
+            .mipmap_mode(plan.mipmap_mode)
+            .address_mode_u(plan.address_mode_u)
+            .address_mode_v(plan.address_mode_v)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .min_lod(0.0)
+            .max_lod(0.0);
+        unsafe { self.device.create_sampler(&info, None) }
+    }
+
+    fn update_descriptor_sets(
+        &self,
+        frame: &AshRendererFrame,
+        descriptor_sets: &[vk::DescriptorSet],
+        uniform_buffers: &[VulkanBuffer],
+        images: &[VulkanImage],
+        fallback_texture: &VulkanImage,
+        samplers: &[vk::Sampler],
+    ) -> Result<(), Box<dyn Error>> {
+        let mut sampler_index = 0;
+        for (set_index, set) in frame.descriptor_sets.iter().enumerate() {
+            let descriptor_set = descriptor_sets[set_index];
+            for binding in &set.bindings {
+                match binding.descriptor_type {
+                    vk::DescriptorType::UNIFORM_BUFFER => {
+                        let uniform = uniform_buffers
+                            .get(set.pipeline_plan_index)
+                            .ok_or("descriptor set references a missing uniform buffer")?;
+                        let buffer_info = [vk::DescriptorBufferInfo::default()
+                            .buffer(uniform.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .buffer_info(&buffer_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                        let sampler = *samplers
+                            .get(sampler_index)
+                            .ok_or("descriptor set references a missing sampler")?;
+                        sampler_index += 1;
+                        let image = binding
+                            .texture_upload_index
+                            .and_then(|index| images.get(index))
+                            .unwrap_or(fallback_texture);
+                        let image_info = [vk::DescriptorImageInfo::default()
+                            .sampler(sampler)
+                            .image_view(image.view)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unsupported ash descriptor type in example renderer: {other:?}"
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn create_render_pass(
@@ -702,6 +843,7 @@ impl UnsafeAshDeviceRenderer {
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
+            self.record_texture_uploads(command_buffer, frame, context);
             self.device.cmd_begin_render_pass(
                 command_buffer,
                 &render_pass_info,
@@ -792,6 +934,96 @@ impl UnsafeAshDeviceRenderer {
         Ok(command_buffers)
     }
 
+    fn record_texture_uploads(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        frame: &AshRendererFrame,
+        context: &CommandRecordContext<'_>,
+    ) {
+        for ((texture, image), staging) in frame
+            .textures
+            .iter()
+            .zip(context.texture_images)
+            .zip(context.texture_staging_buffers)
+        {
+            self.record_texture_upload(
+                command_buffer,
+                image.image,
+                staging.buffer,
+                texture.upload.extent,
+            );
+        }
+        self.record_texture_upload(
+            command_buffer,
+            context.fallback_texture.image,
+            context.fallback_texture_staging.buffer,
+            vk::Extent3D {
+                width: 1,
+                height: 1,
+                depth: 1,
+            },
+        );
+    }
+
+    fn record_texture_upload(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        image: vk::Image,
+        staging_buffer: vk::Buffer,
+        extent: vk::Extent3D,
+    ) {
+        let subresource_range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1);
+        let to_transfer = [vk::ImageMemoryBarrier::default()
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .image(image)
+            .subresource_range(subresource_range)];
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &to_transfer,
+            );
+            self.device.cmd_copy_buffer_to_image(
+                command_buffer,
+                staging_buffer,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::BufferImageCopy::default()
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1),
+                    )
+                    .image_extent(extent)],
+            );
+            let to_shader = [vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image(image)
+                .subresource_range(subresource_range)];
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &to_shader,
+            );
+        }
+    }
+
     fn submit_and_readback(
         &self,
         resources: &VulkanFrameResources,
@@ -869,11 +1101,32 @@ impl UnsafeAshDeviceRenderer {
             for layout in resources.descriptor_set_layouts {
                 self.device.destroy_descriptor_set_layout(layout, None);
             }
+            for sampler in resources.samplers {
+                self.device.destroy_sampler(sampler, None);
+            }
+            for buffer in resources.uniform_buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+            for buffer in resources.texture_staging_buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
             for image in resources.images {
                 self.device.destroy_image_view(image.view, None);
                 self.device.destroy_image(image.image, None);
                 self.device.free_memory(image.memory, None);
             }
+            self.device
+                .destroy_image_view(resources.fallback_texture.view, None);
+            self.device
+                .destroy_image(resources.fallback_texture.image, None);
+            self.device
+                .free_memory(resources.fallback_texture.memory, None);
+            self.device
+                .destroy_buffer(resources.fallback_texture_staging.buffer, None);
+            self.device
+                .free_memory(resources.fallback_texture_staging.memory, None);
             self.device
                 .destroy_image_view(resources.depth_target.view, None);
             self.device
@@ -902,6 +1155,17 @@ fn vertex_attribute_description(
         binding: attribute.binding,
         format: attribute.format,
         offset: attribute.offset,
+    }
+}
+
+fn default_sampler_plan() -> AshSamplerPlan {
+    AshSamplerPlan {
+        mag_filter: vk::Filter::LINEAR,
+        min_filter: vk::Filter::LINEAR,
+        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+        address_mode_u: vk::SamplerAddressMode::REPEAT,
+        address_mode_v: vk::SamplerAddressMode::REPEAT,
+        normal_map_decode: false,
     }
 }
 
