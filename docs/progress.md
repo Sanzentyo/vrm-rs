@@ -20,9 +20,10 @@
   Ash selected `rgb-visible` PSNR `15.4876 dB` with exact opaque alpha parity;
   the companion diagnostics improved flat from `11.3633` to `22.3215 dB` and
   base-color from `12.8878` to `19.3898 dB`. Ash owner-id diagnostics now bake
-  triangle IDs into vertex color as well; the latest owner-id artifact is
-  `target/render-parity-ash-diagnostic-owner-id-128-triangles`, with Ash at
-  `13.9999 dB` instead of the prior black owner-color output. The next Ash
+  triangle IDs into vertex color and assign those IDs after draw-order sorting;
+  the latest owner-id artifact is
+  `target/render-parity-ash-diagnostic-owner-id-128-sorted`, with Ash at
+  `14.6654 dB` instead of the prior black owner-color output. The next Ash
   blocker is now narrower: remaining outline/primitive edge coverage plus MToon
   texture/material accumulation in the source GLSL/resource path, not model
   orientation, camera, alpha, basic normal scale, or raw readback plumbing.
@@ -793,7 +794,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 80.10%, and `vrm-adapter-bevy` line coverage is 75.94%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 80.08%, and `vrm-adapter-bevy` line coverage is 75.94%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.

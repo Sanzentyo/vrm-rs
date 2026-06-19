@@ -868,8 +868,12 @@ struct AshPrimitiveBakeSettings {
     pass: AshMtoonPass,
     mtoon_time: f32,
     scene_options: AshSceneOptions,
-    diagnostic_render: AshDiagnosticRender,
-    owner_id: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AshPrimitiveDrawOrder {
+    render_order: i32,
+    phase_order: i32,
 }
 
 impl AshVrmFramePlanner {
@@ -941,7 +945,12 @@ impl AshVrmFramePlanner {
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
-            primitives: self.bake_primitives(time_seconds, scene_options, diagnostic_render)?,
+            primitives: self.bake_primitives(
+                time_seconds,
+                scene_options,
+                diagnostic_render,
+                &mtoon_pipelines,
+            )?,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
@@ -968,18 +977,17 @@ impl AshVrmFramePlanner {
         mtoon_time: f32,
         scene_options: AshSceneOptions,
         diagnostic_render: AshDiagnosticRender,
+        mtoon_pipelines: &[AshMtoonPipelinePlan],
     ) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
+        let pipeline_orders = ash_pipeline_draw_orders(mtoon_pipelines);
         let mut primitives = Vec::new();
-        let mut owner_id = 1_u32;
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
                 continue;
             };
             let mesh = &self.loaded.meshes[mesh_index];
             for primitive in &mesh.primitives {
-                let base_owner_id = owner_id;
-                owner_id = owner_id.saturating_add(ash_owner_id_count(primitive));
-                primitives.push(self.bake_primitive(
+                let base = self.bake_primitive(
                     node_index,
                     node,
                     mesh,
@@ -988,10 +996,16 @@ impl AshVrmFramePlanner {
                         pass: AshMtoonPass::Base,
                         mtoon_time,
                         scene_options,
-                        diagnostic_render,
-                        owner_id: base_owner_id,
                     },
-                )?);
+                )?;
+                primitives.push((
+                    base,
+                    ash_draw_order(
+                        &pipeline_orders,
+                        primitive.material.map(MaterialRef),
+                        AshMtoonPass::Base,
+                    ),
+                ));
                 if self
                     .loaded
                     .expression_mtoon_outline_plan(
@@ -1000,9 +1014,7 @@ impl AshVrmFramePlanner {
                     )
                     .is_some()
                 {
-                    let outline_owner_id = owner_id;
-                    owner_id = owner_id.saturating_add(ash_owner_id_count(primitive));
-                    primitives.push(self.bake_primitive(
+                    let outline = self.bake_primitive(
                         node_index,
                         node,
                         mesh,
@@ -1011,14 +1023,26 @@ impl AshVrmFramePlanner {
                             pass: AshMtoonPass::Outline,
                             mtoon_time,
                             scene_options,
-                            diagnostic_render,
-                            owner_id: outline_owner_id,
                         },
-                    )?);
+                    )?;
+                    primitives.push((
+                        outline,
+                        ash_draw_order(
+                            &pipeline_orders,
+                            primitive.material.map(MaterialRef),
+                            AshMtoonPass::Outline,
+                        ),
+                    ));
                 }
             }
         }
-        Ok(primitives)
+        if diagnostic_render == AshDiagnosticRender::OwnerId {
+            assign_ash_owner_id_triangles(&mut primitives);
+        }
+        Ok(primitives
+            .into_iter()
+            .map(|(primitive, _draw_order)| primitive)
+            .collect())
     }
 
     fn bake_primitive(
@@ -1072,7 +1096,7 @@ impl AshVrmFramePlanner {
                 &mut normal_scales,
             );
         }
-        let mut vertices: Vec<AshVrmVertex> = source_vertices
+        let vertices: Vec<AshVrmVertex> = source_vertices
             .iter()
             .zip(normal_scales)
             .map(|(vertex, normal_scale)| {
@@ -1094,16 +1118,12 @@ impl AshVrmFramePlanner {
                 }
             })
             .collect();
-        let mut indices = primitive.indices.clone();
-        if settings.diagnostic_render == AshDiagnosticRender::OwnerId {
-            (vertices, indices) = ash_owner_id_triangles(&vertices, &indices, settings.owner_id);
-        }
         Ok(AshVrmPrimitive {
             node: NodeRef(node_index),
             material: primitive.material.map(MaterialRef),
             pass: settings.pass,
             vertices,
-            indices,
+            indices: primitive.indices.clone(),
         })
     }
 
@@ -1296,10 +1316,6 @@ fn ash_model_orientation() -> Mat4 {
     Mat4::from_rotation_y(std::f32::consts::PI)
 }
 
-fn ash_owner_id_count(primitive: &GltfPrimitiveData) -> u32 {
-    u32::try_from(primitive.indices.chunks_exact(3).len()).unwrap_or(u32::MAX)
-}
-
 fn ash_owner_id_color(id: u32) -> [f32; 4] {
     [
         f32::from((id & 0xff) as u8) / 255.0,
@@ -1309,15 +1325,64 @@ fn ash_owner_id_color(id: u32) -> [f32; 4] {
     ]
 }
 
+fn ash_pipeline_draw_orders(
+    pipelines: &[AshMtoonPipelinePlan],
+) -> HashMap<(MaterialRef, AshMtoonPass), AshPrimitiveDrawOrder> {
+    pipelines
+        .iter()
+        .map(|pipeline| {
+            (
+                (pipeline.material, pipeline.key.pass),
+                AshPrimitiveDrawOrder {
+                    render_order: pipeline.key.render_order,
+                    phase_order: pipeline.key.phase_order,
+                },
+            )
+        })
+        .collect()
+}
+
+fn ash_draw_order(
+    pipeline_orders: &HashMap<(MaterialRef, AshMtoonPass), AshPrimitiveDrawOrder>,
+    material: Option<MaterialRef>,
+    pass: AshMtoonPass,
+) -> AshPrimitiveDrawOrder {
+    material
+        .and_then(|material| pipeline_orders.get(&(material, pass)).copied())
+        .unwrap_or(AshPrimitiveDrawOrder {
+            render_order: 2000,
+            phase_order: 2000,
+        })
+}
+
+fn assign_ash_owner_id_triangles(primitives: &mut [(AshVrmPrimitive, AshPrimitiveDrawOrder)]) {
+    let mut ordered_indices = (0..primitives.len()).collect::<Vec<_>>();
+    ordered_indices.sort_by_key(|index| {
+        let draw_order = primitives[*index].1;
+        (draw_order.render_order, draw_order.phase_order, *index)
+    });
+
+    let mut next_id = 1_u32;
+    for primitive_index in ordered_indices {
+        let primitive = &mut primitives[primitive_index].0;
+        let (vertices, indices, next) =
+            ash_owner_id_triangles(&primitive.vertices, &primitive.indices, next_id);
+        primitive.vertices = vertices;
+        primitive.indices = indices;
+        next_id = next;
+    }
+}
+
 fn ash_owner_id_triangles(
     vertices: &[AshVrmVertex],
     indices: &[u32],
     first_id: u32,
-) -> (Vec<AshVrmVertex>, Vec<u32>) {
+) -> (Vec<AshVrmVertex>, Vec<u32>, u32) {
     let mut expanded_vertices = Vec::with_capacity(indices.len());
     let mut expanded_indices = Vec::with_capacity(indices.len());
-    for (triangle_index, triangle) in indices.chunks_exact(3).enumerate() {
-        let color = ash_owner_id_color(first_id.saturating_add(triangle_index as u32));
+    let mut next_id = first_id;
+    for triangle in indices.chunks_exact(3) {
+        let color = ash_owner_id_color(next_id);
         for index in triangle {
             if let Some(vertex) = vertices.get(*index as usize) {
                 let mut vertex = *vertex;
@@ -1326,8 +1391,9 @@ fn ash_owner_id_triangles(
                 expanded_vertices.push(vertex);
             }
         }
+        next_id = next_id.saturating_add(1);
     }
-    (expanded_vertices, expanded_indices)
+    (expanded_vertices, expanded_indices, next_id)
 }
 
 fn ash_vertex_normal_scales(
@@ -1773,6 +1839,42 @@ mod tests {
             ash_owner_id_color(0x000102),
             [2.0 / 255.0, 1.0 / 255.0, 0.0, 1.0]
         );
+    }
+
+    #[test]
+    fn owner_id_triangles_are_assigned_in_draw_order() {
+        let vertex = AshVrmVertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coord_0: [0.0, 0.0],
+            color_0: [0.0, 0.0, 0.0, 1.0],
+            normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            normal_scale: 1.0,
+            double_sided: 0.0,
+        };
+        let primitive = |render_order| {
+            (
+                AshVrmPrimitive {
+                    node: NodeRef(0),
+                    material: Some(MaterialRef(0)),
+                    pass: AshMtoonPass::Base,
+                    vertices: vec![vertex; 3],
+                    indices: vec![0, 1, 2],
+                },
+                AshPrimitiveDrawOrder {
+                    render_order,
+                    phase_order: render_order,
+                },
+            )
+        };
+        let mut primitives = vec![primitive(3000), primitive(1000)];
+
+        assign_ash_owner_id_triangles(&mut primitives);
+
+        assert_eq!(primitives[1].0.vertices[0].color_0, ash_owner_id_color(1));
+        assert_eq!(primitives[0].0.vertices[0].color_0, ash_owner_id_color(2));
+        assert_eq!(primitives[0].0.indices, [0, 1, 2]);
+        assert_eq!(primitives[1].0.indices, [0, 1, 2]);
     }
 
     #[test]
