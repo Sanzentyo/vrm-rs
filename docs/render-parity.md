@@ -1595,6 +1595,7 @@ render-queue variation, use:
 
 ```powershell
 just render-parity-transparent-broad
+just render-parity-transparent-broad-ash-gated
 ```
 
 This writes `.external-fixtures/generated/transparent-broad.vrm.gltf` and
@@ -1611,6 +1612,13 @@ buckets (`transparent=512`, `opaque=0`, `partial=65024`) for three-vrm, wgpu,
 and Bevy; all alpha differences are within 1 LSB (`mismatchesBeyondOne = 0`).
 Selected `rgb-visible` PSNR is wgpu `48.5282 dB` with max selected channel
 delta `3`, and Bevy `48.5944 dB` with max selected channel delta `4`.
+`just render-parity-transparent-broad-ash-gated` runs the same generated broad
+fixture with Ash in `--render-ash-visual-gate` and writes
+`.external-fixtures/render-parity-transparent-broad-ash-gated/`. The current
+Ash-gated run passes the same `48 dB`, selected-channel-delta `<= 4`, and
+alpha-delta `<= 1` gate for all three Rust renderers: wgpu `53.8478 dB`, Bevy
+`49.9717 dB`, and Ash `53.8478 dB`, with identical alpha buckets and no
+alpha-channel deltas beyond 1 LSB.
 
 For transparent texture-alpha coverage with non-identity glTF
 `KHR_texture_transform`, use:
@@ -1660,6 +1668,7 @@ alpha, `transparentWithZWrite`, and `KHR_materials_emissive_strength`, use:
 
 ```powershell
 just render-parity-transparent-lighted
+just render-parity-transparent-lighted-ash-gated
 ```
 
 This writes `.external-fixtures/generated/transparent-lighted.vrm.gltf` and
@@ -1674,6 +1683,12 @@ rounding. The current run has identical alpha buckets for all three renderers
 (`transparent=512`, `opaque=0`, `partial=65024`). Selected `rgb-visible` PSNR
 is wgpu `53.7519 dB` with max selected channel delta `2`, and Bevy
 `50.2049 dB` with max selected channel delta `3`.
+`just render-parity-transparent-lighted-ash-gated` adds Ash to the same visual
+gate and writes `.external-fixtures/render-parity-transparent-lighted-ash-gated/`.
+The current run passes at wgpu `53.7519 dB`, Bevy `50.2049 dB`, and Ash
+`53.7519 dB`, with selected-channel delta `<= 3`, alpha max delta `<= 2`, and
+the same transparent/partial alpha buckets across three-vrm, wgpu, Bevy, and
+Ash.
 
 For same-render-order transparent layers at different depths, use:
 
