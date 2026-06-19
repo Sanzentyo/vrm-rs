@@ -17,6 +17,12 @@
   mode, and root-motion apply/ignore/extract policy. `VrmRuntimePipeline` now
   owns a mixer and exposes `tick_mixer`, returning both mixer output and runtime
   stage reports while applying the sampled VRMA frame through adapter traits.
+- Added `vrm-vmc`, a typed VMC layer over the existing dependency-free
+  `vrm-osc` codec. The initial coverage parses and re-emits availability,
+  relative time, root/bone pose, blend value/apply, camera, directional light,
+  and unknown messages, traverses OSC bundles in wire order, and applies parsed
+  messages through `VmcRuntimeSink` with parse-before-apply transaction hooks
+  plus rollback on sink errors.
 
 ## 2026-06-10
 
@@ -753,7 +759,7 @@
 - Added optional Bevy morph target asset writeback. Renderer integrations can implement `VrmBevyMorphTargetAsset`, attach `BevyVrmMorphTargetAssetHandle`, and run `write_scene_state_to_morph_assets` to push per-node expression weights into concrete mesh or skinned-mesh asset state without reading the lightweight staging component directly.
 - Added optional Bevy first-person `auto` mesh asset handling. Renderer integrations can implement `VrmBevyFirstPersonMeshAsset`, attach `BevyVrmFirstPersonMesh`, and run `apply_first_person_auto_to_mesh_assets` to clone or update a first-person headless mesh while preserving the source mesh for third-person rendering.
 - Added `examples/bevy_mtoon_materialization.rs`, a Bevy-facing MToon materialization example that maps base/outline pass plans, alpha/depth/cull state, render order, emissive strength, and texture refs into an engine-owned Bevy `Asset` implementing `VrmBevyMaterialAsset`.
-- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 79.68%, and `vrm-adapter-bevy` line coverage is 75.88%.
+- Re-measured coverage after workspace coverage refresh on 2026-06-19: workspace line coverage is 79.01%, and `vrm-adapter-bevy` line coverage is 75.88%.
 - Audited renderer/shader responsibilities and closed the P1 guardrail: `vrm-core` and `vrm-adapter` expose MToon parameters, pass hints, and adapter traits only; renderer-specific shader modules, bind groups, render passes, and material assets remain in examples, optional adapters, or downstream crates.
 - Deepened VRM0 numeric humanoid compatibility against the Alicia VRM0 fixture. The VRM0 mapper now normalizes thumb proximal/intermediate names into VRM1 metacarpal/proximal slots, and ignored Alicia three-vrm golden tests cover raw/normalized rest pose plus raw and normalized pose writeback.
 - Expanded VRM0 legacy material edge coverage. Generated tests now cover additional MToon float/vector properties, texture slots, UV animation, and `_ShadeTexture_ST`/`_BumpMap_ST` texture transform binds, while the Alicia external fixture assertion checks normalized thumb slots and concrete legacy texture-slot behavior.

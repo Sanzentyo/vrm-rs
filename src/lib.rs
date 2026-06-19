@@ -25,6 +25,8 @@ pub use vrm_osc as osc;
 pub use vrm_protocol as protocol;
 pub use vrm_runtime as runtime;
 pub use vrm_sans_io as sans_io;
+#[cfg(feature = "vmc")]
+pub use vrm_vmc as vmc;
 
 use std::path::Path;
 
@@ -283,6 +285,16 @@ mod tests {
 
         assert!(remainder.is_empty());
         assert_eq!(decoded, packet);
+    }
+
+    #[cfg(feature = "vmc")]
+    #[test]
+    fn facade_reexports_vmc_when_feature_enabled() {
+        let message = vmc::VmcMessage::RelativeTime(1.25);
+        let osc = message.to_osc_message();
+
+        assert_eq!(osc.addr, "/VMC/Ext/T");
+        assert_eq!(vmc::VmcMessage::from_osc_message(&osc).unwrap(), message);
     }
 
     #[test]

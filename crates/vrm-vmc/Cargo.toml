@@ -1,0 +1,11 @@
+[package]
+name = "vrm-vmc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Typed VMC 3.x message layer and runtime sink helpers for vrm-rs."
+
+[dependencies]
+glam.workspace = true
+thiserror.workspace = true
+vrm-osc = { path = "../vrm-osc" }

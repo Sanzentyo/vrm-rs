@@ -115,6 +115,7 @@ function Build-TestingSection {
         @{ Name = "vrm-protocol"; Key = "vrm-protocol" },
         @{ Name = "vrm-runtime"; Key = "vrm-runtime" },
         @{ Name = "vrm-sans-io"; Key = "vrm-sans-io" },
+        @{ Name = "vrm-vmc"; Key = "vrm-vmc" },
         @{ Name = "src/lib.rs"; Key = "src/lib.rs" }
     )
 

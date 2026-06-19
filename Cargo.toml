@@ -19,6 +19,7 @@ members = [
     "crates/vrm-protocol",
     "crates/vrm-runtime",
     "crates/vrm-sans-io",
+    "crates/vrm-vmc",
 ]
 resolver = "3"
 
@@ -43,6 +44,7 @@ wgpu = "29.0.3"
 default = []
 diagnostics = ["dep:vrm-diagnostics"]
 osc = ["dep:vrm-osc"]
+vmc = ["dep:vrm-vmc"]
 
 [dependencies]
 glam.workspace = true
@@ -55,6 +57,7 @@ vrm-osc = { path = "crates/vrm-osc", optional = true }
 vrm-protocol = { path = "crates/vrm-protocol" }
 vrm-runtime = { path = "crates/vrm-runtime" }
 vrm-sans-io = { path = "crates/vrm-sans-io" }
+vrm-vmc = { path = "crates/vrm-vmc", optional = true }
 
 [dev-dependencies]
 bevy = { workspace = true, features = [

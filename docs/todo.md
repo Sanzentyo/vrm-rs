@@ -136,6 +136,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [x] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.
   - [x] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.
   - [ ] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
+    - [x] Foundation: added `vrm-vmc` over `vrm-osc` with typed messages for availability, relative time, root/bone poses, blend values/apply, camera, directional light, unknown-message retention, OSC roundtrip helpers, recursive bundle traversal, parse-before-apply behavior, and transaction hooks with rollback on sink errors.
   - [ ] MToon GPU ABI/reference WGSL plus practical Bevy/wgpu/ash resource and pipeline hookups.
   - [ ] Optimizer for unused vertices, joint palette compaction, and empty morph removal.
   - [ ] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
