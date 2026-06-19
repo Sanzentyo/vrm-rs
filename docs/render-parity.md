@@ -904,6 +904,7 @@ A source-like same-material subpixel ownership control is available through:
 ```powershell
 just render-parity-subpixel-ownership-generated
 just render-parity-subpixel-ownership-owner-generated
+just render-parity-subpixel-ownership-owner-generated-ash-gated
 just render-parity-subpixel-ownership-owner-hotspots
 ```
 
@@ -912,11 +913,16 @@ the material name `huku_bake` while placing high-contrast texture regions across
 near-subpixel triangle seams. The base-color diagnostic currently has exact
 alpha parity, selected `rgb-shared-nonblack-interior1px` PSNR wgpu
 `43.8282 dB` / Bevy `43.4195 dB`, and max selected-channel deltas `161` /
-`160`. The new owner-id recipe writes
-`.external-fixtures/render-parity-subpixel-ownership-owner-generated/`; on the
-2026-06-19 run, wgpu and Bevy owner-id images matched exactly, and each differed
-from three-vrm by only `2` of `18276` shared nonzero owner pixels. The hotspot
-owner projection under
+`160`. The owner-id recipes write
+`.external-fixtures/render-parity-subpixel-ownership-owner-generated/` and the
+Ash-gated variant under
+`.external-fixtures/render-parity-subpixel-ownership-owner-generated-ash-gated/`.
+On the current Ash-gated run, wgpu, Bevy, and Ash all pass with exact alpha
+parity and identical selected `rgb-visible` PSNR `82.3745 dB`; max
+selected-channel delta is `6` for all three renderers. The older 2026-06-19
+owner comparison showed wgpu and Bevy owner-id images matched exactly, and each
+differed from three-vrm by only `2` of `18276` shared nonzero owner pixels. The
+hotspot owner projection under
 `.external-fixtures/render-parity-subpixel-ownership-generated/` found all
 `32/32` top hotspot rendered owners on `huku_bake`, `28/32` already on the
 center frontmost triangle, and `32/32` recovered to frontmost rank 1 through
@@ -930,6 +936,7 @@ A same-material multi-UV-island ownership control is available through:
 ```powershell
 just render-parity-uv-island-ownership-generated
 just render-parity-uv-island-ownership-owner-generated
+just render-parity-uv-island-ownership-owner-generated-ash-gated
 just render-parity-uv-island-ownership-owner-hotspots
 ```
 
@@ -948,12 +955,16 @@ the CPU-sampled frontmost base texture for `32/32` hotspots while exercising
 large local texture gradients (`>=96` for all `32/32`). The owner-id recipe
 keeps wgpu and Bevy exactly identical; each Rust renderer differs from three-vrm
 by only `8/28554` shared nonzero owner pixels, all explained by adjacent or
-touching projected triangles with zero unexplained tail. The owner-hotspot
-projection has `32/32` rendered owners already at frontmost rank 1 at the center
-sample. This narrows the remaining Seed-san blocker away from generic
-same-material UV-island/high-gradient sampling and toward more specific
-real-model topology, draw grouping, or browser fill behavior around dense
-material regions.
+touching projected triangles with zero unexplained tail. The Ash-gated owner-id
+run under
+`.external-fixtures/render-parity-uv-island-ownership-owner-generated-ash-gated/`
+passes the same visual gate for wgpu, Bevy, and Ash with selected `rgb-visible`
+PSNR `92.0359 dB`, max selected-channel delta `1`, and exact alpha parity for
+all three Rust renderers. The owner-hotspot projection has `32/32` rendered
+owners already at frontmost rank 1 at the center sample. This narrows the
+remaining Seed-san blocker away from generic same-material UV-island/high-gradient
+sampling and toward more specific real-model topology, draw grouping,
+or browser fill behavior around dense material regions.
 
 An additional `rgb-shared-nonblack-interior2px` Seed-san base-UV run writes
 `.external-fixtures/render-parity-seed-base-uv-interior2-diagnostic/` and
