@@ -18,7 +18,7 @@ use vrm_adapter_ash::{
     ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
-use vrm_io::{GltfAlphaMode, GltfMaterialTextureFallback};
+use vrm_io::{GltfAlphaMode, GltfMaterialTextureFallback, RgbaMipLevel, generate_rgba_mip_chain};
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Materialize a VRM frame plan into real ash Vulkan offscreen draw resources")]
@@ -159,6 +159,7 @@ struct CommandRecordContext<'a> {
     descriptor_sets: &'a [vk::DescriptorSet],
     texture_images: &'a [VulkanImage],
     texture_staging_buffers: &'a [VulkanBuffer],
+    texture_mip_levels: &'a [Vec<RgbaMipLevel>],
     fallback_textures: &'a VulkanFallbackTextures,
     fallback_texture_staging: &'a VulkanFallbackBuffers,
     color_target: vk::Image,
@@ -301,13 +302,27 @@ impl UnsafeAshDeviceRenderer {
             .iter()
             .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
             .collect::<Result<Vec<_>, _>>()?;
-        let images = frame
+        let texture_mip_levels = frame
             .textures
             .iter()
             .map(|texture| {
+                generate_rgba_mip_chain(
+                    texture.upload.extent.width,
+                    texture.upload.extent.height,
+                    &texture.upload.rgba,
+                )
+                .map_err(|err| format!("failed to build ash texture mip chain: {err}").into())
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        let images = frame
+            .textures
+            .iter()
+            .zip(&texture_mip_levels)
+            .map(|(texture, mip_levels)| {
                 self.create_image(
                     texture.upload.format,
                     texture.upload.extent,
+                    u32::try_from(mip_levels.len()).unwrap_or(1),
                     texture.image_usage,
                     vk::ImageAspectFlags::COLOR,
                 )
@@ -316,8 +331,12 @@ impl UnsafeAshDeviceRenderer {
         let texture_staging_buffers = frame
             .textures
             .iter()
-            .map(|texture| {
-                self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &texture.upload.rgba)
+            .zip(&texture_mip_levels)
+            .map(|(_, mip_levels)| {
+                self.create_host_buffer(
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    &flatten_mip_level_rgba(mip_levels),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let fallback_textures = self.create_fallback_textures()?;
@@ -338,6 +357,7 @@ impl UnsafeAshDeviceRenderer {
                 height: extent.height,
                 depth: 1,
             },
+            1,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::ImageAspectFlags::COLOR,
         )?;
@@ -348,6 +368,7 @@ impl UnsafeAshDeviceRenderer {
                 height: extent.height,
                 depth: 1,
             },
+            1,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             depth_aspect_mask(depth_format),
         )?;
@@ -416,6 +437,7 @@ impl UnsafeAshDeviceRenderer {
             descriptor_sets: &descriptor_sets,
             texture_images: &images,
             texture_staging_buffers: &texture_staging_buffers,
+            texture_mip_levels: &texture_mip_levels,
             fallback_textures: &fallback_textures,
             fallback_texture_staging: &fallback_texture_staging,
             color_target: color_target.image,
@@ -494,6 +516,7 @@ impl UnsafeAshDeviceRenderer {
         &self,
         format: vk::Format,
         extent: vk::Extent3D,
+        mip_levels: u32,
         usage: vk::ImageUsageFlags,
         aspect_mask: vk::ImageAspectFlags,
     ) -> Result<VulkanImage, Box<dyn Error>> {
@@ -501,7 +524,7 @@ impl UnsafeAshDeviceRenderer {
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
             .extent(extent)
-            .mip_levels(1)
+            .mip_levels(mip_levels.max(1))
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
@@ -523,7 +546,7 @@ impl UnsafeAshDeviceRenderer {
         }
         let subresource_range = vk::ImageSubresourceRange::default()
             .aspect_mask(aspect_mask)
-            .level_count(1)
+            .level_count(mip_levels.max(1))
             .layer_count(1);
         let view_info = vk::ImageViewCreateInfo::default()
             .image(image)
@@ -573,6 +596,7 @@ impl UnsafeAshDeviceRenderer {
                 height: 1,
                 depth: 1,
             },
+            1,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::COLOR,
         )
@@ -1066,46 +1090,40 @@ impl UnsafeAshDeviceRenderer {
     fn record_texture_uploads(
         &self,
         command_buffer: vk::CommandBuffer,
-        frame: &AshRendererFrame,
+        _frame: &AshRendererFrame,
         context: &CommandRecordContext<'_>,
     ) {
-        for ((texture, image), staging) in frame
-            .textures
+        for ((image, staging), mip_levels) in context
+            .texture_images
             .iter()
-            .zip(context.texture_images)
             .zip(context.texture_staging_buffers)
+            .zip(context.texture_mip_levels)
         {
-            self.record_texture_upload(
-                command_buffer,
-                image.image,
-                staging.buffer,
-                texture.upload.extent,
-            );
+            self.record_texture_upload(command_buffer, image.image, staging.buffer, mip_levels);
         }
-        for (image, staging) in [
+        for (fallback, image, staging) in [
             (
+                GltfMaterialTextureFallback::White,
                 &context.fallback_textures.white,
                 &context.fallback_texture_staging.white,
             ),
             (
+                GltfMaterialTextureFallback::Black,
                 &context.fallback_textures.black,
                 &context.fallback_texture_staging.black,
             ),
             (
+                GltfMaterialTextureFallback::NeutralNormal,
                 &context.fallback_textures.neutral_normal,
                 &context.fallback_texture_staging.neutral_normal,
             ),
         ] {
-            self.record_texture_upload(
-                command_buffer,
-                image.image,
-                staging.buffer,
-                vk::Extent3D {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                },
-            );
+            let level = [RgbaMipLevel {
+                width: 1,
+                height: 1,
+                rgba: fallback_rgba(fallback).to_vec(),
+            }];
+            self.record_texture_upload(command_buffer, image.image, staging.buffer, &level);
         }
     }
 
@@ -1114,11 +1132,11 @@ impl UnsafeAshDeviceRenderer {
         command_buffer: vk::CommandBuffer,
         image: vk::Image,
         staging_buffer: vk::Buffer,
-        extent: vk::Extent3D,
+        mip_levels: &[RgbaMipLevel],
     ) {
         let subresource_range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
+            .level_count(u32::try_from(mip_levels.len()).unwrap_or(1).max(1))
             .layer_count(1);
         let to_transfer = [vk::ImageMemoryBarrier::default()
             .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -1136,18 +1154,13 @@ impl UnsafeAshDeviceRenderer {
                 &[],
                 &to_transfer,
             );
+            let regions = mip_copy_regions(mip_levels);
             self.device.cmd_copy_buffer_to_image(
                 command_buffer,
                 staging_buffer,
                 image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::BufferImageCopy::default()
-                    .image_subresource(
-                        vk::ImageSubresourceLayers::default()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .layer_count(1),
-                    )
-                    .image_extent(extent)],
+                &regions,
             );
             let to_shader = [vk::ImageMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -1299,6 +1312,40 @@ fn vertex_attribute_description(
         format: attribute.format,
         offset: attribute.offset,
     }
+}
+
+fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
+    let byte_len = mip_levels.iter().map(|level| level.rgba.len()).sum();
+    let mut bytes = Vec::with_capacity(byte_len);
+    for level in mip_levels {
+        bytes.extend_from_slice(&level.rgba);
+    }
+    bytes
+}
+
+fn mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::BufferImageCopy> {
+    let mut offset = 0_u64;
+    mip_levels
+        .iter()
+        .enumerate()
+        .map(|(mip_level, level)| {
+            let region = vk::BufferImageCopy::default()
+                .buffer_offset(offset)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(u32::try_from(mip_level).unwrap_or(0))
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width: level.width,
+                    height: level.height,
+                    depth: 1,
+                });
+            offset += u64::try_from(level.rgba.len()).unwrap_or(0);
+            region
+        })
+        .collect()
 }
 
 fn default_sampler_plan() -> AshSamplerPlan {
@@ -1674,6 +1721,66 @@ impl Drop for UnsafeAshDeviceRenderer {
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mip_upload_bytes_are_tightly_packed() {
+        let levels = vec![
+            RgbaMipLevel {
+                width: 2,
+                height: 1,
+                rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            RgbaMipLevel {
+                width: 1,
+                height: 1,
+                rgba: vec![9, 10, 11, 12],
+            },
+        ];
+
+        assert_eq!(
+            flatten_mip_level_rgba(&levels),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
+    }
+
+    #[test]
+    fn mip_copy_regions_advance_offsets_and_levels() {
+        let levels = vec![
+            RgbaMipLevel {
+                width: 4,
+                height: 2,
+                rgba: vec![0; 32],
+            },
+            RgbaMipLevel {
+                width: 2,
+                height: 1,
+                rgba: vec![0; 8],
+            },
+            RgbaMipLevel {
+                width: 1,
+                height: 1,
+                rgba: vec![0; 4],
+            },
+        ];
+
+        let regions = mip_copy_regions(&levels);
+
+        assert_eq!(regions.len(), 3);
+        assert_eq!(regions[0].buffer_offset, 0);
+        assert_eq!(regions[0].image_subresource.mip_level, 0);
+        assert_eq!(regions[0].image_extent.width, 4);
+        assert_eq!(regions[1].buffer_offset, 32);
+        assert_eq!(regions[1].image_subresource.mip_level, 1);
+        assert_eq!(regions[1].image_extent.width, 2);
+        assert_eq!(regions[2].buffer_offset, 40);
+        assert_eq!(regions[2].image_subresource.mip_level, 2);
+        assert_eq!(regions[2].image_extent.width, 1);
     }
 }
 

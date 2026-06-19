@@ -1682,7 +1682,12 @@ fn verify_render_alpha_consistency(
         _ => {}
     }
 
-    for renderer in ["wgpu", "bevy"] {
+    let mut renderers = vec!["wgpu", "bevy"];
+    if options.render_ash_readback {
+        renderers.push("ash");
+    }
+
+    for renderer in renderers {
         let actual = read_rgba_artifact(&render_artifact(options, fixture, renderer))?;
         if reference.width != actual.width || reference.height != actual.height {
             return Err(format!(

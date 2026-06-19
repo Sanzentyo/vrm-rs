@@ -132,9 +132,10 @@ Pass `--render-ash-readback` together with `--render-parity` when you want the
 ash unsafe offscreen renderer to emit supplemental `.rgba.json`, `.imqraw`, and
 PNG artifacts under the same render-parity directory. Those ash artifacts are
 validated with the same imqraw/RGBA byte check and recorded in
-`review-manifest.json` as `supplementalCaptures`, but they are not part of the
-wgpu/Bevy PSNR gate yet because the ash example is still a drawable Vulkan
-resource/readback path rather than the full MToon visual renderer.
+`review-manifest.json`; when `--render-ash-visual-gate` is also passed, Ash is
+checked by the same selected-PSNR and alpha-consistency gates as wgpu and Bevy.
+`just render-parity-samples-ash-gated` is the current six-fixture smoke for
+that path.
 For a PNG-free cross-check of existing RGBA artifacts, use
 `just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
 the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the
@@ -507,7 +508,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB`, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, Ash mip-aware Vulkan texture materialization and mask-alpha parity, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, transparent-background Ash sweeps, model-body parity above the current floor, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

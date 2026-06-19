@@ -2960,6 +2960,7 @@ mod tests {
         assert!(fragment_shader.contains("material_extra.flags2.w > 4.5"));
         assert!(fragment_shader.contains("owner_id_output_color(in_color_0.rgb"));
         assert!(fragment_shader.contains("material_extra.flags2.w < -0.5"));
+        assert!(fragment_shader.contains("alpha_mode < 2u ? 1.0 : alpha"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));
         assert!(fragment_shader.contains("centered.x * c + centered.y * s"));

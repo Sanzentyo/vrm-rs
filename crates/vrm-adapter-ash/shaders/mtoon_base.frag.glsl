@@ -266,7 +266,7 @@ void main() {
     if (alpha_mode == 1u && alpha < mtoon.shade_color_factor_cutoff.a) {
         discard;
     }
-    float opaque_alpha = alpha_mode == 0u ? 1.0 : alpha;
+    float opaque_alpha = alpha_mode < 2u ? 1.0 : alpha;
     if (material_extra.flags2.z > 0.5) {
         out_color = vec4(vec3(1.0), opaque_alpha);
         return;
