@@ -18,11 +18,12 @@ use vrm_adapter::{
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
-    CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects, GltfMaterialRenderExtraOptions,
+    CpuRgba8Image, GltfExpressionRenderEffects, GltfMaterialRenderExtraOptions,
     GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions, GltfMaterialTextureBinding,
-    GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvUniformPlan, GltfNodeRest,
-    GltfOutlineScale, GltfOutlineVertexSettings, GltfPrimitiveData, LoadedVrm, Rgba8SamplingOrigin,
-    load_vrm_from_path,
+    GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialTextureSlots,
+    GltfMaterialUvUniformPlan, GltfNodeRest, GltfNormalMapMode, GltfOutlineScale,
+    GltfOutlineVertexSettings, GltfPrimitiveData, LoadedVrm, Rgba8SamplingOrigin,
+    generate_tangents, load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -958,16 +959,10 @@ impl AshVrmFramePlanner {
                 skin.joint_matrices(&self.loaded.scene, &world_matrices, Mat4::IDENTITY)
             })
         });
-        let material = primitive
-            .material
-            .and_then(|index| self.loaded.gltf_materials.get(index));
-        let base_color = material
-            .map(|material| material.base_color_factor)
-            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-        let alpha_enabled = material
-            .map(|material| material.alpha_mode != GltfAlphaMode::Opaque)
-            .unwrap_or(false);
-        let source_vertices = match settings.pass {
+        let shading = self
+            .loaded
+            .material_shading_plan(primitive.material, GltfMaterialShadingOptions::default());
+        let mut source_vertices = match settings.pass {
             AshMtoonPass::Base => {
                 primitive.transformed_vertices(&morph_weights, world, skin_matrices.as_deref())
             }
@@ -980,26 +975,26 @@ impl AshVrmFramePlanner {
                 settings.scene_options,
             ),
         };
+        let source_vertices = source_vertices
+            .as_mut()
+            .ok_or("primitive geometry is inconsistent")?;
+        if settings.pass == AshMtoonPass::Base {
+            apply_generated_tangents(primitive, source_vertices, shading.normal_scale);
+        }
         let vertices = source_vertices
-            .ok_or("primitive geometry is inconsistent")?
-            .into_iter()
+            .iter()
             .map(|vertex| {
-                let alpha = if settings.pass == AshMtoonPass::Outline {
-                    1.0
-                } else if alpha_enabled {
-                    base_color[3] * vertex.color_0[3]
+                let color = if settings.pass == AshMtoonPass::Outline {
+                    [1.0, 1.0, 1.0, 1.0]
+                } else if shading.pbr_fallback {
+                    multiply_rgba(shading.base_color, vertex.color_0)
                 } else {
-                    1.0
+                    shading.base_color
                 };
                 AshVrmVertex {
                     position: vertex.position.to_array(),
                     tex_coord_0: vertex.tex_coord_0,
-                    color_0: [
-                        base_color[0] * vertex.color_0[0],
-                        base_color[1] * vertex.color_0[1],
-                        base_color[2] * vertex.color_0[2],
-                        alpha,
-                    ],
+                    color_0: color,
                     normal: vertex.normal.to_array(),
                     tangent: vertex.tangent.to_array(),
                 }
@@ -1114,7 +1109,7 @@ impl AshVrmFramePlanner {
                     phase_order: plan.pipeline.phase_order,
                     topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                     cull_mode: cull_mode(plan.pipeline.cull_mode),
-                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    front_face: vrm_vulkan_front_face(),
                     depth_test_enable: plan.pipeline.depth_test,
                     depth_write_enable: plan.pipeline.depth_write,
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
@@ -1180,6 +1175,48 @@ fn push_unique_texture(textures: &mut Vec<TextureRef>, texture: TextureRef) {
     }
 }
 
+fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
+    [
+        left[0] * right[0],
+        left[1] * right[1],
+        left[2] * right[2],
+        left[3] * right[3],
+    ]
+}
+
+fn apply_generated_tangents(
+    primitive: &GltfPrimitiveData,
+    vertices: &mut [vrm_io::GltfTransformedVertex],
+    normal_scale: f32,
+) {
+    let normal_plan = primitive.normal_map_plan(normal_scale, GltfNormalMapMode::GeneratedTangents);
+    if !normal_plan.should_generate_tangents() {
+        return;
+    }
+
+    let positions = vertices
+        .iter()
+        .map(|vertex| vertex.position.to_array())
+        .collect::<Vec<_>>();
+    let normals = vertices
+        .iter()
+        .map(|vertex| vertex.normal.to_array())
+        .collect::<Vec<_>>();
+    let tex_coords = vertices
+        .iter()
+        .map(|vertex| vertex.tex_coord_0)
+        .collect::<Vec<_>>();
+    let Some(generated) = generate_tangents(&positions, &normals, &tex_coords, &primitive.indices)
+    else {
+        return;
+    };
+    for (vertex, tangent) in vertices.iter_mut().zip(generated.tangents) {
+        if let Some(tangent) = tangent {
+            vertex.tangent = tangent.into();
+        }
+    }
+}
+
 fn texture_ref_upload_indices(texture_uploads: &[AshTextureUpload]) -> HashMap<TextureRef, usize> {
     texture_uploads
         .iter()
@@ -1214,6 +1251,10 @@ fn cull_mode(mode: MtoonCullMode) -> vk::CullModeFlags {
         MtoonCullMode::Front => vk::CullModeFlags::FRONT,
         MtoonCullMode::Back => vk::CullModeFlags::BACK,
     }
+}
+
+fn vrm_vulkan_front_face() -> vk::FrontFace {
+    vk::FrontFace::CLOCKWISE
 }
 
 pub const fn ash_mtoon_uniform_binding() -> u32 {
@@ -1256,6 +1297,13 @@ pub const fn ash_material_texture_binding(slot: GltfMaterialTextureSlot) -> u32 
         GltfMaterialTextureSlot::UvAnimationMask => 8,
         GltfMaterialTextureSlot::Emissive => 12,
         GltfMaterialTextureSlot::Occlusion => 13,
+    }
+}
+
+pub const fn ash_texture_fallback_for_binding(binding: u32) -> Option<GltfMaterialTextureFallback> {
+    match binding {
+        1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 12 | 13 => Some(GltfMaterialTextureFallback::White),
+        _ => None,
     }
 }
 
@@ -1367,7 +1415,7 @@ fn sampler_plan(hint: MtoonSamplerHint) -> AshSamplerPlan {
 fn texture_upload(texture: Option<TextureRef>, image: CpuRgba8Image) -> AshTextureUpload {
     AshTextureUpload {
         texture,
-        format: vk::Format::R8G8B8A8_SRGB,
+        format: vk::Format::R8G8B8A8_UNORM,
         extent: vk::Extent3D {
             width: image.width,
             height: image.height,
@@ -1480,6 +1528,24 @@ mod tests {
         );
         assert_eq!(bindings[12].binding, ash_mtoon_uv_uniform_binding());
         assert_eq!(bindings[13].binding, ash_mtoon_render_extra_binding());
+        assert_eq!(
+            ash_texture_fallback_for_binding(ash_material_texture_binding(
+                GltfMaterialTextureSlot::Normal
+            )),
+            Some(GltfMaterialTextureFallback::White)
+        );
+        assert_eq!(
+            ash_texture_fallback_for_binding(ash_material_texture_binding(
+                GltfMaterialTextureSlot::ShadingShift
+            )),
+            Some(GltfMaterialTextureFallback::White)
+        );
+        assert_eq!(
+            ash_texture_fallback_for_binding(ash_material_texture_binding(
+                GltfMaterialTextureSlot::Base
+            )),
+            Some(GltfMaterialTextureFallback::White)
+        );
         assert!(
             bindings[12]
                 .stage_flags
@@ -1572,6 +1638,8 @@ mod tests {
         assert!(fragment_shader.contains("layout(set = 0, binding = 11, std140)"));
         assert!(fragment_shader.contains("texture(emissive_texture, emissive_uv)"));
         assert!(fragment_shader.contains("texture(occlusion_texture, occlusion_uv)"));
+        assert!(fragment_shader.contains("srgb_to_linear_color(raw_main_texel.rgb)"));
+        assert!(fragment_shader.contains("base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y)"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));
         assert!(fragment_shader.contains("pbr_direct("));
@@ -1802,7 +1870,7 @@ mod tests {
             materials: Vec::new(),
             texture_uploads: vec![AshTextureUpload {
                 texture: Some(TextureRef(7)),
-                format: vk::Format::R8G8B8A8_SRGB,
+                format: vk::Format::R8G8B8A8_UNORM,
                 extent: vk::Extent3D {
                     width: 1,
                     height: 1,

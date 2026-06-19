@@ -77,6 +77,21 @@ float linear_to_srgb_channel(float value) {
     return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
 }
 
+float srgb_to_linear_channel(float value) {
+    if (value <= 0.04045) {
+        return value / 12.92;
+    }
+    return pow((value + 0.055) / 1.055, 2.4);
+}
+
+vec3 srgb_to_linear_color(vec3 color) {
+    return vec3(
+        srgb_to_linear_channel(color.r),
+        srgb_to_linear_channel(color.g),
+        srgb_to_linear_channel(color.b)
+    );
+}
+
 vec4 output_color(vec3 color, float alpha) {
     return vec4(
         linear_to_srgb_channel(color.r),
@@ -195,9 +210,17 @@ void main() {
     vec2 rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
     vec2 emissive_uv = transform_uv(animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
     vec2 occlusion_uv = transform_uv(animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
-    vec4 main_texel = texture(main_texture, base_uv);
-    vec3 diffuse = in_color_0.rgb * main_texel.rgb * mtoon.base_color_factor.rgb;
-    float alpha = in_color_0.a * main_texel.a * mtoon.base_color_factor.a;
+    vec2 base_sample_uv = base_uv;
+    if (material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5) {
+        base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y);
+    }
+    vec4 raw_main_texel = texture(main_texture, base_sample_uv);
+    vec3 main_texel_rgb = raw_main_texel.rgb;
+    if (material_extra.flags2.w > 1.0 && material_extra.flags2.w < 1.5) {
+        main_texel_rgb = srgb_to_linear_color(raw_main_texel.rgb);
+    }
+    vec3 diffuse = in_color_0.rgb * main_texel_rgb;
+    float alpha = in_color_0.a * raw_main_texel.a;
     uint alpha_mode = mtoon.flags.w;
     if (alpha_mode == 1u && alpha < mtoon.shade_color_factor_cutoff.a) {
         discard;

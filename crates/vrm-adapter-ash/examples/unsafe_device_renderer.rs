@@ -14,8 +14,10 @@ use std::{
 };
 use vrm_adapter_ash::{
     AshGraphicsPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
-    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, frame_plan_from_options_with_aspect,
+    AshVrmFramePlanOptions, ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
+    frame_plan_from_options_with_aspect,
 };
+use vrm_io::GltfMaterialTextureFallback;
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Materialize a VRM frame plan into real ash Vulkan offscreen draw resources")]
@@ -64,8 +66,8 @@ struct VulkanFrameResources {
     buffers: Vec<VulkanBuffer>,
     images: Vec<VulkanImage>,
     texture_staging_buffers: Vec<VulkanBuffer>,
-    fallback_texture: VulkanImage,
-    fallback_texture_staging: VulkanBuffer,
+    fallback_textures: VulkanFallbackTextures,
+    fallback_texture_staging: VulkanFallbackBuffers,
     uniform_buffers: Vec<VulkanBuffer>,
     samplers: Vec<vk::Sampler>,
     color_target: VulkanImage,
@@ -95,6 +97,46 @@ struct VulkanImage {
     view: vk::ImageView,
 }
 
+struct VulkanFallbackTextures {
+    white: VulkanImage,
+    black: VulkanImage,
+    neutral_normal: VulkanImage,
+}
+
+impl VulkanFallbackTextures {
+    fn get(&self, fallback: GltfMaterialTextureFallback) -> &VulkanImage {
+        match fallback {
+            GltfMaterialTextureFallback::White => &self.white,
+            GltfMaterialTextureFallback::Black => &self.black,
+            GltfMaterialTextureFallback::NeutralNormal => &self.neutral_normal,
+        }
+    }
+}
+
+impl IntoIterator for VulkanFallbackTextures {
+    type IntoIter = std::array::IntoIter<VulkanImage, 3>;
+    type Item = VulkanImage;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [self.white, self.black, self.neutral_normal].into_iter()
+    }
+}
+
+struct VulkanFallbackBuffers {
+    white: VulkanBuffer,
+    black: VulkanBuffer,
+    neutral_normal: VulkanBuffer,
+}
+
+impl IntoIterator for VulkanFallbackBuffers {
+    type IntoIter = std::array::IntoIter<VulkanBuffer, 3>;
+    type Item = VulkanBuffer;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [self.white, self.black, self.neutral_normal].into_iter()
+    }
+}
+
 struct PipelineBuildContext<'a> {
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
@@ -115,8 +157,8 @@ struct CommandRecordContext<'a> {
     descriptor_sets: &'a [vk::DescriptorSet],
     texture_images: &'a [VulkanImage],
     texture_staging_buffers: &'a [VulkanBuffer],
-    fallback_texture: &'a VulkanImage,
-    fallback_texture_staging: &'a VulkanBuffer,
+    fallback_textures: &'a VulkanFallbackTextures,
+    fallback_texture_staging: &'a VulkanFallbackBuffers,
     color_target: vk::Image,
     readback_buffer: vk::Buffer,
     clear_alpha: f32,
@@ -276,18 +318,8 @@ impl UnsafeAshDeviceRenderer {
                 self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &texture.upload.rgba)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let fallback_texture = self.create_image(
-            vk::Format::R8G8B8A8_SRGB,
-            vk::Extent3D {
-                width: 1,
-                height: 1,
-                depth: 1,
-            },
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let fallback_texture_staging =
-            self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &[255, 255, 255, 255])?;
+        let fallback_textures = self.create_fallback_textures()?;
+        let fallback_texture_staging = self.create_fallback_staging_buffers()?;
         let uniform_buffers = frame
             .uniforms
             .iter()
@@ -344,7 +376,7 @@ impl UnsafeAshDeviceRenderer {
             &descriptor_sets,
             &uniform_buffers,
             &images,
-            &fallback_texture,
+            &fallback_textures,
             &samplers,
         )?;
         let pipeline_layouts = descriptor_set_layouts
@@ -382,7 +414,7 @@ impl UnsafeAshDeviceRenderer {
             descriptor_sets: &descriptor_sets,
             texture_images: &images,
             texture_staging_buffers: &texture_staging_buffers,
-            fallback_texture: &fallback_texture,
+            fallback_textures: &fallback_textures,
             fallback_texture_staging: &fallback_texture_staging,
             color_target: color_target.image,
             readback_buffer: readback.buffer,
@@ -393,7 +425,7 @@ impl UnsafeAshDeviceRenderer {
             buffers,
             images,
             texture_staging_buffers,
-            fallback_texture,
+            fallback_textures,
             fallback_texture_staging,
             uniform_buffers,
             samplers,
@@ -503,6 +535,43 @@ impl UnsafeAshDeviceRenderer {
         })
     }
 
+    fn create_fallback_textures(&self) -> Result<VulkanFallbackTextures, Box<dyn Error>> {
+        Ok(VulkanFallbackTextures {
+            white: self.create_fallback_texture_image()?,
+            black: self.create_fallback_texture_image()?,
+            neutral_normal: self.create_fallback_texture_image()?,
+        })
+    }
+
+    fn create_fallback_texture_image(&self) -> Result<VulkanImage, Box<dyn Error>> {
+        self.create_image(
+            vk::Format::R8G8B8A8_UNORM,
+            vk::Extent3D {
+                width: 1,
+                height: 1,
+                depth: 1,
+            },
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageAspectFlags::COLOR,
+        )
+    }
+
+    fn create_fallback_staging_buffers(&self) -> Result<VulkanFallbackBuffers, Box<dyn Error>> {
+        Ok(VulkanFallbackBuffers {
+            white: self.create_fallback_staging_buffer(GltfMaterialTextureFallback::White)?,
+            black: self.create_fallback_staging_buffer(GltfMaterialTextureFallback::Black)?,
+            neutral_normal: self
+                .create_fallback_staging_buffer(GltfMaterialTextureFallback::NeutralNormal)?,
+        })
+    }
+
+    fn create_fallback_staging_buffer(
+        &self,
+        fallback: GltfMaterialTextureFallback,
+    ) -> Result<VulkanBuffer, Box<dyn Error>> {
+        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, fallback_rgba(fallback))
+    }
+
     fn create_descriptor_set_layout<I>(
         &self,
         bindings: I,
@@ -589,7 +658,7 @@ impl UnsafeAshDeviceRenderer {
         descriptor_sets: &[vk::DescriptorSet],
         uniform_buffers: &[VulkanBuffer],
         images: &[VulkanImage],
-        fallback_texture: &VulkanImage,
+        fallback_textures: &VulkanFallbackTextures,
         samplers: &[vk::Sampler],
     ) -> Result<(), Box<dyn Error>> {
         let mut sampler_index = 0;
@@ -624,7 +693,11 @@ impl UnsafeAshDeviceRenderer {
                         let image = binding
                             .texture_upload_index
                             .and_then(|index| images.get(index))
-                            .unwrap_or(fallback_texture);
+                            .unwrap_or_else(|| {
+                                let fallback = ash_texture_fallback_for_binding(binding.binding)
+                                    .unwrap_or(GltfMaterialTextureFallback::White);
+                                fallback_textures.get(fallback)
+                            });
                         let image_info = [vk::DescriptorImageInfo::default()
                             .sampler(sampler)
                             .image_view(image.view)
@@ -987,16 +1060,31 @@ impl UnsafeAshDeviceRenderer {
                 texture.upload.extent,
             );
         }
-        self.record_texture_upload(
-            command_buffer,
-            context.fallback_texture.image,
-            context.fallback_texture_staging.buffer,
-            vk::Extent3D {
-                width: 1,
-                height: 1,
-                depth: 1,
-            },
-        );
+        for (image, staging) in [
+            (
+                &context.fallback_textures.white,
+                &context.fallback_texture_staging.white,
+            ),
+            (
+                &context.fallback_textures.black,
+                &context.fallback_texture_staging.black,
+            ),
+            (
+                &context.fallback_textures.neutral_normal,
+                &context.fallback_texture_staging.neutral_normal,
+            ),
+        ] {
+            self.record_texture_upload(
+                command_buffer,
+                image.image,
+                staging.buffer,
+                vk::Extent3D {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+        }
     }
 
     fn record_texture_upload(
@@ -1151,16 +1239,15 @@ impl UnsafeAshDeviceRenderer {
                 self.device.destroy_image(image.image, None);
                 self.device.free_memory(image.memory, None);
             }
-            self.device
-                .destroy_image_view(resources.fallback_texture.view, None);
-            self.device
-                .destroy_image(resources.fallback_texture.image, None);
-            self.device
-                .free_memory(resources.fallback_texture.memory, None);
-            self.device
-                .destroy_buffer(resources.fallback_texture_staging.buffer, None);
-            self.device
-                .free_memory(resources.fallback_texture_staging.memory, None);
+            for image in resources.fallback_textures.into_iter() {
+                self.device.destroy_image_view(image.view, None);
+                self.device.destroy_image(image.image, None);
+                self.device.free_memory(image.memory, None);
+            }
+            for buffer in resources.fallback_texture_staging.into_iter() {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
             self.device
                 .destroy_image_view(resources.depth_target.view, None);
             self.device
@@ -1200,6 +1287,14 @@ fn default_sampler_plan() -> AshSamplerPlan {
         address_mode_u: vk::SamplerAddressMode::REPEAT,
         address_mode_v: vk::SamplerAddressMode::REPEAT,
         normal_map_decode: false,
+    }
+}
+
+fn fallback_rgba(fallback: GltfMaterialTextureFallback) -> &'static [u8; 4] {
+    match fallback {
+        GltfMaterialTextureFallback::White => &[255, 255, 255, 255],
+        GltfMaterialTextureFallback::Black => &[0, 0, 0, 255],
+        GltfMaterialTextureFallback::NeutralNormal => &[128, 128, 255, 255],
     }
 }
 

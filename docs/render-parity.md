@@ -78,10 +78,18 @@ SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
 `unsafe_device_renderer --vertex-spv --fragment-spv`, so the review path no
 longer compares the built-in color-smoke shader. The same runner also forwards
 the render camera distance, direct-light scale, directional color, and MToon
-lighting options into Ash, and the Ash projection applies the Vulkan clip-space Y
-flip needed for top-left RGBA review artifacts. Pass `--render-ash-visual-gate`
-with `--render-ash-readback` to apply the same fail-under and max-delta threshold
-arguments to Ash once the current texture/material color parity gap is closed.
+lighting knobs into the Ash frame plan. The current Ash path also applies the
+Vulkan clip-space Y flip/front-face pairing, bakes base color into vertices,
+and generates missing tangents before readback. It is still non-gating: the
+latest focused Seed-san review artifact is
+`target/render-parity-ash-review-128-whitefallback`, where Ash reaches
+`13.4213 dB` selected `rgb-visible` PSNR with exact opaque alpha parity while
+wgpu/Bevy remain above `32 dB`. Keep `--render-ash-visual-gate` opt-in until
+the Ash GLSL/resource path gains wgpu-equivalent texture-presence fallback,
+normal-scale/double-sided, and remaining MToon material accumulation behavior.
+Pass `--render-ash-visual-gate` with `--render-ash-readback` to apply the same
+fail-under and max-delta threshold arguments to Ash once the current
+texture/material color parity gap is closed.
 
 For the current source-controlled Ash MToon base shader handoff, run:
 
