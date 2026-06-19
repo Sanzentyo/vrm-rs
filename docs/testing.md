@@ -238,7 +238,9 @@ animation; `just render-parity-uv-animation` stores its time-advanced sample
 under `.external-fixtures/render-parity-uv-animation/` so it does not overwrite
 the canonical static sweep. Use `just render-parity-real-normal-maps` for the
 focused real-fixture review of the known official tangentless normal-map
-fixtures; it writes `.external-fixtures/render-parity-real-normal-maps/`.
+fixtures; it writes `.external-fixtures/render-parity-real-normal-maps/`. Use
+`just render-parity-real-normal-maps-ash-gated` when Ash should join the same
+selected-PSNR and exact-alpha gate.
 Use `just render-parity-normal-maps-off` to disable normal maps across
 three-vrm, wgpu, and Bevy when isolating whether a real-fixture delta comes from
 tangentless normal-map behavior or another part of the material/geometry path.
@@ -509,7 +511,7 @@ Current known coverage gaps:
 - Runtime unit tests include representative three-vrm quaternion parity cases for node constraint rotation, roll, and aim solvers.
 - Adapter tests use mock engines plus Bevy lightweight ECS systems and a renderer-agnostic wgpu/ash skeleton example; concrete Bevy render-asset writeback is still pending.
 - Renderer-specific MToon shader generation is intentionally outside current coverage.
-- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, Ash mip-aware Vulkan texture materialization and mask-alpha parity, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a transparent-background six-fixture real sweep gated at `rgb-all >= 32 dB` for wgpu/Bevy/Ash, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture review, model-body parity above the current floor, broader real transparent fixture breadth, and higher final thresholds are still pending.
+- Render parity is not yet fully satisfied across Rust renderers. P3 now has a PSNR comparator, RGBA artifact format, concrete three-vrm browser reference capture, textured wgpu offscreen capture, headless Bevy capture, glTF sampler-policy parity including wgpu per-slot sampler bindings, UV-animation fixture coverage, mask-material fixture coverage, generated transparent-material guards, generated tangentless normal-map parity, direct/ambient isolated MToon light-color guards, Ash mip-aware Vulkan texture materialization and mask-alpha parity, a six-fixture real sweep gated at selected `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a transparent-background six-fixture real sweep gated at `rgb-all >= 32 dB` for wgpu/Bevy/Ash, a focused real tangentless normal-map sweep gated at `rgb-visible >= 34 dB` for wgpu/Bevy/Ash, a matching object-body `rgb-nonblack-interior1px >= 27.4 dB` diagnostic sweep, and a VRM1/current-official subset gated at `34 dB`; broader real-model PSNR, real tangentless normal-map fixture breadth beyond the current pair, model-body parity above the current floor, broader real transparent fixture breadth, and higher final thresholds are still pending.
 
 ## Current Coverage Snapshot
 

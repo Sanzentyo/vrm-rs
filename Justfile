@@ -107,6 +107,10 @@ render-parity-real-transparent-ash-gated three_vrm_root=".external-fixtures/thre
 render-parity-real-normal-maps three_vrm_root=".external-fixtures/three-vrm" background="opaque-black":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-real-normal-maps --render-background "{{ background }}" --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 34 --render-mtoon-light-accumulation three-vrm --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
 
+# Regenerate focused real normal-map artifacts with Ash participating in the same visual gate.
+render-parity-real-normal-maps-ash-gated three_vrm_root=".external-fixtures/three-vrm" background="opaque-black":
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-real-normal-maps-ash-gated --render-background "{{ background }}" --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 34 --render-mtoon-light-accumulation three-vrm --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
+
 # Focused render-parity diagnostics.
 
 # Diagnostic: render Seed-san with flat white materials to separate geometry/pose coverage from material/shader color residuals.
