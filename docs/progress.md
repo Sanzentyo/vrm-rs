@@ -2,6 +2,7 @@
 
 ## 2026-06-19
 
+- Kept the Ash adapter documentation and example surface aligned with the new glTF sampler policy propagation. The unsafe renderer already creates Vulkan samplers from `AshSamplerPlan`; the dependency-free `renderer_integration` example now mirrors that handoff by allocating mock sampler handles and checksumming filter/wrap/mipmap/LOD policy from descriptor bindings, and `docs/adapter-guide.md` documents that texture bindings carry source glTF sampler policy plus MToon normal-map decode intent. The extension-kit TODO parents for structured diagnostics, lossless preservation, and writer/atomic save were also marked complete now that their implementation and tests are present; the remaining extension-kit-adjacent blocker is still Ash visual-gate parity plus ongoing docs/testing maintenance.
 - Tightened the Ash offscreen MToon readback path without promoting it to a
   gating renderer yet. The generated Ash frame plan now uses Vulkan-compatible
   clockwise front faces after the clip-space Y flip, bakes MToon/PBR base color

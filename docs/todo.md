@@ -131,14 +131,14 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - Source archive: `D:\sanze\Downloads\vrm-rs-extension-kit.zip`.
   - Integration note: the archive's `tools/apply.py --dry-run` proposes useful patches, but the zip does not include the referenced `overlay/` crate/module sources. Do not apply the script blindly; port each requirement into the existing workspace with focused tests and normal gates.
   - [x] Expression conformance slice: binary expression threshold uses `> 0.5`, non-finite input becomes `0`, `block` fully suppresses a category when its source output is positive, `blend` scales by source output, binary targets collapse to `0` when category multipliers make them fractional, renderer-facing expression effects use the same rule, unknown expression writes have a checked API, and malformed VRM1 expression JSON is an error instead of being silently dropped.
-  - [ ] Structured diagnostics and strict/lenient load policy.
+  - [x] Structured diagnostics and strict/lenient load policy.
     - [x] Foundation: added `vrm-diagnostics` with typed severity, policy, JSON path, and report APIs, and connected VRM1 expression parsing so strict mode errors with structured diagnostics while lenient mode reports and skips malformed expressions.
     - [x] IO loader policy API: `vrm-io` now exposes `load_vrm_from_slice_with_policy` / `load_vrm_from_path_with_policy` and returns `LoadedVrmWithDiagnostics`, merging sans-IO diagnostics with IO warnings and unknown root-extension preservation warnings while keeping the existing strict loaders unchanged.
-  - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
+  - [x] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
     - [x] Foundation: `vrm-io::LoadedVrm` now exposes a `GltfSource` snapshot with original bytes, raw JSON bytes, parsed root JSON, root unknown extension/extras accessors, and preserved GLB JSON/BIN/unknown chunks.
     - [x] Writer acceptance hardening: `GltfSource` validates GLB declared length and chunk alignment up front, preserves unknown GLB chunks through metadata edits, and keeps root unknown extensions/extras intact in generated roundtrip coverage.
     - [x] Full metadata access: `GltfSource::vrm_full_metadata` returns typed VRM1/VRM0 protocol metadata plus the raw metadata JSON so applications can inspect complete author/license/permission fields and unknown raw fields without copying them into normalized runtime core.
-  - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
+  - [x] glTF/GLB/VRM writer plus metadata editing and atomic save.
     - [x] Foundation: `GltfSource` can patch VRM1/VRM0 metadata, re-encode `.gltf` or `.glb` while preserving non-JSON GLB chunks, and atomically save the edited or original source through a same-directory temp file.
     - [x] Writer options and metadata helpers: compact/pretty JSON output is selectable for `.gltf` and `.glb`, metadata patch byte helpers are public, and metadata patch atomic saves fail before touching the destination when the source shape is unsupported.
   - [x] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.

@@ -2,8 +2,8 @@ use ash::vk;
 use clap::Parser;
 use std::error::Error;
 use vrm_adapter_ash::{
-    AshBufferRole, AshRendererFrame, AshVrmFramePlanOptions, ash_renderer_frame_from_plan,
-    frame_plan_from_options,
+    AshBufferRole, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
+    ash_renderer_frame_from_plan, frame_plan_from_options,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -17,6 +17,9 @@ struct MockPipelineHandle(u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MockDescriptorSetHandle(u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct MockSamplerHandle(u64);
 
 #[derive(Clone, Debug)]
 struct MockRecordedDraw {
@@ -34,6 +37,7 @@ struct MockAshRenderer {
     next_handle: u64,
     buffers: Vec<(MockBufferHandle, vk::BufferUsageFlags, usize)>,
     images: Vec<(MockImageHandle, vk::Format, vk::Extent3D)>,
+    samplers: Vec<(MockSamplerHandle, AshSamplerPlan)>,
     pipelines: Vec<(MockPipelineHandle, vk::PrimitiveTopology, vk::CullModeFlags)>,
     descriptor_sets: Vec<(MockDescriptorSetHandle, usize)>,
     draws: Vec<MockRecordedDraw>,
@@ -52,6 +56,17 @@ impl MockAshRenderer {
             let handle = self.alloc_image();
             self.images
                 .push((handle, texture.upload.format, texture.upload.extent));
+        }
+        self.samplers.clear();
+        let sampler_plans = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| set.bindings.iter())
+            .filter_map(|binding| binding.sampler)
+            .collect::<Vec<_>>();
+        for sampler in sampler_plans {
+            let handle = self.alloc_sampler();
+            self.samplers.push((handle, sampler));
         }
         self.pipelines.clear();
         for pipeline in &frame.pipelines {
@@ -97,6 +112,11 @@ impl MockAshRenderer {
         MockImageHandle(30_000 + self.next_handle)
     }
 
+    fn alloc_sampler(&mut self) -> MockSamplerHandle {
+        self.next_handle += 1;
+        MockSamplerHandle(35_000 + self.next_handle)
+    }
+
     fn alloc_pipeline(&mut self) -> MockPipelineHandle {
         self.next_handle += 1;
         MockPipelineHandle(40_000 + self.next_handle)
@@ -130,14 +150,51 @@ fn main() -> Result<(), Box<dyn Error>> {
             ^ draw.render_order as u64
             ^ draw.phase_order as u64
     });
+    let sampler_policy_checksum = renderer.samplers.iter().fold(0_u64, |acc, (handle, plan)| {
+        acc ^ handle.0
+            ^ sampler_filter_code(plan.mag_filter)
+            ^ (sampler_filter_code(plan.min_filter) << 4)
+            ^ (sampler_mipmap_code(plan.mipmap_mode) << 8)
+            ^ (sampler_address_code(plan.address_mode_u) << 12)
+            ^ (sampler_address_code(plan.address_mode_v) << 16)
+            ^ ((if plan.normal_map_decode { 1 } else { 0 }) << 20)
+            ^ (plan.max_lod.to_bits() as u64)
+    });
     println!(
-        "ash renderer example: {} buffers, {} images, {} descriptor sets, {} draws, {} indices, checksum {}",
+        "ash renderer example: {} buffers, {} images, {} samplers, {} descriptor sets, {} draws, {} indices, checksum {}, sampler checksum {}",
         renderer.buffers.len(),
         renderer.images.len(),
+        renderer.samplers.len(),
         renderer.descriptor_sets.len(),
         renderer.draws.len(),
         total_indices,
-        command_checksum
+        command_checksum,
+        sampler_policy_checksum
     );
     Ok(())
+}
+
+fn sampler_filter_code(filter: vk::Filter) -> u64 {
+    match filter {
+        vk::Filter::NEAREST => 1,
+        vk::Filter::LINEAR => 2,
+        _ => 0,
+    }
+}
+
+fn sampler_mipmap_code(mode: vk::SamplerMipmapMode) -> u64 {
+    match mode {
+        vk::SamplerMipmapMode::NEAREST => 1,
+        vk::SamplerMipmapMode::LINEAR => 2,
+        _ => 0,
+    }
+}
+
+fn sampler_address_code(mode: vk::SamplerAddressMode) -> u64 {
+    match mode {
+        vk::SamplerAddressMode::CLAMP_TO_EDGE => 1,
+        vk::SamplerAddressMode::MIRRORED_REPEAT => 2,
+        vk::SamplerAddressMode::REPEAT => 3,
+        _ => 0,
+    }
 }
