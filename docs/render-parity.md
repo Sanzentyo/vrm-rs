@@ -931,6 +931,34 @@ stable guard for subpixel owner diagnostics while keeping Seed-san's remaining
 gradient-domain blocker classified as a more complex real-topology/UV ownership
 case.
 
+A denser source-like same-material ownership control is available through:
+
+```powershell
+just render-parity-dense-ownership-generated
+just render-parity-dense-ownership-owner-generated
+just render-parity-dense-ownership-owner-generated-ash-gated
+```
+
+It writes `.external-fixtures/generated/dense-ownership.vrm.gltf` with four
+`huku_bake` mesh nodes, many close or overlapping same-depth triangles, and a
+high-gradient embedded base texture. This fixture exposed a Bevy-specific shaded
+ordering gap: owner-id mode already matched wgpu exactly, but shaded OPAQUE
+MToon previously went through Bevy's opaque phase and lost source order for
+equal-depth overlaps. The Bevy capture now keeps the shader alpha policy opaque
+while routing opaque MToon through the same source-order-capable render path.
+The fixed shaded run under
+`.external-fixtures/render-parity-dense-ownership-generated/` passes exact alpha
+parity with selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`39.6165 dB` and Bevy `39.4014 dB`; wgpu-vs-Bevy is `51.3683 dB` with max
+selected-channel delta `2`. The Ash-gated owner run under
+`.external-fixtures/render-parity-dense-ownership-owner-generated-ash-gated/`
+passes selected `rgb-visible >= 49 dB`, max selected-channel delta `48`, and
+exact alpha for wgpu, Bevy, and Ash. Owner IDs are identical across wgpu, Bevy,
+and Ash, while each Rust renderer differs from three-vrm by only `37` of
+`22455` shared nonzero owner pixels with an unexplained tail of `29`. This gives
+a regression guard for dense same-material source ordering, but also shows the
+remaining Seed-san tail is still more specific than this generated topology.
+
 A same-material multi-UV-island ownership control is available through:
 
 ```powershell

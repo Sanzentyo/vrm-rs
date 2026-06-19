@@ -1654,10 +1654,7 @@ fn bevy_mtoon_material(
             image_handles,
         ),
         shader_alpha_mode: material_plan.alpha_mode,
-        render_alpha_mode: bevy_render_alpha_mode(
-            material_plan.alpha_mode,
-            context.options.diagnostic_render,
-        ),
+        render_alpha_mode: bevy_render_alpha_mode(material_plan.alpha_mode),
         cull_mode: material_plan.cull_mode,
         depth_write: material_plan.depth_write,
         front_face: context.options.front_face,
@@ -1842,26 +1839,15 @@ fn bevy_alpha_mode_from_plan(
     }
 }
 
-fn bevy_render_alpha_mode(alpha_mode: AlphaMode, diagnostic_render: DiagnosticRender) -> AlphaMode {
-    if alpha_mode == AlphaMode::Opaque && diagnostic_prefers_source_order(diagnostic_render) {
+fn bevy_render_alpha_mode(alpha_mode: AlphaMode) -> AlphaMode {
+    if alpha_mode == AlphaMode::Opaque {
+        // Keep shader alpha semantics opaque, but use Bevy's sorted phase so
+        // equal-depth MToon overlaps preserve the same source-order behavior
+        // as three-vrm/wgpu/Ash capture paths.
         AlphaMode::Blend
     } else {
         alpha_mode
     }
-}
-
-fn diagnostic_prefers_source_order(diagnostic_render: DiagnosticRender) -> bool {
-    matches!(
-        diagnostic_render,
-        DiagnosticRender::Flat
-            | DiagnosticRender::BaseFactor
-            | DiagnosticRender::BaseColor
-            | DiagnosticRender::BaseColorFlipV
-            | DiagnosticRender::BaseColorRawSrgb
-            | DiagnosticRender::Uv
-            | DiagnosticRender::BaseUv
-            | DiagnosticRender::OwnerId
-    )
 }
 
 fn bevy_image_with_format(
@@ -2359,6 +2345,15 @@ mod tests {
         let late = material_transparent_order_offset(19, 1);
 
         assert!(early < late);
+    }
+
+    #[test]
+    fn bevy_opaque_mtoon_uses_source_order_capable_phase() {
+        assert_eq!(bevy_render_alpha_mode(AlphaMode::Opaque), AlphaMode::Blend);
+        assert_eq!(
+            bevy_render_alpha_mode(AlphaMode::Mask(0.5)),
+            AlphaMode::Mask(0.5)
+        );
     }
 
     fn assert_close(actual: f32, expected: f32) {
