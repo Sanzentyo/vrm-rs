@@ -53,6 +53,7 @@ as the single implementation of the gate:
 just ci
 just ci-external
 just render-parity
+just render-parity-with-ash-readback
 just render-parity-samples
 just render-parity-samples-nonblack
 just render-parity-vrm1-samples
@@ -73,6 +74,7 @@ Recommended stable entrypoints:
 | ash real Vulkan offscreen submit/readback smoke | `just ash-unsafe-device-renderer` |
 | ash readback artifact smoke | `just ash-render-parity-readback` |
 | Current official sample render sweep | `just render-parity-samples` |
+| Seed-san render sweep plus supplemental ash readback artifacts | `just render-parity-with-ash-readback` |
 | Real transparent-background render sweep | `just render-parity-real-transparent` |
 | Raw imqraw Seed-san normal-map cross-check | `just render-parity-imqraw-seed-normal` |
 
@@ -117,6 +119,13 @@ reports as `.rgba.json` diagnostics.
 It also runs `tools/render-parity/verify-imqraw-rgba.rs` for each three-vrm,
 wgpu, and Bevy capture, so the numeric-gate `.imqraw` bytes must match the
 `.rgba.json` bytes used for PNGs, diff heatmaps, and diagnostic reports.
+Pass `--render-ash-readback` together with `--render-parity` when you want the
+ash unsafe offscreen renderer to emit supplemental `.rgba.json`, `.imqraw`, and
+PNG artifacts under the same render-parity directory. Those ash artifacts are
+validated with the same imqraw/RGBA byte check and recorded in
+`review-manifest.json` as `supplementalCaptures`, but they are not part of the
+wgpu/Bevy PSNR gate yet because the ash example is still a drawable Vulkan
+resource/readback path rather than the full MToon visual renderer.
 For a PNG-free cross-check of existing RGBA artifacts, use
 `just imqraw-compare-rgba EXPECTED.rgba.json ACTUAL.rgba.json REPORT.json` or
 the focused `just render-parity-imqraw-seed-normal` recipe. That path uses the

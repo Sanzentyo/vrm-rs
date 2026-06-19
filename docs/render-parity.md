@@ -60,6 +60,21 @@ uses `verify-imqraw-rgba.rs` to prove both files carry identical RGBA bytes.
 Use this as the ash-side bridge into future direct raw comparisons before
 raising it to the same visual threshold path as wgpu and Bevy.
 
+The local render-parity runner can include that bridge beside the normal
+three-vrm/wgpu/Bevy capture set:
+
+```powershell
+just render-parity-with-ash-readback
+```
+
+This forwards `--render-ash-readback` to `tools/ci/local-ci.rs`. The ash
+artifacts are written under the selected render-parity directory as
+`ash/<fixture>.frame000.{rgba.json,imqraw,png}`, verified with the same
+imqraw/RGBA byte check, and recorded in `review-manifest.json` as
+`supplementalCaptures`. They intentionally do not affect the PSNR threshold
+until the ash example grows from a minimal drawable/readback path into the same
+MToon visual renderer as the wgpu and Bevy capture paths.
+
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
 `imq image` CLI still does not expose the VRM-specific selected-metric gates

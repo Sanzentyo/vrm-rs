@@ -50,6 +50,8 @@ struct Options {
     #[arg(long)]
     render_parity: bool,
     #[arg(long)]
+    render_ash_readback: bool,
+    #[arg(long)]
     skip_core: bool,
     #[arg(long)]
     skip_coverage: bool,
@@ -323,6 +325,8 @@ fn run(options: Options) -> Result<(), String> {
     }
     if options.render_parity {
         run_render_parity_ci(&options)?;
+    } else if options.render_ash_readback {
+        return Err("--render-ash-readback requires --render-parity".to_owned());
     }
 
     Ok(())
@@ -611,6 +615,11 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         compare_render_rgba_json_pair(options, fixture, "bevy")?;
         write_render_diff_image(options, fixture, "wgpu")?;
         write_render_diff_image(options, fixture, "bevy")?;
+        if options.render_ash_readback {
+            capture_ash_readback(options, fixture)?;
+            verify_render_imqraw_matches_rgba(options, fixture, "ash")?;
+            write_render_png_from_artifact(options, fixture, "ash")?;
+        }
     }
     let summary = render_summary_markdown(options, &fixtures)?;
     write_render_summary(options, &summary)?;
@@ -622,7 +631,7 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
 fn prepare_render_output_dirs(options: &Options) -> Result<(), String> {
     std::fs::create_dir_all(&options.render_parity_dir).map_err(|err| err.to_string())?;
 
-    for child in ["three-vrm", "wgpu", "bevy", "reports", "diff"] {
+    for child in ["three-vrm", "wgpu", "bevy", "ash", "reports", "diff"] {
         let dir = options.render_parity_dir.join(child);
         if dir.exists() {
             std::fs::remove_dir_all(&dir).map_err(|err| {
@@ -732,36 +741,30 @@ fn build_three_vrm(root: &PathBuf) -> Result<(), String> {
         ["fetch", "--depth", "1", "origin", THREE_VRM_COMMIT],
     )?;
     run_cmd_in(root, "git", ["checkout", "--detach", "FETCH_HEAD"])?;
-    run_cmd("corepack", ["enable"])?;
-    run_cmd("corepack", ["prepare", "pnpm@10.24.0", "--activate"])?;
-    run_cmd(
-        "pnpm",
-        ["-C", path(root).as_str(), "install", "--frozen-lockfile"],
-    )?;
-    run_cmd(
-        "pnpm",
-        [
-            "-C",
-            path(root).as_str(),
-            "--filter",
-            "@pixiv/three-vrm-springbone",
-            "--filter",
-            "@pixiv/three-vrm-core",
-            "--filter",
-            "@pixiv/three-vrm-materials-mtoon",
-            "--filter",
-            "@pixiv/three-vrm-materials-hdr-emissive-multiplier",
-            "--filter",
-            "@pixiv/three-vrm-materials-v0compat",
-            "--filter",
-            "@pixiv/three-vrm-node-constraint",
-            "--filter",
-            "@pixiv/three-vrm",
-            "--filter",
-            "@pixiv/three-vrm-animation",
-            "build",
-        ],
-    )
+    run_corepack(["enable"])?;
+    run_corepack(["prepare", "pnpm@10.24.0", "--activate"])?;
+    run_pnpm(["-C", path(root).as_str(), "install", "--frozen-lockfile"])?;
+    run_pnpm([
+        "-C",
+        path(root).as_str(),
+        "--filter",
+        "@pixiv/three-vrm-springbone",
+        "--filter",
+        "@pixiv/three-vrm-core",
+        "--filter",
+        "@pixiv/three-vrm-materials-mtoon",
+        "--filter",
+        "@pixiv/three-vrm-materials-hdr-emissive-multiplier",
+        "--filter",
+        "@pixiv/three-vrm-materials-v0compat",
+        "--filter",
+        "@pixiv/three-vrm-node-constraint",
+        "--filter",
+        "@pixiv/three-vrm",
+        "--filter",
+        "@pixiv/three-vrm-animation",
+        "build",
+    ])
 }
 
 fn generate_goldens(options: &Options) -> Result<(), String> {
@@ -1209,6 +1212,30 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
     for expression in &options.render_expressions {
         command.arg("--expression").arg(expression);
     }
+    run_command(command)
+}
+
+fn capture_ash_readback(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command
+        .arg("run")
+        .arg("--release")
+        .arg("-p")
+        .arg("vrm-adapter-ash")
+        .arg("--example")
+        .arg("unsafe_device_renderer")
+        .arg("--")
+        .arg("--avatar")
+        .arg(path(&fixture.path))
+        .arg("--no-animation")
+        .arg("--width")
+        .arg(options.render_width.to_string())
+        .arg("--height")
+        .arg(options.render_height.to_string())
+        .arg("--out")
+        .arg(path(&render_artifact(options, fixture, "ash")))
+        .arg("--imqraw-out")
+        .arg(path(&render_imqraw_artifact(options, fixture, "ash")));
     run_command(command)
 }
 
@@ -1771,12 +1798,24 @@ fn render_review_manifest_fixture(
         .into_iter()
         .map(|renderer| render_review_manifest_comparison(options, fixture, renderer))
         .collect::<Result<Vec<_>, _>>()?;
+    let supplemental_captures = if options.render_ash_readback {
+        vec![serde_json::json!({
+            "renderer": "ash",
+            "role": "validated-readback-artifact",
+            "visualParityGate": false,
+            "note": "The ash unsafe_device_renderer currently validates Vulkan submit/readback artifact shape; it is not yet part of the wgpu/Bevy visual PSNR threshold.",
+            "capture": render_review_manifest_artifacts(options, fixture, "ash"),
+        })]
+    } else {
+        Vec::new()
+    };
     Ok(serde_json::json!({
         "name": &fixture.name,
         "stem": &fixture.stem,
         "source": path(&fixture.path),
         "reference": render_review_manifest_artifacts(options, fixture, "three-vrm"),
         "comparisons": comparisons,
+        "supplementalCaptures": supplemental_captures,
     }))
 }
 
@@ -2114,6 +2153,39 @@ fn run_cmd_in<const N: usize>(
     let mut command = Command::new(program);
     command.current_dir(current_dir).args(args);
     run_command(command)
+}
+
+fn run_corepack<const N: usize>(args: [&str; N]) -> Result<(), String> {
+    if program_is_available("corepack") {
+        run_cmd("corepack", args)
+    } else {
+        let mut command = Command::new(npm_program());
+        command.args(["exec", "--yes", "--", "corepack"]).args(args);
+        run_command(command)
+    }
+}
+
+fn run_pnpm<const N: usize>(args: [&str; N]) -> Result<(), String> {
+    if program_is_available("pnpm") {
+        run_cmd("pnpm", args)
+    } else {
+        let mut command = Command::new(npm_program());
+        command.args(["exec", "--yes", "--", "pnpm@10.24.0"]).args(args);
+        run_command(command)
+    }
+}
+
+fn npm_program() -> &'static str {
+    if cfg!(windows) { "npm.cmd" } else { "npm" }
+}
+
+fn program_is_available(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn run_command(mut command: Command) -> Result<(), String> {
