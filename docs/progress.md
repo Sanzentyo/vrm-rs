@@ -936,6 +936,6 @@
 
 Open work:
 
-- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot from 2026-06-18 is workspace 78.09% line coverage, with `vrm-adapter-ash` at 42.00%, `vrm-adapter-bevy` at 75.88%, `vrm-adapter-wgpu` at 0.00%, `vrm-adapter` at 75.34%, `vrm-core` at 77.46%, `vrm-io` at 87.40%, `vrm-osc` at 70.53%, `vrm-protocol` at 90.93%, `vrm-runtime` at 88.42%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.41%.
+- The finite TODO backlog through P2 is complete as of 2026-05-05. P3 is now active and tracked in `docs/todo.md`. Current coverage snapshot from 2026-06-19 is workspace 78.09% line coverage, with `vrm-adapter-ash` at 42.00%, `vrm-adapter-bevy` at 75.88%, `vrm-adapter-wgpu` at 0.00%, `vrm-adapter` at 75.34%, `vrm-core` at 77.46%, `vrm-io` at 87.40%, `vrm-osc` at 70.53%, `vrm-protocol` at 90.93%, `vrm-runtime` at 88.42%, `vrm-sans-io` at 96.43%, and facade src/lib.rs at 98.41%.
 - External binary fixtures and generated golden files remain intentionally outside git under `.external-fixtures/`.
 - P3 work should continue without committing official or third-party binary assets unless redistribution is explicitly reviewed for this MIT/Apache source repository.

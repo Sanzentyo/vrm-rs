@@ -5,6 +5,8 @@ light_swatch_names := "direct-base,forced-shade,ambient-ao-ignored,parametric-ri
 default:
     @just --list
 
+# Core gates.
+
 # Run the local CI-equivalent gate.
 ci:
     cargo +nightly -Zscript tools/ci/local-ci.rs
@@ -12,6 +14,8 @@ ci:
 # Download external fixtures, regenerate goldens, and run ignored parity tests locally.
 ci-external:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+
+# Viewer and animation examples.
 
 # Sample a VRMA clip onto a VRM avatar through the renderer-neutral headless adapter.
 vrma-animation avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/test.vrma" frames="5":
@@ -25,6 +29,8 @@ bevy-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".e
 wgpu-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma":
     cargo run --release -p vrm-adapter-wgpu --example vrma_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}"
 
+# Adapter integration examples.
+
 # Build an ash/Vulkan-shaped frame plan for a VRM avatar plus optional VRMA clip without creating a Vulkan device.
 ash-vrma-frame-plan avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example frame_plan -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
@@ -33,9 +39,11 @@ ash-vrma-frame-plan avatar=".external-fixtures/official/Seed-san.vrm" animation=
 ash-renderer-integration avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example renderer_integration -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
 
-# Materialize a VRM frame plan into real ash Vulkan buffers, images, descriptor sets, and pipeline layouts.
+# Materialize a VRM frame plan into real ash Vulkan resources; this stops before swapchain, shaders, graphics pipelines, and draw submission.
 ash-unsafe-device-renderer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
+
+# Stable render-parity gates.
 
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
 render-parity three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm":
@@ -64,6 +72,8 @@ render-parity-real-transparent three_vrm_root=".external-fixtures/three-vrm":
 # Regenerate focused artifacts for real official MToon normal-map fixtures whose primitives omit glTF TANGENT.
 render-parity-real-normal-maps three_vrm_root=".external-fixtures/three-vrm" background="opaque-black":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-real-normal-maps --render-background "{{ background }}" --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 34 --render-mtoon-light-accumulation three-vrm --render-fixture Seed-san.vrm --render-fixture VRM1_Constraint_Twist_Sample.vrm
+
+# Focused render-parity diagnostics.
 
 # Diagnostic: render Seed-san with flat white materials to separate geometry/pose coverage from material/shader color residuals.
 render-parity-seed-flat-diagnostic three_vrm_root=".external-fixtures/three-vrm":
@@ -330,6 +340,8 @@ render-parity-transparent-generated three_vrm_root=".external-fixtures/three-vrm
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-generated --render-background transparent --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-visible --render-fail-under 49 --render-max-selected-channel-delta 2 --render-max-alpha-delta 0 --render-fixture .external-fixtures/generated/transparent-blend.vrm.gltf
 
+# Transparent-material generated guards.
+
 # Regenerate high-contrast transparent material ordering artifacts for Bevy/wgpu parity debugging.
 render-parity-transparent-high-contrast three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-fixture.rs --palette high-contrast --out .external-fixtures/generated/transparent-high-contrast.vrm.gltf
@@ -369,6 +381,8 @@ render-parity-transparent-mask-texture three_vrm_root=".external-fixtures/three-
 render-parity-transparent-depth-stack three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-transparent-depth-fixture.rs
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-transparent-depth-stack --render-background transparent --render-alpha-mismatch-tolerance 0 --render-alpha-channel-tolerance 1 --render-psnr-metric rgb-visible --render-fail-under 49 --render-max-selected-channel-delta 2 --render-max-alpha-delta 1 --render-fixture .external-fixtures/generated/transparent-depth-stack.vrm.gltf
+
+# Maintenance and low-level analysis helpers.
 
 # Prepare external inputs and regenerate the default render parity artifact set from scratch.
 render-parity-full:
