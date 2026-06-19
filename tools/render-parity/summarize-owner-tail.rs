@@ -488,6 +488,20 @@ fn markdown_report(report: &OwnerTailReport) -> String {
     write_projection_gap_count(&mut output, report, "pixel_near_both_edges_025px");
     write_projection_gap_count(&mut output, report, "pixel_near_either_edge_05px");
     write_projection_gap_count(&mut output, report, "pixel_near_both_edges_05px");
+    write_projection_gap_count(&mut output, report, "pixel_inside_expected_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_inside_actual_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_inside_both_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_inside_expected_only_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_inside_actual_only_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_inside_neither_screen_bounds");
+    write_projection_gap_count(&mut output, report, "pixel_near_expected_min_x_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_expected_max_x_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_expected_min_y_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_expected_max_y_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_actual_min_x_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_actual_max_x_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_actual_min_y_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_actual_max_y_edge_05px");
     write_projection_gap_count(&mut output, report, "either_small_bounds_area_le_1px");
     write_projection_gap_count(&mut output, report, "both_small_bounds_area_le_1px");
     write_projection_gap_count(&mut output, report, "either_small_bounds_area_le_4px");
@@ -646,6 +660,20 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "pixel_near_both_edges_025px": 0,
             "pixel_near_either_edge_05px": 2,
             "pixel_near_both_edges_05px": 1,
+            "pixel_inside_expected_screen_bounds": 1,
+            "pixel_inside_actual_screen_bounds": 2,
+            "pixel_inside_both_screen_bounds": 1,
+            "pixel_inside_expected_only_screen_bounds": 0,
+            "pixel_inside_actual_only_screen_bounds": 1,
+            "pixel_inside_neither_screen_bounds": 0,
+            "pixel_near_expected_min_x_edge_05px": 0,
+            "pixel_near_expected_max_x_edge_05px": 1,
+            "pixel_near_expected_min_y_edge_05px": 1,
+            "pixel_near_expected_max_y_edge_05px": 0,
+            "pixel_near_actual_min_x_edge_05px": 2,
+            "pixel_near_actual_max_x_edge_05px": 0,
+            "pixel_near_actual_min_y_edge_05px": 2,
+            "pixel_near_actual_max_y_edge_05px": 0,
             "either_small_bounds_area_le_1px": 0,
             "both_small_bounds_area_le_1px": 0,
             "either_small_bounds_area_le_4px": 2,
@@ -716,6 +744,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(markdown.contains("Projection Gap Shape"));
     assert!(markdown.contains("pixel_near_either_edge_05px"));
+    assert!(markdown.contains("pixel_inside_both_screen_bounds"));
+    assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));
     assert!(markdown.contains("either_small_bounds_area_le_4px"));
     Ok(())
 }

@@ -997,7 +997,13 @@ proximity and small screen-bounds area: the current Bevy-vs-three-vrm topology
 artifact has `34/46` unexplained gaps within `0.5px` of either owner's bounds
 edge and `11/46` involving an owner bounds area `<= 4px`; Bevy-vs-wgpu has
 `31/41` near a `0.5px` bounds edge and `10/41` involving a `<= 4px` owner
-bounds area.
+bounds area. The same report also records whether each pixel center is inside
+the expected and actual owner screen bounds: Bevy-vs-wgpu is `18/41` inside
+both, `23/41` inside the wgpu expected bounds only, `0/41` inside Bevy actual
+only, and `0/41` inside neither. Its per-side `0.5px` counts are distributed
+across expected minX/maxX/minY/maxY `10/11/11/10` and actual minX/maxX/minY/maxY
+`6/8/14/4`, so the remaining tail is a mixed small-triangle edge/fill problem
+rather than one global pixel-center offset.
 This makes the topology extract a compact source-derived regression guard for
 the remaining Bevy/raster-fill tail; the earlier isolated and index-window runs
 remain useful negative controls. The owner-ID selected-PSNR threshold on this

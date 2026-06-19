@@ -377,6 +377,20 @@ struct OwnerProjectionGapSummary {
     pixel_near_actual_edge_05px: u64,
     pixel_near_either_edge_05px: u64,
     pixel_near_both_edges_05px: u64,
+    pixel_inside_expected_screen_bounds: u64,
+    pixel_inside_actual_screen_bounds: u64,
+    pixel_inside_both_screen_bounds: u64,
+    pixel_inside_expected_only_screen_bounds: u64,
+    pixel_inside_actual_only_screen_bounds: u64,
+    pixel_inside_neither_screen_bounds: u64,
+    pixel_near_expected_min_x_edge_05px: u64,
+    pixel_near_expected_max_x_edge_05px: u64,
+    pixel_near_expected_min_y_edge_05px: u64,
+    pixel_near_expected_max_y_edge_05px: u64,
+    pixel_near_actual_min_x_edge_05px: u64,
+    pixel_near_actual_max_x_edge_05px: u64,
+    pixel_near_actual_min_y_edge_05px: u64,
+    pixel_near_actual_max_y_edge_05px: u64,
     expected_small_bounds_area_le_1px: u64,
     actual_small_bounds_area_le_1px: u64,
     either_small_bounds_area_le_1px: u64,
@@ -410,6 +424,20 @@ struct OwnerProjectionGapAccumulator {
     pixel_near_actual_edge_05px: u64,
     pixel_near_either_edge_05px: u64,
     pixel_near_both_edges_05px: u64,
+    pixel_inside_expected_screen_bounds: u64,
+    pixel_inside_actual_screen_bounds: u64,
+    pixel_inside_both_screen_bounds: u64,
+    pixel_inside_expected_only_screen_bounds: u64,
+    pixel_inside_actual_only_screen_bounds: u64,
+    pixel_inside_neither_screen_bounds: u64,
+    pixel_near_expected_min_x_edge_05px: u64,
+    pixel_near_expected_max_x_edge_05px: u64,
+    pixel_near_expected_min_y_edge_05px: u64,
+    pixel_near_expected_max_y_edge_05px: u64,
+    pixel_near_actual_min_x_edge_05px: u64,
+    pixel_near_actual_max_x_edge_05px: u64,
+    pixel_near_actual_min_y_edge_05px: u64,
+    pixel_near_actual_max_y_edge_05px: u64,
     expected_small_bounds_area_le_1px: u64,
     actual_small_bounds_area_le_1px: u64,
     either_small_bounds_area_le_1px: u64,
@@ -449,6 +477,16 @@ struct OwnerScreenBounds {
     min_y: f64,
     max_x: f64,
     max_y: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PixelBoundsRelation {
+    inside: bool,
+    min_edge_distance: f64,
+    min_x_distance: f64,
+    max_x_distance: f64,
+    min_y_distance: f64,
+    max_y_distance: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -1572,20 +1610,32 @@ fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
     ((bounds.max_x - bounds.min_x).max(0.0)) * ((bounds.max_y - bounds.min_y).max(0.0))
 }
 
-fn pixel_center_bounds_edge_distance(pixel: OwnerPixel, bounds: OwnerScreenBounds) -> f64 {
+fn pixel_bounds_relation(pixel: OwnerPixel, bounds: OwnerScreenBounds) -> PixelBoundsRelation {
     let x = pixel.x as f64 + 0.5;
     let y = pixel.y as f64 + 0.5;
     let inside_x = (bounds.min_x..=bounds.max_x).contains(&x);
     let inside_y = (bounds.min_y..=bounds.max_y).contains(&y);
+    let min_x_distance = (x - bounds.min_x).abs();
+    let max_x_distance = (x - bounds.max_x).abs();
+    let min_y_distance = (y - bounds.min_y).abs();
+    let max_y_distance = (y - bounds.max_y).abs();
     if inside_x && inside_y {
-        return [
-            x - bounds.min_x,
-            bounds.max_x - x,
-            y - bounds.min_y,
-            bounds.max_y - y,
+        let min_edge_distance = [
+            min_x_distance,
+            max_x_distance,
+            min_y_distance,
+            max_y_distance,
         ]
         .into_iter()
         .fold(f64::INFINITY, f64::min);
+        return PixelBoundsRelation {
+            inside: true,
+            min_edge_distance,
+            min_x_distance,
+            max_x_distance,
+            min_y_distance,
+            max_y_distance,
+        };
     }
 
     let dx = if x < bounds.min_x {
@@ -1602,7 +1652,14 @@ fn pixel_center_bounds_edge_distance(pixel: OwnerPixel, bounds: OwnerScreenBound
     } else {
         0.0
     };
-    dx.hypot(dy)
+    PixelBoundsRelation {
+        inside: false,
+        min_edge_distance: dx.hypot(dy),
+        min_x_distance,
+        max_x_distance,
+        min_y_distance,
+        max_y_distance,
+    }
 }
 
 fn depth_relation(expected: &OwnerLabel, actual: &OwnerLabel) -> DepthRelation {
@@ -1785,6 +1842,21 @@ impl OwnerProjectionGapAccumulator {
             pixel_near_actual_edge_05px: self.pixel_near_actual_edge_05px,
             pixel_near_either_edge_05px: self.pixel_near_either_edge_05px,
             pixel_near_both_edges_05px: self.pixel_near_both_edges_05px,
+            pixel_inside_expected_screen_bounds: self.pixel_inside_expected_screen_bounds,
+            pixel_inside_actual_screen_bounds: self.pixel_inside_actual_screen_bounds,
+            pixel_inside_both_screen_bounds: self.pixel_inside_both_screen_bounds,
+            pixel_inside_expected_only_screen_bounds: self
+                .pixel_inside_expected_only_screen_bounds,
+            pixel_inside_actual_only_screen_bounds: self.pixel_inside_actual_only_screen_bounds,
+            pixel_inside_neither_screen_bounds: self.pixel_inside_neither_screen_bounds,
+            pixel_near_expected_min_x_edge_05px: self.pixel_near_expected_min_x_edge_05px,
+            pixel_near_expected_max_x_edge_05px: self.pixel_near_expected_max_x_edge_05px,
+            pixel_near_expected_min_y_edge_05px: self.pixel_near_expected_min_y_edge_05px,
+            pixel_near_expected_max_y_edge_05px: self.pixel_near_expected_max_y_edge_05px,
+            pixel_near_actual_min_x_edge_05px: self.pixel_near_actual_min_x_edge_05px,
+            pixel_near_actual_max_x_edge_05px: self.pixel_near_actual_max_x_edge_05px,
+            pixel_near_actual_min_y_edge_05px: self.pixel_near_actual_min_y_edge_05px,
+            pixel_near_actual_max_y_edge_05px: self.pixel_near_actual_max_y_edge_05px,
             expected_small_bounds_area_le_1px: self.expected_small_bounds_area_le_1px,
             actual_small_bounds_area_le_1px: self.actual_small_bounds_area_le_1px,
             either_small_bounds_area_le_1px: self.either_small_bounds_area_le_1px,
@@ -1814,21 +1886,61 @@ impl OwnerProjectionGapAccumulator {
         expected_bounds: OwnerScreenBounds,
         actual_bounds: OwnerScreenBounds,
     ) {
-        let expected_edge_distance = pixel_center_bounds_edge_distance(pixel, expected_bounds);
-        let actual_edge_distance = pixel_center_bounds_edge_distance(pixel, actual_bounds);
-        let near_expected_025 = expected_edge_distance <= 0.25;
-        let near_actual_025 = actual_edge_distance <= 0.25;
+        let expected_relation = pixel_bounds_relation(pixel, expected_bounds);
+        let actual_relation = pixel_bounds_relation(pixel, actual_bounds);
+        self.add_inside_bounds_relation(expected_relation.inside, actual_relation.inside);
+
+        let near_expected_025 = expected_relation.min_edge_distance <= 0.25;
+        let near_actual_025 = actual_relation.min_edge_distance <= 0.25;
         self.pixel_near_expected_edge_025px += u64::from(near_expected_025);
         self.pixel_near_actual_edge_025px += u64::from(near_actual_025);
         self.pixel_near_either_edge_025px += u64::from(near_expected_025 || near_actual_025);
         self.pixel_near_both_edges_025px += u64::from(near_expected_025 && near_actual_025);
 
-        let near_expected_05 = expected_edge_distance <= 0.5;
-        let near_actual_05 = actual_edge_distance <= 0.5;
+        let near_expected_05 = expected_relation.min_edge_distance <= 0.5;
+        let near_actual_05 = actual_relation.min_edge_distance <= 0.5;
         self.pixel_near_expected_edge_05px += u64::from(near_expected_05);
         self.pixel_near_actual_edge_05px += u64::from(near_actual_05);
         self.pixel_near_either_edge_05px += u64::from(near_expected_05 || near_actual_05);
         self.pixel_near_both_edges_05px += u64::from(near_expected_05 && near_actual_05);
+        self.add_near_edge_sides(expected_relation, actual_relation);
+    }
+
+    fn add_inside_bounds_relation(&mut self, inside_expected: bool, inside_actual: bool) {
+        self.pixel_inside_expected_screen_bounds += u64::from(inside_expected);
+        self.pixel_inside_actual_screen_bounds += u64::from(inside_actual);
+        self.pixel_inside_both_screen_bounds += u64::from(inside_expected && inside_actual);
+        self.pixel_inside_expected_only_screen_bounds +=
+            u64::from(inside_expected && !inside_actual);
+        self.pixel_inside_actual_only_screen_bounds += u64::from(!inside_expected && inside_actual);
+        self.pixel_inside_neither_screen_bounds += u64::from(!inside_expected && !inside_actual);
+    }
+
+    fn add_near_edge_sides(
+        &mut self,
+        expected_relation: PixelBoundsRelation,
+        actual_relation: PixelBoundsRelation,
+    ) {
+        fn near_side(relation: PixelBoundsRelation, side_distance: f64) -> bool {
+            relation.min_edge_distance <= 0.5 && side_distance <= 0.5
+        }
+
+        self.pixel_near_expected_min_x_edge_05px +=
+            u64::from(near_side(expected_relation, expected_relation.min_x_distance));
+        self.pixel_near_expected_max_x_edge_05px +=
+            u64::from(near_side(expected_relation, expected_relation.max_x_distance));
+        self.pixel_near_expected_min_y_edge_05px +=
+            u64::from(near_side(expected_relation, expected_relation.min_y_distance));
+        self.pixel_near_expected_max_y_edge_05px +=
+            u64::from(near_side(expected_relation, expected_relation.max_y_distance));
+        self.pixel_near_actual_min_x_edge_05px +=
+            u64::from(near_side(actual_relation, actual_relation.min_x_distance));
+        self.pixel_near_actual_max_x_edge_05px +=
+            u64::from(near_side(actual_relation, actual_relation.max_x_distance));
+        self.pixel_near_actual_min_y_edge_05px +=
+            u64::from(near_side(actual_relation, actual_relation.min_y_distance));
+        self.pixel_near_actual_max_y_edge_05px +=
+            u64::from(near_side(actual_relation, actual_relation.max_y_distance));
     }
 
     fn add_small_bounds(
@@ -2394,6 +2506,90 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .unexplained_projection_gap_summary
             .pixel_near_both_edges_05px,
         1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_expected_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_actual_screen_bounds,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_both_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_expected_only_screen_bounds,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_actual_only_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_neither_screen_bounds,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_min_x_edge_05px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_max_x_edge_05px,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_min_y_edge_05px,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_max_y_edge_05px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_min_x_edge_05px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_max_x_edge_05px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_min_y_edge_05px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_max_y_edge_05px,
+        0
     );
     assert_eq!(
         report
