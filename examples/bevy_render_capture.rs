@@ -748,11 +748,11 @@ fn diagnostic_owner_ids(
     let view_projection = diagnostic_view_projection(options);
     let reference_view_projection = diagnostic_reference_view_projection(options);
     let size = ScreenProjectionSize::from_pixels(options.width, options.height);
-    let front_face = options.front_face.renderer_policy();
     primitives
         .iter()
         .enumerate()
         .flat_map(|(draw_index, primitive)| {
+            let front_face = bevy_primitive_front_face(primitive).renderer_policy();
             primitive.owner_ids.iter().map(move |owner| {
                 let source = primitive.owner_source;
                 let projection = owner_triangle_projection::<ReverseZeroToOneDepth>(
@@ -783,13 +783,13 @@ fn diagnostic_owner_ids(
                     "renderOrder": source.render_order,
                     "renderPhaseOrder": source.phase_order,
                     "drawIndex": draw_index,
-                    "frontFace": options.front_face.as_str(),
+                    "frontFace": bevy_primitive_front_face(primitive).as_str(),
                     "cullMode": bevy_primitive_cull_mode(primitive),
                     "alphaMode": bevy_primitive_alpha_mode(primitive),
                     "alphaCutoff": bevy_primitive_alpha_cutoff(primitive),
                     "depthWrite": bevy_primitive_depth_write(primitive),
                     "depthTest": true,
-                    "depthCompare": "bevy-material-default",
+                    "depthCompare": "greater-equal",
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
                     "triangle": owner.triangle,
@@ -840,6 +840,12 @@ fn bevy_primitive_blend(primitive: &BevyPrimitive) -> bool {
 fn bevy_primitive_cull_mode(primitive: &BevyPrimitive) -> &'static str {
     match &primitive.material {
         BevyPrimitiveMaterial::Mtoon(material) => face_name(material.cull_mode),
+    }
+}
+
+fn bevy_primitive_front_face(primitive: &BevyPrimitive) -> CaptureFrontFace {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => material.front_face,
     }
 }
 

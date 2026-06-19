@@ -63,6 +63,7 @@ struct OwnerTailCounts {
     unexplained_owner_tail_after_touching_mismatched_shared_nonzero: Option<u64>,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: Option<u64>,
     actual_metadata_bounds_miss_mismatched_shared_nonzero: Option<u64>,
+    actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero: Option<u64>,
     exact_owner_match_ratio: Option<f64>,
 }
 
@@ -200,6 +201,10 @@ fn summarize_report(
             actual_metadata_bounds_miss_mismatched_shared_nonzero: u64_field(
                 value,
                 "actual_metadata_bounds_miss_mismatched_shared_nonzero",
+            ),
+            actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero: u64_field(
+                value,
+                "actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero",
             ),
             exact_owner_match_ratio: f64_field(value, "exact_owner_match_ratio"),
         },
@@ -452,6 +457,27 @@ fn markdown_report(report: &OwnerTailReport) -> String {
             .counts
             .unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
     );
+    write_count(
+        &mut output,
+        "actual_not_visible_by_cull_policy_mismatched_shared_nonzero",
+        report
+            .counts
+            .actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "actual_metadata_bounds_miss_mismatched_shared_nonzero",
+        report
+            .counts
+            .actual_metadata_bounds_miss_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero",
+        report
+            .counts
+            .actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero,
+    );
 
     output.push_str("\n## Top Unexplained Material Transitions\n\n");
     output.push_str("| Count | Expected | Actual | Relation |\n|---:|---|---|---|\n");
@@ -584,6 +610,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         "same_projected_or_touching_triangle_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_after_touching_mismatched_shared_nonzero": 1,
+        "actual_not_visible_by_cull_policy_mismatched_shared_nonzero": 1,
+        "actual_metadata_bounds_miss_mismatched_shared_nonzero": 1,
+        "actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero": 1,
         "top_unexplained_material_transitions": [{
             "expected_pass": "outline",
             "expected_mesh": "wear_4",
@@ -642,5 +671,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     let markdown = markdown_report(&report);
     assert!(markdown.contains("huku_bake (Outline)"));
     assert!(markdown.contains("depth_delta=0.010000"));
+    assert!(markdown.contains("actual_not_visible_by_cull_policy_mismatched_shared_nonzero"));
+    assert!(
+        markdown
+            .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
+    );
     Ok(())
 }
