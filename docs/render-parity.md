@@ -1056,6 +1056,22 @@ primitive-group, dense, and uv-island. The current `1e-6` offset remains the
 default because it preserves those source-order controls; the no-bias switches
 are an isolation tool for the source-derived topology tail.
 
+The Bevy capture also exposes an experimental overlap-localized policy:
+
+```powershell
+--owner-id-phase-order-policy overlap-area
+```
+
+This keeps owner-id phase offsets only when same-material, same-render-order
+owner primitives have projected triangle overlap of at least `4px^2` at
+near-equal depth. The topology experiment under
+`.external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-overlap-phase/`
+shows why this is not the default fix: nonzero actual phase-offset tail pixels
+drop from `40` to `32`, but the Bevy-vs-wgpu unexplained tail returns to `41`.
+That rejects simple overlap-area localization and keeps the next investigation
+on Bevy render-phase distance/order behavior or a more explicit owner-id
+diagnostic draw-order path.
+
 A same-material multi-UV-island ownership control is available through:
 
 ```powershell

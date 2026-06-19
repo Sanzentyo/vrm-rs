@@ -53,8 +53,8 @@ use std::sync::{
 use std::time::Duration;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RendererFrontFace, ReverseZeroToOneDepth, ScreenProjectionSize, ScreenTriangleProjection,
-    ZeroToOneDepth, project_triangle_to_screen,
+    RendererFrontFace, ReverseZeroToOneDepth, ScreenProjectionBounds, ScreenProjectionSize,
+    ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
@@ -70,6 +70,8 @@ use vrm_io::{
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
 const BEVY_PHASE_ORDER_OFFSET_SCALE: f32 = 0.000001;
+const OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD: f32 = 4.0;
+const OWNER_ID_PHASE_ORDER_DEPTH_TOLERANCE: f32 = 0.001;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse();
@@ -174,8 +176,27 @@ struct CaptureOptions {
     disable_owner_id_depth_bias: bool,
     #[arg(long)]
     disable_owner_id_phase_order: bool,
+    #[arg(long, value_enum, default_value_t = OwnerIdPhaseOrderPolicy::Full)]
+    owner_id_phase_order_policy: OwnerIdPhaseOrderPolicy,
     #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
     front_face: CaptureFrontFace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum OwnerIdPhaseOrderPolicy {
+    Full,
+    Off,
+    OverlapArea,
+}
+
+impl OwnerIdPhaseOrderPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Off => "off",
+            Self::OverlapArea => "overlap-area",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -561,6 +582,11 @@ fn spawn_vrm_meshes(
                     material_plan.phase_order,
                     0,
                 ),
+                phase_order_offset_applied: bevy_source_order_offset(
+                    &material,
+                    material_plan.phase_order,
+                    0,
+                ),
                 material,
                 render_order: material_plan.render_order,
                 owner_source,
@@ -582,22 +608,23 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
+    if options.diagnostic_render == DiagnosticRender::OwnerId {
+        assign_owner_id_triangles(&mut primitives);
+        configure_owner_id_phase_order_offsets(&mut primitives, options);
+    } else {
+        assign_owner_id_colors(&mut primitives);
+    }
     if should_apply_owner_id_depth_bias(options) {
         for primitive in &mut primitives {
             primitive.apply_phase_order_depth_bias();
         }
-    }
-    if options.diagnostic_render == DiagnosticRender::OwnerId {
-        assign_owner_id_triangles(&mut primitives);
-    } else {
-        assign_owner_id_colors(&mut primitives);
     }
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
     });
 
     for primitive in primitives {
-        let phase_order = owner_id_phase_order_offset(options, &primitive);
+        let phase_order = owner_id_phase_order_offset(&primitive);
         let mesh = meshes.add(primitive.mesh);
         match primitive.material {
             BevyPrimitiveMaterial::Mtoon(material) => {
@@ -662,6 +689,135 @@ fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
             }
         }
     }
+}
+
+fn configure_owner_id_phase_order_offsets(
+    primitives: &mut [BevyPrimitive],
+    options: &CaptureOptions,
+) {
+    let policy = if options.disable_owner_id_phase_order {
+        OwnerIdPhaseOrderPolicy::Off
+    } else {
+        options.owner_id_phase_order_policy
+    };
+    match policy {
+        OwnerIdPhaseOrderPolicy::Full => {
+            for primitive in primitives {
+                primitive.phase_order_offset_applied = primitive.transparent_order_offset;
+            }
+        }
+        OwnerIdPhaseOrderPolicy::Off => {
+            for primitive in primitives {
+                primitive.phase_order_offset_applied = 0.0;
+            }
+        }
+        OwnerIdPhaseOrderPolicy::OverlapArea => {
+            let keep_offsets = owner_id_phase_order_overlap_mask(primitives, options);
+            for (primitive, keep_offset) in primitives.iter_mut().zip(keep_offsets) {
+                primitive.phase_order_offset_applied = if keep_offset {
+                    primitive.transparent_order_offset
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+}
+
+fn owner_id_phase_order_overlap_mask(
+    primitives: &[BevyPrimitive],
+    options: &CaptureOptions,
+) -> Vec<bool> {
+    let view_projection = diagnostic_view_projection(options);
+    let size = ScreenProjectionSize::from_pixels(options.width, options.height);
+    let groups = primitives
+        .iter()
+        .map(|primitive| {
+            let front_face = bevy_primitive_front_face(primitive).renderer_policy();
+            let projections = if primitive.needs_source_order_offset() {
+                primitive
+                    .owner_ids
+                    .iter()
+                    .filter_map(|owner| {
+                        owner_triangle_projection::<ReverseZeroToOneDepth>(
+                            &primitive.mesh,
+                            owner.triangle,
+                            view_projection,
+                            size,
+                            front_face,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            OwnerIdPhaseOrderProjectionGroup {
+                render_order: primitive.render_order,
+                material: primitive.owner_source.material,
+                transparent_order_offset: primitive.transparent_order_offset,
+                projections,
+            }
+        })
+        .collect::<Vec<_>>();
+    owner_id_phase_order_overlap_mask_from_groups(&groups)
+}
+
+fn owner_id_phase_order_overlap_mask_from_groups(
+    groups: &[OwnerIdPhaseOrderProjectionGroup],
+) -> Vec<bool> {
+    let mut keep_offsets = vec![false; groups.len()];
+    for (left_index, left) in groups.iter().enumerate() {
+        if !left.has_phase_offset_candidates() {
+            continue;
+        }
+        for (right_index, right) in groups.iter().enumerate().skip(left_index + 1) {
+            if !right.has_phase_offset_candidates()
+                || left.render_order != right.render_order
+                || left.material != right.material
+            {
+                continue;
+            }
+            if owner_id_phase_order_groups_overlap(left, right) {
+                keep_offsets[left_index] = true;
+                keep_offsets[right_index] = true;
+            }
+        }
+    }
+    keep_offsets
+}
+
+fn owner_id_phase_order_groups_overlap(
+    left: &OwnerIdPhaseOrderProjectionGroup,
+    right: &OwnerIdPhaseOrderProjectionGroup,
+) -> bool {
+    left.projections.iter().any(|left_projection| {
+        right.projections.iter().any(|right_projection| {
+            screen_bounds_overlap_area(left_projection.bounds, right_projection.bounds)
+                >= OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD
+                && (left_projection.webgl_depth - right_projection.webgl_depth).abs()
+                    <= OWNER_ID_PHASE_ORDER_DEPTH_TOLERANCE
+        })
+    })
+}
+
+#[derive(Clone, Debug)]
+struct OwnerIdPhaseOrderProjectionGroup {
+    render_order: i32,
+    material: Option<usize>,
+    transparent_order_offset: f32,
+    projections: Vec<ScreenTriangleProjection>,
+}
+
+impl OwnerIdPhaseOrderProjectionGroup {
+    fn has_phase_offset_candidates(&self) -> bool {
+        self.transparent_order_offset.abs() > f32::EPSILON && !self.projections.is_empty()
+    }
+}
+
+fn screen_bounds_overlap_area(left: ScreenProjectionBounds, right: ScreenProjectionBounds) -> f32 {
+    let width = (left.max_x.min(right.max_x) - left.min_x.max(right.min_x)).max(0.0);
+    let height = (left.max_y.min(right.max_y) - left.min_y.max(right.min_y)).max(0.0);
+    width * height
 }
 
 fn duplicate_mesh_vertices_in_index_order(
@@ -795,7 +951,7 @@ fn diagnostic_owner_ids(
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
                     "bevyPhaseOrderOffset": primitive.transparent_order_offset,
-                    "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(options, primitive),
+                    "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
@@ -869,14 +1025,8 @@ fn should_apply_owner_id_depth_bias(options: &CaptureOptions) -> bool {
     options.diagnostic_render != DiagnosticRender::OwnerId || !options.disable_owner_id_depth_bias
 }
 
-fn owner_id_phase_order_offset(options: &CaptureOptions, primitive: &BevyPrimitive) -> f32 {
-    if options.diagnostic_render == DiagnosticRender::OwnerId
-        && options.disable_owner_id_phase_order
-    {
-        0.0
-    } else {
-        primitive.transparent_order_offset
-    }
+fn owner_id_phase_order_offset(primitive: &BevyPrimitive) -> f32 {
+    primitive.phase_order_offset_applied
 }
 
 fn alpha_mode_name(mode: AlphaMode) -> &'static str {
@@ -1092,13 +1242,12 @@ fn bevy_outline_primitive(
     material.cull_mode = Some(Face::Front);
     material.pipeline.w = 0.0;
     let material = BevyPrimitiveMaterial::Mtoon(material);
+    let transparent_order_offset =
+        bevy_source_order_offset(&material, material_plan.phase_order.saturating_add(1), 0);
     Some(BevyPrimitive {
         mesh,
-        transparent_order_offset: bevy_source_order_offset(
-            &material,
-            material_plan.phase_order.saturating_add(1),
-            0,
-        ),
+        transparent_order_offset,
+        phase_order_offset_applied: transparent_order_offset,
         material,
         render_order: material_plan.render_order.saturating_add(1),
         owner_source: OwnerSource {
@@ -1181,6 +1330,7 @@ struct BevyPrimitive {
     material: BevyPrimitiveMaterial,
     render_order: i32,
     transparent_order_offset: f32,
+    phase_order_offset_applied: f32,
     owner_source: OwnerSource,
     owner_ids: Vec<OwnerTriangle>,
 }
@@ -1192,7 +1342,8 @@ impl BevyPrimitive {
 
     fn apply_phase_order_depth_bias(&mut self) {
         if self.needs_source_order_offset() {
-            self.material.set_depth_bias(self.transparent_order_offset);
+            self.material
+                .set_depth_bias(self.phase_order_offset_applied);
         }
     }
 }
@@ -2332,6 +2483,7 @@ fn write_capture(
         "diagnosticRender": options.diagnostic_render.as_str(),
         "disableOwnerIdDepthBias": options.disable_owner_id_depth_bias,
         "disableOwnerIdPhaseOrder": options.disable_owner_id_phase_order,
+        "ownerIdPhaseOrderPolicy": options.owner_id_phase_order_policy.as_str(),
         "frontFace": options.front_face.as_str(),
         "renderer": {
             "backend": "bevy",
@@ -2442,6 +2594,22 @@ mod tests {
     }
 
     #[test]
+    fn owner_id_overlap_area_policy_keeps_large_same_material_overlaps_only() {
+        let groups = vec![
+            owner_phase_group(19.0, Some(1), 3000, 10.0, 10.0, 14.0, 14.0, 0.5),
+            owner_phase_group(19.0, Some(1), 3000, 11.0, 11.0, 15.0, 15.0, 0.5005),
+            owner_phase_group(19.0, Some(1), 3000, 30.0, 30.0, 31.0, 31.0, 0.5),
+            owner_phase_group(19.0, Some(1), 3000, 30.5, 30.5, 31.5, 31.5, 0.5005),
+            owner_phase_group(19.0, Some(2), 3000, 10.0, 10.0, 14.0, 14.0, 0.5),
+        ];
+
+        assert_eq!(
+            owner_id_phase_order_overlap_mask_from_groups(&groups),
+            vec![true, true, false, false, false]
+        );
+    }
+
+    #[test]
     fn bevy_opaque_mtoon_uses_source_order_capable_phase() {
         assert_eq!(bevy_render_alpha_mode(AlphaMode::Opaque), AlphaMode::Blend);
         assert_eq!(
@@ -2484,5 +2652,36 @@ mod tests {
             (actual - expected).abs() <= 1.0e-6,
             "expected {expected}, got {actual}"
         );
+    }
+
+    fn owner_phase_group(
+        offset_units: f32,
+        material: Option<usize>,
+        render_order: i32,
+        min_x: f32,
+        min_y: f32,
+        max_x: f32,
+        max_y: f32,
+        webgl_depth: f32,
+    ) -> OwnerIdPhaseOrderProjectionGroup {
+        OwnerIdPhaseOrderProjectionGroup {
+            render_order,
+            material,
+            transparent_order_offset: offset_units * BEVY_PHASE_ORDER_OFFSET_SCALE,
+            projections: vec![ScreenTriangleProjection {
+                screen: [[min_x, min_y], [max_x, min_y], [min_x, max_y]],
+                bounds: ScreenProjectionBounds {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                },
+                ndc_depth: webgl_depth,
+                webgl_depth,
+                screen_signed_area: 1.0,
+                front_facing: true,
+                gpu_front_facing: true,
+            }],
+        }
     }
 }
