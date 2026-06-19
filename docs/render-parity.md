@@ -73,10 +73,13 @@ artifacts are written under the selected render-parity directory as
 imqraw/RGBA byte check, and recorded in `review-manifest.json` as
 `supplementalCaptures`. The ash example already allocates real Vulkan uniform
 buffers, sampled texture images, samplers, descriptor sets, graphics pipelines,
-and offscreen readback resources from the MToon frame plan. It intentionally
-does not affect the PSNR threshold until its shader path grows from the current
-minimal color-only smoke shader into the same MToon visual renderer as the wgpu
-and Bevy capture paths.
+and offscreen readback resources from the MToon frame plan. It also accepts
+external precompiled SPIR-V through `--vertex-spv` and `--fragment-spv`, so a
+MToon-compatible shader experiment can reuse the same descriptor/resource plan
+without committing shader binaries to the repository. It intentionally does not
+affect the PSNR threshold until that external shader path is promoted from an
+opt-in experiment into the same checked MToon visual renderer as the wgpu and
+Bevy capture paths.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public

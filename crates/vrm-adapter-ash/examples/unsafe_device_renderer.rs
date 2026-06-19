@@ -43,6 +43,18 @@ struct Options {
     /// Write the submitted/read-back offscreen color attachment as an imqraw bundle.
     #[arg(long)]
     imqraw_out: Option<PathBuf>,
+    /// Optional precompiled SPIR-V vertex shader for the offscreen graphics pipelines.
+    ///
+    /// The shader must use entry point `main` and match the example vertex input
+    /// plus descriptor-set layout emitted from `AshRendererFrame`.
+    #[arg(long, requires = "fragment_spv")]
+    vertex_spv: Option<PathBuf>,
+    /// Optional precompiled SPIR-V fragment shader for the offscreen graphics pipelines.
+    ///
+    /// Use together with `--vertex-spv` to replace the built-in color-only smoke
+    /// shader without committing shader binaries to this repository.
+    #[arg(long, requires = "vertex_spv")]
+    fragment_spv: Option<PathBuf>,
 }
 
 struct VulkanFrameResources {
@@ -117,6 +129,19 @@ impl ReadbackFrame {
     fn byte_len(&self) -> usize {
         self.rgba.len()
     }
+}
+
+#[derive(Clone, Debug)]
+struct ShaderModuleSources {
+    vertex: Vec<u32>,
+    fragment: Vec<u32>,
+    source: ShaderSourceKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShaderSourceKind {
+    BuiltInSmoke,
+    ExternalSpirv,
 }
 
 const MINIMAL_VERTEX_SPV: &[u32] = &[
@@ -215,6 +240,7 @@ impl UnsafeAshDeviceRenderer {
         &self,
         frame: &AshRendererFrame,
         extent: vk::Extent2D,
+        shaders: &ShaderModuleSources,
     ) -> Result<VulkanFrameResources, Box<dyn Error>> {
         let command_pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(self.queue_family_index)
@@ -327,8 +353,8 @@ impl UnsafeAshDeviceRenderer {
         let render_pass = self.create_render_pass(color_format, depth_format)?;
         let framebuffer =
             self.create_framebuffer(render_pass, color_target.view, depth_target.view, extent)?;
-        let vertex_shader = self.create_shader_module(MINIMAL_VERTEX_SPV)?;
-        let fragment_shader = self.create_shader_module(MINIMAL_FRAGMENT_SPV)?;
+        let vertex_shader = self.create_shader_module(&shaders.vertex)?;
+        let fragment_shader = self.create_shader_module(&shaders.fragment)?;
         let shader_modules = vec![vertex_shader, fragment_shader];
         let entry_point = CString::new("main")?;
         let pipeline_context = PipelineBuildContext {
@@ -1169,6 +1195,48 @@ fn default_sampler_plan() -> AshSamplerPlan {
     }
 }
 
+fn shader_sources_from_options(options: &Options) -> Result<ShaderModuleSources, Box<dyn Error>> {
+    match (&options.vertex_spv, &options.fragment_spv) {
+        (Some(vertex), Some(fragment)) => Ok(ShaderModuleSources {
+            vertex: read_spirv_words(vertex)?,
+            fragment: read_spirv_words(fragment)?,
+            source: ShaderSourceKind::ExternalSpirv,
+        }),
+        (None, None) => Ok(ShaderModuleSources {
+            vertex: MINIMAL_VERTEX_SPV.to_vec(),
+            fragment: MINIMAL_FRAGMENT_SPV.to_vec(),
+            source: ShaderSourceKind::BuiltInSmoke,
+        }),
+        _ => Err("--vertex-spv and --fragment-spv must be provided together".into()),
+    }
+}
+
+fn read_spirv_words(path: &Path) -> Result<Vec<u32>, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if bytes.len() % std::mem::size_of::<u32>() != 0 {
+        return Err(format!(
+            "{} is not valid SPIR-V: byte length is not a multiple of 4",
+            path.display()
+        )
+        .into());
+    }
+    let words = bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect::<Vec<_>>();
+    if words.first().copied() != Some(0x0723_0203) {
+        return Err(format!("{} is not valid SPIR-V: missing magic", path.display()).into());
+    }
+    Ok(words)
+}
+
+fn shader_source_label(source: ShaderSourceKind) -> &'static str {
+    match source {
+        ShaderSourceKind::BuiltInSmoke => "built-in-color-smoke",
+        ShaderSourceKind::ExternalSpirv => "external-spirv",
+    }
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -1179,6 +1247,7 @@ fn write_rgba_json(
     path: &Path,
     options: &Options,
     frame: &AshRendererFrame,
+    shaders: ShaderSourceKind,
     readback: &ReadbackFrame,
     width: u32,
     height: u32,
@@ -1196,6 +1265,7 @@ fn write_rgba_json(
         "renderer": {
             "backend": "ash",
             "physicalDevice": "local-vulkan-device",
+            "shaderSource": shader_source_label(shaders),
             "graphicsPipelines": frame.pipelines.len(),
             "drawCalls": frame.draw_calls.len(),
         },
@@ -1249,6 +1319,7 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
         &json_path,
         options,
         &AshRendererFrame::default(),
+        ShaderSourceKind::BuiltInSmoke,
         &readback,
         width,
         height,
@@ -1345,6 +1416,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let frame_plan = frame_plan_from_options(&options.frame)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
+    let shaders = shader_sources_from_options(&options)?;
     let renderer = UnsafeAshDeviceRenderer::new()?;
     let resources = renderer.materialize_frame(
         &renderer_frame,
@@ -1352,15 +1424,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             width: options.width.max(1),
             height: options.height.max(1),
         },
+        &shaders,
     )?;
     println!(
-        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans on physical device {:?}",
+        "unsafe ash device renderer: {} buffers, {} images, {} descriptor sets, {} graphics pipelines, {} recorded command buffers, {} draw plans, {} shaders on physical device {:?}",
         resources.buffers.len(),
         resources.images.len(),
         resources.descriptor_sets.len(),
         resources.pipelines.len(),
         resources.command_buffers.len(),
         renderer_frame.draw_calls.len(),
+        shader_source_label(shaders.source),
         renderer.physical_device
     );
     if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
@@ -1376,6 +1450,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 path,
                 &options,
                 &renderer_frame,
+                shaders.source,
                 &summary,
                 options.width.max(1),
                 options.height.max(1),
