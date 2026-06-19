@@ -7,7 +7,7 @@ use vrm_adapter_ash::{
 };
 
 #[derive(Clone, Debug, Parser)]
-#[command(about = "Materialize a VRM frame plan into real ash Vulkan buffers and descriptors")]
+#[command(about = "Materialize a VRM frame plan into real ash Vulkan offscreen draw resources")]
 struct Options {
     #[command(flatten)]
     frame: AshVrmFramePlanOptions,
@@ -20,6 +20,9 @@ struct Options {
     /// Offscreen framebuffer height for the drawable pipeline smoke.
     #[arg(long, default_value_t = 64)]
     height: u32,
+    /// Submit the recorded offscreen draw and read back the color attachment.
+    #[arg(long)]
+    submit_readback: bool,
 }
 
 struct VulkanFrameResources {
@@ -36,6 +39,8 @@ struct VulkanFrameResources {
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
     command_buffers: Vec<vk::CommandBuffer>,
+    readback: VulkanBuffer,
+    readback_len: usize,
     command_pool: vk::CommandPool,
 }
 
@@ -68,6 +73,15 @@ struct CommandRecordContext<'a> {
     pipeline_layouts: &'a [vk::PipelineLayout],
     buffers: &'a [VulkanBuffer],
     descriptor_sets: &'a [vk::DescriptorSet],
+    color_target: vk::Image,
+    readback_buffer: vk::Buffer,
+}
+
+#[derive(Clone, Debug)]
+struct ReadbackSummary {
+    bytes: usize,
+    checksum: u64,
+    nonzero_pixels: usize,
 }
 
 const MINIMAL_VERTEX_SPV: &[u32] = &[
@@ -211,6 +225,11 @@ impl UnsafeAshDeviceRenderer {
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
         )?;
+        let readback_len = extent.width as usize * extent.height as usize * 4;
+        let readback = self.create_host_buffer(
+            vk::BufferUsageFlags::TRANSFER_DST,
+            &vec![0_u8; readback_len],
+        )?;
         let descriptor_set_layouts = frame
             .descriptor_sets
             .iter()
@@ -260,6 +279,8 @@ impl UnsafeAshDeviceRenderer {
             pipeline_layouts: &pipeline_layouts,
             buffers: &buffers,
             descriptor_sets: &descriptor_sets,
+            color_target: color_target.image,
+            readback_buffer: readback.buffer,
         };
         let command_buffers = self.record_command_buffers(frame, &command_context)?;
         Ok(VulkanFrameResources {
@@ -276,11 +297,13 @@ impl UnsafeAshDeviceRenderer {
             pipeline_layouts,
             pipelines,
             command_buffers,
+            readback,
+            readback_len,
             command_pool,
         })
     }
 
-    fn create_upload_buffer(
+    fn create_host_buffer(
         &self,
         usage: vk::BufferUsageFlags,
         bytes: &[u8],
@@ -302,13 +325,23 @@ impl UnsafeAshDeviceRenderer {
         let memory = unsafe { self.device.allocate_memory(&allocate_info, None)? };
         unsafe {
             self.device.bind_buffer_memory(buffer, memory, 0)?;
-            let mapped = self
-                .device
-                .map_memory(memory, 0, size, vk::MemoryMapFlags::empty())?;
-            ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
-            self.device.unmap_memory(memory);
+            if !bytes.is_empty() {
+                let mapped =
+                    self.device
+                        .map_memory(memory, 0, size, vk::MemoryMapFlags::empty())?;
+                ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+                self.device.unmap_memory(memory);
+            }
         }
         Ok(VulkanBuffer { buffer, memory })
+    }
+
+    fn create_upload_buffer(
+        &self,
+        usage: vk::BufferUsageFlags,
+        bytes: &[u8],
+    ) -> Result<VulkanBuffer, Box<dyn Error>> {
+        self.create_host_buffer(usage | vk::BufferUsageFlags::TRANSFER_DST, bytes)
     }
 
     fn create_image(
@@ -691,9 +724,89 @@ impl UnsafeAshDeviceRenderer {
                     .cmd_draw_indexed(command_buffer, draw.index_count, 1, 0, 0, 0);
             }
             self.device.cmd_end_render_pass(command_buffer);
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .image(context.color_target)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1),
+                    )],
+            );
+            self.device.cmd_copy_image_to_buffer(
+                command_buffer,
+                context.color_target,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                context.readback_buffer,
+                &[vk::BufferImageCopy::default()
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1),
+                    )
+                    .image_extent(vk::Extent3D {
+                        width: context.extent.width,
+                        height: context.extent.height,
+                        depth: 1,
+                    })],
+            );
             self.device.end_command_buffer(command_buffer)?;
         }
         Ok(command_buffers)
+    }
+
+    fn submit_and_readback(
+        &self,
+        resources: &VulkanFrameResources,
+    ) -> Result<ReadbackSummary, Box<dyn Error>> {
+        let queue = unsafe { self.device.get_device_queue(self.queue_family_index, 0) };
+        let submit_info = [vk::SubmitInfo::default().command_buffers(&resources.command_buffers)];
+        let fence_info = vk::FenceCreateInfo::default();
+        let fence = unsafe { self.device.create_fence(&fence_info, None)? };
+        unsafe {
+            self.device.queue_submit(queue, &submit_info, fence)?;
+            self.device.wait_for_fences(&[fence], true, u64::MAX)?;
+            self.device.destroy_fence(fence, None);
+        }
+        self.readback_summary(resources)
+    }
+
+    fn readback_summary(
+        &self,
+        resources: &VulkanFrameResources,
+    ) -> Result<ReadbackSummary, Box<dyn Error>> {
+        let size = resources.readback_len as vk::DeviceSize;
+        let bytes = unsafe {
+            let mapped = self.device.map_memory(
+                resources.readback.memory,
+                0,
+                size,
+                vk::MemoryMapFlags::empty(),
+            )?;
+            let slice = std::slice::from_raw_parts(mapped.cast::<u8>(), resources.readback_len);
+            let bytes = slice.to_vec();
+            self.device.unmap_memory(resources.readback.memory);
+            bytes
+        };
+        Ok(ReadbackSummary {
+            bytes: bytes.len(),
+            checksum: fnv1a64(&bytes),
+            nonzero_pixels: bytes
+                .chunks_exact(4)
+                .filter(|pixel| pixel.iter().any(|channel| *channel != 0))
+                .count(),
+        })
     }
 
     fn find_memory_type(
@@ -745,6 +858,8 @@ impl UnsafeAshDeviceRenderer {
             self.device
                 .destroy_image(resources.color_target.image, None);
             self.device.free_memory(resources.color_target.memory, None);
+            self.device.destroy_buffer(resources.readback.buffer, None);
+            self.device.free_memory(resources.readback.memory, None);
             for buffer in resources.buffers {
                 self.device.destroy_buffer(buffer.buffer, None);
                 self.device.free_memory(buffer.memory, None);
@@ -762,6 +877,12 @@ fn vertex_attribute_description(
         format: attribute.format,
         offset: attribute.offset,
     }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 impl Drop for UnsafeAshDeviceRenderer {
@@ -800,6 +921,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         renderer_frame.draw_calls.len(),
         renderer.physical_device
     );
+    if options.submit_readback {
+        let summary = renderer.submit_and_readback(&resources)?;
+        println!(
+            "ash offscreen readback: {} bytes, {} nonzero pixels, checksum {:016x}",
+            summary.bytes, summary.nonzero_pixels, summary.checksum
+        );
+    }
     renderer.destroy_frame_resources(resources);
     Ok(())
 }

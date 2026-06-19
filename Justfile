@@ -39,9 +39,9 @@ ash-vrma-frame-plan avatar=".external-fixtures/official/Seed-san.vrm" animation=
 ash-renderer-integration avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example renderer_integration -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
 
-# Materialize a VRM frame plan into real ash Vulkan resources, offscreen graphics pipelines, and a recorded draw command buffer.
+# Materialize a VRM frame plan into real ash Vulkan resources, submit an offscreen draw, and read back a checksum.
 ash-unsafe-device-renderer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
-    cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}"
+    cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}" --submit-readback
 
 # Stable render-parity gates.
 
