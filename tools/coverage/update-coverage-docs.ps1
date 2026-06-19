@@ -109,6 +109,7 @@ function Build-TestingSection {
         @{ Name = "vrm-adapter-wgpu"; Key = "vrm-adapter-wgpu" },
         @{ Name = "vrm-adapter"; Key = "vrm-adapter" },
         @{ Name = "vrm-core"; Key = "vrm-core" },
+        @{ Name = "vrm-diagnostics"; Key = "vrm-diagnostics" },
         @{ Name = "vrm-io"; Key = "vrm-io" },
         @{ Name = "vrm-osc"; Key = "vrm-osc" },
         @{ Name = "vrm-protocol"; Key = "vrm-protocol" },

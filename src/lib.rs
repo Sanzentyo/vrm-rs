@@ -17,6 +17,8 @@
 
 pub use vrm_adapter as adapter;
 pub use vrm_core as core;
+#[cfg(feature = "diagnostics")]
+pub use vrm_diagnostics as diagnostics;
 pub use vrm_io as io;
 #[cfg(feature = "osc")]
 pub use vrm_osc as osc;

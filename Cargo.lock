@@ -4187,6 +4187,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vrm-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vrm-io"
 version = "0.1.0"
 dependencies = [
@@ -4233,6 +4241,7 @@ dependencies = [
  "vrm-adapter",
  "vrm-adapter-bevy",
  "vrm-core",
+ "vrm-diagnostics",
  "vrm-io",
  "vrm-osc",
  "vrm-protocol",
@@ -4259,6 +4268,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "vrm-core",
+ "vrm-diagnostics",
  "vrm-protocol",
 ]
 

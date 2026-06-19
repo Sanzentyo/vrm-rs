@@ -13,6 +13,7 @@ members = [
     "crates/vrm-adapter-bevy",
     "crates/vrm-adapter-wgpu",
     "crates/vrm-core",
+    "crates/vrm-diagnostics",
     "crates/vrm-io",
     "crates/vrm-osc",
     "crates/vrm-protocol",
@@ -40,6 +41,7 @@ wgpu = "29.0.3"
 
 [features]
 default = []
+diagnostics = ["dep:vrm-diagnostics"]
 osc = ["dep:vrm-osc"]
 
 [dependencies]
@@ -47,6 +49,7 @@ glam.workspace = true
 thiserror.workspace = true
 vrm-adapter = { path = "crates/vrm-adapter" }
 vrm-core = { path = "crates/vrm-core" }
+vrm-diagnostics = { path = "crates/vrm-diagnostics", optional = true }
 vrm-io = { path = "crates/vrm-io" }
 vrm-osc = { path = "crates/vrm-osc", optional = true }
 vrm-protocol = { path = "crates/vrm-protocol" }

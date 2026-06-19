@@ -128,6 +128,7 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - Integration note: the archive's `tools/apply.py --dry-run` proposes useful patches, but the zip does not include the referenced `overlay/` crate/module sources. Do not apply the script blindly; port each requirement into the existing workspace with focused tests and normal gates.
   - [x] Expression conformance slice: binary expression threshold uses `> 0.5`, non-finite input becomes `0`, `block` fully suppresses a category when its source output is positive, `blend` scales by source output, binary targets collapse to `0` when category multipliers make them fractional, renderer-facing expression effects use the same rule, unknown expression writes have a checked API, and malformed VRM1 expression JSON is an error instead of being silently dropped.
   - [ ] Structured diagnostics and strict/lenient load policy.
+    - [x] Foundation: added `vrm-diagnostics` with typed severity, policy, JSON path, and report APIs, and connected VRM1 expression parsing so strict mode errors with structured diagnostics while lenient mode reports and skips malformed expressions.
   - [ ] Lossless source preservation for raw JSON, unknown extensions, extras, and GLB chunks.
   - [ ] glTF/GLB/VRM writer plus metadata editing and atomic save.
   - [ ] Persistent runtime pipeline with LookAt, first-person controller, fixed-step spring stepping, and observable stage report.

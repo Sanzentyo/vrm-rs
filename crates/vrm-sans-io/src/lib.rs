@@ -36,15 +36,29 @@
 use glam::Vec3;
 use thiserror::Error;
 use vrm_core::*;
+use vrm_diagnostics::{
+    Diagnostic, DiagnosticPolicy, DiagnosticReport, DiagnosticSeverity, JsonPath,
+};
 use vrm_protocol::{
     VrmExtension, khr_materials_emissive_strength, materials_hdr_emissive_multiplier,
     node_constraint, spring_bone, vrm0, vrm1, vrma,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedAssetBuilder {
     node_count: Option<usize>,
     material_count: Option<usize>,
+    diagnostic_policy: DiagnosticPolicy,
+}
+
+impl Default for ValidatedAssetBuilder {
+    fn default() -> Self {
+        Self {
+            node_count: None,
+            material_count: None,
+            diagnostic_policy: DiagnosticPolicy::Strict,
+        }
+    }
 }
 
 impl ValidatedAssetBuilder {
@@ -62,14 +76,27 @@ impl ValidatedAssetBuilder {
         self
     }
 
+    pub fn with_diagnostic_policy(mut self, diagnostic_policy: DiagnosticPolicy) -> Self {
+        self.diagnostic_policy = diagnostic_policy;
+        self
+    }
+
     pub fn build(
         self,
         bundle: vrm_protocol::ExtensionBundle,
     ) -> Result<VrmAsset<Validated>, BuildError> {
+        self.build_with_diagnostics(bundle).map(|build| build.value)
+    }
+
+    pub fn build_with_diagnostics(
+        self,
+        bundle: vrm_protocol::ExtensionBundle,
+    ) -> Result<DiagnosticBuild<VrmAsset<Validated>>, BuildError> {
+        let mut diagnostics = DiagnosticReport::new();
         validate_secondary_extension_versions(&bundle)?;
         let extension = bundle.vrm.ok_or(BuildError::MissingVrm)?;
         let mut document = match extension {
-            VrmExtension::Vrm1(vrm) => map_vrm1(*vrm)?,
+            VrmExtension::Vrm1(vrm) => map_vrm1(*vrm, self.diagnostic_policy, &mut diagnostics)?,
             VrmExtension::Vrm0(vrm) => map_vrm0(*vrm)?,
             VrmExtension::Vrma(animation) => map_vrma(*animation),
         };
@@ -130,8 +157,17 @@ impl ValidatedAssetBuilder {
         }
         validate_spring_references(&document)?;
 
-        Ok(VrmAsset::<Parsed>::new_parsed(document).mark_validated())
+        Ok(DiagnosticBuild {
+            value: VrmAsset::<Parsed>::new_parsed(document).mark_validated(),
+            diagnostics,
+        })
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagnosticBuild<T> {
+    pub value: T,
+    pub diagnostics: DiagnosticReport,
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -142,9 +178,15 @@ pub enum BuildError {
     Core(#[from] CoreError),
     #[error("invalid protocol data: {0}")]
     Protocol(String),
+    #[error("{0}")]
+    Diagnostics(DiagnosticReport),
 }
 
-fn map_vrm1(vrm: vrm1::VrmcVrm) -> Result<VrmDocument, BuildError> {
+fn map_vrm1(
+    vrm: vrm1::VrmcVrm,
+    diagnostic_policy: DiagnosticPolicy,
+    diagnostics: &mut DiagnosticReport,
+) -> Result<VrmDocument, BuildError> {
     let mut document = VrmDocument {
         kind: VrmKind::Vrm1,
         meta: Meta {
@@ -189,7 +231,11 @@ fn map_vrm1(vrm: vrm1::VrmcVrm) -> Result<VrmDocument, BuildError> {
     }
 
     if let Some(expressions) = vrm.expressions {
-        document.expressions = Feature::Present(map_vrm1_expressions(expressions)?);
+        document.expressions = Feature::Present(map_vrm1_expressions(
+            expressions,
+            diagnostic_policy,
+            diagnostics,
+        )?);
     }
 
     Ok(document)
@@ -245,35 +291,64 @@ fn map_vrm1_humanoid(humanoid: vrm1::Humanoid) -> Result<Humanoid, BuildError> {
     Ok(Humanoid { bones })
 }
 
-fn map_vrm1_expressions(expressions: vrm1::Expressions) -> Result<ExpressionSet, BuildError> {
-    let preset = expressions
-        .preset
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, value)| {
-            let expression =
-                serde_json::from_value::<vrm1::Expression>(value).map_err(|error| {
-                    BuildError::Protocol(format!("invalid preset expression {name:?}: {error}"))
-                })?;
-            Ok((
-                ExpressionName::from(name.as_str()),
-                map_expression(expression),
-            ))
-        })
-        .collect::<Result<_, BuildError>>()?;
-    let custom = expressions
-        .custom
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, value)| {
-            let expression =
-                serde_json::from_value::<vrm1::Expression>(value).map_err(|error| {
-                    BuildError::Protocol(format!("invalid custom expression {name:?}: {error}"))
-                })?;
-            Ok((name, map_expression(expression)))
-        })
-        .collect::<Result<_, BuildError>>()?;
-    Ok(ExpressionSet { preset, custom })
+fn map_vrm1_expressions(
+    expressions: vrm1::Expressions,
+    diagnostic_policy: DiagnosticPolicy,
+    diagnostics: &mut DiagnosticReport,
+) -> Result<ExpressionSet, BuildError> {
+    let mut result = ExpressionSet::default();
+    for (name, value) in expressions.preset.unwrap_or_default() {
+        if let Some(expression) =
+            map_vrm1_expression_value("preset", &name, value, diagnostic_policy, diagnostics)?
+        {
+            result
+                .preset
+                .insert(ExpressionName::from(name.as_str()), expression);
+        }
+    }
+
+    for (name, value) in expressions.custom.unwrap_or_default() {
+        if let Some(expression) =
+            map_vrm1_expression_value("custom", &name, value, diagnostic_policy, diagnostics)?
+        {
+            result.custom.insert(name, expression);
+        }
+    }
+    Ok(result)
+}
+
+fn map_vrm1_expression_value(
+    kind: &'static str,
+    name: &str,
+    value: serde_json::Value,
+    diagnostic_policy: DiagnosticPolicy,
+    diagnostics: &mut DiagnosticReport,
+) -> Result<Option<Expression>, BuildError> {
+    match serde_json::from_value::<vrm1::Expression>(value) {
+        Ok(expression) => Ok(Some(map_expression(expression))),
+        Err(error) => {
+            let diagnostic = Diagnostic::error(
+                "vrm.expression.invalid_shape",
+                expression_path(kind, name),
+                format!("invalid {kind} expression {name:?}: {error}"),
+            );
+            diagnostics.push(diagnostic);
+            if diagnostic_policy.is_blocking(DiagnosticSeverity::Error) {
+                Err(BuildError::Diagnostics(diagnostics.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn expression_path(kind: &str, name: &str) -> JsonPath {
+    JsonPath::root()
+        .child("extensions")
+        .child("VRMC_vrm")
+        .child("expressions")
+        .child(kind)
+        .child(name)
 }
 
 fn map_expression(expression: vrm1::Expression) -> Expression {
@@ -2115,6 +2190,52 @@ mod tests {
     }
 
     #[test]
+    fn strict_diagnostics_reject_invalid_expression_shape() {
+        let mut bundle = vrm1_bundle();
+        insert_invalid_vrm1_preset_expression(&mut bundle);
+
+        let err = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .build(bundle)
+            .unwrap_err();
+
+        let BuildError::Diagnostics(report) = err else {
+            panic!("expected diagnostics error");
+        };
+        assert!(report.has_errors());
+        let diagnostic = &report.diagnostics()[0];
+        assert_eq!(diagnostic.code, "vrm.expression.invalid_shape");
+        assert_eq!(
+            diagnostic.path.as_str(),
+            "$.extensions.VRMC_vrm.expressions.preset.blink"
+        );
+        assert!(diagnostic.message.contains("invalid preset expression"));
+        assert!(diagnostic.message.contains("blink"));
+    }
+
+    #[test]
+    fn lenient_diagnostics_report_and_skip_invalid_expression_shape() {
+        let mut bundle = vrm1_bundle();
+        insert_invalid_vrm1_preset_expression(&mut bundle);
+
+        let build = ValidatedAssetBuilder::new()
+            .with_node_count(15)
+            .with_diagnostic_policy(DiagnosticPolicy::Lenient)
+            .build_with_diagnostics(bundle)
+            .unwrap();
+
+        assert!(build.diagnostics.has_errors());
+        assert_eq!(build.diagnostics.diagnostics().len(), 1);
+        assert_eq!(
+            build.diagnostics.diagnostics()[0].path.as_str(),
+            "$.extensions.VRMC_vrm.expressions.preset.blink"
+        );
+        let expressions = build.value.document.expressions.as_ref().unwrap();
+        assert!(!expressions.preset.contains_key(&ExpressionName::Blink));
+        assert!(expressions.custom.is_empty());
+    }
+
+    #[test]
     fn rejects_unsupported_secondary_extension_spec_versions_in_sans_io() {
         let mut bundle = vrm1_bundle();
         bundle.spring_bone = Some(vrm_protocol::spring_bone::VrmcSpringBone {
@@ -2250,6 +2371,22 @@ mod tests {
             }))),
             ..Default::default()
         }
+    }
+
+    fn insert_invalid_vrm1_preset_expression(bundle: &mut ExtensionBundle) {
+        let Some(VrmExtension::Vrm1(vrm)) = &mut bundle.vrm else {
+            panic!("expected VRM1 bundle");
+        };
+        vrm.expressions = Some(vrm1::Expressions {
+            preset: Some(
+                [("blink".to_owned(), serde_json::json!(false))]
+                    .into_iter()
+                    .collect(),
+            ),
+            custom: None,
+            extensions: None,
+            extras: None,
+        });
     }
 
     fn required_vrm0_bones() -> Vec<vrm0::HumanBone> {
