@@ -27,12 +27,12 @@ use vrm_core::{
     UvAnimation, VrmDocument,
 };
 use vrm_runtime::{
-    AimConstraintInput, AppliedExpression, CenterSpringParticleState, CenterSpringRuntimeState,
-    ConstraintRestState, DeltaTime, Runtime, RuntimeEvents, SpringJointParityInput,
-    SpringJointRestState, SpringJointSimulationInput, SpringParticleState, SpringRuntimeState,
-    VrmAnimationFrame, collider_shape_in_simulation_space, solve_aim_constraint,
-    solve_roll_constraint, solve_rotation_constraint, solve_spring_joint_rotation,
-    step_spring_joint, step_spring_joint_parity,
+    AimConstraintInput, AnimationMixerFrame, AppliedExpression, CenterSpringParticleState,
+    CenterSpringRuntimeState, ConstraintRestState, DeltaTime, Runtime, RuntimeEvents,
+    SpringJointParityInput, SpringJointRestState, SpringJointSimulationInput, SpringParticleState,
+    SpringRuntimeState, VrmAnimationFrame, VrmAnimationMixer, collider_shape_in_simulation_space,
+    solve_aim_constraint, solve_roll_constraint, solve_rotation_constraint,
+    solve_spring_joint_rotation, step_spring_joint, step_spring_joint_parity,
 };
 
 pub trait CoordinateSpaceMapping: Copy + std::fmt::Debug + 'static {
@@ -2749,10 +2749,17 @@ impl RuntimePipelineReport {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimePipelineMixerReport {
+    pub mixer: AnimationMixerFrame,
+    pub runtime: RuntimePipelineReport,
+}
+
 #[derive(Debug)]
 pub struct VrmRuntimePipeline<'a> {
     document: &'a VrmDocument,
     runtime: Runtime,
+    animation_mixer: VrmAnimationMixer,
     options: RuntimePipelineOptions,
     root: Option<NodeRef>,
     accumulator: f32,
@@ -2770,6 +2777,7 @@ impl<'a> VrmRuntimePipeline<'a> {
         Self {
             document,
             runtime: Runtime::from_document(document),
+            animation_mixer: VrmAnimationMixer::default(),
             options,
             root: None,
             accumulator: 0.0,
@@ -2785,6 +2793,14 @@ impl<'a> VrmRuntimePipeline<'a> {
 
     pub fn runtime_mut(&mut self) -> &mut Runtime {
         &mut self.runtime
+    }
+
+    pub fn animation_mixer(&self) -> &VrmAnimationMixer {
+        &self.animation_mixer
+    }
+
+    pub fn animation_mixer_mut(&mut self) -> &mut VrmAnimationMixer {
+        &mut self.animation_mixer
     }
 
     pub fn options(&self) -> RuntimePipelineOptions {
@@ -2881,6 +2897,47 @@ impl<'a> VrmRuntimePipeline<'a> {
         }
         report.accumulator = DeltaTime(self.accumulator);
         Ok(report)
+    }
+
+    pub fn tick_mixer<T, E>(
+        &mut self,
+        target: &mut T,
+        delta: DeltaTime,
+    ) -> Result<RuntimePipelineMixerReport, AdapterError<E>>
+    where
+        T: TransformAccess<Error = E>
+            + WorldTransformAccess<Error = E>
+            + WorldMatrixAccess<Error = E>
+            + WorldTransformUpdate<Error = E>
+            + SceneGraph<Error = E>
+            + ConstraintRestAccess<Error = E>
+            + MorphTargetAccess<Error = E>
+            + MaterialAccess<Error = E>
+            + MtoonPipelineAccess<Error = E>
+            + VisibilityAccess<Error = E>
+            + LookAtAccess<Error = E>,
+    {
+        let mixer = self
+            .animation_mixer
+            .update(delta)
+            .map_err(AdapterError::AnimationMixer)?;
+        self.apply_mixer_expression_inputs(&mixer.frame);
+        let mut adapter_frame = mixer.frame.clone();
+        adapter_frame.preset_expressions.clear();
+        adapter_frame.custom_expressions.clear();
+        let runtime = self.tick(target, delta, Some(&adapter_frame))?;
+        Ok(RuntimePipelineMixerReport { mixer, runtime })
+    }
+
+    fn apply_mixer_expression_inputs(&mut self, frame: &VrmAnimationFrame) {
+        for (name, weight) in &frame.preset_expressions {
+            self.runtime
+                .expression_manager
+                .set_value(name.as_str(), *weight);
+        }
+        for (name, weight) in &frame.custom_expressions {
+            self.runtime.expression_manager.set_value(name, *weight);
+        }
     }
 
     fn consume_substeps(&mut self, delta: DeltaTime, report: &mut RuntimePipelineReport) -> usize {
@@ -3992,6 +4049,8 @@ pub enum AdapterError<E> {
     Target(E),
     #[error("runtime error: {0}")]
     Runtime(vrm_runtime::RuntimeError),
+    #[error("animation mixer error: {0}")]
+    AnimationMixer(vrm_runtime::AnimationMixerError),
     #[error("spring joint state is missing for spring {spring_index}, joint {joint_index}")]
     InvalidSpringJoint {
         spring_index: usize,
@@ -4018,7 +4077,7 @@ mod tests {
         EmissiveStrength, Expression, ExpressionSet, Feature, FirstPerson,
         FirstPersonMeshAnnotation, HdrEmissiveMultiplier, HumanBone, Humanoid, Material,
         MtoonMaterial, MtoonRenderQueue, MtoonTextureSet, OutlineWidthMode, PoseTransform,
-        RotationTrack, Transform, VrmAnimation, VrmDocument,
+        RotationTrack, ScalarTrack, Transform, TranslationTrack, VrmAnimation, VrmDocument,
     };
     use vrm_runtime::sample_vrm_animation;
 
@@ -7704,6 +7763,88 @@ mod tests {
         assert!(pipeline.spring_state().is_some());
         assert!(mock.world_updates >= 1);
         assert!(mock.rotations.iter().any(|(node, _)| *node == NodeRef(2)));
+    }
+
+    #[test]
+    fn runtime_pipeline_tick_mixer_applies_sampled_vrma_frame() {
+        let document = VrmDocument {
+            humanoid: Humanoid {
+                bones: [(
+                    HumanBoneName::Hips,
+                    HumanBone {
+                        node: NodeRef(1),
+                        rest: Transform::default(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            expressions: Feature::Present(ExpressionSet {
+                preset: [(
+                    ExpressionName::Blink,
+                    Expression {
+                        binds: vec![ExpressionBind::MorphTarget {
+                            node: NodeRef(8),
+                            index: 0,
+                            weight: 100.0,
+                        }],
+                        ..Expression::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                custom: Default::default(),
+            }),
+            ..VrmDocument::default()
+        };
+        let mut animation = VrmAnimation {
+            duration: 1.0,
+            hips_translation: Some(TranslationTrack {
+                times: vec![0.0, 1.0],
+                values: vec![Vec3::ZERO, Vec3::Y],
+            }),
+            look_at_track: Some(RotationTrack {
+                times: vec![0.0, 1.0],
+                values: vec![Quat::IDENTITY, Quat::from_rotation_x(0.5)],
+            }),
+            ..VrmAnimation::default()
+        };
+        animation.preset_expression_tracks.insert(
+            ExpressionName::Blink,
+            ScalarTrack {
+                times: vec![0.0, 1.0],
+                values: vec![0.0, 1.0],
+            },
+        );
+        let mut pipeline = VrmRuntimePipeline::with_options(
+            &document,
+            RuntimePipelineOptions {
+                fixed_delta: DeltaTime(1.0),
+                ..RuntimePipelineOptions::default()
+            },
+        );
+        let clip = pipeline.animation_mixer_mut().add_clip(animation);
+        pipeline
+            .animation_mixer_mut()
+            .play(clip, vrm_runtime::AnimationActionOptions::default())
+            .unwrap();
+        let mut mock = Mock::default();
+
+        let report = pipeline.tick_mixer(&mut mock, DeltaTime(0.5)).unwrap();
+
+        assert_eq!(report.runtime.substeps, 0);
+        assert_eq!(
+            report.mixer.frame.hips_translation,
+            Some(Vec3::new(0.0, 0.5, 0.0))
+        );
+        assert!(mock.local_sets.iter().any(|(node, transform)| {
+            *node == NodeRef(1)
+                && transform
+                    .translation
+                    .abs_diff_eq(Vec3::new(0.0, 0.5, 0.0), 0.0001)
+        }));
+        assert_eq!(mock.morphs, vec![(NodeRef(8), 0, 50.0)]);
+        assert_eq!(mock.look_at_rotations.len(), 1);
     }
 
     #[test]

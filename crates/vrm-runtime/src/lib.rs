@@ -1043,6 +1043,512 @@ pub fn sample_vrm_animation(animation: &VrmAnimation, time: f32) -> VrmAnimation
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct VrmAnimationClipId(pub usize);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct VrmAnimationActionId(pub u64);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnimationLoopMode {
+    Once,
+    #[default]
+    Repeat,
+    PingPong,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnimationBlendMode {
+    #[default]
+    Override,
+    Additive,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RootMotionPolicy {
+    #[default]
+    Apply,
+    Ignore,
+    Extract,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum BoneMask {
+    #[default]
+    All,
+    Only(Vec<HumanBoneName>),
+    Except(Vec<HumanBoneName>),
+}
+
+impl BoneMask {
+    pub fn contains(&self, bone: &HumanBoneName) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(bones) => bones.contains(bone),
+            Self::Except(bones) => !bones.contains(bone),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationActionOptions {
+    pub loop_mode: AnimationLoopMode,
+    pub blend_mode: AnimationBlendMode,
+    pub root_motion: RootMotionPolicy,
+    pub bone_mask: BoneMask,
+    pub layer: i32,
+    pub speed: f32,
+    pub weight: f32,
+    pub paused: bool,
+}
+
+impl Default for AnimationActionOptions {
+    fn default() -> Self {
+        Self {
+            loop_mode: AnimationLoopMode::Repeat,
+            blend_mode: AnimationBlendMode::Override,
+            root_motion: RootMotionPolicy::Apply,
+            bone_mask: BoneMask::All,
+            layer: 0,
+            speed: 1.0,
+            weight: 1.0,
+            paused: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimationMixerFrame {
+    pub frame: VrmAnimationFrame,
+    pub root_motion: Option<Vec3>,
+    pub completed_actions: Vec<VrmAnimationActionId>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VrmAnimationMixer {
+    clips: Vec<VrmAnimation>,
+    actions: Vec<AnimationAction>,
+    next_action_id: u64,
+    order: u64,
+}
+
+impl VrmAnimationMixer {
+    pub fn add_clip(&mut self, clip: VrmAnimation) -> VrmAnimationClipId {
+        let id = VrmAnimationClipId(self.clips.len());
+        self.clips.push(clip);
+        id
+    }
+
+    pub fn clip(&self, id: VrmAnimationClipId) -> Option<&VrmAnimation> {
+        self.clips.get(id.0)
+    }
+
+    pub fn actions(&self) -> impl Iterator<Item = &AnimationAction> {
+        self.actions.iter().filter(|action| action.active)
+    }
+
+    pub fn play(
+        &mut self,
+        clip: VrmAnimationClipId,
+        options: AnimationActionOptions,
+    ) -> Result<VrmAnimationActionId, AnimationMixerError> {
+        self.clip(clip)
+            .ok_or(AnimationMixerError::UnknownClip { clip })?;
+        let id = VrmAnimationActionId(self.next_action_id);
+        self.next_action_id += 1;
+        let order = self.order;
+        self.order += 1;
+        let weight = sanitize_weight(options.weight);
+        self.actions.push(AnimationAction {
+            id,
+            clip,
+            options,
+            time: 0.0,
+            weight,
+            fade: None,
+            active: true,
+            order,
+            completed: false,
+        });
+        Ok(id)
+    }
+
+    pub fn stop(&mut self, action: VrmAnimationActionId) -> Result<(), AnimationMixerError> {
+        self.action_mut(action)?.active = false;
+        Ok(())
+    }
+
+    pub fn seek(
+        &mut self,
+        action: VrmAnimationActionId,
+        time: f32,
+    ) -> Result<(), AnimationMixerError> {
+        self.action_mut(action)?.time = sanitize_seconds(time);
+        Ok(())
+    }
+
+    pub fn set_weight(
+        &mut self,
+        action: VrmAnimationActionId,
+        weight: f32,
+    ) -> Result<(), AnimationMixerError> {
+        let action = self.action_mut(action)?;
+        action.weight = sanitize_weight(weight);
+        action.fade = None;
+        Ok(())
+    }
+
+    pub fn fade_to(
+        &mut self,
+        action: VrmAnimationActionId,
+        target_weight: f32,
+        duration: f32,
+    ) -> Result<(), AnimationMixerError> {
+        let action = self.action_mut(action)?;
+        action.fade = Some(AnimationFade {
+            start_weight: action.weight,
+            target_weight: sanitize_weight(target_weight),
+            duration: sanitize_seconds(duration),
+            elapsed: 0.0,
+        });
+        Ok(())
+    }
+
+    pub fn cross_fade(
+        &mut self,
+        from: VrmAnimationActionId,
+        to_clip: VrmAnimationClipId,
+        duration: f32,
+        mut options: AnimationActionOptions,
+    ) -> Result<VrmAnimationActionId, AnimationMixerError> {
+        self.fade_to(from, 0.0, duration)?;
+        let target = sanitize_weight(options.weight);
+        options.weight = 0.0;
+        let to = self.play(to_clip, options)?;
+        self.fade_to(to, target, duration)?;
+        Ok(to)
+    }
+
+    pub fn update(&mut self, delta: DeltaTime) -> Result<AnimationMixerFrame, AnimationMixerError> {
+        let delta_seconds = sanitized_delta_seconds(delta);
+        let mut completed_actions = Vec::new();
+        let mut contributions = Vec::new();
+        for index in 0..self.actions.len() {
+            if !self.actions[index].active {
+                continue;
+            }
+            let (sample_time, effective_weight, completed) =
+                self.advance_action(index, delta_seconds)?;
+            if completed {
+                completed_actions.push(self.actions[index].id);
+            }
+            if effective_weight <= f32::EPSILON {
+                continue;
+            }
+            let action = self.actions[index].clone();
+            let clip = self
+                .clip(action.clip)
+                .ok_or(AnimationMixerError::UnknownClip { clip: action.clip })?;
+            contributions.push(AnimationContribution {
+                action,
+                frame: sample_vrm_animation(clip, sample_time),
+                weight: effective_weight,
+            });
+        }
+
+        contributions.sort_by_key(|entry| (entry.action.options.layer, entry.action.order));
+        let mut output = AnimationMixerFrame {
+            completed_actions,
+            ..AnimationMixerFrame::default()
+        };
+        for contribution in contributions {
+            output.apply_contribution(&contribution);
+        }
+        self.actions.retain(|action| action.active);
+        Ok(output)
+    }
+
+    fn advance_action(
+        &mut self,
+        index: usize,
+        delta_seconds: f32,
+    ) -> Result<(f32, f32, bool), AnimationMixerError> {
+        let clip = self
+            .clip(self.actions[index].clip)
+            .ok_or(AnimationMixerError::UnknownClip {
+                clip: self.actions[index].clip,
+            })?;
+        let duration = clip.duration.max(0.0);
+        let action = &mut self.actions[index];
+        if !action.options.paused {
+            action.time += delta_seconds * action.options.speed.max(0.0);
+        }
+        action.update_fade(delta_seconds);
+        let (sample_time, completed) =
+            looped_sample_time(action.time, duration, action.options.loop_mode);
+        if completed && !action.completed {
+            action.completed = true;
+        }
+        if action.fade_finished_at_zero()
+            || (completed && action.options.loop_mode == AnimationLoopMode::Once)
+        {
+            action.active = false;
+        }
+        Ok((sample_time, action.weight, completed))
+    }
+
+    fn action_mut(
+        &mut self,
+        id: VrmAnimationActionId,
+    ) -> Result<&mut AnimationAction, AnimationMixerError> {
+        self.actions
+            .iter_mut()
+            .find(|action| action.id == id && action.active)
+            .ok_or(AnimationMixerError::UnknownAction { action: id })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationAction {
+    pub id: VrmAnimationActionId,
+    pub clip: VrmAnimationClipId,
+    pub options: AnimationActionOptions,
+    pub time: f32,
+    pub weight: f32,
+    fade: Option<AnimationFade>,
+    active: bool,
+    order: u64,
+    completed: bool,
+}
+
+impl AnimationAction {
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn update_fade(&mut self, delta_seconds: f32) {
+        let Some(fade) = &mut self.fade else {
+            return;
+        };
+        if fade.duration <= f32::EPSILON {
+            self.weight = fade.target_weight;
+            self.fade = None;
+            return;
+        }
+        fade.elapsed = (fade.elapsed + delta_seconds).min(fade.duration);
+        let t = fade.elapsed / fade.duration;
+        self.weight = fade.start_weight + (fade.target_weight - fade.start_weight) * t;
+        if fade.elapsed >= fade.duration {
+            self.weight = fade.target_weight;
+            self.fade = None;
+        }
+    }
+
+    fn fade_finished_at_zero(&self) -> bool {
+        self.fade.is_none() && self.weight <= f32::EPSILON
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnimationFade {
+    start_weight: f32,
+    target_weight: f32,
+    duration: f32,
+    elapsed: f32,
+}
+
+#[derive(Clone, Debug)]
+struct AnimationContribution {
+    action: AnimationAction,
+    frame: VrmAnimationFrame,
+    weight: f32,
+}
+
+impl AnimationMixerFrame {
+    fn apply_contribution(&mut self, contribution: &AnimationContribution) {
+        let action = &contribution.action;
+        let weight = contribution.weight;
+        for (bone, rotation) in &contribution.frame.humanoid_rotations {
+            if action.options.bone_mask.contains(bone) {
+                blend_rotation_entry(
+                    &mut self.frame.humanoid_rotations,
+                    bone.clone(),
+                    *rotation,
+                    weight,
+                    action.options.blend_mode,
+                );
+            }
+        }
+        match action.options.root_motion {
+            RootMotionPolicy::Apply => {
+                if let Some(translation) = contribution.frame.hips_translation {
+                    blend_translation(
+                        &mut self.frame.hips_translation,
+                        translation,
+                        weight,
+                        action.options.blend_mode,
+                    );
+                    self.frame.source_rest_hips_position =
+                        contribution.frame.source_rest_hips_position;
+                }
+            }
+            RootMotionPolicy::Ignore => {}
+            RootMotionPolicy::Extract => {
+                if let Some(translation) = contribution.frame.hips_translation {
+                    blend_translation(
+                        &mut self.root_motion,
+                        translation,
+                        weight,
+                        action.options.blend_mode,
+                    );
+                    self.frame.source_rest_hips_position =
+                        contribution.frame.source_rest_hips_position;
+                }
+            }
+        }
+        for (name, value) in &contribution.frame.preset_expressions {
+            blend_scalar_entry(
+                &mut self.frame.preset_expressions,
+                name.clone(),
+                *value,
+                weight,
+                action.options.blend_mode,
+            );
+        }
+        for (name, value) in &contribution.frame.custom_expressions {
+            blend_scalar_entry(
+                &mut self.frame.custom_expressions,
+                name.clone(),
+                *value,
+                weight,
+                action.options.blend_mode,
+            );
+        }
+        if let Some(rotation) = contribution.frame.look_at {
+            blend_optional_rotation(
+                &mut self.frame.look_at,
+                rotation,
+                weight,
+                action.options.blend_mode,
+            );
+        }
+    }
+}
+
+fn blend_rotation_entry(
+    rotations: &mut IndexMap<HumanBoneName, Quat>,
+    bone: HumanBoneName,
+    rotation: Quat,
+    weight: f32,
+    mode: AnimationBlendMode,
+) {
+    let current = rotations.get(&bone).copied();
+    rotations.insert(bone, blend_rotation(current, rotation, weight, mode));
+}
+
+fn blend_optional_rotation(
+    current: &mut Option<Quat>,
+    rotation: Quat,
+    weight: f32,
+    mode: AnimationBlendMode,
+) {
+    *current = Some(blend_rotation(*current, rotation, weight, mode));
+}
+
+fn blend_rotation(
+    current: Option<Quat>,
+    rotation: Quat,
+    weight: f32,
+    mode: AnimationBlendMode,
+) -> Quat {
+    let weight = sanitize_weight(weight);
+    match (current, mode) {
+        (Some(current), AnimationBlendMode::Override) => {
+            current.slerp(rotation, weight).normalize()
+        }
+        (None, AnimationBlendMode::Override) => Quat::IDENTITY.slerp(rotation, weight).normalize(),
+        (Some(current), AnimationBlendMode::Additive) => {
+            (current * Quat::IDENTITY.slerp(rotation, weight)).normalize()
+        }
+        (None, AnimationBlendMode::Additive) => Quat::IDENTITY.slerp(rotation, weight).normalize(),
+    }
+}
+
+fn blend_translation(
+    current: &mut Option<Vec3>,
+    translation: Vec3,
+    weight: f32,
+    mode: AnimationBlendMode,
+) {
+    let next = match (*current, mode) {
+        (Some(current), AnimationBlendMode::Override) => {
+            current.lerp(translation, sanitize_weight(weight))
+        }
+        (None, AnimationBlendMode::Override) => translation * sanitize_weight(weight),
+        (Some(current), AnimationBlendMode::Additive) => {
+            current + translation * sanitize_weight(weight)
+        }
+        (None, AnimationBlendMode::Additive) => translation * sanitize_weight(weight),
+    };
+    *current = Some(next);
+}
+
+fn blend_scalar_entry<K>(
+    values: &mut IndexMap<K, f32>,
+    key: K,
+    value: f32,
+    weight: f32,
+    mode: AnimationBlendMode,
+) where
+    K: std::hash::Hash + Eq,
+{
+    let weight = sanitize_weight(weight);
+    let current = values.get(&key).copied().unwrap_or(0.0);
+    let next = match mode {
+        AnimationBlendMode::Override => current + (value - current) * weight,
+        AnimationBlendMode::Additive => current + value * weight,
+    };
+    values.insert(key, next);
+}
+
+fn looped_sample_time(time: f32, duration: f32, mode: AnimationLoopMode) -> (f32, bool) {
+    if duration <= f32::EPSILON {
+        return (0.0, true);
+    }
+    match mode {
+        AnimationLoopMode::Once => (time.clamp(0.0, duration), time >= duration),
+        AnimationLoopMode::Repeat => (time.rem_euclid(duration), false),
+        AnimationLoopMode::PingPong => {
+            let phase = time.rem_euclid(duration * 2.0);
+            if phase <= duration {
+                (phase, false)
+            } else {
+                (duration * 2.0 - phase, false)
+            }
+        }
+    }
+}
+
+fn sanitize_weight(weight: f32) -> f32 {
+    if weight.is_finite() {
+        weight.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn sanitize_seconds(seconds: f32) -> f32 {
+    if seconds.is_finite() {
+        seconds.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn sanitized_delta_seconds(delta: DeltaTime) -> f32 {
+    sanitize_seconds(delta.0)
+}
+
 fn sample_track<T: Copy>(
     times: &[f32],
     values: &[T],
@@ -1071,6 +1577,14 @@ fn sample_track<T: Copy>(
 pub enum RuntimeError {
     #[error("circular node constraint dependency")]
     CircularConstraint,
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum AnimationMixerError {
+    #[error("unknown animation clip: {clip:?}")]
+    UnknownClip { clip: VrmAnimationClipId },
+    #[error("unknown animation action: {action:?}")]
+    UnknownAction { action: VrmAnimationActionId },
 }
 
 #[cfg(test)]
@@ -1333,6 +1847,147 @@ mod tests {
         let frame = sample_vrm_animation(&animation, 0.5);
         assert_eq!(frame.hips_translation, Some(Vec3::new(0.0, 0.5, 0.0)));
         assert_eq!(frame.preset_expressions[&ExpressionName::Blink], 0.5);
+    }
+
+    #[test]
+    fn animation_mixer_supports_seek_repeat_and_once_completion() {
+        let mut mixer = VrmAnimationMixer::default();
+        let clip = mixer.add_clip(mixer_clip(
+            2.0,
+            HumanBoneName::Head,
+            (Quat::IDENTITY, Quat::from_rotation_y(2.0)),
+            (Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)),
+            (0.0, 1.0),
+        ));
+        let action = mixer.play(clip, AnimationActionOptions::default()).unwrap();
+        mixer.seek(action, 1.0).unwrap();
+
+        let frame = mixer.update(DeltaTime(0.0)).unwrap();
+
+        assert_eq!(frame.frame.hips_translation, Some(Vec3::new(1.0, 0.0, 0.0)));
+        assert_eq!(frame.frame.preset_expressions[&ExpressionName::Blink], 0.5);
+        assert_quat_close(
+            frame.frame.humanoid_rotations[&HumanBoneName::Head],
+            Quat::from_rotation_y(1.0),
+        );
+
+        mixer.seek(action, 2.5).unwrap();
+        let frame = mixer.update(DeltaTime(0.0)).unwrap();
+        assert_eq!(frame.frame.hips_translation, Some(Vec3::new(0.5, 0.0, 0.0)));
+
+        let once = mixer
+            .play(
+                clip,
+                AnimationActionOptions {
+                    loop_mode: AnimationLoopMode::Once,
+                    ..AnimationActionOptions::default()
+                },
+            )
+            .unwrap();
+        let frame = mixer.update(DeltaTime(3.0)).unwrap();
+
+        assert!(frame.completed_actions.contains(&once));
+        assert!(mixer.actions().all(|action| action.id != once));
+    }
+
+    #[test]
+    fn animation_mixer_cross_fades_actions() {
+        let mut mixer = VrmAnimationMixer::default();
+        let idle = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::IDENTITY, Quat::IDENTITY),
+            (Vec3::ZERO, Vec3::ZERO),
+            (0.0, 0.0),
+        ));
+        let wave = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::from_rotation_z(1.0), Quat::from_rotation_z(1.0)),
+            (Vec3::ZERO, Vec3::ZERO),
+            (1.0, 1.0),
+        ));
+        let idle_action = mixer.play(idle, AnimationActionOptions::default()).unwrap();
+        let wave_action = mixer
+            .cross_fade(idle_action, wave, 1.0, AnimationActionOptions::default())
+            .unwrap();
+
+        let halfway = mixer.update(DeltaTime(0.5)).unwrap();
+        assert!((halfway.frame.preset_expressions[&ExpressionName::Blink] - 0.5).abs() <= 0.0001);
+
+        let complete = mixer.update(DeltaTime(0.5)).unwrap();
+        assert_eq!(
+            complete.frame.preset_expressions[&ExpressionName::Blink],
+            1.0
+        );
+        assert!(mixer.actions().all(|action| action.id != idle_action));
+        assert!(mixer.actions().any(|action| action.id == wave_action));
+    }
+
+    #[test]
+    fn animation_mixer_applies_masks_additive_and_root_motion_policy() {
+        let mut mixer = VrmAnimationMixer::default();
+        let base = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::from_rotation_y(0.5), Quat::from_rotation_y(0.5)),
+            (Vec3::X, Vec3::X),
+            (0.25, 0.25),
+        ));
+        let additive = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::from_rotation_z(1.0), Quat::from_rotation_z(1.0)),
+            (Vec3::Y, Vec3::Y),
+            (0.5, 0.5),
+        ));
+        mixer.play(base, AnimationActionOptions::default()).unwrap();
+        mixer
+            .play(
+                additive,
+                AnimationActionOptions {
+                    blend_mode: AnimationBlendMode::Additive,
+                    root_motion: RootMotionPolicy::Extract,
+                    bone_mask: BoneMask::Only(vec![HumanBoneName::Head]),
+                    layer: 1,
+                    weight: 0.5,
+                    ..AnimationActionOptions::default()
+                },
+            )
+            .unwrap();
+
+        let frame = mixer.update(DeltaTime(0.0)).unwrap();
+
+        assert_eq!(frame.frame.hips_translation, Some(Vec3::X));
+        assert_eq!(frame.root_motion, Some(Vec3::new(0.0, 0.5, 0.0)));
+        assert!((frame.frame.preset_expressions[&ExpressionName::Blink] - 0.5).abs() <= 0.0001);
+        assert!(
+            (frame.frame.humanoid_rotations[&HumanBoneName::Head] * Vec3::Y)
+                .z
+                .abs()
+                > 0.1
+        );
+
+        let mut ignore_mixer = VrmAnimationMixer::default();
+        let ignore = ignore_mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Hips,
+            (Quat::IDENTITY, Quat::IDENTITY),
+            (Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0)),
+            (0.0, 0.0),
+        ));
+        ignore_mixer
+            .play(
+                ignore,
+                AnimationActionOptions {
+                    root_motion: RootMotionPolicy::Ignore,
+                    ..AnimationActionOptions::default()
+                },
+            )
+            .unwrap();
+        let frame = ignore_mixer.update(DeltaTime(0.0)).unwrap();
+        assert_eq!(frame.frame.hips_translation, None);
+        assert_eq!(frame.root_motion, None);
     }
 
     #[test]
@@ -1759,6 +2414,44 @@ mod tests {
             }),
             quat_90_around_xz,
         );
+    }
+
+    fn mixer_clip(
+        duration: f32,
+        bone: HumanBoneName,
+        rotations: (Quat, Quat),
+        translations: (Vec3, Vec3),
+        blink: (f32, f32),
+    ) -> VrmAnimation {
+        let (start_rotation, end_rotation) = rotations;
+        let (start_translation, end_translation) = translations;
+        let (start_blink, end_blink) = blink;
+        let mut animation = VrmAnimation {
+            duration,
+            rest_hips_position: Vec3::Y,
+            humanoid_rotation_tracks: [(
+                bone,
+                RotationTrack {
+                    times: vec![0.0, duration],
+                    values: vec![start_rotation, end_rotation],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            hips_translation: Some(TranslationTrack {
+                times: vec![0.0, duration],
+                values: vec![start_translation, end_translation],
+            }),
+            ..VrmAnimation::default()
+        };
+        animation.preset_expression_tracks.insert(
+            ExpressionName::Blink,
+            ScalarTrack {
+                times: vec![0.0, duration],
+                values: vec![start_blink, end_blink],
+            },
+        );
+        animation
     }
 
     fn quat(x: f32, y: f32, z: f32, w: f32) -> Quat {

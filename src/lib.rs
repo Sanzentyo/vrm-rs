@@ -31,13 +31,18 @@ use std::path::Path;
 pub use glam::Mat4;
 use thiserror::Error;
 pub use vrm_adapter::{
-    HeadlessAdapterError, HeadlessSceneState, RuntimePipelineOptions, RuntimePipelineReport,
-    RuntimePipelineStage, RuntimeStageReport, VrmRuntimeDriver, VrmRuntimePipeline,
+    HeadlessAdapterError, HeadlessSceneState, RuntimePipelineMixerReport, RuntimePipelineOptions,
+    RuntimePipelineReport, RuntimePipelineStage, RuntimeStageReport, VrmRuntimeDriver,
+    VrmRuntimePipeline,
 };
 use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
-pub use vrm_runtime::{DeltaTime, Runtime, RuntimeEvents};
+pub use vrm_runtime::{
+    AnimationActionOptions, AnimationBlendMode, AnimationLoopMode, AnimationMixerError,
+    AnimationMixerFrame, BoneMask, DeltaTime, RootMotionPolicy, Runtime, RuntimeEvents,
+    VrmAnimationActionId, VrmAnimationClipId, VrmAnimationMixer,
+};
 pub use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
 /// Concrete resolved model type returned by the facade loaders.

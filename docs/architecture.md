@@ -51,6 +51,13 @@ Current channel mapping:
 
 `VrmAnimation::rest_hips_position` captures the hips node rest world position. `vrm-runtime` samples clips into `VrmAnimationFrame`, and `vrm-adapter` applies those frames through `TransformAccess`, `MorphTargetAccess`, and `MaterialAccess` without depending on Bevy, wgpu, ash, or glTF node objects.
 
+`vrm-runtime::VrmAnimationMixer` composes sampled VRMA frames without an
+engine-native animation graph. It owns clip/action ids, seek and looping state,
+fade/crossfade, layer ordering, bone masks, additive actions, and root-motion
+apply/ignore/extract policy. `vrm-adapter::VrmRuntimePipeline` embeds this
+mixer and exposes `tick_mixer` so a renderer can advance VRMA clips and runtime
+side effects through one renderer-agnostic adapter entry.
+
 ## Runtime Solvers
 
 Runtime math remains renderer-agnostic. Engine adapters are expected to provide current transforms and apply returned rotations/positions.
