@@ -405,6 +405,23 @@ fn run_example_smokes() -> Result<(), String> {
             "--help",
         ],
     )?;
+    run_cmd(
+        "cargo",
+        [
+            "run",
+            "--release",
+            "-p",
+            "vrm-adapter-ash",
+            "--example",
+            "unsafe_device_renderer",
+            "--",
+            "--artifact-self-test",
+            "--out",
+            "target/ash-artifact-self-test/ash-self-test.frame000.rgba.json",
+            "--imqraw-out",
+            "target/ash-artifact-self-test/ash-self-test.frame000.imqraw",
+        ],
+    )?;
     Ok(())
 }
 

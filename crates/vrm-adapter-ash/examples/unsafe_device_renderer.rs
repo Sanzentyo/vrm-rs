@@ -1,6 +1,17 @@
 use ash::{Entry, vk};
 use clap::Parser;
-use std::{error::Error, ffi::CString, ptr};
+use imq::{
+    FrameOwned, PixelFormat, RawImageBundle, RawImageRecord, decode_imqraw_bundle,
+    encode_imqraw_bundle,
+};
+use serde_json::json;
+use std::{
+    error::Error,
+    ffi::CString,
+    fs, io,
+    path::{Path, PathBuf},
+    ptr,
+};
 use vrm_adapter_ash::{
     AshGraphicsPipelinePlan, AshRendererFrame, AshVertexAttributePlan, AshVrmFramePlanOptions,
     ash_renderer_frame_from_plan, frame_plan_from_options,
@@ -14,6 +25,9 @@ struct Options {
     /// Only print help/parse inputs; useful for CI smoke checks.
     #[arg(long)]
     dry_run: bool,
+    /// Write and validate tiny RGBA/imqraw artifacts without opening Vulkan.
+    #[arg(long)]
+    artifact_self_test: bool,
     /// Offscreen framebuffer width for the drawable pipeline smoke.
     #[arg(long, default_value_t = 64)]
     width: u32,
@@ -23,6 +37,12 @@ struct Options {
     /// Submit the recorded offscreen draw and read back the color attachment.
     #[arg(long)]
     submit_readback: bool,
+    /// Write the submitted/read-back offscreen color attachment as a render-parity RGBA JSON artifact.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Write the submitted/read-back offscreen color attachment as an imqraw bundle.
+    #[arg(long)]
+    imqraw_out: Option<PathBuf>,
 }
 
 struct VulkanFrameResources {
@@ -78,10 +98,16 @@ struct CommandRecordContext<'a> {
 }
 
 #[derive(Clone, Debug)]
-struct ReadbackSummary {
-    bytes: usize,
+struct ReadbackFrame {
+    rgba: Vec<u8>,
     checksum: u64,
     nonzero_pixels: usize,
+}
+
+impl ReadbackFrame {
+    fn byte_len(&self) -> usize {
+        self.rgba.len()
+    }
 }
 
 const MINIMAL_VERTEX_SPV: &[u32] = &[
@@ -769,7 +795,7 @@ impl UnsafeAshDeviceRenderer {
     fn submit_and_readback(
         &self,
         resources: &VulkanFrameResources,
-    ) -> Result<ReadbackSummary, Box<dyn Error>> {
+    ) -> Result<ReadbackFrame, Box<dyn Error>> {
         let queue = unsafe { self.device.get_device_queue(self.queue_family_index, 0) };
         let submit_info = [vk::SubmitInfo::default().command_buffers(&resources.command_buffers)];
         let fence_info = vk::FenceCreateInfo::default();
@@ -785,7 +811,7 @@ impl UnsafeAshDeviceRenderer {
     fn readback_summary(
         &self,
         resources: &VulkanFrameResources,
-    ) -> Result<ReadbackSummary, Box<dyn Error>> {
+    ) -> Result<ReadbackFrame, Box<dyn Error>> {
         let size = resources.readback_len as vk::DeviceSize;
         let bytes = unsafe {
             let mapped = self.device.map_memory(
@@ -799,13 +825,13 @@ impl UnsafeAshDeviceRenderer {
             self.device.unmap_memory(resources.readback.memory);
             bytes
         };
-        Ok(ReadbackSummary {
-            bytes: bytes.len(),
+        Ok(ReadbackFrame {
             checksum: fnv1a64(&bytes),
             nonzero_pixels: bytes
                 .chunks_exact(4)
                 .filter(|pixel| pixel.iter().any(|channel| *channel != 0))
                 .count(),
+            rgba: bytes,
         })
     }
 
@@ -885,6 +911,155 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     })
 }
 
+fn write_rgba_json(
+    path: &Path,
+    options: &Options,
+    frame: &AshRendererFrame,
+    readback: &ReadbackFrame,
+    width: u32,
+    height: u32,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let artifact = json!({
+        "generator": "vrm-rs crates/vrm-adapter-ash/examples/unsafe_device_renderer.rs",
+        "fixture": options.frame.avatar.to_string_lossy(),
+        "animation": (!options.frame.no_animation).then(|| options.frame.animation.to_string_lossy().to_string()),
+        "time": options.frame.time,
+        "width": width,
+        "height": height,
+        "renderer": {
+            "backend": "ash",
+            "physicalDevice": "local-vulkan-device",
+            "graphicsPipelines": frame.pipelines.len(),
+            "drawCalls": frame.draw_calls.len(),
+        },
+        "readback": {
+            "checksum": format!("{:016x}", readback.checksum),
+            "nonzeroPixels": readback.nonzero_pixels,
+        },
+        "format": "rgba8",
+        "rgba": &readback.rgba,
+    });
+    fs::write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(&artifact)?),
+    )?;
+    Ok(())
+}
+
+fn write_imqraw_rgba8(path: &Path, width: u32, height: u32, rgba: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let frame = FrameOwned::packed_tight(rgba.to_vec(), width, height, PixelFormat::Rgba8)
+        .map_err(|err| io::Error::other(format!("failed to create imqraw RGBA frame: {err}")))?;
+    let record = RawImageRecord::new(
+        Some("ash".to_string()),
+        vec!["ash".to_string(), "candidate".to_string()],
+        frame,
+    );
+    let bytes = encode_imqraw_bundle(&RawImageBundle::new(vec![record]))
+        .map_err(|err| io::Error::other(format!("failed to encode imqraw bundle: {err}")))?;
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
+fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
+    let width = 2;
+    let height = 1;
+    let rgba = vec![255, 0, 0, 255, 0, 0, 255, 128];
+    let readback = ReadbackFrame {
+        checksum: fnv1a64(&rgba),
+        nonzero_pixels: 2,
+        rgba: rgba.clone(),
+    };
+    let json_path = options.out.clone().unwrap_or_else(|| {
+        PathBuf::from("target/ash-artifact-self-test/ash-self-test.frame000.rgba.json")
+    });
+    let imqraw_path = options.imqraw_out.clone().unwrap_or_else(|| {
+        PathBuf::from("target/ash-artifact-self-test/ash-self-test.frame000.imqraw")
+    });
+    write_rgba_json(
+        &json_path,
+        options,
+        &AshRendererFrame::default(),
+        &readback,
+        width,
+        height,
+    )?;
+    write_imqraw_rgba8(&imqraw_path, width, height, &rgba)?;
+    validate_rgba_json(&json_path, width, height, &rgba)?;
+    validate_imqraw(&imqraw_path, width, height, &rgba)?;
+    println!(
+        "ash artifact self-test: wrote {} and {}",
+        json_path.display(),
+        imqraw_path.display()
+    );
+    Ok(())
+}
+
+fn validate_rgba_json(
+    path: &Path,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    if value.get("width").and_then(serde_json::Value::as_u64) != Some(u64::from(width)) {
+        return Err(format!("{} has unexpected width", path.display()).into());
+    }
+    if value.get("height").and_then(serde_json::Value::as_u64) != Some(u64::from(height)) {
+        return Err(format!("{} has unexpected height", path.display()).into());
+    }
+    let actual = value
+        .get("rgba")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("{} does not contain an rgba array", path.display()))?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_u64()
+                .and_then(|value| u8::try_from(value).ok())
+                .ok_or_else(|| format!("{} contains a non-u8 rgba value", path.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual != rgba {
+        return Err(format!("{} rgba payload did not round-trip", path.display()).into());
+    }
+    Ok(())
+}
+
+fn validate_imqraw(
+    path: &Path,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let bundle = decode_imqraw_bundle(&fs::read(path)?)?;
+    let record = bundle
+        .records
+        .first()
+        .ok_or_else(|| format!("{} contains no imqraw records", path.display()))?;
+    let dimensions = record.frame.dimensions();
+    if dimensions.width != width || dimensions.height != height {
+        return Err(format!("{} has unexpected imqraw dimensions", path.display()).into());
+    }
+    if record.frame.format().pixel_format != PixelFormat::Rgba8 {
+        return Err(format!("{} is not RGBA8 imqraw", path.display()).into());
+    }
+    let plane = record
+        .frame
+        .owned_planes()
+        .first()
+        .ok_or_else(|| format!("{} contains no imqraw plane", path.display()))?;
+    if plane.data != rgba {
+        return Err(format!("{} imqraw payload did not round-trip", path.display()).into());
+    }
+    Ok(())
+}
+
 impl Drop for UnsafeAshDeviceRenderer {
     fn drop(&mut self) {
         unsafe {
@@ -897,6 +1072,9 @@ impl Drop for UnsafeAshDeviceRenderer {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
+    if options.artifact_self_test {
+        return run_artifact_self_test(&options);
+    }
     if options.dry_run {
         println!("dry run: parsed ash unsafe device renderer options");
         return Ok(());
@@ -921,12 +1099,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         renderer_frame.draw_calls.len(),
         renderer.physical_device
     );
-    if options.submit_readback {
+    if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
         let summary = renderer.submit_and_readback(&resources)?;
         println!(
             "ash offscreen readback: {} bytes, {} nonzero pixels, checksum {:016x}",
-            summary.bytes, summary.nonzero_pixels, summary.checksum
+            summary.byte_len(),
+            summary.nonzero_pixels,
+            summary.checksum
         );
+        if let Some(path) = &options.out {
+            write_rgba_json(
+                path,
+                &options,
+                &renderer_frame,
+                &summary,
+                options.width.max(1),
+                options.height.max(1),
+            )?;
+        }
+        if let Some(path) = &options.imqraw_out {
+            write_imqraw_rgba8(
+                path,
+                options.width.max(1),
+                options.height.max(1),
+                &summary.rgba,
+            )?;
+        }
     }
     renderer.destroy_frame_resources(resources);
     Ok(())

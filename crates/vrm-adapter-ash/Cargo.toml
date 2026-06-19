@@ -14,3 +14,7 @@ vrm-adapter = { path = "../vrm-adapter" }
 vrm-core = { path = "../vrm-core" }
 vrm-io = { path = "../vrm-io" }
 vrm-runtime = { path = "../vrm-runtime" }
+
+[dev-dependencies]
+imq.workspace = true
+serde_json.workspace = true

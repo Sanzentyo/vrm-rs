@@ -47,6 +47,19 @@ node tools/render-parity/three-vrm-browser-capture.mjs `
   --height 64
 ```
 
+The ash example is not yet a full visual-parity renderer, but its offscreen
+Vulkan readback now emits the same raw artifact shape:
+
+```powershell
+just ash-render-parity-readback
+```
+
+This writes `.external-fixtures/ash-readback-smoke/ash/Seed-san.frame000.rgba.json`
+and `.external-fixtures/ash-readback-smoke/ash/Seed-san.frame000.imqraw`, then
+uses `verify-imqraw-rgba.rs` to prove both files carry identical RGBA bytes.
+Use this as the ash-side bridge into future direct raw comparisons before
+raising it to the same visual threshold path as wgpu and Bevy.
+
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
 `imq image` CLI still does not expose the VRM-specific selected-metric gates

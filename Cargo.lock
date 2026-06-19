@@ -4142,6 +4142,8 @@ dependencies = [
  "bytemuck",
  "clap",
  "glam 0.32.1",
+ "imq",
+ "serde_json",
  "vrm-adapter",
  "vrm-core",
  "vrm-io",

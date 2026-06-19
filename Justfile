@@ -43,6 +43,11 @@ ash-renderer-integration avatar=".external-fixtures/official/Seed-san.vrm" anima
 ash-unsafe-device-renderer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" time="0":
     cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}" --submit-readback
 
+# Materialize, submit, and write ash offscreen readback artifacts in the same RGBA/imqraw shape used by render-parity captures.
+ash-render-parity-readback avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san" width="32" height="32" time="0":
+    cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --time "{{ time }}" --width "{{ width }}" --height "{{ height }}" --out "{{ out_dir }}/ash/{{ artifact }}.frame000.rgba.json" --imqraw-out "{{ out_dir }}/ash/{{ artifact }}.frame000.imqraw"
+    just imqraw-verify "{{ out_dir }}/ash/{{ artifact }}.frame000.imqraw" "{{ out_dir }}/ash/{{ artifact }}.frame000.rgba.json"
+
 # Stable render-parity gates.
 
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
