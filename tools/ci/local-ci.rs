@@ -547,6 +547,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/generate-shared-vertex-ownership-fixture.rs",
+            "--help",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/generate-dense-ownership-fixture.rs",
             "--help",
         ],
