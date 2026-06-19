@@ -334,6 +334,11 @@ render-parity-texture-boundary-generated three_vrm_root=".external-fixtures/thre
     cargo +nightly -Zscript tools/render-parity/map-render-hotspots.rs --fixture .external-fixtures/generated/texture-boundary.vrm.gltf --deltas .external-fixtures/render-parity-texture-boundary-generated/reports/texture-boundary_vrm.wgpu-vs-three-vrm.deltas.json --out .external-fixtures/render-parity-texture-boundary-generated/reports/texture-boundary_vrm.wgpu-vs-three-vrm.hotspots.json --top-pixels 32 --disable-outlines
     cargo +nightly -Zscript tools/render-parity/map-render-hotspots.rs --fixture .external-fixtures/generated/texture-boundary.vrm.gltf --deltas .external-fixtures/render-parity-texture-boundary-generated/reports/texture-boundary_vrm.bevy-vs-three-vrm.deltas.json --out .external-fixtures/render-parity-texture-boundary-generated/reports/texture-boundary_vrm.bevy-vs-three-vrm.hotspots.json --top-pixels 32 --disable-outlines
 
+# Generate and render the base-texture UV-boundary fixture with Ash in the visual gate.
+render-parity-texture-boundary-generated-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-texture-boundary-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-texture-boundary-generated-ash-gated --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-shared-nonblack-interior1px --render-fail-under 49 --render-max-selected-channel-delta 7 --render-mtoon-light-accumulation three-vrm --render-diagnostic-mode base-color --render-disable-outlines --render-fixture .external-fixtures/generated/texture-boundary.vrm.gltf
+
 # Generate and render a source-like per-material base texture selection diagnostic fixture.
 render-parity-texture-selection-generated three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-texture-selection-fixture.rs
@@ -342,6 +347,11 @@ render-parity-texture-selection-generated three_vrm_root=".external-fixtures/thr
     just imqraw-deltas .external-fixtures/render-parity-texture-selection-generated/three-vrm/texture-selection_vrm.frame000.imqraw .external-fixtures/render-parity-texture-selection-generated/bevy/texture-selection_vrm.frame000.imqraw .external-fixtures/render-parity-texture-selection-generated/reports/texture-selection_vrm.bevy-vs-three-vrm.deltas.json 32 1 shared-nonblack-interior1px
     cargo +nightly -Zscript tools/render-parity/map-render-hotspots.rs --fixture .external-fixtures/generated/texture-selection.vrm.gltf --deltas .external-fixtures/render-parity-texture-selection-generated/reports/texture-selection_vrm.wgpu-vs-three-vrm.deltas.json --out .external-fixtures/render-parity-texture-selection-generated/reports/texture-selection_vrm.wgpu-vs-three-vrm.hotspots.json --top-pixels 32 --disable-outlines
     cargo +nightly -Zscript tools/render-parity/map-render-hotspots.rs --fixture .external-fixtures/generated/texture-selection.vrm.gltf --deltas .external-fixtures/render-parity-texture-selection-generated/reports/texture-selection_vrm.bevy-vs-three-vrm.deltas.json --out .external-fixtures/render-parity-texture-selection-generated/reports/texture-selection_vrm.bevy-vs-three-vrm.hotspots.json --top-pixels 32 --disable-outlines
+
+# Generate and render the per-material base-texture selection fixture with Ash in the visual gate.
+render-parity-texture-selection-generated-ash-gated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-texture-selection-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --render-ash-visual-gate --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-texture-selection-generated-ash-gated --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-shared-nonblack-interior1px --render-fail-under 52 --render-max-selected-channel-delta 2 --render-mtoon-light-accumulation three-vrm --render-diagnostic-mode base-color --render-disable-outlines --render-fixture .external-fixtures/generated/texture-selection.vrm.gltf
 
 # Generate and render a source-like base-material seam/fill-rule diagnostic fixture.
 render-parity-material-seam-generated three_vrm_root=".external-fixtures/three-vrm":

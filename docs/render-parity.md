@@ -833,17 +833,21 @@ A source-like generated base-texture UV-boundary control is available through:
 
 ```powershell
 just render-parity-texture-boundary-generated
+just render-parity-texture-boundary-generated-ash-gated
 ```
 
 It writes `.external-fixtures/generated/texture-boundary.vrm.gltf` and renders
 `base-color` diagnostics into
-`.external-fixtures/render-parity-texture-boundary-generated/` with outlines
-disabled. The fixture reuses the generated UV-boundary topology, adds a small
-embedded PNG base-color texture through a glTF bufferView, and keeps a single
-opaque MToon material so the result isolates base texture sampling over UV
-discontinuities from material assignment and MToon lighting. The current guard
-has exact alpha parity and selected `rgb-shared-nonblack-interior1px` PSNR wgpu
-`52.9232 dB` / Bevy `49.5132 dB`, with max selected-channel deltas `7` / `6`.
+`.external-fixtures/render-parity-texture-boundary-generated/`, or the Ash
+visual-gate variant under
+`.external-fixtures/render-parity-texture-boundary-generated-ash-gated/`, with
+outlines disabled. The fixture reuses the generated UV-boundary topology, adds
+a small embedded PNG base-color texture through a glTF bufferView, and keeps a
+single opaque MToon material so the result isolates base texture sampling over
+UV discontinuities from material assignment and MToon lighting. The current
+Ash-gated guard has exact alpha parity and selected
+`rgb-shared-nonblack-interior1px` PSNR wgpu `52.9232 dB` / Bevy `49.5132 dB` /
+Ash `52.9232 dB`, with max selected-channel deltas `7` / `6` / `7`.
 The hotspot maps are useful for geometry ownership only on this fixture: top-32
 wgpu/Bevy deltas all agree with the frontmost base-pass triangle and material,
 while the remaining RGB differences are small linear-filtering/rounding deltas
@@ -856,21 +860,24 @@ A source-like per-material base texture selection guard is available through:
 
 ```powershell
 just render-parity-texture-selection-generated
+just render-parity-texture-selection-generated-ash-gated
 ```
 
 It writes `.external-fixtures/generated/texture-selection.vrm.gltf` and renders
 `base-color` diagnostics into
-`.external-fixtures/render-parity-texture-selection-generated/` with outlines
-disabled. The fixture uses four opaque MToon primitives, four materials, and
-four distinct embedded PNG base textures, so a material/texture binding mix-up
-would produce a large color error. The current guard has exact alpha parity and
-selected `rgb-shared-nonblack-interior1px` PSNR wgpu `58.0021 dB` / Bevy
-`52.5998 dB`, with max selected-channel deltas `1` / `2`. The top-32 hotspot
-maps match the frontmost base-pass triangle and material for both expected and
-actual pixels, so generated per-material base texture selection is now covered.
-This narrows the remaining Seed-san base-texture blocker away from broad
-texture binding-table mistakes and toward real-model-local UV/coverage/lookup
-details.
+`.external-fixtures/render-parity-texture-selection-generated/`, or the Ash
+visual-gate variant under
+`.external-fixtures/render-parity-texture-selection-generated-ash-gated/`, with
+outlines disabled. The fixture uses four opaque MToon primitives, four
+materials, and four distinct embedded PNG base textures, so a material/texture
+binding mix-up would produce a large color error. The current Ash-gated guard
+has exact alpha parity and selected `rgb-shared-nonblack-interior1px` PSNR wgpu
+`58.0021 dB` / Bevy `52.5998 dB` / Ash `58.0021 dB`, with max selected-channel
+deltas `1` / `2` / `1`. The top-32 hotspot maps match the frontmost base-pass
+triangle and material for both expected and actual pixels, so generated
+per-material base texture selection is now covered. This narrows the remaining
+Seed-san base-texture blocker away from broad texture binding-table mistakes
+and toward real-model-local UV/coverage/lookup details.
 
 A source-like generated base-material seam control is available through:
 
