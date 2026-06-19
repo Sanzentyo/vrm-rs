@@ -194,12 +194,16 @@ Bevy `31.0407 dB`, while normal-map-off stays flat at wgpu `28.6428 dB` /
 Bevy `28.6321 dB`.
 Use `just render-parity-constraint-shared-body3-pass-summary` after the
 shared-body3 sweep to regenerate base/outline pass ownership counts for the
-constraint top-64 hotspots; the current diagnostic shows wgpu and Bevy share the
-same pass-level ownership shape, with most hotspots still within a quarter pixel
-of an internal edge. The same report includes frontmost-to-nearest surface
-transition counts, currently showing that the largest constraint residuals are
-base-material seams such as `material_6 -> material_12` rather than outline-only
-ownership.
+constraint top-64 hotspots; use
+`just render-parity-constraint-shared-body3-pass-summary-ash-gated` after the
+Ash-gated sweep for matching wgpu/Bevy/Ash summaries. The current Ash-gated
+diagnostic shows all three Rust renderers share the same pass-level ownership
+shape: `64/64` hotspots have a visible frontmost candidate, `62-63/64` are
+within `0.25px` of an internal edge, and actual-vs-frontmost pass matches are
+`51/64`. The same report includes frontmost-to-nearest surface transition
+counts, currently showing that the largest constraint residuals are
+base-material seams such as `EyeIris_00_EYE -> Hair_00_HAIR` and
+`Hair_00_HAIR -> HairBack_00_HAIR` rather than an Ash-specific ownership path.
 Use `just render-parity-texture-boundary-generated` for the focused source-like
 base-texture UV-boundary guard. It generates
 `.external-fixtures/generated/texture-boundary.vrm.gltf`, renders `base-color`

@@ -1088,13 +1088,17 @@ base/outline color swaps near internal edges. This makes real outline
 expansion/color ownership the next constraint-sample parity target.
 
 `just render-parity-constraint-shared-body3-pass-summary` maps the same top-64
-hotspots with expanded outline geometry and base/outline pass ownership counts.
-The current result is identical for wgpu and Bevy at the pass level:
-frontmost visible candidates are `57` base / `7` outline, nearest actual-color
-candidates are `58` base / `6` outline, and nearest expected-color candidates
-are `61` base / `3` outline. Pass matches are `51/64` for actual-vs-frontmost
-and `56/64` for expected-vs-frontmost, while `62-63/64` hotspots are still
-within `0.25px` of the frontmost nearest edge. A trial that inverted outline
+hotspots with expanded outline geometry and base/outline pass ownership counts;
+`just render-parity-constraint-shared-body3-pass-summary-ash-gated` performs
+the same analysis from the Ash-gated sweep. The current Ash-gated result keeps
+wgpu, Bevy, and Ash in the same diagnostic shape: all three have `64/64`
+frontmost visible candidates, `62-63/64` hotspots within `0.25px` of an
+internal edge, `51/64` actual-vs-frontmost pass matches, and only `1/64`
+actual-vs-frontmost triangle matches. The top transitions are base-material
+seams such as `EyeIris_00_EYE -> Hair_00_HAIR` and
+`Hair_00_HAIR -> HairBack_00_HAIR`, so the remaining constraint residual is
+local material/edge ownership shared by the Rust renderers rather than an
+Ash-specific Vulkan resource or shader path. A trial that inverted outline
 lighting normals for normal-map-disabled outline passes slightly worsened the
 constraint score, so that branch is kept out of the renderer path; the remaining
 work is edge/pass ownership and material color selection, not a global outline
