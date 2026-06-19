@@ -9,17 +9,22 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
 use glam::Mat4;
-use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    path::PathBuf,
+    sync::Arc,
+};
 use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
     MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, RendererFrontFace, RendererMaterialCullMode, ScreenProjectionBounds,
-    ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
-    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
-    project_triangle_to_screen, renderer_material_pipeline_plan,
+    MtoonTextureSlot, RendererFrontFace, RendererMaterialAlphaMode, RendererMaterialCullMode,
+    ScreenProjectionBounds, ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess,
+    WorldTransformUpdate, ZeroToOneDepth, apply_vrma_animation_frame_with_look_at,
+    mtoon_renderer_material_plans, project_triangle_to_screen, renderer_material_pipeline_plan,
 };
-use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation};
+use vrm_core::{Feature, MaterialRef, MtoonAlphaMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
     CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects, GltfMagFilter,
     GltfMaterialRenderExtraOptions, GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions,
@@ -1453,7 +1458,7 @@ impl AshVrmFramePlanner {
         scene_options: AshSceneOptions,
         render_options: AshRenderOptions,
     ) -> Vec<AshMtoonPipelinePlan> {
-        mtoon_renderer_material_plans(
+        let mut plans = mtoon_renderer_material_plans(
             self.loaded.model().document(),
             MtoonMaterializationOptions::default(),
         )
@@ -1525,7 +1530,140 @@ impl AshVrmFramePlanner {
                 emissive_color: plan.shader.emissive_color,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+        let base_materials = plans
+            .iter()
+            .filter(|plan| plan.key.pass == AshMtoonPass::Base)
+            .map(|plan| plan.material)
+            .collect::<HashSet<_>>();
+        plans.extend(
+            (0..self.loaded.gltf_materials.len())
+                .map(MaterialRef)
+                .filter(|material| !base_materials.contains(material))
+                .map(|material| {
+                    ash_gltf_base_pipeline_plan(
+                        &self.loaded,
+                        material,
+                        mtoon_time,
+                        scene_options,
+                        render_options,
+                    )
+                }),
+        );
+        plans
+    }
+}
+
+fn ash_gltf_base_pipeline_plan(
+    loaded: &LoadedVrm,
+    material: MaterialRef,
+    mtoon_time: f32,
+    scene_options: AshSceneOptions,
+    render_options: AshRenderOptions,
+) -> AshMtoonPipelinePlan {
+    let material_index = Some(material.0);
+    let renderer_pipeline = ash_renderer_pipeline_plan(loaded, Some(material));
+    let shading =
+        loaded.material_shading_plan(material_index, GltfMaterialShadingOptions::default());
+    let uv_uniform = AshMaterialUvUniform::from_plan(
+        loaded
+            .material_uv_transforms(material_index, mtoon_time)
+            .uniform_plan(),
+    );
+    let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
+        shading
+            .render_extra_plan(ash_material_render_extra_options(
+                scene_options,
+                render_options,
+            ))
+            .uniform_plan(),
+    );
+    render_extra_uniform.flags2[2] = render_options.diagnostic_render.flat_flag();
+    render_extra_uniform.flags2[3] = render_options.diagnostic_render.mode_code();
+    AshMtoonPipelinePlan {
+        material,
+        name: loaded
+            .material_display_name(material_index)
+            .map(str::to_owned),
+        key: AshPipelineKey {
+            pass: AshMtoonPass::Base,
+            render_order: renderer_pipeline.render_order,
+            phase_order: renderer_pipeline.phase_order,
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            cull_mode: ash_renderer_cull_mode(renderer_pipeline.cull_mode),
+            front_face: vrm_vulkan_front_face(),
+            depth_test_enable: true,
+            depth_write_enable: renderer_pipeline.depth_write,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            blend_enable: renderer_pipeline.blend,
+        },
+        descriptor_bindings: descriptor_bindings(
+            &loaded.textures,
+            loaded.material_texture_slots(material_index),
+        ),
+        uniform: ash_gltf_base_uniform(shading, renderer_pipeline),
+        uv_uniform,
+        render_extra_uniform,
+        uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+        alpha_cutoff: renderer_pipeline.alpha_cutoff,
+        outline_width: 0.0,
+        base_color_factor: shading.base_color,
+        emissive_color: shading.emissive,
+    }
+}
+
+fn ash_gltf_base_uniform(
+    shading: vrm_io::GltfMaterialShadingPlan,
+    pipeline: vrm_adapter::RendererMaterialPipelinePlan,
+) -> MtoonGpuUniform {
+    MtoonGpuUniform {
+        base_color_factor: shading.base_color,
+        shade_color_factor_cutoff: [
+            shading.shade_color[0],
+            shading.shade_color[1],
+            shading.shade_color[2],
+            pipeline.alpha_cutoff,
+        ],
+        emissive_color_outline_width: [
+            shading.emissive[0],
+            shading.emissive[1],
+            shading.emissive[2],
+            0.0,
+        ],
+        shading: [1.0, 1.0, shading.shading_shift, shading.shading_toony],
+        lighting: [
+            shading.shading_shift_texture_scale,
+            0.0,
+            shading.gi_equalization,
+            0.0,
+        ],
+        matcap_factor_debug: [
+            shading.matcap_factor[0],
+            shading.matcap_factor[1],
+            shading.matcap_factor[2],
+            0.0,
+        ],
+        rim_color_lighting_mix: [
+            shading.parametric_rim_color[0],
+            shading.parametric_rim_color[1],
+            shading.parametric_rim_color[2],
+            shading.rim_lighting_mix,
+        ],
+        rim_params: [
+            shading.parametric_rim_fresnel_power,
+            shading.parametric_rim_lift,
+            pipeline.render_order as f32,
+            pipeline.phase_order as f32,
+        ],
+        outline_color_lighting_mix: [0.0; 4],
+        uv_animation: [0.0; 4],
+        flags: [
+            0,
+            u32::from(shading.v0_compat_shade),
+            0,
+            ash_renderer_alpha_mode_code(pipeline.alpha_mode),
+        ],
     }
 }
 
@@ -1752,6 +1890,18 @@ fn ash_renderer_cull_mode(mode: RendererMaterialCullMode) -> vk::CullModeFlags {
         RendererMaterialCullMode::Off => vk::CullModeFlags::NONE,
         RendererMaterialCullMode::Front => vk::CullModeFlags::FRONT,
         RendererMaterialCullMode::Back => vk::CullModeFlags::BACK,
+    }
+}
+
+fn ash_renderer_alpha_mode_code(mode: RendererMaterialAlphaMode) -> u32 {
+    match mode {
+        RendererMaterialAlphaMode::Opaque => {
+            vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Opaque)
+        }
+        RendererMaterialAlphaMode::Mask => vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Mask),
+        RendererMaterialAlphaMode::Blend => {
+            vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Blend)
+        }
     }
 }
 
@@ -2605,6 +2755,51 @@ mod tests {
         );
         assert!(!view_derivative.derivative_normals);
         assert!(view_derivative.view_derivative_normals);
+    }
+
+    #[test]
+    fn gltf_base_uniform_preserves_alpha_and_pbr_inputs() {
+        let shading = vrm_io::GltfMaterialShadingPlan {
+            base_color: [0.25, 0.5, 0.75, 0.6],
+            shade_color: [0.1, 0.2, 0.3, 1.0],
+            shading_shift: 0.4,
+            shading_toony: 0.5,
+            shading_shift_texture_scale: 0.6,
+            gi_equalization: 0.7,
+            emissive: [0.8, 0.9, 1.0],
+            matcap_factor: [0.0, 0.0, 0.0],
+            parametric_rim_color: [0.0, 0.0, 0.0],
+            rim_lighting_mix: 0.0,
+            parametric_rim_fresnel_power: 1.0,
+            parametric_rim_lift: 0.0,
+            normal_scale: 1.0,
+            metallic: 0.2,
+            roughness: 0.3,
+            occlusion_strength: 0.4,
+            pbr_fallback: true,
+            unlit: false,
+            v0_compat_shade: true,
+        };
+        let pipeline = vrm_adapter::RendererMaterialPipelinePlan {
+            alpha_mode: RendererMaterialAlphaMode::Mask,
+            alpha_cutoff: 0.42,
+            render_order: 2450,
+            phase_order: 19,
+            ..Default::default()
+        };
+
+        let uniform = ash_gltf_base_uniform(shading, pipeline);
+
+        assert_eq!(uniform.base_color_factor, shading.base_color);
+        assert_eq!(uniform.shade_color_factor_cutoff[3], 0.42);
+        assert_eq!(uniform.emissive_color_outline_width, [0.8, 0.9, 1.0, 0.0]);
+        assert_eq!(uniform.rim_params[2], 2450.0);
+        assert_eq!(uniform.rim_params[3], 19.0);
+        assert_eq!(
+            uniform.flags[3],
+            vrm_adapter::mtoon_alpha_mode_code(MtoonAlphaMode::Mask)
+        );
+        assert_eq!(uniform.flags[1], 1);
     }
 
     #[test]
