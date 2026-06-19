@@ -23,10 +23,21 @@ layout(set = 0, binding = 6) uniform sampler2D rim_multiply_texture;
 layout(set = 0, binding = 7) uniform sampler2D outline_width_texture;
 layout(set = 0, binding = 8) uniform sampler2D uv_animation_mask_texture;
 
+layout(set = 0, binding = 9, std140) uniform AshSceneUniform {
+    mat4 view_projection;
+    mat4 view;
+    mat4 world_from_view;
+    vec4 light_dir;
+    vec4 light_color;
+    vec4 camera_pos;
+    vec4 mtoon_lighting;
+} scene;
+
 layout(location = 0) in vec2 in_tex_coord_0;
 layout(location = 1) in vec4 in_color_0;
 layout(location = 2) in vec3 in_normal;
 layout(location = 3) in vec4 in_tangent;
+layout(location = 4) in vec3 in_world_position;
 
 layout(location = 0) out vec4 out_color;
 
@@ -83,19 +94,27 @@ void main() {
     }
 
     vec3 normal = mtoon_normal(uv);
-    vec3 light_dir = normalize(vec3(0.25, 0.65, 0.72));
+    vec3 light_dir = normalize(scene.light_dir.xyz);
     float ndotl = clamp(dot(normal, light_dir), 0.0, 1.0);
     float shift_texel = texture(shading_shift_texture, uv).r;
     float shade_rate = mtoon_lit_shade_rate(ndotl, shift_texel);
     vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture(shade_multiply_texture, uv).rgb;
-    vec3 lit = mix(shade, base.rgb, shade_rate);
+    vec3 direct = mix(shade, base.rgb, shade_rate) * scene.light_color.rgb * scene.light_dir.w;
+    vec3 ambient = base.rgb * (scene.mtoon_lighting.y + scene.mtoon_lighting.z * mtoon.lighting.z);
 
     vec3 matcap = texture(matcap_texture, uv).rgb * mtoon.matcap_factor_debug.rgb;
-    vec3 rim = texture(rim_multiply_texture, uv).rgb * mtoon.rim_color_lighting_mix.rgb;
+    vec3 view_dir = normalize(scene.camera_pos.xyz - in_world_position);
+    vec3 rim_base = mtoon.rim_color_lighting_mix.rgb * pow(
+        clamp(1.0 - dot(view_dir, normal) + mtoon.rim_params.y, 0.0, 1.0),
+        max(mtoon.rim_params.x, 0.0001)
+    );
+    vec3 rim_light = scene.light_color.rgb * scene.light_dir.w + vec3(scene.mtoon_lighting.w);
+    vec3 rim_mix = mix(vec3(1.0), rim_light, mtoon.rim_color_lighting_mix.a);
+    vec3 rim = texture(rim_multiply_texture, uv).rgb * rim_base * rim_mix;
     float outline_mask = texture(outline_width_texture, uv).r;
     float uv_mask = texture(uv_animation_mask_texture, in_tex_coord_0).b;
     vec3 emissive = mtoon.emissive_color_outline_width.rgb;
-    vec3 color = lit + matcap + rim * mtoon.rim_color_lighting_mix.a + emissive;
+    vec3 color = (direct + ambient + matcap + rim + emissive) * scene.mtoon_lighting.x;
 
     if (mtoon.flags.z == 1u) {
         color = mix(color, mtoon.outline_color_lighting_mix.rgb, outline_mask);

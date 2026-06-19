@@ -12,8 +12,8 @@ use glam::Mat4;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform,
-    MtoonMaterializationOptions, MtoonRendererPass, MtoonRendererTextureRefs, MtoonSamplerHint,
-    MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
+    MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonRendererTextureRefs,
+    MtoonSamplerHint, MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
     apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
@@ -125,12 +125,58 @@ pub struct AshMtoonPipelinePlan {
     pub emissive_color: [f32; 3],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct AshSceneUniform {
+    pub view_projection: [[f32; 4]; 4],
+    pub view: [[f32; 4]; 4],
+    pub world_from_view: [[f32; 4]; 4],
+    pub light_dir: [f32; 4],
+    pub light_color: [f32; 4],
+    pub camera_pos: [f32; 4],
+    pub mtoon_lighting: [f32; 4],
+}
+
+impl AshSceneUniform {
+    pub fn parity_camera(aspect_ratio: f32) -> Self {
+        let aspect_ratio = if aspect_ratio.is_finite() && aspect_ratio > 0.0 {
+            aspect_ratio
+        } else {
+            1.0
+        };
+        let eye = glam::Vec3::new(0.0, 1.4, -4.0);
+        let view = Mat4::look_at_rh(eye, glam::Vec3::new(0.0, 1.0, 0.0), glam::Vec3::Y);
+        let projection = Mat4::perspective_rh(30.0_f32.to_radians(), aspect_ratio, 0.1, 20.0);
+        let light_dir = glam::Vec3::new(-1.0, 1.0, -1.0).normalize();
+        Self {
+            view_projection: (projection * view).to_cols_array_2d(),
+            view: view.to_cols_array_2d(),
+            world_from_view: view.inverse().to_cols_array_2d(),
+            light_dir: [light_dir.x, light_dir.y, light_dir.z, 1.0],
+            light_color: [1.0, 1.0, 1.0, 0.0],
+            camera_pos: [eye.x, eye.y, eye.z, 1.0],
+            mtoon_lighting: MtoonLightingConfig::default().effective_values().to_array(),
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+impl Default for AshSceneUniform {
+    fn default() -> Self {
+        Self::parity_camera(1.0)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AshVrmFramePlan {
     pub primitives: Vec<AshVrmPrimitive>,
     pub materials: Vec<AshMaterialRecord>,
     pub texture_uploads: Vec<AshTextureUpload>,
     pub mtoon_pipelines: Vec<AshMtoonPipelinePlan>,
+    pub scene_uniform: AshSceneUniform,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +214,7 @@ pub struct AshResolvedDescriptorBinding {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub stage_flags: vk::ShaderStageFlags,
+    pub uniform_upload_index: Option<usize>,
     pub texture_upload_index: Option<usize>,
     pub sampler: Option<AshSamplerPlan>,
 }
@@ -195,10 +242,52 @@ pub struct AshRendererFrame {
     pub draw_calls: Vec<AshDrawCallPlan>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshUniformScope {
+    Material {
+        material: MaterialRef,
+        pipeline_plan_index: usize,
+    },
+    Scene,
+}
+
+impl AshUniformScope {
+    pub const fn material(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+        Self::Material {
+            material,
+            pipeline_plan_index,
+        }
+    }
+
+    pub const fn binding(self) -> u32 {
+        match self {
+            Self::Material { .. } => ash_mtoon_uniform_binding(),
+            Self::Scene => ash_mtoon_scene_binding(),
+        }
+    }
+
+    pub const fn material_ref(self) -> Option<MaterialRef> {
+        match self {
+            Self::Material { material, .. } => Some(material),
+            Self::Scene => None,
+        }
+    }
+
+    pub const fn pipeline_plan_index(self) -> Option<usize> {
+        match self {
+            Self::Material {
+                pipeline_plan_index,
+                ..
+            } => Some(pipeline_plan_index),
+            Self::Scene => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshUniformUpload {
-    pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub scope: AshUniformScope,
+    pub binding: u32,
     pub bytes: Vec<u8>,
 }
 
@@ -224,6 +313,8 @@ pub struct AshVertexAttributePlan {
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
     let texture_indices = texture_ref_upload_indices(&plan.texture_uploads);
+    let material_uniform_count = plan.mtoon_pipelines.len();
+    let scene_uniform_upload_index = material_uniform_count;
     let descriptor_sets = plan
         .mtoon_pipelines
         .iter()
@@ -238,6 +329,15 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                     binding: binding.binding,
                     descriptor_type: binding.descriptor_type,
                     stage_flags: binding.stage_flags,
+                    uniform_upload_index: (binding.descriptor_type
+                        == vk::DescriptorType::UNIFORM_BUFFER)
+                        .then(|| {
+                            if binding.binding == ash_mtoon_scene_binding() {
+                                scene_uniform_upload_index
+                            } else {
+                                pipeline_plan_index
+                            }
+                        }),
                     texture_upload_index: binding
                         .texture
                         .and_then(|texture| texture_indices.get(&texture).copied()),
@@ -330,10 +430,15 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
             .iter()
             .enumerate()
             .map(|(pipeline_plan_index, pipeline)| AshUniformUpload {
-                material: pipeline.material,
-                pipeline_plan_index,
+                scope: AshUniformScope::material(pipeline.material, pipeline_plan_index),
+                binding: ash_mtoon_uniform_binding(),
                 bytes: pipeline.uniform.bytes().to_vec(),
             })
+            .chain(std::iter::once(AshUniformUpload {
+                scope: AshUniformScope::Scene,
+                binding: ash_mtoon_scene_binding(),
+                bytes: plan.scene_uniform.bytes().to_vec(),
+            }))
             .collect(),
         pipelines,
         descriptor_sets,
@@ -435,6 +540,7 @@ impl AshVrmFramePlanner {
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
+            scene_uniform: AshSceneUniform::default(),
         })
     }
 
@@ -667,6 +773,10 @@ pub const fn ash_mtoon_uniform_binding() -> u32 {
     0
 }
 
+pub const fn ash_mtoon_scene_binding() -> u32 {
+    9
+}
+
 pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
     match slot {
         MtoonTextureSlot::Main => 1,
@@ -681,7 +791,7 @@ pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
 }
 
 fn descriptor_bindings(textures: &MtoonRendererTextureRefs) -> Vec<AshDescriptorBindingPlan> {
-    let mut result = Vec::with_capacity(ASH_MTOON_TEXTURE_SLOTS.len() + 1);
+    let mut result = Vec::with_capacity(ASH_MTOON_TEXTURE_SLOTS.len() + 2);
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_uniform_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -701,6 +811,13 @@ fn descriptor_bindings(textures: &MtoonRendererTextureRefs) -> Vec<AshDescriptor
                 sampler: Some(sampler_plan(sampler_hint_for_slot(slot))),
             }),
     );
+    result.push(AshDescriptorBindingPlan {
+        binding: ash_mtoon_scene_binding(),
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+        texture: None,
+        sampler: None,
+    });
     result
 }
 
@@ -828,7 +945,7 @@ mod tests {
     #[test]
     fn descriptor_bindings_start_with_uniform_buffer() {
         let bindings = descriptor_bindings(&MtoonRendererTextureRefs::default());
-        assert_eq!(bindings.len(), 9);
+        assert_eq!(bindings.len(), 10);
         assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
         assert_eq!(
             bindings[0].descriptor_type,
@@ -844,6 +961,21 @@ mod tests {
             ash_mtoon_texture_binding(MtoonTextureSlot::Normal)
         );
         assert!(bindings[4].sampler.unwrap().normal_map_decode);
+        assert_eq!(bindings[9].binding, ash_mtoon_scene_binding());
+        assert_eq!(
+            bindings[9].descriptor_type,
+            vk::DescriptorType::UNIFORM_BUFFER
+        );
+    }
+
+    #[test]
+    fn scene_uniform_exposes_stable_camera_light_abi() {
+        let uniform = AshSceneUniform::parity_camera(1.0);
+        assert_eq!(std::mem::size_of::<AshSceneUniform>(), 256);
+        assert_eq!(uniform.bytes().len(), 256);
+        assert_eq!(uniform.camera_pos, [0.0, 1.4, -4.0, 1.0]);
+        assert_eq!(uniform.light_color, [1.0, 1.0, 1.0, 0.0]);
+        assert_ne!(uniform.view_projection, Mat4::IDENTITY.to_cols_array_2d());
     }
 
     #[test]
@@ -872,7 +1004,9 @@ mod tests {
         }
 
         assert!(fragment_shader.contains("layout(set = 0, binding = 0, std140)"));
+        assert!(fragment_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
+        assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
     }
@@ -921,14 +1055,50 @@ mod tests {
                 base_color_factor: [1.0, 1.0, 1.0, 1.0],
                 emissive_color: [0.0, 0.0, 0.0],
             }],
+            scene_uniform: AshSceneUniform::default(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
-        assert_eq!(renderer_frame.uniforms.len(), 1);
+        assert_eq!(renderer_frame.uniforms.len(), 2);
         assert_eq!(renderer_frame.pipelines.len(), 1);
         assert_eq!(
             renderer_frame.uniforms[0].bytes.len(),
             MTOON_GPU_UNIFORM_SIZE
+        );
+        assert_eq!(
+            renderer_frame.uniforms[0].scope,
+            AshUniformScope::material(MaterialRef(0), 0)
+        );
+        assert_eq!(
+            renderer_frame.uniforms[0].scope.material_ref(),
+            Some(MaterialRef(0))
+        );
+        assert_eq!(
+            renderer_frame.uniforms[0].scope.pipeline_plan_index(),
+            Some(0)
+        );
+        assert_eq!(
+            renderer_frame.uniforms[0].binding,
+            ash_mtoon_uniform_binding()
+        );
+        assert_eq!(
+            renderer_frame.uniforms[1].bytes.len(),
+            std::mem::size_of::<AshSceneUniform>()
+        );
+        assert_eq!(renderer_frame.uniforms[1].scope, AshUniformScope::Scene);
+        assert_eq!(renderer_frame.uniforms[1].scope.material_ref(), None);
+        assert_eq!(renderer_frame.uniforms[1].scope.pipeline_plan_index(), None);
+        assert_eq!(
+            renderer_frame.uniforms[1].binding,
+            ash_mtoon_scene_binding()
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[0].uniform_upload_index,
+            Some(0)
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[9].uniform_upload_index,
+            Some(1)
         );
         assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
@@ -1004,6 +1174,7 @@ mod tests {
                 base_color_factor: [1.0, 1.0, 1.0, 1.0],
                 emissive_color: [0.0, 0.0, 0.0],
             }],
+            scene_uniform: AshSceneUniform::default(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.textures.len(), 1);

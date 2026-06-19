@@ -593,7 +593,9 @@ impl UnsafeAshDeviceRenderer {
                 match binding.descriptor_type {
                     vk::DescriptorType::UNIFORM_BUFFER => {
                         let uniform = uniform_buffers
-                            .get(set.pipeline_plan_index)
+                            .get(binding.uniform_upload_index.ok_or(
+                                "uniform descriptor binding is missing a uniform upload index",
+                            )?)
                             .ok_or("descriptor set references a missing uniform buffer")?;
                         let buffer_info = [vk::DescriptorBufferInfo::default()
                             .buffer(uniform.buffer)

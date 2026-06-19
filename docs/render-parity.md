@@ -93,10 +93,11 @@ modules into `unsafe_device_renderer --vertex-spv --fragment-spv`, and verifies
 the direct `.imqraw` bundle against the `.rgba.json` readback artifact. The
 shader now consumes the shared MToon uniform ABI, fixed texture slots,
 normal/tangent vertex attributes, UV animation, shade/shading-shift textures,
-alpha mode, and outline-pass flag. It is still not the final visual parity
-shader because Ash does not yet expose the full camera/light/material-extra
-uniform set used by the wgpu and Bevy captures, but it is past the previous
-color-only smoke handoff.
+alpha mode, outline-pass flag, and a frame-level scene uniform for
+view-projection, camera position, light direction/color, and MToon lighting
+accumulation. It is still not the final visual parity shader because Ash does
+not yet expose the full material-extra and UV-transform uniform set used by the
+wgpu and Bevy captures, but it is past the previous color-only smoke handoff.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
