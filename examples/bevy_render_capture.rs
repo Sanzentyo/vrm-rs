@@ -577,12 +577,6 @@ fn spawn_vrm_meshes(
         }
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
-    for (draw_order, primitive) in primitives.iter_mut().enumerate() {
-        if primitive.needs_source_order_offset() {
-            primitive.transparent_order_offset +=
-                i32::try_from(draw_order).unwrap_or(i32::MAX) as f32 * 0.0001;
-        }
-    }
     for primitive in &mut primitives {
         primitive.apply_phase_order_depth_bias();
     }
