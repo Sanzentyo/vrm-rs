@@ -1,5 +1,6 @@
 //! glTF/GLB IO for VRM and VRMA assets.
 
+pub mod optimize;
 pub mod resource;
 
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -21,6 +22,10 @@ use vrm_protocol::{
 };
 use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
 
+pub use optimize::{
+    JointPaletteCompaction, OptimizeError, OptimizeOptions, OptimizeReport, VertexRemap,
+    apply_joint_compaction_to_skin, optimize_primitive,
+};
 pub use resource::{
     CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
     DecodedTexturePayload, FileResourceReader, MeshCodec, MeshCodecProvider, ResourceData,

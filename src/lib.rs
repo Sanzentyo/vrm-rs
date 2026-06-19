@@ -42,9 +42,10 @@ use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
 pub use vrm_io::{
     CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
-    DecodedTexturePayload, FileResourceReader, MeshCodec, MeshCodecProvider, ResourceData,
-    ResourceError, ResourceLimits, ResourceReader, ResourceSource, TextureCodec,
-    TextureCodecProvider, TextureOutputFormat,
+    DecodedTexturePayload, FileResourceReader, JointPaletteCompaction, MeshCodec,
+    MeshCodecProvider, OptimizeError, OptimizeOptions, OptimizeReport, ResourceData, ResourceError,
+    ResourceLimits, ResourceReader, ResourceSource, TextureCodec, TextureCodecProvider,
+    TextureOutputFormat, VertexRemap, apply_joint_compaction_to_skin, optimize_primitive,
 };
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
 pub use vrm_runtime::{
@@ -297,6 +298,20 @@ mod tests {
                 codec: MeshCodec::Draco
             }
         ));
+    }
+
+    #[test]
+    fn facade_reexports_optimizer_types() {
+        let mut primitive = io::GltfPrimitiveData {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        };
+
+        let report = optimize_primitive(&mut primitive, 0, OptimizeOptions::default()).unwrap();
+
+        assert_eq!(report.vertex_remap.new_to_old, vec![0, 1, 2]);
+        assert_eq!(primitive.indices, vec![0, 1, 2]);
     }
 
     #[cfg(feature = "osc")]
