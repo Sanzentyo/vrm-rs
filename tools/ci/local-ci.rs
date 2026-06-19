@@ -620,7 +620,7 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
     let fixtures = render_fixtures(options)?;
     let comparison_renderers = render_comparison_renderers(options);
     let ash_shaders = if options.render_ash_readback {
-        Some(compile_ash_mtoon_base_shaders()?)
+        Some(compile_ash_mtoon_base_shaders(options)?)
     } else {
         None
     };
@@ -688,8 +688,8 @@ struct AshMtoonShaderPaths {
     fragment_spv: PathBuf,
 }
 
-fn compile_ash_mtoon_base_shaders() -> Result<AshMtoonShaderPaths, String> {
-    let out_dir = PathBuf::from("target/render-parity-ash-mtoon-shaders");
+fn compile_ash_mtoon_base_shaders(options: &Options) -> Result<AshMtoonShaderPaths, String> {
+    let out_dir = options.render_parity_dir.join("ash-shaders");
     let mut command = Command::new("cargo");
     command.args([
         "+nightly",
