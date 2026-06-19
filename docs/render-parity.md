@@ -1591,10 +1591,12 @@ the recipe now fails if selected `rgb-visible` falls below `49 dB`, selected RGB
 channel delta exceeds `2`, or alpha delta is non-zero. A focused Ash readback
 rerun for this fixture now reports exact alpha buckets and byte-exact
 Ash-vs-wgpu direct imqraw output after the Ash MToon uniform began consuming
-the renderer-resolved alpha policy. The same local rerun exposed a separate
-current Bevy transparent RGB regression (`30.4930 dB`, max channel delta `13`,
-exact alpha), so treat Bevy transparent RGB separately from the resolved Ash
-alpha blocker when triaging this fixture.
+the renderer-resolved alpha policy. A later 2026-06-20 rerun also closed the
+Bevy transparent RGB regression by applying the shared MToon transparent
+phase/source-order bias to ordinary `BLEND` materials in the Bevy capture path.
+The Ash-inclusive run now passes for wgpu, Bevy, and Ash with exact alpha
+buckets, max selected-channel delta `<= 1`, and selected `rgb-visible` PSNR
+wgpu `54.3997 dB`, Bevy `56.8605 dB`, and Ash `54.3997 dB`.
 For a stronger transparent layer-ordering audit, use the high-contrast palette:
 
 ```powershell
@@ -2222,9 +2224,11 @@ with max channel delta `2`. This closes the generated source-like transparent
 texture/material blocker for the then-current wgpu/Bevy path. A 2026-06-20
 focused Ash rerun of the base transparent fixture reports Ash-vs-wgpu
 `Infinity`, max channel delta `0`, alpha max delta `0`, and Ash-vs-three-vrm
-`54.3997 dB` with max channel delta `1`, while the same rerun shows the current
-Bevy output at `30.4930 dB` with exact alpha and a small full-surface RGB
-shift. The broader generated transparent run extends this
+`54.3997 dB` with max channel delta `1`. A follow-up Bevy capture fix applies
+the transparent phase/source-order bias to ordinary `BLEND` materials and keeps
+the shared adapter render order, raising the same base fixture to
+Bevy-vs-three-vrm `56.8605 dB` with max channel delta `1` and exact alpha.
+The broader generated transparent run extends this
 with texture alpha, four mixed-queue layers, and `transparentWithZWrite`; it
 passes with exact alpha buckets, no alpha deltas beyond 1 LSB, and selected
 `rgb-visible` PSNR wgpu `48.5282 dB` / Bevy `48.5944 dB`. The remaining

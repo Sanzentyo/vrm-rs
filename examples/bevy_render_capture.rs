@@ -583,6 +583,9 @@ fn spawn_vrm_meshes(
                 i32::try_from(draw_order).unwrap_or(i32::MAX) as f32 * 0.0001;
         }
     }
+    for primitive in &mut primitives {
+        primitive.apply_phase_order_depth_bias();
+    }
     if options.diagnostic_render == DiagnosticRender::OwnerId {
         assign_owner_id_triangles(&mut primitives);
     } else {
@@ -1094,6 +1097,12 @@ impl BevyPrimitive {
     fn needs_source_order_offset(&self) -> bool {
         self.material.needs_source_order_offset()
     }
+
+    fn apply_phase_order_depth_bias(&mut self) {
+        if self.needs_source_order_offset() {
+            self.material.set_depth_bias(self.transparent_order_offset);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1124,13 +1133,6 @@ struct BevyMaterialPlan {
 impl BevyMaterialPlan {
     fn new(loaded: &LoadedVrm, material: Option<usize>) -> Self {
         let plan = render_capture_scene::capture_material_plan(loaded, material);
-        let render_order =
-            if plan.alpha_mode == render_capture_scene::CaptureMaterialAlphaMode::Blend {
-                plan.transparent_order_offset
-                    .map_or(plan.render_order.max(3000), |offset| 3000 + (1000 - offset))
-            } else {
-                plan.render_order
-            };
         let mtoon_phase_order = material.and_then(|index| {
             loaded
                 .model()
@@ -1140,7 +1142,7 @@ impl BevyMaterialPlan {
                 .and_then(|material| material.mtoon.is_present().then_some(plan.phase_order))
         });
         Self {
-            render_order,
+            render_order: bevy_render_order_from_plan(plan),
             phase_order: plan.phase_order,
             mtoon_phase_order,
             alpha_mode: bevy_alpha_mode_from_plan(plan.alpha_mode, plan.alpha_cutoff),
@@ -1148,6 +1150,10 @@ impl BevyMaterialPlan {
             depth_write: plan.depth_write,
         }
     }
+}
+
+fn bevy_render_order_from_plan(plan: render_capture_scene::CaptureMaterialPlan) -> i32 {
+    plan.render_order
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1181,6 +1187,14 @@ impl BevyPrimitiveMaterial {
     fn needs_source_order_offset(&self) -> bool {
         match self {
             Self::Mtoon(material) => material.needs_source_order_offset(),
+        }
+    }
+
+    fn set_depth_bias(&mut self, depth_bias: f32) {
+        match self {
+            Self::Mtoon(material) => {
+                material.depth_bias = depth_bias;
+            }
         }
     }
 }
@@ -1347,7 +1361,10 @@ struct BevyMtoonMaterial {
 
 impl BevyMtoonMaterial {
     fn needs_source_order_offset(&self) -> bool {
-        self.shader_alpha_mode == AlphaMode::Opaque && self.render_alpha_mode == AlphaMode::Blend
+        matches!(
+            self.render_alpha_mode,
+            AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply
+        )
     }
 }
 
@@ -2313,6 +2330,35 @@ mod tests {
         let jitter = camera_jitter_world_pixels([2.0, 2.0], 180, 3.0);
 
         assert_close(jitter.x.abs(), jitter.y.abs());
+    }
+
+    #[test]
+    fn bevy_render_order_preserves_adapter_transparent_order() {
+        let early = render_capture_scene::CaptureMaterialPlan {
+            render_order: 3000,
+            phase_order: 0,
+            alpha_mode: render_capture_scene::CaptureMaterialAlphaMode::Blend,
+            transparent_order_offset: Some(0),
+            ..Default::default()
+        };
+        let late = render_capture_scene::CaptureMaterialPlan {
+            render_order: 3019,
+            phase_order: 19,
+            alpha_mode: render_capture_scene::CaptureMaterialAlphaMode::Blend,
+            transparent_order_offset: Some(19),
+            ..Default::default()
+        };
+
+        assert!(bevy_render_order_from_plan(early) < bevy_render_order_from_plan(late));
+        assert_eq!(bevy_render_order_from_plan(late), 3019);
+    }
+
+    #[test]
+    fn bevy_transparent_phase_order_bias_keeps_early_material_first() {
+        let early = material_transparent_order_offset(0, 0);
+        let late = material_transparent_order_offset(19, 1);
+
+        assert!(early < late);
     }
 
     fn assert_close(actual: f32, expected: f32) {
