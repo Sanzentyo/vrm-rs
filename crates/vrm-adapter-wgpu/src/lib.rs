@@ -12,10 +12,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use vrm_adapter::{
-    HeadlessSceneState, HumanoidPoseRig, WorldMatrixAccess, WorldTransformUpdate,
-    apply_vrma_animation_frame_with_look_at,
+    HeadlessSceneState, HumanoidPoseRig, MTOON_REFERENCE_WGSL, MtoonGpuMaterial,
+    MtoonGpuTextureBindingPlan, MtoonGpuUniform, MtoonMaterializationOptions, MtoonRendererPass,
+    MtoonSamplerHint, MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
+    apply_vrma_animation_frame_with_look_at, mtoon_gpu_materials,
 };
-use vrm_core::{Feature, NodeRef, VrmAnimation};
+use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation, VrmDocument};
 use vrm_io::{
     CpuRgba8Image, GltfAlphaMode, GltfNodeRest, GltfPrimitiveData, LoadedVrm, load_vrm_from_path,
 };
@@ -55,6 +57,156 @@ pub struct WgpuVrmViewerOptions {
     /// Initial window height.
     #[arg(long, default_value_t = 720)]
     pub height: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WgpuMtoonResourcePlan {
+    pub material: MaterialRef,
+    pub name: Option<String>,
+    pub pass: WgpuMtoonPass,
+    pub render_order: i32,
+    pub phase_order: i32,
+    pub uniform: MtoonGpuUniform,
+    pub uniform_usage: wgpu::BufferUsages,
+    pub shader_source: &'static str,
+    pub cull_mode: Option<wgpu::Face>,
+    pub front_face: wgpu::FrontFace,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub depth_compare: wgpu::CompareFunction,
+    pub blend: Option<wgpu::BlendState>,
+    pub texture_bindings: Vec<WgpuMtoonTextureBindingPlan>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WgpuMtoonPass {
+    Base,
+    Outline,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WgpuMtoonTextureBindingPlan {
+    pub slot: MtoonTextureSlot,
+    pub texture: TextureRef,
+    pub sampler: WgpuMtoonSamplerPlan,
+    pub texture_binding: u32,
+    pub sampler_binding: u32,
+    pub visibility: wgpu::ShaderStages,
+    pub sample_type: wgpu::TextureSampleType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WgpuMtoonSamplerPlan {
+    pub mag_filter: wgpu::FilterMode,
+    pub min_filter: wgpu::FilterMode,
+    pub mipmap_filter: wgpu::FilterMode,
+    pub address_mode_u: wgpu::AddressMode,
+    pub address_mode_v: wgpu::AddressMode,
+    pub normal_map_decode: bool,
+}
+
+pub fn wgpu_mtoon_resource_plans(
+    document: &VrmDocument,
+    options: MtoonMaterializationOptions,
+) -> Vec<WgpuMtoonResourcePlan> {
+    mtoon_gpu_materials(document, options)
+        .into_iter()
+        .map(wgpu_mtoon_resource_plan)
+        .collect()
+}
+
+pub fn wgpu_mtoon_resource_plan(material: MtoonGpuMaterial) -> WgpuMtoonResourcePlan {
+    WgpuMtoonResourcePlan {
+        material: material.material,
+        name: material.name,
+        pass: wgpu_mtoon_pass(material.pass),
+        render_order: material.pipeline.render_order,
+        phase_order: material.pipeline.phase_order,
+        uniform: material.uniform,
+        uniform_usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        shader_source: MTOON_REFERENCE_WGSL,
+        cull_mode: wgpu_cull_mode(material.pipeline.cull_mode),
+        front_face: wgpu::FrontFace::Ccw,
+        depth_test: material.pipeline.depth_test,
+        depth_write: material.pipeline.depth_write,
+        depth_compare: if material.pipeline.depth_test {
+            wgpu::CompareFunction::LessEqual
+        } else {
+            wgpu::CompareFunction::Always
+        },
+        blend: material
+            .pipeline
+            .blend
+            .then_some(wgpu::BlendState::ALPHA_BLENDING),
+        texture_bindings: material
+            .texture_bindings
+            .iter()
+            .copied()
+            .map(wgpu_mtoon_texture_binding_plan)
+            .collect(),
+    }
+}
+
+fn wgpu_mtoon_pass(pass: MtoonRendererPass) -> WgpuMtoonPass {
+    match pass {
+        MtoonRendererPass::Base => WgpuMtoonPass::Base,
+        MtoonRendererPass::Outline => WgpuMtoonPass::Outline,
+    }
+}
+
+fn wgpu_cull_mode(mode: vrm_core::MtoonCullMode) -> Option<wgpu::Face> {
+    match mode {
+        vrm_core::MtoonCullMode::Off => None,
+        vrm_core::MtoonCullMode::Front => Some(wgpu::Face::Front),
+        vrm_core::MtoonCullMode::Back => Some(wgpu::Face::Back),
+    }
+}
+
+fn wgpu_mtoon_texture_binding_plan(
+    binding: MtoonGpuTextureBindingPlan,
+) -> WgpuMtoonTextureBindingPlan {
+    WgpuMtoonTextureBindingPlan {
+        slot: binding.slot,
+        texture: binding.texture,
+        sampler: wgpu_mtoon_sampler_plan(binding.sampler),
+        texture_binding: binding.texture_binding,
+        sampler_binding: binding.sampler_binding,
+        visibility: wgpu_texture_visibility(binding.slot),
+        sample_type: wgpu_texture_sample_type(binding.sampler),
+    }
+}
+
+fn wgpu_texture_visibility(slot: MtoonTextureSlot) -> wgpu::ShaderStages {
+    match slot {
+        MtoonTextureSlot::OutlineWidth => wgpu::ShaderStages::VERTEX_FRAGMENT,
+        MtoonTextureSlot::Main
+        | MtoonTextureSlot::ShadeMultiply
+        | MtoonTextureSlot::ShadingShift
+        | MtoonTextureSlot::Normal
+        | MtoonTextureSlot::Matcap
+        | MtoonTextureSlot::RimMultiply
+        | MtoonTextureSlot::UvAnimationMask => wgpu::ShaderStages::FRAGMENT,
+    }
+}
+
+fn wgpu_texture_sample_type(sampler: MtoonSamplerHint) -> wgpu::TextureSampleType {
+    match sampler {
+        MtoonSamplerHint::LinearRepeat => wgpu::TextureSampleType::Float { filterable: true },
+        MtoonSamplerHint::NormalMapLinearRepeat => {
+            wgpu::TextureSampleType::Float { filterable: true }
+        }
+    }
+}
+
+fn wgpu_mtoon_sampler_plan(sampler: MtoonSamplerHint) -> WgpuMtoonSamplerPlan {
+    WgpuMtoonSamplerPlan {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        normal_map_decode: matches!(sampler, MtoonSamplerHint::NormalMapLinearRepeat),
+    }
 }
 
 #[repr(C)]
@@ -966,3 +1118,74 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return sampled * input.color;
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vrm_core::{
+        EmissiveStrength, Feature, Material, MtoonCullMode, MtoonMaterial, MtoonRenderQueue,
+        MtoonTextureSet,
+    };
+
+    fn sample_document() -> VrmDocument {
+        VrmDocument {
+            materials: vec![Material {
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    transparent_with_z_write: true,
+                    cull_mode: MtoonCullMode::Off,
+                    base_color_factor: [0.2, 0.4, 0.6, 0.5],
+                    emissive_factor: [0.1, 0.2, 0.3],
+                    textures: MtoonTextureSet {
+                        main_texture: Some(TextureRef(1)),
+                        normal_texture: Some(TextureRef(2)),
+                        outline_width_multiply_texture: Some(TextureRef(3)),
+                        ..MtoonTextureSet::default()
+                    },
+                    ..MtoonMaterial::default()
+                }),
+                ..Material::default()
+            }],
+            ..VrmDocument::default()
+        }
+    }
+
+    #[test]
+    fn mtoon_resource_plans_expose_wgpu_state_and_uniforms() {
+        let plans = wgpu_mtoon_resource_plans(&sample_document(), Default::default());
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].pass, WgpuMtoonPass::Base);
+        assert_eq!(plans[0].render_order, 3000);
+        assert_eq!(plans[0].phase_order, 0);
+        assert_eq!(plans[0].cull_mode, None);
+        assert_eq!(plans[0].depth_compare, wgpu::CompareFunction::LessEqual);
+        assert_eq!(plans[0].blend, Some(wgpu::BlendState::ALPHA_BLENDING));
+        assert_eq!(
+            plans[0].uniform.emissive_color_outline_width[0..3],
+            [0.2, 0.4, 0.6]
+        );
+        assert!(plans[0].shader_source.contains("MtoonGpuUniform"));
+        assert!(
+            plans[0]
+                .uniform_usage
+                .contains(wgpu::BufferUsages::COPY_DST)
+        );
+    }
+
+    #[test]
+    fn mtoon_resource_plans_map_texture_sampler_bindings() {
+        let plans = wgpu_mtoon_resource_plans(&sample_document(), Default::default());
+        let bindings = &plans[0].texture_bindings;
+
+        assert_eq!(bindings.len(), 3);
+        assert_eq!(bindings[0].slot, MtoonTextureSlot::Main);
+        assert_eq!(bindings[0].texture_binding, 1);
+        assert_eq!(bindings[0].sampler_binding, 2);
+        assert_eq!(bindings[1].slot, MtoonTextureSlot::Normal);
+        assert!(bindings[1].sampler.normal_map_decode);
+        assert_eq!(bindings[2].slot, MtoonTextureSlot::OutlineWidth);
+        assert!(bindings[2].visibility.contains(wgpu::ShaderStages::VERTEX));
+    }
+}

@@ -11,9 +11,10 @@ use clap::Parser;
 use glam::Mat4;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 use vrm_adapter::{
-    HeadlessSceneState, HumanoidPoseRig, MtoonMaterializationOptions, MtoonRendererPass,
-    MtoonSamplerHint, MtoonTextureBindingPlan, WorldMatrixAccess, WorldTransformUpdate,
-    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    HeadlessSceneState, HumanoidPoseRig, MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform,
+    MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint, MtoonTextureBindingPlan,
+    WorldMatrixAccess, WorldTransformUpdate, apply_vrma_animation_frame_with_look_at,
+    mtoon_renderer_material_plans,
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
@@ -114,7 +115,8 @@ pub struct AshMtoonPipelinePlan {
     pub name: Option<String>,
     pub key: AshPipelineKey,
     pub descriptor_bindings: Vec<AshDescriptorBindingPlan>,
-    pub push_constant_size: u32,
+    pub uniform: MtoonGpuUniform,
+    pub uniform_buffer_size: u32,
     pub alpha_cutoff: f32,
     pub outline_width: f32,
     pub base_color_factor: [f32; 4],
@@ -185,8 +187,16 @@ pub struct AshDrawCallPlan {
 pub struct AshRendererFrame {
     pub buffers: Vec<AshBufferUpload>,
     pub textures: Vec<AshTextureResourcePlan>,
+    pub uniforms: Vec<AshUniformUpload>,
     pub descriptor_sets: Vec<AshDescriptorSetPlan>,
     pub draw_calls: Vec<AshDrawCallPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshUniformUpload {
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub bytes: Vec<u8>,
 }
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
@@ -270,6 +280,16 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                 image_usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                 image_layout_after_upload: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 aspect_mask: vk::ImageAspectFlags::COLOR,
+            })
+            .collect(),
+        uniforms: plan
+            .mtoon_pipelines
+            .iter()
+            .enumerate()
+            .map(|(pipeline_plan_index, pipeline)| AshUniformUpload {
+                material: pipeline.material,
+                pipeline_plan_index,
+                bytes: pipeline.uniform.bytes().to_vec(),
             })
             .collect(),
         descriptor_sets,
@@ -452,30 +472,34 @@ impl AshVrmFramePlanner {
             MtoonMaterializationOptions::default(),
         )
         .into_iter()
-        .map(|plan| AshMtoonPipelinePlan {
-            material: plan.material,
-            name: plan.name,
-            key: AshPipelineKey {
-                pass: match plan.pass {
-                    MtoonRendererPass::Base => AshMtoonPass::Base,
-                    MtoonRendererPass::Outline => AshMtoonPass::Outline,
+        .map(|plan| {
+            let gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
+            AshMtoonPipelinePlan {
+                material: plan.material,
+                name: plan.name,
+                key: AshPipelineKey {
+                    pass: match plan.pass {
+                        MtoonRendererPass::Base => AshMtoonPass::Base,
+                        MtoonRendererPass::Outline => AshMtoonPass::Outline,
+                    },
+                    render_order: plan.pipeline.render_order,
+                    phase_order: plan.pipeline.phase_order,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: cull_mode(plan.pipeline.cull_mode),
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: plan.pipeline.depth_test,
+                    depth_write_enable: plan.pipeline.depth_write,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: plan.pipeline.blend,
                 },
-                render_order: plan.pipeline.render_order,
-                phase_order: plan.pipeline.phase_order,
-                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                cull_mode: cull_mode(plan.pipeline.cull_mode),
-                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                depth_test_enable: plan.pipeline.depth_test,
-                depth_write_enable: plan.pipeline.depth_write,
-                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                blend_enable: plan.pipeline.blend,
-            },
-            descriptor_bindings: descriptor_bindings(&plan.texture_bindings),
-            push_constant_size: 160,
-            alpha_cutoff: plan.shader.cutoff_factor,
-            outline_width: plan.shader.outline_width_factor,
-            base_color_factor: plan.shader.base_color_factor,
-            emissive_color: plan.shader.emissive_color,
+                descriptor_bindings: descriptor_bindings(&plan.texture_bindings),
+                uniform: gpu.uniform,
+                uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+                alpha_cutoff: plan.shader.cutoff_factor,
+                outline_width: plan.shader.outline_width_factor,
+                base_color_factor: plan.shader.base_color_factor,
+                emissive_color: plan.shader.emissive_color,
+            }
         })
         .collect()
     }
@@ -685,7 +709,8 @@ mod tests {
                     blend_enable: false,
                 },
                 descriptor_bindings: descriptor_bindings(&[]),
-                push_constant_size: 160,
+                uniform: MtoonGpuUniform::zeroed(),
+                uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: 0.5,
                 outline_width: 0.0,
                 base_color_factor: [1.0, 1.0, 1.0, 1.0],
@@ -694,6 +719,11 @@ mod tests {
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
+        assert_eq!(renderer_frame.uniforms.len(), 1);
+        assert_eq!(
+            renderer_frame.uniforms[0].bytes.len(),
+            MTOON_GPU_UNIFORM_SIZE
+        );
         assert_eq!(
             renderer_frame.buffers[0].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER

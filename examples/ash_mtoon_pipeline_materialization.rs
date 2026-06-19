@@ -8,9 +8,11 @@
 //! same conversion points.
 
 use vrm_adapter::{
+    MTOON_GPU_UNIFORM_SIZE, MTOON_REFERENCE_WGSL, MtoonGpuMaterial, MtoonGpuUniform,
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
     MtoonTextureBindingPlan, MtoonTextureSlot, RendererMaterialAlphaMode, RendererMaterialCullMode,
-    RendererMaterialPipelinePlan, mtoon_renderer_material_plans,
+    RendererMaterialPipelinePlan, mtoon_gpu_combined_image_sampler_binding_number,
+    mtoon_renderer_material_plans,
 };
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonMaterial, MtoonRenderQueue,
@@ -127,21 +129,11 @@ struct VkImageBinding {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct VkMtoonUniformBlock {
-    base_color_factor: [f32; 4],
-    shade_color_factor: [f32; 3],
-    emissive_color: [f32; 3],
-    matcap_factor: [f32; 3],
-    rim_color_factor: [f32; 3],
-    outline_color_factor: [f32; 3],
-    shading: [f32; 4],
-    rim: [f32; 4],
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct VkMtoonMaterialRecord {
     material: MaterialRef,
-    uniform: VkMtoonUniformBlock,
+    uniform: MtoonGpuUniform,
+    uniform_size: usize,
+    reference_wgsl: &'static str,
     image_bindings: Vec<VkImageBinding>,
 }
 
@@ -219,28 +211,12 @@ fn vulkan_pipeline_recipe(plan: &MtoonRendererMaterialPlan) -> VkGraphicsPipelin
 }
 
 fn vulkan_material_record(plan: &MtoonRendererMaterialPlan) -> VkMtoonMaterialRecord {
+    let gpu = MtoonGpuMaterial::from_renderer_plan(plan);
     VkMtoonMaterialRecord {
         material: plan.material,
-        uniform: VkMtoonUniformBlock {
-            base_color_factor: plan.shader.base_color_factor,
-            shade_color_factor: plan.shader.shade_color_factor,
-            emissive_color: plan.shader.emissive_color,
-            matcap_factor: plan.shader.matcap_factor,
-            rim_color_factor: plan.shader.parametric_rim_color_factor,
-            outline_color_factor: plan.shader.outline_color_factor,
-            shading: [
-                plan.shader.receive_shadow_rate_factor,
-                plan.shader.shading_grade_rate_factor,
-                plan.shader.shading_shift_factor,
-                plan.shader.shading_toony_factor,
-            ],
-            rim: [
-                plan.shader.rim_lighting_mix_factor,
-                plan.shader.parametric_rim_fresnel_power_factor,
-                plan.shader.parametric_rim_lift_factor,
-                plan.shader.outline_lighting_mix_factor,
-            ],
-        },
+        uniform: gpu.uniform,
+        uniform_size: gpu.uniform_bytes().len(),
+        reference_wgsl: MTOON_REFERENCE_WGSL,
         image_bindings: image_bindings(&plan.texture_bindings),
     }
 }
@@ -282,7 +258,7 @@ fn image_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<VkImageBinding> {
 }
 
 fn texture_binding_number(index: usize) -> u32 {
-    u32::try_from(index + 1).expect("example material has a small texture binding table")
+    mtoon_gpu_combined_image_sampler_binding_number(index)
 }
 
 fn texture_stage_flags(slot: MtoonTextureSlot) -> VkShaderStage {
@@ -404,7 +380,11 @@ fn main() {
     assert_eq!(table.pipelines[1].key.pass, VkMtoonPass::Outline);
     assert_eq!(table.pipelines[0].key.blend, VkBlendPreset::AlphaBlend);
     assert!(table.pipelines[0].key.depth_stencil.depth_write_enable);
-    assert_eq!(table.materials[0].uniform.emissive_color, [0.6, 0.3, 0.15]);
+    assert_eq!(table.materials[0].uniform_size, MTOON_GPU_UNIFORM_SIZE);
+    assert_eq!(
+        table.materials[0].uniform.emissive_color_outline_width[0..3],
+        [0.6, 0.3, 0.15]
+    );
     assert_eq!(table.materials[0].image_bindings.len(), 7);
 }
 
@@ -462,7 +442,12 @@ mod tests {
         assert_eq!(base.push_constants.outline_width, 0.02);
         assert_eq!(base.push_constants.uv_animation, [0.1, -0.2, 0.3, 0.0]);
         assert_eq!(material.uniform.base_color_factor, [0.4, 0.7, 1.0, 0.5]);
-        assert_eq!(material.uniform.emissive_color, [0.6, 0.3, 0.15]);
-        assert_eq!(material.uniform.rim, [0.6, 2.5, 0.15, 0.25]);
+        assert_eq!(
+            material.uniform.emissive_color_outline_width[0..3],
+            [0.6, 0.3, 0.15]
+        );
+        assert_eq!(material.uniform.rim_params, [2.5, 0.15, 3000.0, 3000.0]);
+        assert_eq!(material.uniform_size, MTOON_GPU_UNIFORM_SIZE);
+        assert!(material.reference_wgsl.contains("mtoon_lit_shade_rate"));
     }
 }

@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 bevy = []
 
 [dependencies]
+bytemuck.workspace = true
 glam.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true

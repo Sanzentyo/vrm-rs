@@ -2061,6 +2061,219 @@ pub struct MtoonShaderParameters {
     pub v0_compat_shade: bool,
 }
 
+pub const MTOON_REFERENCE_WGSL: &str = include_str!("mtoon_reference.wgsl");
+pub const MTOON_GPU_MATERIAL_GROUP: u32 = 1;
+pub const MTOON_GPU_UNIFORM_BINDING: u32 = 0;
+pub const MTOON_GPU_UNIFORM_SIZE: usize = std::mem::size_of::<MtoonGpuUniform>();
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MtoonGpuUniform {
+    pub base_color_factor: [f32; 4],
+    pub shade_color_factor_cutoff: [f32; 4],
+    pub emissive_color_outline_width: [f32; 4],
+    pub shading: [f32; 4],
+    pub lighting: [f32; 4],
+    pub matcap_factor_debug: [f32; 4],
+    pub rim_color_lighting_mix: [f32; 4],
+    pub rim_params: [f32; 4],
+    pub outline_color_lighting_mix: [f32; 4],
+    pub uv_animation: [f32; 4],
+    pub flags: [u32; 4],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MtoonGpuMaterial {
+    pub material: MaterialRef,
+    pub name: Option<String>,
+    pub pass: MtoonRendererPass,
+    pub pipeline: MtoonRendererPipelineState,
+    pub uniform: MtoonGpuUniform,
+    pub textures: MtoonRendererTextureRefs,
+    pub texture_bindings: Vec<MtoonGpuTextureBindingPlan>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MtoonGpuTextureBindingPlan {
+    pub slot: MtoonTextureSlot,
+    pub texture: TextureRef,
+    pub sampler: MtoonSamplerHint,
+    pub texture_binding: u32,
+    pub sampler_binding: u32,
+    pub combined_image_sampler_binding: u32,
+}
+
+impl MtoonGpuUniform {
+    pub fn from_shader_parameters(
+        shader: &MtoonShaderParameters,
+        pass: MtoonRendererPass,
+        pipeline: MtoonRendererPipelineState,
+    ) -> Self {
+        Self {
+            base_color_factor: shader.base_color_factor,
+            shade_color_factor_cutoff: [
+                shader.shade_color_factor[0],
+                shader.shade_color_factor[1],
+                shader.shade_color_factor[2],
+                shader.cutoff_factor,
+            ],
+            emissive_color_outline_width: [
+                shader.emissive_color[0],
+                shader.emissive_color[1],
+                shader.emissive_color[2],
+                shader.outline_width_factor,
+            ],
+            shading: [
+                shader.receive_shadow_rate_factor,
+                shader.shading_grade_rate_factor,
+                shader.shading_shift_factor,
+                shader.shading_toony_factor,
+            ],
+            lighting: [
+                shader.shading_shift_texture_scale,
+                shader.light_color_attenuation_factor,
+                shader.gi_equalization_factor,
+                if pipeline.transparent_with_z_write {
+                    1.0
+                } else {
+                    0.0
+                },
+            ],
+            matcap_factor_debug: [
+                shader.matcap_factor[0],
+                shader.matcap_factor[1],
+                shader.matcap_factor[2],
+                mtoon_debug_mode_code(shader.debug_mode) as f32,
+            ],
+            rim_color_lighting_mix: [
+                shader.parametric_rim_color_factor[0],
+                shader.parametric_rim_color_factor[1],
+                shader.parametric_rim_color_factor[2],
+                shader.rim_lighting_mix_factor,
+            ],
+            rim_params: [
+                shader.parametric_rim_fresnel_power_factor,
+                shader.parametric_rim_lift_factor,
+                pipeline.render_order as f32,
+                pipeline.phase_order as f32,
+            ],
+            outline_color_lighting_mix: [
+                shader.outline_color_factor[0],
+                shader.outline_color_factor[1],
+                shader.outline_color_factor[2],
+                shader.outline_lighting_mix_factor,
+            ],
+            uv_animation: [
+                shader.uv_animation.scroll_x_speed,
+                shader.uv_animation.scroll_y_speed,
+                shader.uv_animation.rotation_speed,
+                0.0,
+            ],
+            flags: [
+                mtoon_debug_mode_code(shader.debug_mode),
+                u32::from(shader.v0_compat_shade),
+                mtoon_renderer_pass_code(pass),
+                mtoon_alpha_mode_code(pipeline.alpha_mode),
+            ],
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+impl MtoonGpuMaterial {
+    pub fn from_renderer_plan(plan: &MtoonRendererMaterialPlan) -> Self {
+        Self {
+            material: plan.material,
+            name: plan.name.clone(),
+            pass: plan.pass,
+            pipeline: plan.pipeline,
+            uniform: MtoonGpuUniform::from_shader_parameters(
+                &plan.shader,
+                plan.pass,
+                plan.pipeline,
+            ),
+            textures: plan.textures.clone(),
+            texture_bindings: mtoon_gpu_texture_binding_plans(&plan.texture_bindings),
+        }
+    }
+
+    pub fn uniform_bytes(&self) -> &[u8] {
+        self.uniform.bytes()
+    }
+}
+
+pub fn mtoon_gpu_materials(
+    document: &VrmDocument,
+    options: MtoonMaterializationOptions,
+) -> Vec<MtoonGpuMaterial> {
+    mtoon_renderer_material_plans(document, options)
+        .iter()
+        .map(MtoonGpuMaterial::from_renderer_plan)
+        .collect()
+}
+
+pub fn mtoon_gpu_texture_binding_plans(
+    bindings: &[MtoonTextureBindingPlan],
+) -> Vec<MtoonGpuTextureBindingPlan> {
+    bindings
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| MtoonGpuTextureBindingPlan {
+            slot: binding.slot,
+            texture: binding.texture,
+            sampler: binding.sampler,
+            texture_binding: mtoon_gpu_texture_binding_number(index),
+            sampler_binding: mtoon_gpu_sampler_binding_number(index),
+            combined_image_sampler_binding: mtoon_gpu_combined_image_sampler_binding_number(index),
+        })
+        .collect()
+}
+
+#[inline(always)]
+pub const fn mtoon_gpu_texture_binding_number(index: usize) -> u32 {
+    1 + index as u32 * 2
+}
+
+#[inline(always)]
+pub const fn mtoon_gpu_sampler_binding_number(index: usize) -> u32 {
+    2 + index as u32 * 2
+}
+
+#[inline(always)]
+pub const fn mtoon_gpu_combined_image_sampler_binding_number(index: usize) -> u32 {
+    1 + index as u32
+}
+
+#[inline(always)]
+pub const fn mtoon_debug_mode_code(mode: MtoonDebugMode) -> u32 {
+    match mode {
+        MtoonDebugMode::None => 0,
+        MtoonDebugMode::LitShadeRate => 1,
+        MtoonDebugMode::Lighting => 2,
+        MtoonDebugMode::Normal => 3,
+    }
+}
+
+#[inline(always)]
+pub const fn mtoon_renderer_pass_code(pass: MtoonRendererPass) -> u32 {
+    match pass {
+        MtoonRendererPass::Base => 0,
+        MtoonRendererPass::Outline => 1,
+    }
+}
+
+#[inline(always)]
+pub const fn mtoon_alpha_mode_code(mode: MtoonAlphaMode) -> u32 {
+    match mode {
+        MtoonAlphaMode::Opaque => 0,
+        MtoonAlphaMode::Mask => 1,
+        MtoonAlphaMode::Blend => 2,
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MtoonRendererTextureRefs {
     pub main: Option<TextureRef>,
@@ -5886,6 +6099,73 @@ mod tests {
         assert_eq!(capture_plan.alpha_mode, RendererMaterialAlphaMode::Blend);
         assert_eq!(capture_plan.cull_mode, RendererMaterialCullMode::Off);
         assert!(capture_plan.depth_write);
+    }
+
+    #[test]
+    fn mtoon_gpu_materials_expose_uniform_abi_and_reference_shader() {
+        let document = VrmDocument {
+            materials: vec![vrm_core::Material {
+                khr_emissive_strength: Feature::Present(EmissiveStrength(2.0)),
+                mtoon: Feature::Present(MtoonMaterial {
+                    render_queue: MtoonRenderQueue::Transparent,
+                    transparent_with_z_write: true,
+                    base_color_factor: [0.8, 0.7, 0.6, 0.5],
+                    shade_color_factor: [0.2, 0.3, 0.4],
+                    emissive_factor: [0.1, 0.2, 0.3],
+                    cutoff_factor: 0.37,
+                    outline_width_mode: OutlineWidthMode::WorldCoordinates,
+                    outline_width_factor: 0.012,
+                    rim_lighting_mix_factor: 0.44,
+                    parametric_rim_fresnel_power_factor: 2.5,
+                    parametric_rim_lift_factor: 0.25,
+                    uv_animation: UvAnimation {
+                        scroll_x_speed: 0.1,
+                        scroll_y_speed: -0.2,
+                        rotation_speed: 0.3,
+                    },
+                    textures: MtoonTextureSet {
+                        main_texture: Some(TextureRef(1)),
+                        normal_texture: Some(TextureRef(2)),
+                        ..MtoonTextureSet::default()
+                    },
+                    ..MtoonMaterial::default()
+                }),
+                ..vrm_core::Material::default()
+            }],
+            ..VrmDocument::default()
+        };
+
+        let gpu = mtoon_gpu_materials(
+            &document,
+            MtoonMaterializationOptions {
+                debug_mode: MtoonDebugMode::Lighting,
+                v0_compat_shade: true,
+            },
+        );
+
+        assert_eq!(gpu.len(), 2);
+        assert_eq!(MTOON_GPU_MATERIAL_GROUP, 1);
+        assert_eq!(MTOON_GPU_UNIFORM_BINDING, 0);
+        assert_eq!(gpu[0].uniform.bytes().len(), MTOON_GPU_UNIFORM_SIZE);
+        assert_eq!(MTOON_GPU_UNIFORM_SIZE % 16, 0);
+        assert!(MTOON_REFERENCE_WGSL.contains("struct MtoonGpuUniform"));
+        assert_eq!(gpu[0].uniform.base_color_factor, [0.8, 0.7, 0.6, 0.5]);
+        assert_eq!(
+            gpu[0].uniform.shade_color_factor_cutoff,
+            [0.2, 0.3, 0.4, 0.37]
+        );
+        assert_eq!(
+            gpu[0].uniform.emissive_color_outline_width,
+            [0.2, 0.4, 0.6, 0.012]
+        );
+        assert_eq!(gpu[0].uniform.uv_animation, [0.1, -0.2, 0.3, 0.0]);
+        assert_eq!(
+            gpu[0].uniform.flags,
+            [mtoon_debug_mode_code(MtoonDebugMode::Lighting), 1, 0, 2]
+        );
+        assert_eq!(gpu[0].texture_bindings[0].texture_binding, 1);
+        assert_eq!(gpu[0].texture_bindings[0].sampler_binding, 2);
+        assert_eq!(gpu[0].texture_bindings[1].combined_image_sampler_binding, 2);
     }
 
     #[test]

@@ -6,9 +6,11 @@
 //! sampler descriptors, texture bindings, and uniform payloads.
 
 use vrm_adapter::{
+    MTOON_GPU_UNIFORM_SIZE, MTOON_REFERENCE_WGSL, MtoonGpuMaterial, MtoonGpuUniform,
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
     MtoonTextureBindingPlan, MtoonTextureSlot, RendererMaterialAlphaMode, RendererMaterialCullMode,
-    RendererMaterialPipelinePlan, mtoon_renderer_material_plans,
+    RendererMaterialPipelinePlan, mtoon_gpu_sampler_binding_number,
+    mtoon_gpu_texture_binding_number, mtoon_renderer_material_plans,
 };
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonCullMode, MtoonMaterial,
@@ -131,19 +133,11 @@ struct WgpuTextureBinding {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct WgpuMtoonUniform {
-    base_color_factor: [f32; 4],
-    shade_color_factor: [f32; 3],
-    emissive_color: [f32; 3],
-    cutoff_outline_rim: [f32; 4],
-    uv_animation: [f32; 4],
-    rim: [f32; 4],
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct WgpuMaterialBindGroupRecipe {
     material: MaterialRef,
-    uniform: WgpuMtoonUniform,
+    uniform: MtoonGpuUniform,
+    uniform_size: usize,
+    reference_wgsl: &'static str,
     texture_bindings: Vec<WgpuTextureBinding>,
 }
 
@@ -223,26 +217,12 @@ fn wgpu_pipeline_descriptor(plan: &MtoonRendererMaterialPlan) -> WgpuRenderPipel
 }
 
 fn wgpu_material_bind_group(plan: &MtoonRendererMaterialPlan) -> WgpuMaterialBindGroupRecipe {
+    let gpu = MtoonGpuMaterial::from_renderer_plan(plan);
     WgpuMaterialBindGroupRecipe {
         material: plan.material,
-        uniform: WgpuMtoonUniform {
-            base_color_factor: plan.shader.base_color_factor,
-            shade_color_factor: plan.shader.shade_color_factor,
-            emissive_color: plan.shader.emissive_color,
-            cutoff_outline_rim: [
-                plan.shader.cutoff_factor,
-                plan.shader.outline_width_factor,
-                plan.shader.rim_lighting_mix_factor,
-                plan.shader.outline_lighting_mix_factor,
-            ],
-            uv_animation: uv_animation_uniform(plan.shader.uv_animation),
-            rim: [
-                plan.shader.rim_lighting_mix_factor,
-                plan.shader.parametric_rim_fresnel_power_factor,
-                plan.shader.parametric_rim_lift_factor,
-                0.0,
-            ],
-        },
+        uniform: gpu.uniform,
+        uniform_size: gpu.uniform_bytes().len(),
+        reference_wgsl: MTOON_REFERENCE_WGSL,
         texture_bindings: texture_bindings(&plan.texture_bindings),
     }
 }
@@ -293,11 +273,11 @@ fn texture_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<WgpuTextureBind
 }
 
 fn texture_binding_number(index: usize) -> u32 {
-    u32::try_from(1 + index * 2).expect("example texture binding index fits u32")
+    mtoon_gpu_texture_binding_number(index)
 }
 
 fn sampler_binding_number(index: usize) -> u32 {
-    u32::try_from(2 + index * 2).expect("example sampler binding index fits u32")
+    mtoon_gpu_sampler_binding_number(index)
 }
 
 fn texture_visibility(slot: MtoonTextureSlot) -> WgpuShaderStages {
@@ -360,15 +340,6 @@ fn wgpu_blend_state(alpha_mode: RendererMaterialAlphaMode, blend: bool) -> WgpuB
     }
 }
 
-fn uv_animation_uniform(uv_animation: UvAnimation) -> [f32; 4] {
-    [
-        uv_animation.scroll_x_speed,
-        uv_animation.scroll_y_speed,
-        uv_animation.rotation_speed,
-        0.0,
-    ]
-}
-
 fn sample_document() -> VrmDocument {
     VrmDocument {
         materials: vec![Material {
@@ -419,7 +390,13 @@ fn main() {
     assert!(table.pipelines[0].key.depth_stencil.depth_write_enabled);
     assert_eq!(table.material_bind_groups[0].texture_bindings.len(), 8);
     assert_eq!(
-        table.material_bind_groups[0].uniform.emissive_color,
+        table.material_bind_groups[0].uniform_size,
+        MTOON_GPU_UNIFORM_SIZE
+    );
+    assert_eq!(
+        table.material_bind_groups[0]
+            .uniform
+            .emissive_color_outline_width[0..3],
         [0.5, 0.25, 0.125]
     );
 }
@@ -470,12 +447,14 @@ mod tests {
         let bind_group = &table.material_bind_groups[0];
 
         assert_eq!(bind_group.uniform.base_color_factor, [0.25, 0.6, 1.0, 0.45]);
-        assert_eq!(bind_group.uniform.emissive_color, [0.5, 0.25, 0.125]);
         assert_eq!(
-            bind_group.uniform.cutoff_outline_rim,
-            [0.4, 0.015, 0.35, 0.4]
+            bind_group.uniform.emissive_color_outline_width[0..3],
+            [0.5, 0.25, 0.125]
         );
+        assert_eq!(bind_group.uniform.shade_color_factor_cutoff[3], 0.4);
         assert_eq!(bind_group.uniform.uv_animation, [0.25, -0.5, 0.125, 0.0]);
+        assert_eq!(bind_group.uniform_size, MTOON_GPU_UNIFORM_SIZE);
+        assert!(bind_group.reference_wgsl.contains("struct MtoonGpuUniform"));
         assert_eq!(
             bind_group.texture_bindings[3].slot,
             MtoonTextureSlot::Normal

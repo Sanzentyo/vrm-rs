@@ -5,6 +5,7 @@
 //! `BevyVrmMaterialState`.
 
 use bevy::prelude::{Asset, Assets, TypePath};
+use vrm_adapter::MTOON_GPU_UNIFORM_SIZE;
 use vrm_adapter_bevy::{
     BevyMtoonMaterialPlan, BevyMtoonPass, BevyMtoonTextureRefs, BevyVrmMaterialState,
     VrmBevyMaterialAsset, bevy_mtoon_material_plans,
@@ -35,6 +36,7 @@ struct ExampleBevyMtoonMaterial {
     emissive_color: [f32; 3],
     emissive_strength: f32,
     cutoff: f32,
+    uniform_size: usize,
     textures: BevyMtoonTextureRefs,
     runtime_colors: Vec<(String, Vec<f32>)>,
 }
@@ -62,6 +64,7 @@ impl ExampleBevyMtoonMaterial {
                     output.shade_color = plan.shade_color;
                     output.emissive_color = plan.emissive_color;
                     output.cutoff = plan.cutoff;
+                    output.uniform_size = plan.gpu_uniform.bytes().len();
                     output.textures = plan.textures.clone();
                 }
                 BevyMtoonPass::Outline => {
@@ -166,6 +169,7 @@ fn main() {
     );
     assert_eq!(asset.emissive_color, [0.3, 0.6, 0.90000004]);
     assert_eq!(asset.emissive_strength, 3.0);
+    assert_eq!(asset.uniform_size, MTOON_GPU_UNIFORM_SIZE);
     assert_eq!(asset.textures.base_color, Some(TextureRef(1)));
     assert_eq!(asset.textures.uv_animation_mask, Some(TextureRef(7)));
     assert_eq!(asset.textures.shading_shift, Some(TextureRef(8)));

@@ -33,9 +33,10 @@ use std::path::Path;
 pub use glam::Mat4;
 use thiserror::Error;
 pub use vrm_adapter::{
-    HeadlessAdapterError, HeadlessSceneState, RuntimePipelineMixerReport, RuntimePipelineOptions,
-    RuntimePipelineReport, RuntimePipelineStage, RuntimeStageReport, VrmRuntimeDriver,
-    VrmRuntimePipeline,
+    HeadlessAdapterError, HeadlessSceneState, MTOON_GPU_MATERIAL_GROUP, MTOON_GPU_UNIFORM_BINDING,
+    MTOON_GPU_UNIFORM_SIZE, MTOON_REFERENCE_WGSL, MtoonGpuMaterial, MtoonGpuTextureBindingPlan,
+    MtoonGpuUniform, RuntimePipelineMixerReport, RuntimePipelineOptions, RuntimePipelineReport,
+    RuntimePipelineStage, RuntimeStageReport, VrmRuntimeDriver, VrmRuntimePipeline,
 };
 use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};

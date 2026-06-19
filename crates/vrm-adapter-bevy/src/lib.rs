@@ -21,7 +21,7 @@ use bevy::prelude::{
 use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
-    ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess,
+    ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess, MtoonGpuUniform,
     MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess,
     MtoonRendererMaterialPlan, MtoonRendererPass, SceneGraph, SkinVertexInfluence, SpringRestMap,
     TransformAccess, ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldMatrixAccess,
@@ -932,6 +932,7 @@ pub struct BevyMtoonMaterialPlan {
     pub cutoff: f32,
     pub textures: BevyMtoonTextureRefs,
     pub outline_width: Option<f32>,
+    pub gpu_uniform: MtoonGpuUniform,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -987,6 +988,11 @@ impl BevyMtoonMaterialPlan {
                 uv_animation_mask: plan.textures.uv_animation_mask,
             },
             outline_width,
+            gpu_uniform: MtoonGpuUniform::from_shader_parameters(
+                &plan.shader,
+                plan.pass,
+                plan.pipeline,
+            ),
         }
     }
 }
