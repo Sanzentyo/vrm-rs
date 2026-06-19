@@ -369,6 +369,22 @@ struct OwnerProjectionGapSummary {
     with_screen_bounds: u64,
     overlapping_screen_bounds_1px: u64,
     disjoint_screen_bounds_1px: u64,
+    pixel_near_expected_edge_025px: u64,
+    pixel_near_actual_edge_025px: u64,
+    pixel_near_either_edge_025px: u64,
+    pixel_near_both_edges_025px: u64,
+    pixel_near_expected_edge_05px: u64,
+    pixel_near_actual_edge_05px: u64,
+    pixel_near_either_edge_05px: u64,
+    pixel_near_both_edges_05px: u64,
+    expected_small_bounds_area_le_1px: u64,
+    actual_small_bounds_area_le_1px: u64,
+    either_small_bounds_area_le_1px: u64,
+    both_small_bounds_area_le_1px: u64,
+    expected_small_bounds_area_le_4px: u64,
+    actual_small_bounds_area_le_4px: u64,
+    either_small_bounds_area_le_4px: u64,
+    both_small_bounds_area_le_4px: u64,
     with_depth: u64,
     within_webgl_depth_001: u64,
     within_webgl_depth_02: u64,
@@ -386,6 +402,22 @@ struct OwnerProjectionGapAccumulator {
     with_screen_bounds: u64,
     overlapping_screen_bounds_1px: u64,
     disjoint_screen_bounds_1px: u64,
+    pixel_near_expected_edge_025px: u64,
+    pixel_near_actual_edge_025px: u64,
+    pixel_near_either_edge_025px: u64,
+    pixel_near_both_edges_025px: u64,
+    pixel_near_expected_edge_05px: u64,
+    pixel_near_actual_edge_05px: u64,
+    pixel_near_either_edge_05px: u64,
+    pixel_near_both_edges_05px: u64,
+    expected_small_bounds_area_le_1px: u64,
+    actual_small_bounds_area_le_1px: u64,
+    either_small_bounds_area_le_1px: u64,
+    both_small_bounds_area_le_1px: u64,
+    expected_small_bounds_area_le_4px: u64,
+    actual_small_bounds_area_le_4px: u64,
+    either_small_bounds_area_le_4px: u64,
+    both_small_bounds_area_le_4px: u64,
     with_depth: u64,
     within_webgl_depth_001: u64,
     within_webgl_depth_02: u64,
@@ -606,7 +638,7 @@ fn compare_owner_images(
                         if !same_projected_or_touching {
                             unexplained_owner_tail_after_touching_mismatched_shared_nonzero += 1;
                         }
-                        unexplained_projection_gaps.add(expected_label, actual_label);
+                        unexplained_projection_gaps.add(expected_label, actual_label, pixel);
                         bump_owner_material_transition(
                             &mut unexplained_material_transitions,
                             expected_label,
@@ -1540,6 +1572,39 @@ fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
     ((bounds.max_x - bounds.min_x).max(0.0)) * ((bounds.max_y - bounds.min_y).max(0.0))
 }
 
+fn pixel_center_bounds_edge_distance(pixel: OwnerPixel, bounds: OwnerScreenBounds) -> f64 {
+    let x = pixel.x as f64 + 0.5;
+    let y = pixel.y as f64 + 0.5;
+    let inside_x = (bounds.min_x..=bounds.max_x).contains(&x);
+    let inside_y = (bounds.min_y..=bounds.max_y).contains(&y);
+    if inside_x && inside_y {
+        return [
+            x - bounds.min_x,
+            bounds.max_x - x,
+            y - bounds.min_y,
+            bounds.max_y - y,
+        ]
+        .into_iter()
+        .fold(f64::INFINITY, f64::min);
+    }
+
+    let dx = if x < bounds.min_x {
+        bounds.min_x - x
+    } else if x > bounds.max_x {
+        x - bounds.max_x
+    } else {
+        0.0
+    };
+    let dy = if y < bounds.min_y {
+        bounds.min_y - y
+    } else if y > bounds.max_y {
+        y - bounds.max_y
+    } else {
+        0.0
+    };
+    dx.hypot(dy)
+}
+
 fn depth_relation(expected: &OwnerLabel, actual: &OwnerLabel) -> DepthRelation {
     match (owner_depth(expected), owner_depth(actual)) {
         (Some(left), Some(right)) => {
@@ -1662,7 +1727,12 @@ impl OwnerTransitionPixels {
 }
 
 impl OwnerProjectionGapAccumulator {
-    fn add(&mut self, expected: Option<&OwnerLabel>, actual: Option<&OwnerLabel>) {
+    fn add(
+        &mut self,
+        expected: Option<&OwnerLabel>,
+        actual: Option<&OwnerLabel>,
+        pixel: OwnerPixel,
+    ) {
         self.count += 1;
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return;
@@ -1682,6 +1752,8 @@ impl OwnerProjectionGapAccumulator {
             let area_ratio = screen_bounds_area_ratio(expected_bounds, actual_bounds);
             self.area_ratio_sum += area_ratio;
             self.area_ratio_max = self.area_ratio_max.max(area_ratio);
+            self.add_edge_distance(pixel, expected_bounds, actual_bounds);
+            self.add_small_bounds(expected_bounds, actual_bounds);
         }
         if let (Some(expected_depth), Some(actual_depth)) =
             (owner_depth(expected), owner_depth(actual))
@@ -1705,6 +1777,22 @@ impl OwnerProjectionGapAccumulator {
             with_screen_bounds: self.with_screen_bounds,
             overlapping_screen_bounds_1px: self.overlapping_screen_bounds_1px,
             disjoint_screen_bounds_1px: self.disjoint_screen_bounds_1px,
+            pixel_near_expected_edge_025px: self.pixel_near_expected_edge_025px,
+            pixel_near_actual_edge_025px: self.pixel_near_actual_edge_025px,
+            pixel_near_either_edge_025px: self.pixel_near_either_edge_025px,
+            pixel_near_both_edges_025px: self.pixel_near_both_edges_025px,
+            pixel_near_expected_edge_05px: self.pixel_near_expected_edge_05px,
+            pixel_near_actual_edge_05px: self.pixel_near_actual_edge_05px,
+            pixel_near_either_edge_05px: self.pixel_near_either_edge_05px,
+            pixel_near_both_edges_05px: self.pixel_near_both_edges_05px,
+            expected_small_bounds_area_le_1px: self.expected_small_bounds_area_le_1px,
+            actual_small_bounds_area_le_1px: self.actual_small_bounds_area_le_1px,
+            either_small_bounds_area_le_1px: self.either_small_bounds_area_le_1px,
+            both_small_bounds_area_le_1px: self.both_small_bounds_area_le_1px,
+            expected_small_bounds_area_le_4px: self.expected_small_bounds_area_le_4px,
+            actual_small_bounds_area_le_4px: self.actual_small_bounds_area_le_4px,
+            either_small_bounds_area_le_4px: self.either_small_bounds_area_le_4px,
+            both_small_bounds_area_le_4px: self.both_small_bounds_area_le_4px,
             with_depth: self.with_depth,
             within_webgl_depth_001: self.within_webgl_depth_001,
             within_webgl_depth_02: self.within_webgl_depth_02,
@@ -1718,6 +1806,51 @@ impl OwnerProjectionGapAccumulator {
             mean_abs_webgl_depth_delta: mean(self.depth_delta_sum, self.with_depth),
             max_abs_webgl_depth_delta: some_if_count(self.depth_delta_max, self.with_depth),
         }
+    }
+
+    fn add_edge_distance(
+        &mut self,
+        pixel: OwnerPixel,
+        expected_bounds: OwnerScreenBounds,
+        actual_bounds: OwnerScreenBounds,
+    ) {
+        let expected_edge_distance = pixel_center_bounds_edge_distance(pixel, expected_bounds);
+        let actual_edge_distance = pixel_center_bounds_edge_distance(pixel, actual_bounds);
+        let near_expected_025 = expected_edge_distance <= 0.25;
+        let near_actual_025 = actual_edge_distance <= 0.25;
+        self.pixel_near_expected_edge_025px += u64::from(near_expected_025);
+        self.pixel_near_actual_edge_025px += u64::from(near_actual_025);
+        self.pixel_near_either_edge_025px += u64::from(near_expected_025 || near_actual_025);
+        self.pixel_near_both_edges_025px += u64::from(near_expected_025 && near_actual_025);
+
+        let near_expected_05 = expected_edge_distance <= 0.5;
+        let near_actual_05 = actual_edge_distance <= 0.5;
+        self.pixel_near_expected_edge_05px += u64::from(near_expected_05);
+        self.pixel_near_actual_edge_05px += u64::from(near_actual_05);
+        self.pixel_near_either_edge_05px += u64::from(near_expected_05 || near_actual_05);
+        self.pixel_near_both_edges_05px += u64::from(near_expected_05 && near_actual_05);
+    }
+
+    fn add_small_bounds(
+        &mut self,
+        expected_bounds: OwnerScreenBounds,
+        actual_bounds: OwnerScreenBounds,
+    ) {
+        let expected_area = screen_bounds_area(expected_bounds);
+        let actual_area = screen_bounds_area(actual_bounds);
+        let expected_small_1 = expected_area <= 1.0;
+        let actual_small_1 = actual_area <= 1.0;
+        self.expected_small_bounds_area_le_1px += u64::from(expected_small_1);
+        self.actual_small_bounds_area_le_1px += u64::from(actual_small_1);
+        self.either_small_bounds_area_le_1px += u64::from(expected_small_1 || actual_small_1);
+        self.both_small_bounds_area_le_1px += u64::from(expected_small_1 && actual_small_1);
+
+        let expected_small_4 = expected_area <= 4.0;
+        let actual_small_4 = actual_area <= 4.0;
+        self.expected_small_bounds_area_le_4px += u64::from(expected_small_4);
+        self.actual_small_bounds_area_le_4px += u64::from(actual_small_4);
+        self.either_small_bounds_area_le_4px += u64::from(expected_small_4 || actual_small_4);
+        self.both_small_bounds_area_le_4px += u64::from(expected_small_4 && actual_small_4);
     }
 }
 
@@ -2213,6 +2346,84 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .unexplained_projection_gap_summary
             .disjoint_screen_bounds_1px,
         1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_edge_025px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_edge_025px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_either_edge_025px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_both_edges_025px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_expected_edge_05px,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_actual_edge_05px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_either_edge_05px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_near_both_edges_05px,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .either_small_bounds_area_le_1px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .expected_small_bounds_area_le_4px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .actual_small_bounds_area_le_4px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .either_small_bounds_area_le_4px,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .both_small_bounds_area_le_4px,
+        2
     );
     assert_eq!(report.unexplained_projection_gap_summary.with_depth, 2);
     assert_eq!(

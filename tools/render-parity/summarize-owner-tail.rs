@@ -479,6 +479,20 @@ fn markdown_report(report: &OwnerTailReport) -> String {
             .actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero,
     );
 
+    output.push_str("\n## Projection Gap Shape\n\n");
+    output.push_str("| Metric | Count |\n|---|---:|\n");
+    write_projection_gap_count(&mut output, report, "with_screen_bounds");
+    write_projection_gap_count(&mut output, report, "overlapping_screen_bounds_1px");
+    write_projection_gap_count(&mut output, report, "disjoint_screen_bounds_1px");
+    write_projection_gap_count(&mut output, report, "pixel_near_either_edge_025px");
+    write_projection_gap_count(&mut output, report, "pixel_near_both_edges_025px");
+    write_projection_gap_count(&mut output, report, "pixel_near_either_edge_05px");
+    write_projection_gap_count(&mut output, report, "pixel_near_both_edges_05px");
+    write_projection_gap_count(&mut output, report, "either_small_bounds_area_le_1px");
+    write_projection_gap_count(&mut output, report, "both_small_bounds_area_le_1px");
+    write_projection_gap_count(&mut output, report, "either_small_bounds_area_le_4px");
+    write_projection_gap_count(&mut output, report, "both_small_bounds_area_le_4px");
+
     output.push_str("\n## Top Unexplained Material Transitions\n\n");
     output.push_str("| Count | Expected | Actual | Relation |\n|---:|---|---|---|\n");
     for transition in &report.top_unexplained_material_transitions {
@@ -556,6 +570,17 @@ fn write_count(output: &mut String, label: &str, value: Option<u64>) {
     }
 }
 
+fn write_projection_gap_count(output: &mut String, report: &OwnerTailReport, label: &str) {
+    write_count(
+        output,
+        label,
+        report
+            .unexplained_projection_gap_summary
+            .get(label)
+            .and_then(Value::as_u64),
+    );
+}
+
 fn text_field(value: &Value, key: &str) -> String {
     value
         .get(key)
@@ -613,6 +638,19 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         "actual_not_visible_by_cull_policy_mismatched_shared_nonzero": 1,
         "actual_metadata_bounds_miss_mismatched_shared_nonzero": 1,
         "actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero": 1,
+        "unexplained_projection_gap_summary": {
+            "with_screen_bounds": 2,
+            "overlapping_screen_bounds_1px": 1,
+            "disjoint_screen_bounds_1px": 1,
+            "pixel_near_either_edge_025px": 0,
+            "pixel_near_both_edges_025px": 0,
+            "pixel_near_either_edge_05px": 2,
+            "pixel_near_both_edges_05px": 1,
+            "either_small_bounds_area_le_1px": 0,
+            "both_small_bounds_area_le_1px": 0,
+            "either_small_bounds_area_le_4px": 2,
+            "both_small_bounds_area_le_4px": 2
+        },
         "top_unexplained_material_transitions": [{
             "expected_pass": "outline",
             "expected_mesh": "wear_4",
@@ -676,5 +714,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         markdown
             .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
     );
+    assert!(markdown.contains("Projection Gap Shape"));
+    assert!(markdown.contains("pixel_near_either_edge_05px"));
+    assert!(markdown.contains("either_small_bounds_area_le_4px"));
     Ok(())
 }

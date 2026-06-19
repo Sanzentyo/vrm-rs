@@ -988,14 +988,22 @@ emits `109` source-neighborhood triangles, and passes under
 `85.8817 dB`, Bevy `85.6261 dB`, max selected-channel delta `4`, exact alpha,
 and only `3` wgpu / `5` Bevy owner mismatches out of `249` shared nonzero pixels
 against three-vrm. The topology run uses `--context-shared-vertex-depth 2`,
-emits `200` source-neighborhood triangles, and passes under
-`.external-fixtures/render-parity-seed-owner-tail-topology-extract/` with wgpu
-`57.3005 dB`, Bevy `57.2896 dB`, max selected-channel delta `149`, and exact
-alpha. Its owner reports show wgpu is still close to three-vrm (`6/415` shared
-nonzero mismatches), but Bevy diverges from both three-vrm (`51/415`) and wgpu
-(`46/416`). This makes the topology extract a compact source-derived regression
-guard for the remaining Bevy/raster-fill tail; the earlier isolated and
-index-window runs remain useful negative controls.
+emits `200` source-neighborhood triangles, and writes artifacts under
+`.external-fixtures/render-parity-seed-owner-tail-topology-extract/`. Its owner
+reports keep wgpu close to three-vrm (`6` unexplained gaps), while the current
+Bevy-vs-three-vrm artifact has `46` unexplained gaps and Bevy-vs-wgpu has `41`.
+`compare-owner-id-images.rs` now classifies those gaps by screen-bounds edge
+proximity and small screen-bounds area: the current Bevy-vs-three-vrm topology
+artifact has `34/46` unexplained gaps within `0.5px` of either owner's bounds
+edge and `11/46` involving an owner bounds area `<= 4px`; Bevy-vs-wgpu has
+`31/41` near a `0.5px` bounds edge and `10/41` involving a `<= 4px` owner
+bounds area.
+This makes the topology extract a compact source-derived regression guard for
+the remaining Bevy/raster-fill tail; the earlier isolated and index-window runs
+remain useful negative controls. The owner-ID selected-PSNR threshold on this
+diagnostic is intentionally a working guard rather than final parity evidence,
+because tiny generated-owner color changes can move the PSNR while the owner
+tail classification is the actual signal.
 
 A same-material multi-UV-island ownership control is available through:
 
