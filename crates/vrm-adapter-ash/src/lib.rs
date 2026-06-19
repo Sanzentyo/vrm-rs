@@ -868,6 +868,8 @@ struct AshPrimitiveBakeSettings {
     pass: AshMtoonPass,
     mtoon_time: f32,
     scene_options: AshSceneOptions,
+    diagnostic_render: AshDiagnosticRender,
+    owner_id: u32,
 }
 
 impl AshVrmFramePlanner {
@@ -939,7 +941,7 @@ impl AshVrmFramePlanner {
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
-            primitives: self.bake_primitives(time_seconds, scene_options)?,
+            primitives: self.bake_primitives(time_seconds, scene_options, diagnostic_render)?,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
@@ -965,14 +967,18 @@ impl AshVrmFramePlanner {
         &self,
         mtoon_time: f32,
         scene_options: AshSceneOptions,
+        diagnostic_render: AshDiagnosticRender,
     ) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
         let mut primitives = Vec::new();
+        let mut owner_id = 1_u32;
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
                 continue;
             };
             let mesh = &self.loaded.meshes[mesh_index];
             for primitive in &mesh.primitives {
+                let base_owner_id = owner_id;
+                owner_id = owner_id.saturating_add(ash_owner_id_count(primitive));
                 primitives.push(self.bake_primitive(
                     node_index,
                     node,
@@ -982,6 +988,8 @@ impl AshVrmFramePlanner {
                         pass: AshMtoonPass::Base,
                         mtoon_time,
                         scene_options,
+                        diagnostic_render,
+                        owner_id: base_owner_id,
                     },
                 )?);
                 if self
@@ -992,6 +1000,8 @@ impl AshVrmFramePlanner {
                     )
                     .is_some()
                 {
+                    let outline_owner_id = owner_id;
+                    owner_id = owner_id.saturating_add(ash_owner_id_count(primitive));
                     primitives.push(self.bake_primitive(
                         node_index,
                         node,
@@ -1001,6 +1011,8 @@ impl AshVrmFramePlanner {
                             pass: AshMtoonPass::Outline,
                             mtoon_time,
                             scene_options,
+                            diagnostic_render,
+                            owner_id: outline_owner_id,
                         },
                     )?);
                 }
@@ -1060,7 +1072,7 @@ impl AshVrmFramePlanner {
                 &mut normal_scales,
             );
         }
-        let vertices = source_vertices
+        let mut vertices: Vec<AshVrmVertex> = source_vertices
             .iter()
             .zip(normal_scales)
             .map(|(vertex, normal_scale)| {
@@ -1082,12 +1094,16 @@ impl AshVrmFramePlanner {
                 }
             })
             .collect();
+        let mut indices = primitive.indices.clone();
+        if settings.diagnostic_render == AshDiagnosticRender::OwnerId {
+            (vertices, indices) = ash_owner_id_triangles(&vertices, &indices, settings.owner_id);
+        }
         Ok(AshVrmPrimitive {
             node: NodeRef(node_index),
             material: primitive.material.map(MaterialRef),
             pass: settings.pass,
             vertices,
-            indices: primitive.indices.clone(),
+            indices,
         })
     }
 
@@ -1278,6 +1294,40 @@ fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
 
 fn ash_model_orientation() -> Mat4 {
     Mat4::from_rotation_y(std::f32::consts::PI)
+}
+
+fn ash_owner_id_count(primitive: &GltfPrimitiveData) -> u32 {
+    u32::try_from(primitive.indices.chunks_exact(3).len()).unwrap_or(u32::MAX)
+}
+
+fn ash_owner_id_color(id: u32) -> [f32; 4] {
+    [
+        f32::from((id & 0xff) as u8) / 255.0,
+        f32::from(((id >> 8) & 0xff) as u8) / 255.0,
+        f32::from(((id >> 16) & 0xff) as u8) / 255.0,
+        1.0,
+    ]
+}
+
+fn ash_owner_id_triangles(
+    vertices: &[AshVrmVertex],
+    indices: &[u32],
+    first_id: u32,
+) -> (Vec<AshVrmVertex>, Vec<u32>) {
+    let mut expanded_vertices = Vec::with_capacity(indices.len());
+    let mut expanded_indices = Vec::with_capacity(indices.len());
+    for (triangle_index, triangle) in indices.chunks_exact(3).enumerate() {
+        let color = ash_owner_id_color(first_id.saturating_add(triangle_index as u32));
+        for index in triangle {
+            if let Some(vertex) = vertices.get(*index as usize) {
+                let mut vertex = *vertex;
+                vertex.color_0 = color;
+                expanded_indices.push(u32::try_from(expanded_vertices.len()).unwrap_or(u32::MAX));
+                expanded_vertices.push(vertex);
+            }
+        }
+    }
+    (expanded_vertices, expanded_indices)
 }
 
 fn ash_vertex_normal_scales(
@@ -1719,6 +1769,10 @@ mod tests {
         assert_eq!(AshDiagnosticRender::Uv.mode_code(), 3.0);
         assert_eq!(AshDiagnosticRender::BaseUv.mode_code(), 4.0);
         assert_eq!(AshDiagnosticRender::OwnerId.mode_code(), 5.0);
+        assert_eq!(
+            ash_owner_id_color(0x000102),
+            [2.0 / 255.0, 1.0 / 255.0, 0.0, 1.0]
+        );
     }
 
     #[test]
@@ -1766,6 +1820,7 @@ mod tests {
         assert!(fragment_shader.contains("base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y)"));
         assert!(fragment_shader.contains("material_extra.flags2.z > 0.5"));
         assert!(fragment_shader.contains("material_extra.flags2.w > 4.5"));
+        assert!(fragment_shader.contains("owner_id_output_color(in_color_0.rgb"));
         assert!(fragment_shader.contains("material_extra.flags2.w < -0.5"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
         assert!(fragment_shader.contains("transform_uv(animated_uv"));

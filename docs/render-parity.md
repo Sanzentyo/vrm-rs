@@ -91,6 +91,9 @@ non-gating: the latest focused Seed-san review artifact is
 wgpu/Bevy remain above `32 dB`. The oriented diagnostic artifacts are
 `target/render-parity-ash-diagnostic-flat-128-oriented` (`22.3215 dB`) and
 `target/render-parity-ash-diagnostic-base-color-128-oriented` (`19.3898 dB`).
+Ash owner-id diagnostics now bake triangle IDs into vertex color; use
+`target/render-parity-ash-diagnostic-owner-id-128-triangles` (`13.9999 dB`)
+for the current primitive-ownership review.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
 the remaining wgpu-equivalent outline/primitive edge coverage and MToon
 material accumulation behavior.

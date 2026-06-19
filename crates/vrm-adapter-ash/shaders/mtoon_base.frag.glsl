@@ -103,6 +103,11 @@ vec4 output_color(vec3 color, float alpha) {
     );
 }
 
+vec4 owner_id_output_color(vec3 color, float alpha) {
+    vec3 rgb8 = round(clamp(color, vec3(0.0), vec3(1.0)) * 255.0) / 255.0;
+    return vec4(rgb8, alpha);
+}
+
 vec3 pbr_direct(
     vec3 diffuse,
     vec3 normal,
@@ -237,7 +242,7 @@ void main() {
         return;
     }
     if (material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5) {
-        out_color = output_color(material_extra.owner_color.rgb, opaque_alpha);
+        out_color = owner_id_output_color(in_color_0.rgb, opaque_alpha);
         return;
     }
     if (material_extra.flags2.w > 2.5) {
