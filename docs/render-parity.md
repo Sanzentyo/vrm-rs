@@ -1060,17 +1060,22 @@ run:
 
 ```powershell
 just render-parity-samples-shared-body3
+just render-parity-samples-shared-body3-ash-gated
 ```
 
 This writes `.external-fixtures/render-parity-samples-shared-body3/`, selects
-`rgb-shared-nonblack-interior3px`, and enforces `--render-fail-under 28.5`.
-The current six-fixture floor is the constraint sample at wgpu `28.6412 dB` /
-Bevy `28.6300 dB`; Seed-san is wgpu `31.9233 dB` / Bevy `31.2229 dB`, UV
-animation is wgpu `30.1907 dB` / Bevy `30.1538 dB`, the expression mask samples
-are wgpu `51.6179 dB` / Bevy `50.1671 dB`, and Alicia VRM0 is wgpu
-`33.1953 dB` / Bevy `33.1425 dB`. This is not a replacement for the canonical
-`rgb-visible` review; it is the body-color/material sweep used after known
-local raster ownership bands have been classified separately.
+`rgb-shared-nonblack-interior3px`, and enforces `--render-fail-under 28.5`;
+the Ash-gated variant writes
+`.external-fixtures/render-parity-samples-shared-body3-ash-gated/` and applies
+the same visual gate to Ash. The current six-fixture floor is the constraint
+sample at wgpu `28.6412 dB` / Bevy `28.6300 dB` / Ash `28.6392 dB`; Seed-san
+is wgpu `31.9233 dB` / Bevy `31.2229 dB` / Ash `31.9056 dB`, UV animation is
+wgpu `30.1907 dB` / Bevy `30.1538 dB` / Ash `30.1907 dB`, the expression mask
+samples are wgpu `51.6179 dB` / Bevy `50.1671 dB` / Ash `51.6179 dB`, and
+Alicia VRM0 is wgpu `33.1953 dB` / Bevy `33.1425 dB` / Ash `33.1953 dB`. This
+is not a replacement for the canonical `rgb-visible` review; it is the
+body-color/material sweep used after known local raster ownership bands have
+been classified separately.
 
 The current shared-body floor is outline-sensitive rather than normal-map
 sensitive. `just render-parity-constraint-shared-body3-diagnostics` reruns the
