@@ -1345,6 +1345,14 @@ fn capture_ash_readback(
         .arg(path(&shaders.vertex_spv))
         .arg("--fragment-spv")
         .arg(path(&shaders.fragment_spv));
+    if options.render_disable_normal_maps {
+        command.arg("--disable-normal-maps");
+    }
+    command
+        .arg("--normal-map-mode")
+        .arg(options.render_normal_map_mode.as_cli_value())
+        .arg("--normal-map-scale")
+        .arg(options.render_normal_map_scale.to_string());
     run_command(command)
 }
 

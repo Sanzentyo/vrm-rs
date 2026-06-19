@@ -101,6 +101,18 @@ not remove the current Ash fragment outline-width mask as a blind wgpu
 alignment step: the 2026-06-19 check under
 `target/render-parity-ash-review-128-outline-color-direct` fell to `15.4337 dB`,
 so the remaining outline blocker is coupled to Ash geometry/fill behavior.
+Ash now also accepts the same normal-map diagnostic axis as wgpu/Bevy:
+`--normal-map-mode generated-tangents|derivative|view-derivative`,
+`--normal-map-scale`, and `--disable-normal-maps` are forwarded through the
+local render-parity runner into the release-built Vulkan readback example. The
+GLSL handoff shader implements the derivative and view-derivative fallback path
+using `dFdx`/`dFdy` and the material-extra view-derivative flag. On Seed-san the
+2026-06-19 diagnostic runs
+`target/render-parity-ash-review-128-normal-derivative` and
+`target/render-parity-ash-review-128-normal-view-derivative` both reported Ash
+selected `rgb-visible` PSNR `15.4683 dB`, slightly below the current generated
+tangent default `15.4876 dB`, so this is a parity investigation knob rather
+than the current default path.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
 the remaining wgpu-equivalent outline/primitive edge coverage and MToon
 material accumulation behavior.

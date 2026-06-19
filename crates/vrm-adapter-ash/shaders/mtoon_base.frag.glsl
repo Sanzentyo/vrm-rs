@@ -188,6 +188,36 @@ vec3 mtoon_normal(vec2 uv, bool front_facing) {
         (1.0 - sampled.y * 2.0) * normal_scale,
         sampled.z * 2.0 - 1.0
     );
+    if (in_normal_scale < 0.0) {
+        bool use_view_derivative = material_extra.flags2.y > 0.5;
+        vec3 view_position = (scene.view * vec4(in_world_position, 1.0)).xyz;
+        vec3 view_normal = normalize((scene.view * vec4(geometric_normal, 0.0)).xyz);
+        vec3 derivative_position = use_view_derivative ? view_position : in_world_position;
+        vec3 derivative_normal = use_view_derivative ? view_normal : geometric_normal;
+        vec3 q0 = dFdx(derivative_position);
+        vec3 q1 = dFdy(derivative_position);
+        vec2 st0 = dFdx(uv);
+        vec2 st1 = dFdy(uv);
+        vec3 q1perp = cross(q1, derivative_normal);
+        vec3 q0perp = cross(derivative_normal, q0);
+        vec3 derivative_tangent = q1perp * st0.x + q0perp * st1.x;
+        vec3 derivative_bitangent = q1perp * st0.y + q0perp * st1.y;
+        float det = max(dot(derivative_tangent, derivative_tangent), dot(derivative_bitangent, derivative_bitangent));
+        if (det <= 0.0) {
+            return geometric_normal;
+        }
+        float derivative_scale = 1.0 / sqrt(det);
+        derivative_tangent *= derivative_scale * face_sign;
+        derivative_bitangent *= derivative_scale * face_sign;
+        vec3 perturbed = normalize(
+            derivative_tangent * tangent_normal.x +
+            derivative_bitangent * tangent_normal.y +
+            derivative_normal * tangent_normal.z
+        );
+        return use_view_derivative
+            ? normalize((scene.world_from_view * vec4(perturbed, 0.0)).xyz)
+            : perturbed;
+    }
     return normalize(
         tangent * tangent_normal.x +
         bitangent * tangent_normal.y +

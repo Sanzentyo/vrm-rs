@@ -78,6 +78,15 @@ pub struct AshVrmFramePlanOptions {
     /// MToon light accumulation mode.
     #[arg(long, value_enum, default_value_t = AshMtoonLightAccumulation::ThreeVrm)]
     pub mtoon_light_accumulation: AshMtoonLightAccumulation,
+    /// Disable normal map contribution for diagnostic renders.
+    #[arg(long)]
+    pub disable_normal_maps: bool,
+    /// Normal-map fallback mode used for primitives without authored tangents.
+    #[arg(long, value_enum, default_value_t = AshNormalMapMode::GeneratedTangents)]
+    pub normal_map_mode: AshNormalMapMode,
+    /// Scalar applied to normal-map strength for diagnostics.
+    #[arg(long, default_value_t = 1.0)]
+    pub normal_map_scale: f32,
     /// Renderer diagnostic mode for render-parity investigations.
     #[arg(long, value_enum, default_value_t = AshDiagnosticRender::Shaded)]
     pub diagnostic_render: AshDiagnosticRender,
@@ -102,11 +111,28 @@ pub enum AshDiagnosticRender {
     OwnerId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum AshNormalMapMode {
+    GeneratedTangents,
+    Derivative,
+    ViewDerivative,
+}
+
 impl From<AshMtoonLightAccumulation> for MtoonLightAccumulation {
     fn from(value: AshMtoonLightAccumulation) -> Self {
         match value {
             AshMtoonLightAccumulation::Tuned => Self::Tuned,
             AshMtoonLightAccumulation::ThreeVrm => Self::ThreeVrm,
+        }
+    }
+}
+
+impl From<AshNormalMapMode> for GltfNormalMapMode {
+    fn from(value: AshNormalMapMode) -> Self {
+        match value {
+            AshNormalMapMode::GeneratedTangents => Self::GeneratedTangents,
+            AshNormalMapMode::Derivative => Self::Derivative,
+            AshNormalMapMode::ViewDerivative => Self::ViewDerivative,
         }
     }
 }
@@ -130,8 +156,32 @@ impl AshVrmFramePlanOptions {
         }
     }
 
-    fn diagnostic_render_extra(&self) -> AshDiagnosticRender {
-        self.diagnostic_render
+    fn render_options(&self) -> AshRenderOptions {
+        AshRenderOptions {
+            diagnostic_render: self.diagnostic_render,
+            disable_normal_maps: self.disable_normal_maps,
+            normal_map_mode: self.normal_map_mode,
+            normal_map_scale: self.normal_map_scale,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshRenderOptions {
+    pub diagnostic_render: AshDiagnosticRender,
+    pub disable_normal_maps: bool,
+    pub normal_map_mode: AshNormalMapMode,
+    pub normal_map_scale: f32,
+}
+
+impl Default for AshRenderOptions {
+    fn default() -> Self {
+        Self {
+            diagnostic_render: AshDiagnosticRender::Shaded,
+            disable_normal_maps: false,
+            normal_map_mode: AshNormalMapMode::GeneratedTangents,
+            normal_map_scale: 1.0,
+        }
     }
 }
 
@@ -868,6 +918,7 @@ struct AshPrimitiveBakeSettings {
     pass: AshMtoonPass,
     mtoon_time: f32,
     scene_options: AshSceneOptions,
+    render_options: AshRenderOptions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -926,6 +977,22 @@ impl AshVrmFramePlanner {
         scene_options: AshSceneOptions,
         diagnostic_render: AshDiagnosticRender,
     ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
+        self.sample_frame_with_full_render_options(
+            time_seconds,
+            scene_options,
+            AshRenderOptions {
+                diagnostic_render,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn sample_frame_with_full_render_options(
+        &mut self,
+        time_seconds: f32,
+        scene_options: AshSceneOptions,
+        render_options: AshRenderOptions,
+    ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
         if let Some(animation) = &self.animation {
             let time = if animation.duration > f32::EPSILON {
                 time_seconds.rem_euclid(animation.duration)
@@ -941,14 +1008,14 @@ impl AshVrmFramePlanner {
             )?;
         }
         self.scene.update_world_transforms()?;
-        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds, diagnostic_render);
+        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds, render_options);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
             primitives: self.bake_primitives(
                 time_seconds,
                 scene_options,
-                diagnostic_render,
+                render_options,
                 &mtoon_pipelines,
             )?,
             materials: self.material_records(&texture_upload_indices),
@@ -976,7 +1043,7 @@ impl AshVrmFramePlanner {
         &self,
         mtoon_time: f32,
         scene_options: AshSceneOptions,
-        diagnostic_render: AshDiagnosticRender,
+        render_options: AshRenderOptions,
         mtoon_pipelines: &[AshMtoonPipelinePlan],
     ) -> Result<Vec<AshVrmPrimitive>, Box<dyn Error>> {
         let pipeline_orders = ash_pipeline_draw_orders(mtoon_pipelines);
@@ -996,6 +1063,7 @@ impl AshVrmFramePlanner {
                         pass: AshMtoonPass::Base,
                         mtoon_time,
                         scene_options,
+                        render_options,
                     },
                 )?;
                 primitives.push((
@@ -1023,6 +1091,7 @@ impl AshVrmFramePlanner {
                             pass: AshMtoonPass::Outline,
                             mtoon_time,
                             scene_options,
+                            render_options,
                         },
                     )?;
                     primitives.push((
@@ -1036,7 +1105,7 @@ impl AshVrmFramePlanner {
                 }
             }
         }
-        if diagnostic_render == AshDiagnosticRender::OwnerId {
+        if render_options.diagnostic_render == AshDiagnosticRender::OwnerId {
             assign_ash_owner_id_triangles(&mut primitives);
         }
         Ok(primitives
@@ -1066,6 +1135,11 @@ impl AshVrmFramePlanner {
         let shading = self
             .loaded
             .material_shading_plan(primitive.material, GltfMaterialShadingOptions::default());
+        let normal_scale = if settings.render_options.disable_normal_maps {
+            0.0
+        } else {
+            shading.normal_scale * settings.render_options.normal_map_scale
+        };
         let double_sided = primitive
             .material
             .and_then(|index| self.loaded.gltf_materials.get(index))
@@ -1086,13 +1160,18 @@ impl AshVrmFramePlanner {
         let source_vertices = source_vertices
             .as_mut()
             .ok_or("primitive geometry is inconsistent")?;
-        let mut normal_scales =
-            ash_vertex_normal_scales(primitive, source_vertices.len(), shading.normal_scale);
+        let mut normal_scales = ash_vertex_normal_scales(
+            primitive,
+            source_vertices.len(),
+            normal_scale,
+            settings.render_options.normal_map_mode.into(),
+        );
         if settings.pass == AshMtoonPass::Base {
             apply_generated_tangents(
                 primitive,
                 source_vertices,
-                shading.normal_scale,
+                normal_scale,
+                settings.render_options.normal_map_mode.into(),
                 &mut normal_scales,
             );
         }
@@ -1198,7 +1277,7 @@ impl AshVrmFramePlanner {
     fn mtoon_pipeline_plans(
         &self,
         mtoon_time: f32,
-        diagnostic_render: AshDiagnosticRender,
+        render_options: AshRenderOptions,
     ) -> Vec<AshMtoonPipelinePlan> {
         mtoon_renderer_material_plans(
             self.loaded.model().document(),
@@ -1216,11 +1295,15 @@ impl AshVrmFramePlanner {
             let mut render_extra_uniform = AshMaterialExtraUniform::from_plan(
                 self.loaded
                     .material_shading_plan(material, GltfMaterialShadingOptions::default())
-                    .render_extra_plan(GltfMaterialRenderExtraOptions::default())
+                    .render_extra_plan(GltfMaterialRenderExtraOptions {
+                        view_derivative_normals: render_options.normal_map_mode
+                            == AshNormalMapMode::ViewDerivative,
+                        ..Default::default()
+                    })
                     .uniform_plan(),
             );
-            render_extra_uniform.flags2[2] = diagnostic_render.flat_flag();
-            render_extra_uniform.flags2[3] = diagnostic_render.mode_code();
+            render_extra_uniform.flags2[2] = render_options.diagnostic_render.flat_flag();
+            render_extra_uniform.flags2[3] = render_options.diagnostic_render.mode_code();
             AshMtoonPipelinePlan {
                 material: plan.material,
                 name: plan.name,
@@ -1268,10 +1351,10 @@ pub fn frame_plan_from_options_with_aspect(
 ) -> Result<AshVrmFramePlan, Box<dyn Error>> {
     let animation = (!options.no_animation).then_some(options.animation.clone());
     let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
-    planner.sample_frame_with_render_options(
+    planner.sample_frame_with_full_render_options(
         options.time,
         options.scene_options(aspect_ratio),
-        options.diagnostic_render_extra(),
+        options.render_options(),
     )
 }
 
@@ -1400,8 +1483,9 @@ fn ash_vertex_normal_scales(
     primitive: &GltfPrimitiveData,
     vertex_count: usize,
     normal_scale: f32,
+    normal_map_mode: GltfNormalMapMode,
 ) -> Vec<f32> {
-    let normal_plan = primitive.normal_map_plan(normal_scale, GltfNormalMapMode::GeneratedTangents);
+    let normal_plan = primitive.normal_map_plan(normal_scale, normal_map_mode);
     (0..vertex_count)
         .map(|index| normal_plan.vertex_normal_scale(primitive.tangents.get(index).is_some()))
         .collect()
@@ -1411,9 +1495,10 @@ fn apply_generated_tangents(
     primitive: &GltfPrimitiveData,
     vertices: &mut [vrm_io::GltfTransformedVertex],
     normal_scale: f32,
+    normal_map_mode: GltfNormalMapMode,
     normal_scales: &mut [f32],
 ) {
-    let normal_plan = primitive.normal_map_plan(normal_scale, GltfNormalMapMode::GeneratedTangents);
+    let normal_plan = primitive.normal_map_plan(normal_scale, normal_map_mode);
     if !normal_plan.should_generate_tangents() {
         return;
     }
@@ -1878,6 +1963,37 @@ mod tests {
     }
 
     #[test]
+    fn render_options_carry_normal_map_diagnostics() {
+        let options = AshVrmFramePlanOptions::parse_from([
+            "ash-plan",
+            "--normal-map-mode",
+            "view-derivative",
+            "--normal-map-scale",
+            "0.25",
+            "--disable-normal-maps",
+            "--diagnostic-render",
+            "owner-id",
+        ]);
+
+        let render_options = options.render_options();
+
+        assert_eq!(
+            render_options.normal_map_mode,
+            AshNormalMapMode::ViewDerivative
+        );
+        assert_eq!(
+            GltfNormalMapMode::from(render_options.normal_map_mode),
+            GltfNormalMapMode::ViewDerivative
+        );
+        assert_eq!(render_options.normal_map_scale, 0.25);
+        assert!(render_options.disable_normal_maps);
+        assert_eq!(
+            render_options.diagnostic_render,
+            AshDiagnosticRender::OwnerId
+        );
+    }
+
+    #[test]
     fn source_mtoon_shader_matches_rust_binding_contract() {
         let vertex_shader = include_str!("../shaders/mtoon_base.vert.glsl");
         let fragment_shader = include_str!("../shaders/mtoon_base.frag.glsl");
@@ -1936,6 +2052,9 @@ mod tests {
         assert!(fragment_shader.contains("gl_FrontFacing"));
         assert!(fragment_shader.contains("in_normal_scale == 0.0"));
         assert!(fragment_shader.contains("front_facing || in_double_sided < 0.5"));
+        assert!(fragment_shader.contains("material_extra.flags2.y > 0.5"));
+        assert!(fragment_shader.contains("dFdx(derivative_position)"));
+        assert!(fragment_shader.contains("scene.world_from_view"));
         assert!(fragment_shader.contains("material_extra.flags.x > 0.5"));
         assert!(fragment_shader.contains("material_extra.flags2.x > 0.5"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
