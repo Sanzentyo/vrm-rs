@@ -22,6 +22,8 @@ layout(set = 0, binding = 5) uniform sampler2D matcap_texture;
 layout(set = 0, binding = 6) uniform sampler2D rim_multiply_texture;
 layout(set = 0, binding = 7) uniform sampler2D outline_width_texture;
 layout(set = 0, binding = 8) uniform sampler2D uv_animation_mask_texture;
+layout(set = 0, binding = 12) uniform sampler2D emissive_texture;
+layout(set = 0, binding = 13) uniform sampler2D occlusion_texture;
 
 layout(set = 0, binding = 9, std140) uniform AshSceneUniform {
     mat4 view_projection;
@@ -191,6 +193,8 @@ void main() {
     );
     vec2 normal_uv = transform_uv(animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
     vec2 rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    vec2 emissive_uv = transform_uv(animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
+    vec2 occlusion_uv = transform_uv(animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
     vec4 main_texel = texture(main_texture, base_uv);
     vec3 diffuse = in_color_0.rgb * main_texel.rgb * mtoon.base_color_factor.rgb;
     float alpha = in_color_0.a * main_texel.a * mtoon.base_color_factor.a;
@@ -204,7 +208,7 @@ void main() {
     vec3 light_dir = normalize(scene.light_dir.xyz);
     float ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
     vec3 view_dir = normalize(scene.camera_pos.xyz - in_world_position);
-    vec3 emissive = mtoon.emissive_color_outline_width.rgb;
+    vec3 emissive = mtoon.emissive_color_outline_width.rgb * texture(emissive_texture, emissive_uv).rgb;
 
     if (material_extra.flags2.x > 0.5) {
         out_color = output_color(diffuse + emissive, opaque_alpha);
@@ -219,7 +223,8 @@ void main() {
             material_extra.pbr_params.x,
             material_extra.pbr_params.y
         ) * scene.light_color.rgb * scene.light_dir.w;
-        vec3 ambient = diffuse * (1.0 - material_extra.pbr_params.x) * scene.mtoon_lighting.w;
+        float occlusion = (texture(occlusion_texture, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+        vec3 ambient = diffuse * (1.0 - material_extra.pbr_params.x) * scene.mtoon_lighting.w * occlusion;
         vec3 pbr_color = direct + ambient + emissive;
         if (mtoon.flags.z == 1u) {
             pbr_color = mtoon.outline_color_lighting_mix.rgb * mix(
@@ -239,7 +244,9 @@ void main() {
     if (material_extra.flags.x > 0.5) {
         direct = min(direct, diffuse);
     }
-    vec3 ambient = diffuse * (scene.mtoon_lighting.y + scene.mtoon_lighting.z * mtoon.lighting.z);
+    float sampled_occlusion = (texture(occlusion_texture, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    float occlusion = material_extra.flags.z > 0.5 ? 1.0 : sampled_occlusion;
+    vec3 ambient = diffuse * (scene.mtoon_lighting.y + scene.mtoon_lighting.z * mtoon.lighting.z) * occlusion;
 
     vec2 matcap_uv = matcap_uv_from_view(normal);
     vec3 matcap = texture(matcap_texture, matcap_uv).rgb * mtoon.matcap_factor_debug.rgb;
