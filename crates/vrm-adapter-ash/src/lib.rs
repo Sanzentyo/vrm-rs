@@ -18,12 +18,12 @@ use vrm_adapter::{
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
-    CpuRgba8Image, GltfExpressionRenderEffects, GltfMaterialRenderExtraOptions,
+    CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
     GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions, GltfMaterialTextureBinding,
     GltfMaterialTextureFallback, GltfMaterialTextureSlot, GltfMaterialTextureSlots,
-    GltfMaterialUvUniformPlan, GltfNodeRest, GltfNormalMapMode, GltfOutlineScale,
-    GltfOutlineVertexSettings, GltfPrimitiveData, LoadedVrm, Rgba8SamplingOrigin,
-    generate_tangents, load_vrm_from_path,
+    GltfMaterialUvUniformPlan, GltfMinFilter, GltfNodeRest, GltfNormalMapMode, GltfOutlineScale,
+    GltfOutlineVertexSettings, GltfPrimitiveData, GltfSamplerData, GltfTextureData, GltfWrapMode,
+    LoadedVrm, Rgba8SamplingOrigin, generate_tangents, load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -281,13 +281,15 @@ pub struct AshDescriptorBindingPlan {
     pub sampler: Option<AshSamplerPlan>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AshSamplerPlan {
     pub mag_filter: vk::Filter,
     pub min_filter: vk::Filter,
     pub mipmap_mode: vk::SamplerMipmapMode,
     pub address_mode_u: vk::SamplerAddressMode,
     pub address_mode_v: vk::SamplerAddressMode,
+    pub min_lod: f32,
+    pub max_lod: f32,
     pub normal_map_decode: bool,
 }
 
@@ -1334,6 +1336,7 @@ impl AshVrmFramePlanner {
                     blend_enable: plan.pipeline.blend,
                 },
                 descriptor_bindings: descriptor_bindings(
+                    &self.loaded.textures,
                     self.loaded.material_texture_slots(material),
                 ),
                 uniform: gpu.uniform,
@@ -1634,7 +1637,10 @@ pub const fn ash_texture_fallback_for_binding(binding: u32) -> Option<GltfMateri
     }
 }
 
-fn descriptor_bindings(slots: GltfMaterialTextureSlots) -> Vec<AshDescriptorBindingPlan> {
+fn descriptor_bindings(
+    textures: &[GltfTextureData],
+    slots: GltfMaterialTextureSlots,
+) -> Vec<AshDescriptorBindingPlan> {
     let plan = slots.binding_plan();
     let mut result = Vec::with_capacity(14);
     result.push(AshDescriptorBindingPlan {
@@ -1648,20 +1654,24 @@ fn descriptor_bindings(slots: GltfMaterialTextureSlots) -> Vec<AshDescriptorBind
         ASH_GLTF_TEXTURE_SLOTS_BEFORE_OUTLINE
             .iter()
             .filter_map(|slot| plan.binding(*slot))
-            .map(descriptor_binding_for_texture),
+            .map(|binding| descriptor_binding_for_texture(textures, binding)),
     );
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_texture_binding(MtoonTextureSlot::OutlineWidth),
         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: slots.outline_width.map(TextureRef),
-        sampler: Some(sampler_plan(MtoonSamplerHint::LinearRepeat)),
+        sampler: Some(sampler_plan_for_texture(
+            textures,
+            slots.outline_width,
+            MtoonSamplerHint::LinearRepeat,
+        )),
     });
     result.extend(
         ASH_GLTF_TEXTURE_SLOTS_AFTER_OUTLINE
             .iter()
             .filter_map(|slot| plan.binding(*slot))
-            .map(descriptor_binding_for_texture),
+            .map(|binding| descriptor_binding_for_texture(textures, binding)),
     );
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_scene_binding(),
@@ -1704,13 +1714,20 @@ const ASH_GLTF_TEXTURE_SLOTS_AFTER_OUTLINE: [GltfMaterialTextureSlot; 3] = [
     GltfMaterialTextureSlot::UvAnimationMask,
 ];
 
-fn descriptor_binding_for_texture(binding: GltfMaterialTextureBinding) -> AshDescriptorBindingPlan {
+fn descriptor_binding_for_texture(
+    textures: &[GltfTextureData],
+    binding: GltfMaterialTextureBinding,
+) -> AshDescriptorBindingPlan {
     AshDescriptorBindingPlan {
         binding: ash_material_texture_binding(binding.slot),
         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: binding.texture.map(TextureRef),
-        sampler: Some(sampler_plan(sampler_hint_for_material_slot(binding.slot))),
+        sampler: Some(sampler_plan_for_texture(
+            textures,
+            binding.texture,
+            sampler_hint_for_material_slot(binding.slot),
+        )),
     }
 }
 
@@ -1735,7 +1752,77 @@ fn sampler_plan(hint: MtoonSamplerHint) -> AshSamplerPlan {
         mipmap_mode: vk::SamplerMipmapMode::LINEAR,
         address_mode_u: vk::SamplerAddressMode::REPEAT,
         address_mode_v: vk::SamplerAddressMode::REPEAT,
+        min_lod: 0.0,
+        max_lod: 32.0,
         normal_map_decode: matches!(hint, MtoonSamplerHint::NormalMapLinearRepeat),
+    }
+}
+
+fn sampler_plan_for_texture(
+    textures: &[GltfTextureData],
+    texture: Option<usize>,
+    hint: MtoonSamplerHint,
+) -> AshSamplerPlan {
+    let mut plan = texture
+        .and_then(|texture| textures.get(texture))
+        .map(|texture| ash_sampler_plan(texture.sampler))
+        .unwrap_or_else(|| sampler_plan(MtoonSamplerHint::LinearRepeat));
+    plan.normal_map_decode = matches!(hint, MtoonSamplerHint::NormalMapLinearRepeat);
+    plan
+}
+
+fn ash_sampler_plan(sampler: GltfSamplerData) -> AshSamplerPlan {
+    AshSamplerPlan {
+        mag_filter: ash_mag_filter(sampler.mag_filter),
+        min_filter: ash_min_filter(sampler.min_filter),
+        mipmap_mode: ash_mipmap_mode(sampler.min_filter),
+        address_mode_u: ash_address_mode(sampler.wrap_s),
+        address_mode_v: ash_address_mode(sampler.wrap_t),
+        min_lod: 0.0,
+        max_lod: if sampler.min_filter.uses_mipmaps() {
+            32.0
+        } else {
+            0.0
+        },
+        normal_map_decode: false,
+    }
+}
+
+fn ash_address_mode(mode: GltfWrapMode) -> vk::SamplerAddressMode {
+    match mode {
+        GltfWrapMode::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
+        GltfWrapMode::MirroredRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
+        GltfWrapMode::Repeat => vk::SamplerAddressMode::REPEAT,
+    }
+}
+
+fn ash_mag_filter(filter: GltfMagFilter) -> vk::Filter {
+    match filter {
+        GltfMagFilter::Nearest => vk::Filter::NEAREST,
+        GltfMagFilter::Linear => vk::Filter::LINEAR,
+    }
+}
+
+fn ash_min_filter(filter: GltfMinFilter) -> vk::Filter {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::NearestMipmapLinear => vk::Filter::NEAREST,
+        GltfMinFilter::Linear
+        | GltfMinFilter::LinearMipmapNearest
+        | GltfMinFilter::LinearMipmapLinear => vk::Filter::LINEAR,
+    }
+}
+
+fn ash_mipmap_mode(filter: GltfMinFilter) -> vk::SamplerMipmapMode {
+    match filter {
+        GltfMinFilter::Nearest
+        | GltfMinFilter::Linear
+        | GltfMinFilter::NearestMipmapNearest
+        | GltfMinFilter::LinearMipmapNearest => vk::SamplerMipmapMode::NEAREST,
+        GltfMinFilter::NearestMipmapLinear | GltfMinFilter::LinearMipmapLinear => {
+            vk::SamplerMipmapMode::LINEAR
+        }
     }
 }
 
@@ -1811,12 +1898,25 @@ mod tests {
 
     #[test]
     fn descriptor_bindings_start_with_uniform_buffer() {
-        let bindings = descriptor_bindings(GltfMaterialTextureSlots {
-            outline_width: Some(6),
-            emissive: Some(7),
-            occlusion: Some(8),
+        let textures = vec![GltfTextureData {
+            sampler: GltfSamplerData {
+                mag_filter: GltfMagFilter::Nearest,
+                min_filter: GltfMinFilter::Linear,
+                wrap_s: GltfWrapMode::ClampToEdge,
+                wrap_t: GltfWrapMode::MirroredRepeat,
+            },
             ..Default::default()
-        });
+        }];
+        let bindings = descriptor_bindings(
+            &textures,
+            GltfMaterialTextureSlots {
+                base: Some(0),
+                outline_width: Some(6),
+                emissive: Some(7),
+                occlusion: Some(8),
+                ..Default::default()
+            },
+        );
         assert_eq!(bindings.len(), 14);
         assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
         assert_eq!(
@@ -1827,7 +1927,19 @@ mod tests {
             bindings[1].binding,
             ash_mtoon_texture_binding(MtoonTextureSlot::Main)
         );
-        assert_eq!(bindings[1].texture, None);
+        assert_eq!(bindings[1].texture, Some(TextureRef(0)));
+        let base_sampler = bindings[1].sampler.unwrap();
+        assert_eq!(base_sampler.mag_filter, vk::Filter::NEAREST);
+        assert_eq!(base_sampler.min_filter, vk::Filter::LINEAR);
+        assert_eq!(
+            base_sampler.address_mode_u,
+            vk::SamplerAddressMode::CLAMP_TO_EDGE
+        );
+        assert_eq!(
+            base_sampler.address_mode_v,
+            vk::SamplerAddressMode::MIRRORED_REPEAT
+        );
+        assert_eq!(base_sampler.max_lod, 0.0);
         assert_eq!(
             bindings[4].binding,
             ash_mtoon_texture_binding(MtoonTextureSlot::Normal)
@@ -2119,7 +2231,7 @@ mod tests {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: false,
                 },
-                descriptor_bindings: descriptor_bindings(GltfMaterialTextureSlots::default()),
+                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
                 uniform: MtoonGpuUniform::zeroed(),
                 uv_uniform: AshMaterialUvUniform::default(),
                 render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -2256,7 +2368,7 @@ mod tests {
                 depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                 blend_enable: false,
             },
-            descriptor_bindings: descriptor_bindings(GltfMaterialTextureSlots::default()),
+            descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
             uniform: MtoonGpuUniform::zeroed(),
             uv_uniform: AshMaterialUvUniform::default(),
             render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -2343,6 +2455,8 @@ mod tests {
                             mipmap_mode: vk::SamplerMipmapMode::LINEAR,
                             address_mode_u: vk::SamplerAddressMode::REPEAT,
                             address_mode_v: vk::SamplerAddressMode::REPEAT,
+                            min_lod: 0.0,
+                            max_lod: 32.0,
                             normal_map_decode: false,
                         }),
                     },

@@ -121,6 +121,13 @@ release-built Vulkan example records `21` draw plans instead of `31`, with
 exact opaque alpha parity and Ash selected `rgb-visible` PSNR `16.6624 dB`.
 This makes Ash outline diagnostics comparable to wgpu/Bevy/three-vrm without
 making outline-off the default path.
+Ash descriptor plans now also derive Vulkan sampler filter, wrap, mipmap mode,
+and LOD clamps from the glTF texture sampler referenced by each material
+texture slot. This aligns the Ash resource handoff with the wgpu/Bevy capture
+paths before further material-color work. The 2026-06-19 Seed-san smoke under
+`target/render-parity-ash-review-128-sampler-policy` preserved exact opaque
+alpha parity and stayed at Ash selected `rgb-visible` PSNR `15.4876 dB`, so the
+change is a compatibility prerequisite rather than the current visible blocker.
 Keep `--render-ash-visual-gate` opt-in until the Ash GLSL/resource path gains
 the remaining wgpu-equivalent outline/primitive edge coverage and MToon
 material accumulation behavior.

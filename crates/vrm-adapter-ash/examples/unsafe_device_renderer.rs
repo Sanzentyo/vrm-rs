@@ -647,8 +647,8 @@ impl UnsafeAshDeviceRenderer {
             .address_mode_u(plan.address_mode_u)
             .address_mode_v(plan.address_mode_v)
             .address_mode_w(vk::SamplerAddressMode::REPEAT)
-            .min_lod(0.0)
-            .max_lod(0.0);
+            .min_lod(plan.min_lod)
+            .max_lod(plan.max_lod);
         unsafe { self.device.create_sampler(&info, None) }
     }
 
@@ -1286,6 +1286,8 @@ fn default_sampler_plan() -> AshSamplerPlan {
         mipmap_mode: vk::SamplerMipmapMode::LINEAR,
         address_mode_u: vk::SamplerAddressMode::REPEAT,
         address_mode_v: vk::SamplerAddressMode::REPEAT,
+        min_lod: 0.0,
+        max_lod: 32.0,
         normal_map_decode: false,
     }
 }
