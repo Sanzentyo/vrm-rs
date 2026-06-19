@@ -18,7 +18,9 @@ use vrm_adapter::{
 };
 use vrm_core::{Feature, MaterialRef, MtoonCullMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
-    CpuRgba8Image, GltfAlphaMode, GltfNodeRest, GltfPrimitiveData, LoadedVrm, load_vrm_from_path,
+    CpuRgba8Image, GltfAlphaMode, GltfMaterialRenderExtraOptions,
+    GltfMaterialRenderExtraUniformPlan, GltfMaterialShadingOptions, GltfMaterialUvUniformPlan,
+    GltfNodeRest, GltfPrimitiveData, LoadedVrm, load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -118,11 +120,123 @@ pub struct AshMtoonPipelinePlan {
     pub key: AshPipelineKey,
     pub descriptor_bindings: Vec<AshDescriptorBindingPlan>,
     pub uniform: MtoonGpuUniform,
+    pub uv_uniform: AshMaterialUvUniform,
+    pub render_extra_uniform: AshMaterialExtraUniform,
     pub uniform_buffer_size: u32,
     pub alpha_cutoff: f32,
     pub outline_width: f32,
     pub base_color_factor: [f32; 4],
     pub emissive_color: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct AshMaterialUvUniform {
+    pub base_transform: [f32; 4],
+    pub shade_transform: [f32; 4],
+    pub shading_shift_transform: [f32; 4],
+    pub normal_transform: [f32; 4],
+    pub matcap_transform: [f32; 4],
+    pub rim_transform: [f32; 4],
+    pub emissive_transform: [f32; 4],
+    pub occlusion_transform: [f32; 4],
+    pub uv_animation_mask_transform: [f32; 4],
+    pub rotation_a: [f32; 4],
+    pub rotation_b: [f32; 4],
+    pub uv_animation: [f32; 4],
+}
+
+impl AshMaterialUvUniform {
+    pub fn from_plan(plan: GltfMaterialUvUniformPlan) -> Self {
+        plan.into()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+impl From<GltfMaterialUvUniformPlan> for AshMaterialUvUniform {
+    fn from(plan: GltfMaterialUvUniformPlan) -> Self {
+        Self {
+            base_transform: plan.base_transform,
+            shade_transform: plan.shade_transform,
+            shading_shift_transform: plan.shading_shift_transform,
+            normal_transform: plan.normal_transform,
+            matcap_transform: plan.matcap_transform,
+            rim_transform: plan.rim_transform,
+            emissive_transform: plan.emissive_transform,
+            occlusion_transform: plan.occlusion_transform,
+            uv_animation_mask_transform: plan.uv_animation_mask_transform,
+            rotation_a: plan.rotation_a,
+            rotation_b: plan.rotation_b,
+            uv_animation: plan.uv_animation,
+        }
+    }
+}
+
+impl Default for AshMaterialUvUniform {
+    fn default() -> Self {
+        Self::from_plan(GltfMaterialUvUniformPlan {
+            base_transform: [0.0, 0.0, 1.0, 1.0],
+            shade_transform: [0.0, 0.0, 1.0, 1.0],
+            shading_shift_transform: [0.0, 0.0, 1.0, 1.0],
+            normal_transform: [0.0, 0.0, 1.0, 1.0],
+            matcap_transform: [0.0, 0.0, 1.0, 1.0],
+            rim_transform: [0.0, 0.0, 1.0, 1.0],
+            emissive_transform: [0.0, 0.0, 1.0, 1.0],
+            occlusion_transform: [0.0, 0.0, 1.0, 1.0],
+            uv_animation_mask_transform: [0.0, 0.0, 1.0, 1.0],
+            rotation_a: [0.0; 4],
+            rotation_b: [0.0; 4],
+            uv_animation: [0.0; 4],
+        })
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct AshMaterialExtraUniform {
+    pub flags: [f32; 4],
+    pub pbr_params: [f32; 4],
+    pub flags2: [f32; 4],
+    pub owner_color: [f32; 4],
+}
+
+impl AshMaterialExtraUniform {
+    pub fn from_plan(plan: GltfMaterialRenderExtraUniformPlan) -> Self {
+        plan.into()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+impl From<GltfMaterialRenderExtraUniformPlan> for AshMaterialExtraUniform {
+    fn from(plan: GltfMaterialRenderExtraUniformPlan) -> Self {
+        Self {
+            flags: plan.flags,
+            pbr_params: plan.pbr_params,
+            flags2: plan.flags2,
+            owner_color: [0.0; 4],
+        }
+    }
+}
+
+impl Default for AshMaterialExtraUniform {
+    fn default() -> Self {
+        Self::from_plan(
+            vrm_io::GltfMaterialRenderExtraPlan {
+                flags: Default::default(),
+                metallic: 0.0,
+                roughness: 1.0,
+                occlusion_strength: 1.0,
+                direct_light_scale: 1.0,
+            }
+            .uniform_plan(),
+        )
+    }
 }
 
 #[repr(C)]
@@ -248,6 +362,14 @@ pub enum AshUniformScope {
         material: MaterialRef,
         pipeline_plan_index: usize,
     },
+    MaterialUv {
+        material: MaterialRef,
+        pipeline_plan_index: usize,
+    },
+    MaterialExtra {
+        material: MaterialRef,
+        pipeline_plan_index: usize,
+    },
     Scene,
 }
 
@@ -259,16 +381,34 @@ impl AshUniformScope {
         }
     }
 
+    pub const fn material_uv(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+        Self::MaterialUv {
+            material,
+            pipeline_plan_index,
+        }
+    }
+
+    pub const fn material_extra(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+        Self::MaterialExtra {
+            material,
+            pipeline_plan_index,
+        }
+    }
+
     pub const fn binding(self) -> u32 {
         match self {
             Self::Material { .. } => ash_mtoon_uniform_binding(),
+            Self::MaterialUv { .. } => ash_mtoon_uv_uniform_binding(),
+            Self::MaterialExtra { .. } => ash_mtoon_render_extra_binding(),
             Self::Scene => ash_mtoon_scene_binding(),
         }
     }
 
     pub const fn material_ref(self) -> Option<MaterialRef> {
         match self {
-            Self::Material { material, .. } => Some(material),
+            Self::Material { material, .. }
+            | Self::MaterialUv { material, .. }
+            | Self::MaterialExtra { material, .. } => Some(material),
             Self::Scene => None,
         }
     }
@@ -276,6 +416,14 @@ impl AshUniformScope {
     pub const fn pipeline_plan_index(self) -> Option<usize> {
         match self {
             Self::Material {
+                pipeline_plan_index,
+                ..
+            }
+            | Self::MaterialUv {
+                pipeline_plan_index,
+                ..
+            }
+            | Self::MaterialExtra {
                 pipeline_plan_index,
                 ..
             } => Some(pipeline_plan_index),
@@ -313,7 +461,7 @@ pub struct AshVertexAttributePlan {
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
     let texture_indices = texture_ref_upload_indices(&plan.texture_uploads);
-    let material_uniform_count = plan.mtoon_pipelines.len();
+    let material_uniform_count = plan.mtoon_pipelines.len() * ASH_MTOON_UNIFORMS_PER_PIPELINE;
     let scene_uniform_upload_index = material_uniform_count;
     let descriptor_sets = plan
         .mtoon_pipelines
@@ -331,12 +479,20 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                     stage_flags: binding.stage_flags,
                     uniform_upload_index: (binding.descriptor_type
                         == vk::DescriptorType::UNIFORM_BUFFER)
-                        .then(|| {
-                            if binding.binding == ash_mtoon_scene_binding() {
-                                scene_uniform_upload_index
-                            } else {
-                                pipeline_plan_index
+                        .then(|| match binding.binding {
+                            binding if binding == ash_mtoon_uniform_binding() => {
+                                pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE
                             }
+                            binding if binding == ash_mtoon_uv_uniform_binding() => {
+                                pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE + 1
+                            }
+                            binding if binding == ash_mtoon_render_extra_binding() => {
+                                pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE + 2
+                            }
+                            binding if binding == ash_mtoon_scene_binding() => {
+                                scene_uniform_upload_index
+                            }
+                            _ => pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE,
                         }),
                     texture_upload_index: binding
                         .texture
@@ -429,10 +585,27 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
             .mtoon_pipelines
             .iter()
             .enumerate()
-            .map(|(pipeline_plan_index, pipeline)| AshUniformUpload {
-                scope: AshUniformScope::material(pipeline.material, pipeline_plan_index),
-                binding: ash_mtoon_uniform_binding(),
-                bytes: pipeline.uniform.bytes().to_vec(),
+            .flat_map(|(pipeline_plan_index, pipeline)| {
+                [
+                    AshUniformUpload {
+                        scope: AshUniformScope::material(pipeline.material, pipeline_plan_index),
+                        binding: ash_mtoon_uniform_binding(),
+                        bytes: pipeline.uniform.bytes().to_vec(),
+                    },
+                    AshUniformUpload {
+                        scope: AshUniformScope::material_uv(pipeline.material, pipeline_plan_index),
+                        binding: ash_mtoon_uv_uniform_binding(),
+                        bytes: pipeline.uv_uniform.bytes().to_vec(),
+                    },
+                    AshUniformUpload {
+                        scope: AshUniformScope::material_extra(
+                            pipeline.material,
+                            pipeline_plan_index,
+                        ),
+                        binding: ash_mtoon_render_extra_binding(),
+                        bytes: pipeline.render_extra_uniform.bytes().to_vec(),
+                    },
+                ]
             })
             .chain(std::iter::once(AshUniformUpload {
                 scope: AshUniformScope::Scene,
@@ -532,7 +705,7 @@ impl AshVrmFramePlanner {
             )?;
         }
         self.scene.update_world_transforms()?;
-        let mtoon_pipelines = self.mtoon_pipeline_plans();
+        let mtoon_pipelines = self.mtoon_pipeline_plans(time_seconds);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
         Ok(AshVrmFramePlan {
@@ -659,7 +832,7 @@ impl AshVrmFramePlanner {
             .collect()
     }
 
-    fn mtoon_pipeline_plans(&self) -> Vec<AshMtoonPipelinePlan> {
+    fn mtoon_pipeline_plans(&self, mtoon_time: f32) -> Vec<AshMtoonPipelinePlan> {
         mtoon_renderer_material_plans(
             self.loaded.model().document(),
             MtoonMaterializationOptions::default(),
@@ -667,6 +840,18 @@ impl AshVrmFramePlanner {
         .into_iter()
         .map(|plan| {
             let gpu = MtoonGpuMaterial::from_renderer_plan(&plan);
+            let material = Some(plan.material.0);
+            let uv_uniform = AshMaterialUvUniform::from_plan(
+                self.loaded
+                    .material_uv_transforms(material, mtoon_time)
+                    .uniform_plan(),
+            );
+            let render_extra_uniform = AshMaterialExtraUniform::from_plan(
+                self.loaded
+                    .material_shading_plan(material, GltfMaterialShadingOptions::default())
+                    .render_extra_plan(GltfMaterialRenderExtraOptions::default())
+                    .uniform_plan(),
+            );
             AshMtoonPipelinePlan {
                 material: plan.material,
                 name: plan.name,
@@ -687,6 +872,8 @@ impl AshVrmFramePlanner {
                 },
                 descriptor_bindings: descriptor_bindings(&gpu.textures),
                 uniform: gpu.uniform,
+                uv_uniform,
+                render_extra_uniform,
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: plan.shader.cutoff_factor,
                 outline_width: plan.shader.outline_width_factor,
@@ -777,6 +964,14 @@ pub const fn ash_mtoon_scene_binding() -> u32 {
     9
 }
 
+pub const fn ash_mtoon_uv_uniform_binding() -> u32 {
+    10
+}
+
+pub const fn ash_mtoon_render_extra_binding() -> u32 {
+    11
+}
+
 pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
     match slot {
         MtoonTextureSlot::Main => 1,
@@ -791,7 +986,7 @@ pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
 }
 
 fn descriptor_bindings(textures: &MtoonRendererTextureRefs) -> Vec<AshDescriptorBindingPlan> {
-    let mut result = Vec::with_capacity(ASH_MTOON_TEXTURE_SLOTS.len() + 2);
+    let mut result = Vec::with_capacity(ASH_MTOON_TEXTURE_SLOTS.len() + 4);
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_uniform_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -818,8 +1013,24 @@ fn descriptor_bindings(textures: &MtoonRendererTextureRefs) -> Vec<AshDescriptor
         texture: None,
         sampler: None,
     });
+    result.push(AshDescriptorBindingPlan {
+        binding: ash_mtoon_uv_uniform_binding(),
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        texture: None,
+        sampler: None,
+    });
+    result.push(AshDescriptorBindingPlan {
+        binding: ash_mtoon_render_extra_binding(),
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        texture: None,
+        sampler: None,
+    });
     result
 }
+
+const ASH_MTOON_UNIFORMS_PER_PIPELINE: usize = 3;
 
 const ASH_MTOON_TEXTURE_SLOTS: [MtoonTextureSlot; 8] = [
     MtoonTextureSlot::Main,
@@ -945,7 +1156,7 @@ mod tests {
     #[test]
     fn descriptor_bindings_start_with_uniform_buffer() {
         let bindings = descriptor_bindings(&MtoonRendererTextureRefs::default());
-        assert_eq!(bindings.len(), 10);
+        assert_eq!(bindings.len(), 12);
         assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
         assert_eq!(
             bindings[0].descriptor_type,
@@ -966,6 +1177,18 @@ mod tests {
             bindings[9].descriptor_type,
             vk::DescriptorType::UNIFORM_BUFFER
         );
+        assert_eq!(bindings[10].binding, ash_mtoon_uv_uniform_binding());
+        assert_eq!(bindings[11].binding, ash_mtoon_render_extra_binding());
+        assert!(
+            bindings[10]
+                .stage_flags
+                .contains(vk::ShaderStageFlags::FRAGMENT)
+        );
+        assert!(
+            bindings[11]
+                .stage_flags
+                .contains(vk::ShaderStageFlags::FRAGMENT)
+        );
     }
 
     #[test]
@@ -976,6 +1199,18 @@ mod tests {
         assert_eq!(uniform.camera_pos, [0.0, 1.4, -4.0, 1.0]);
         assert_eq!(uniform.light_color, [1.0, 1.0, 1.0, 0.0]);
         assert_ne!(uniform.view_projection, Mat4::IDENTITY.to_cols_array_2d());
+    }
+
+    #[test]
+    fn material_extra_uniforms_expose_stable_abi() {
+        let uv = AshMaterialUvUniform::default();
+        let extra = AshMaterialExtraUniform::default();
+        assert_eq!(std::mem::size_of::<AshMaterialUvUniform>(), 192);
+        assert_eq!(uv.bytes().len(), 192);
+        assert_eq!(uv.base_transform, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(std::mem::size_of::<AshMaterialExtraUniform>(), 64);
+        assert_eq!(extra.bytes().len(), 64);
+        assert_eq!(extra.pbr_params, [0.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -1005,7 +1240,10 @@ mod tests {
 
         assert!(fragment_shader.contains("layout(set = 0, binding = 0, std140)"));
         assert!(fragment_shader.contains("layout(set = 0, binding = 9, std140)"));
+        assert!(fragment_shader.contains("layout(set = 0, binding = 10, std140)"));
+        assert!(fragment_shader.contains("layout(set = 0, binding = 11, std140)"));
         assert!(fragment_shader.contains("mtoon.flags.z == 1u"));
+        assert!(fragment_shader.contains("transform_uv(animated_uv"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
@@ -1049,6 +1287,8 @@ mod tests {
                 },
                 descriptor_bindings: descriptor_bindings(&MtoonRendererTextureRefs::default()),
                 uniform: MtoonGpuUniform::zeroed(),
+                uv_uniform: AshMaterialUvUniform::default(),
+                render_extra_uniform: AshMaterialExtraUniform::default(),
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: 0.5,
                 outline_width: 0.0,
@@ -1059,7 +1299,7 @@ mod tests {
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
-        assert_eq!(renderer_frame.uniforms.len(), 2);
+        assert_eq!(renderer_frame.uniforms.len(), 4);
         assert_eq!(renderer_frame.pipelines.len(), 1);
         assert_eq!(
             renderer_frame.uniforms[0].bytes.len(),
@@ -1083,13 +1323,37 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.uniforms[1].bytes.len(),
-            std::mem::size_of::<AshSceneUniform>()
+            std::mem::size_of::<AshMaterialUvUniform>()
         );
-        assert_eq!(renderer_frame.uniforms[1].scope, AshUniformScope::Scene);
-        assert_eq!(renderer_frame.uniforms[1].scope.material_ref(), None);
-        assert_eq!(renderer_frame.uniforms[1].scope.pipeline_plan_index(), None);
+        assert_eq!(
+            renderer_frame.uniforms[1].scope,
+            AshUniformScope::material_uv(MaterialRef(0), 0)
+        );
         assert_eq!(
             renderer_frame.uniforms[1].binding,
+            ash_mtoon_uv_uniform_binding()
+        );
+        assert_eq!(
+            renderer_frame.uniforms[2].bytes.len(),
+            std::mem::size_of::<AshMaterialExtraUniform>()
+        );
+        assert_eq!(
+            renderer_frame.uniforms[2].scope,
+            AshUniformScope::material_extra(MaterialRef(0), 0)
+        );
+        assert_eq!(
+            renderer_frame.uniforms[2].binding,
+            ash_mtoon_render_extra_binding()
+        );
+        assert_eq!(
+            renderer_frame.uniforms[3].bytes.len(),
+            std::mem::size_of::<AshSceneUniform>()
+        );
+        assert_eq!(renderer_frame.uniforms[3].scope, AshUniformScope::Scene);
+        assert_eq!(renderer_frame.uniforms[3].scope.material_ref(), None);
+        assert_eq!(renderer_frame.uniforms[3].scope.pipeline_plan_index(), None);
+        assert_eq!(
+            renderer_frame.uniforms[3].binding,
             ash_mtoon_scene_binding()
         );
         assert_eq!(
@@ -1098,7 +1362,15 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.descriptor_sets[0].bindings[9].uniform_upload_index,
+            Some(3)
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[10].uniform_upload_index,
             Some(1)
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[11].uniform_upload_index,
+            Some(2)
         );
         assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
@@ -1168,6 +1440,8 @@ mod tests {
                     },
                 ],
                 uniform: MtoonGpuUniform::zeroed(),
+                uv_uniform: AshMaterialUvUniform::default(),
+                render_extra_uniform: AshMaterialExtraUniform::default(),
                 uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
                 alpha_cutoff: 0.5,
                 outline_width: 0.0,

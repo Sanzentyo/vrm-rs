@@ -33,6 +33,28 @@ layout(set = 0, binding = 9, std140) uniform AshSceneUniform {
     vec4 mtoon_lighting;
 } scene;
 
+layout(set = 0, binding = 10, std140) uniform AshMaterialUvUniform {
+    vec4 base_transform;
+    vec4 shade_transform;
+    vec4 shading_shift_transform;
+    vec4 normal_transform;
+    vec4 matcap_transform;
+    vec4 rim_transform;
+    vec4 emissive_transform;
+    vec4 occlusion_transform;
+    vec4 uv_animation_mask_transform;
+    vec4 rotation_a;
+    vec4 rotation_b;
+    vec4 uv_animation;
+} material_uv;
+
+layout(set = 0, binding = 11, std140) uniform AshMaterialExtraUniform {
+    vec4 flags;
+    vec4 pbr_params;
+    vec4 flags2;
+    vec4 owner_color;
+} material_extra;
+
 layout(location = 0) in vec2 in_tex_coord_0;
 layout(location = 1) in vec4 in_color_0;
 layout(location = 2) in vec3 in_normal;
@@ -45,10 +67,25 @@ float linearstep(float edge0, float edge1, float value) {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
 
+vec2 transform_uv(vec2 uv, vec4 offset_scale, float rotation) {
+    vec2 scaled = uv * offset_scale.zw;
+    float c = cos(rotation);
+    float s = sin(rotation);
+    return vec2(
+        c * scaled.x - s * scaled.y + offset_scale.x,
+        s * scaled.x + c * scaled.y + offset_scale.y
+    );
+}
+
 vec2 mtoon_uv_animation(vec2 uv) {
-    float mask = texture(uv_animation_mask_texture, uv).b;
-    vec2 scroll = mtoon.uv_animation.xy * mask;
-    float rotation = mtoon.uv_animation.z * mask;
+    vec2 mask_uv = transform_uv(
+        uv,
+        material_uv.uv_animation_mask_transform,
+        material_uv.rotation_b.z
+    );
+    float mask = texture(uv_animation_mask_texture, mask_uv).b;
+    vec2 scroll = material_uv.uv_animation.xy * mask;
+    float rotation = material_uv.uv_animation.z * mask;
     vec2 centered = uv - vec2(0.5, 0.5);
     float c = cos(rotation);
     float s = sin(rotation);
@@ -84,8 +121,18 @@ vec3 mtoon_normal(vec2 uv) {
 }
 
 void main() {
-    vec2 uv = mtoon_uv_animation(in_tex_coord_0);
-    vec4 main_texel = texture(main_texture, uv);
+    vec2 animated_uv = mtoon_uv_animation(in_tex_coord_0);
+    vec2 base_uv = transform_uv(animated_uv, material_uv.base_transform, material_uv.rotation_a.x);
+    vec2 shade_uv = transform_uv(animated_uv, material_uv.shade_transform, material_uv.rotation_a.y);
+    vec2 shading_shift_uv = transform_uv(
+        animated_uv,
+        material_uv.shading_shift_transform,
+        material_uv.rotation_a.z
+    );
+    vec2 normal_uv = transform_uv(animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
+    vec2 matcap_uv = transform_uv(animated_uv, material_uv.matcap_transform, material_uv.rotation_b.w);
+    vec2 rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    vec4 main_texel = texture(main_texture, base_uv);
     vec4 base = in_color_0 * main_texel * mtoon.base_color_factor;
     float alpha = base.a;
     uint alpha_mode = mtoon.flags.w;
@@ -93,16 +140,16 @@ void main() {
         discard;
     }
 
-    vec3 normal = mtoon_normal(uv);
+    vec3 normal = mtoon_normal(normal_uv);
     vec3 light_dir = normalize(scene.light_dir.xyz);
     float ndotl = clamp(dot(normal, light_dir), 0.0, 1.0);
-    float shift_texel = texture(shading_shift_texture, uv).r;
+    float shift_texel = texture(shading_shift_texture, shading_shift_uv).r;
     float shade_rate = mtoon_lit_shade_rate(ndotl, shift_texel);
-    vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture(shade_multiply_texture, uv).rgb;
-    vec3 direct = mix(shade, base.rgb, shade_rate) * scene.light_color.rgb * scene.light_dir.w;
+    vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture(shade_multiply_texture, shade_uv).rgb;
+    vec3 direct = mix(shade, base.rgb, shade_rate) * scene.light_color.rgb * scene.light_dir.w * material_extra.pbr_params.w;
     vec3 ambient = base.rgb * (scene.mtoon_lighting.y + scene.mtoon_lighting.z * mtoon.lighting.z);
 
-    vec3 matcap = texture(matcap_texture, uv).rgb * mtoon.matcap_factor_debug.rgb;
+    vec3 matcap = texture(matcap_texture, matcap_uv).rgb * mtoon.matcap_factor_debug.rgb;
     vec3 view_dir = normalize(scene.camera_pos.xyz - in_world_position);
     vec3 rim_base = mtoon.rim_color_lighting_mix.rgb * pow(
         clamp(1.0 - dot(view_dir, normal) + mtoon.rim_params.y, 0.0, 1.0),
@@ -110,9 +157,14 @@ void main() {
     );
     vec3 rim_light = scene.light_color.rgb * scene.light_dir.w + vec3(scene.mtoon_lighting.w);
     vec3 rim_mix = mix(vec3(1.0), rim_light, mtoon.rim_color_lighting_mix.a);
-    vec3 rim = texture(rim_multiply_texture, uv).rgb * rim_base * rim_mix;
-    float outline_mask = texture(outline_width_texture, uv).r;
-    float uv_mask = texture(uv_animation_mask_texture, in_tex_coord_0).b;
+    vec3 rim = texture(rim_multiply_texture, rim_uv).rgb * rim_base * rim_mix;
+    float outline_mask = texture(outline_width_texture, base_uv).r;
+    vec2 uv_mask_uv = transform_uv(
+        in_tex_coord_0,
+        material_uv.uv_animation_mask_transform,
+        material_uv.rotation_b.z
+    );
+    float uv_mask = texture(uv_animation_mask_texture, uv_mask_uv).b;
     vec3 emissive = mtoon.emissive_color_outline_width.rgb;
     vec3 color = (direct + ambient + matcap + rim + emissive) * scene.mtoon_lighting.x;
 

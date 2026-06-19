@@ -95,9 +95,13 @@ shader now consumes the shared MToon uniform ABI, fixed texture slots,
 normal/tangent vertex attributes, UV animation, shade/shading-shift textures,
 alpha mode, outline-pass flag, and a frame-level scene uniform for
 view-projection, camera position, light direction/color, and MToon lighting
-accumulation. It is still not the final visual parity shader because Ash does
-not yet expose the full material-extra and UV-transform uniform set used by the
-wgpu and Bevy captures, but it is past the previous color-only smoke handoff.
+accumulation. It also exposes the same packed material-extra and UV-transform
+uniform surfaces used by the wgpu and Bevy captures, so transformed base, shade,
+shading-shift, normal, matcap, rim, and UV-animation-mask sampling can be driven
+through the same IO-derived plans. It is still not the final visual parity shader:
+Ash remains supplemental until outline, normal, rim, and exact three-vrm
+light/color accumulation behavior are covered by the same PSNR/visual review
+language as wgpu and Bevy.
 
 `tools/ci/local-ci.rs --render-parity` now asks three-vrm, wgpu, and Bevy to
 emit `.frame000.imqraw` beside their `.rgba.json` artifacts. The current public
