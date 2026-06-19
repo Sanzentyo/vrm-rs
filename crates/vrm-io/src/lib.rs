@@ -1,5 +1,7 @@
 //! glTF/GLB IO for VRM and VRMA assets.
 
+pub mod resource;
+
 use glam::{Mat4, Quat, Vec3, Vec4};
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -18,6 +20,13 @@ use vrm_protocol::{
     parse_root_extensions,
 };
 use vrm_sans_io::{BuildError, ValidatedAssetBuilder};
+
+pub use resource::{
+    CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
+    DecodedTexturePayload, FileResourceReader, MeshCodec, MeshCodecProvider, ResourceData,
+    ResourceError, ResourceLimits, ResourceReader, ResourceSource, TextureCodec,
+    TextureCodecProvider, TextureOutputFormat,
+};
 
 #[derive(Clone, Debug)]
 pub struct LoadedVrm {

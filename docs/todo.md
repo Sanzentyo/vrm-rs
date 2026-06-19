@@ -140,9 +140,11 @@ The repository intentionally has no GitHub-hosted CI. Use `tools/ci/local-ci.rs`
   - [x] VRMA mixer with loop, seek, fade/crossfade, layers, masks, additive mode, and root-motion policy.
   - [ ] VMC 3.1 typed messages, OSC conversion, bundle traversal, runtime sink, and transaction-safe application policy.
     - [x] Foundation: added `vrm-vmc` over `vrm-osc` with typed messages for availability, relative time, root/bone poses, blend values/apply, camera, directional light, unknown-message retention, OSC roundtrip helpers, recursive bundle traversal, parse-before-apply behavior, and transaction hooks with rollback on sink errors.
-  - [ ] MToon GPU ABI/reference WGSL plus practical Bevy/wgpu/ash resource and pipeline hookups.
+  - [x] MToon GPU ABI/reference WGSL plus practical Bevy/wgpu/ash resource and pipeline hookups.
+    - `MtoonGpuUniform` / `MtoonGpuMaterial` are shared through `vrm-adapter`, `wgpu_mtoon_resource_plans` exposes wgpu-owned resource setup data, ash frame plans emit per-pipeline uniform uploads, and Bevy material plans carry the same uniform into engine-owned assets.
   - [ ] Optimizer for unused vertices, joint palette compaction, and empty morph removal.
   - [ ] Codec/resource registry for data URI/file resolution and Draco/Meshopt/KTX2 provider APIs with size/path safety.
+    - [x] Foundation: `vrm-io::resource` now provides data URI and relative file resolution with path traversal rejection, file/data/decode size limits, missing-codec errors, and provider traits/registry for Draco, Meshopt, and KTX2/Basis-style texture decoding without bundling codec dependencies.
   - [ ] Revisit extension-kit known limitations: VRM0 LookAt curve compatibility, transport policy boundaries, and whether `FullMeta` is needed without breaking existing API.
 - [ ] Keep `docs/progress.md` as a chronological log.
 - [ ] Keep `docs/testing.md` coverage numbers current after coverage-affecting work.

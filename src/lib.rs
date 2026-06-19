@@ -40,6 +40,12 @@ pub use vrm_adapter::{
 };
 use vrm_adapter::{SpringRestMap, WorldMatrixAccess, WorldTransformUpdate};
 pub use vrm_core::{NodeRef, Parsed, Raw, Resolved, Validated, VrmAsset, VrmDocument, VrmModel};
+pub use vrm_io::{
+    CodecRegistry, CompressedMeshPayload, CompressedTexturePayload, DecodedMeshPayload,
+    DecodedTexturePayload, FileResourceReader, MeshCodec, MeshCodecProvider, ResourceData,
+    ResourceError, ResourceLimits, ResourceReader, ResourceSource, TextureCodec,
+    TextureCodecProvider, TextureOutputFormat,
+};
 pub use vrm_io::{LoadedVrm, VrmIoError, load_vrm_from_path, load_vrm_from_slice};
 pub use vrm_runtime::{
     AnimationActionOptions, AnimationBlendMode, AnimationLoopMode, AnimationMixerError,
@@ -272,6 +278,25 @@ mod tests {
         let asset = VrmAsset::<Parsed>::new_parsed(core::VrmDocument::default());
         let model: ResolvedVrmModel = asset.mark_validated().resolve();
         assert_eq!(model.document().kind, core::VrmKind::Vrm1);
+    }
+
+    #[test]
+    fn facade_reexports_resource_codec_registry_types() {
+        let registry = CodecRegistry::default();
+        let err = registry
+            .decode_mesh(&CompressedMeshPayload {
+                codec: MeshCodec::Draco,
+                bytes: vec![1, 2, 3],
+                declared_decoded_bytes: None,
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ResourceError::MissingMeshCodec {
+                codec: MeshCodec::Draco
+            }
+        ));
     }
 
     #[cfg(feature = "osc")]

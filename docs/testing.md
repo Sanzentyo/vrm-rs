@@ -489,20 +489,20 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 76.95% | 79.30% |
+| Workspace total | 77.01% | 79.38% |
 | `vrm-adapter-ash` | 37.76% | 43.38% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
 | `vrm-adapter-wgpu` | 14.00% | 14.99% |
 | `vrm-adapter` | 69.62% | 77.50% |
 | `vrm-core` | 73.86% | 79.39% |
 | `vrm-diagnostics` | 85.48% | 88.59% |
-| `vrm-io` | 88.35% | 86.82% |
+| `vrm-io` | 87.69% | 86.50% |
 | `vrm-osc` | 68.00% | 70.53% |
 | `vrm-protocol` | 93.02% | 91.16% |
 | `vrm-runtime` | 93.06% | 93.80% |
 | `vrm-sans-io` | 93.42% | 96.49% |
 | `vrm-vmc` | 48.45% | 51.47% |
-| `facade src/lib.rs` | 93.83% | 98.45% |
+| `facade src/lib.rs` | 93.78% | 98.52% |
 
 The current external fixture tests cover recursive fixture discovery, semantic
 IO loading including the Alicia VRM0 compatibility sample, adapter spring rest
