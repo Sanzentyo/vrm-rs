@@ -111,6 +111,7 @@ struct CorrectionManifestEntry {
     rgba: [u8; 4],
     surface: CorrectionManifestSurface,
     sample: [f64; 2],
+    sample_geometry: CorrectionManifestSampleGeometry,
     relation_to_expected: String,
 }
 
@@ -119,6 +120,32 @@ struct CorrectionManifestSurface {
     #[serde(rename = "materialName")]
     material_name: String,
     triangle: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CorrectionManifestSampleGeometry {
+    node: u64,
+    mesh: u64,
+    primitive: u64,
+    triangle: u64,
+    indices: [u64; 3],
+    barycentric: [f64; 3],
+    raw_uv: [f64; 2],
+    base_uv: [f64; 2],
+    depth: f64,
+    pass: String,
+}
+
+#[derive(Clone, Debug)]
+struct OwnerSampleResolvedCandidate {
+    rgba: [u8; 4],
+    geometry: CorrectionManifestSampleGeometry,
+}
+
+#[derive(Clone, Debug)]
+struct AppliedCorrectionDecision {
+    decision: RenderOwnerSampleCorrectionDecision,
+    sample_geometry: CorrectionManifestSampleGeometry,
 }
 
 fn main() {
@@ -218,7 +245,7 @@ fn correction_report(
     let mut worsened = 0;
     let mut tied = 0;
     let mut relation_counts = std::collections::BTreeMap::new();
-    let mut decisions = Vec::<RenderOwnerSampleCorrectionDecision>::new();
+    let mut applied_decisions = Vec::<AppliedCorrectionDecision>::new();
 
     for owner_hotspot in owner_hotspots {
         let Some((x, y)) = pixel_key(owner_hotspot) else {
@@ -239,7 +266,8 @@ fn correction_report(
             continue;
         };
         let sample_key = RenderOwnerSampleKey::from_pair(browser_best.clone(), sample);
-        let Some(color) = rust_subpixel_color_for_owner_sample(rust_hotspot, &sample_key) else {
+        let Some(resolved_sample) = rust_subpixel_candidate_for_owner_sample(rust_hotspot, &sample_key)
+        else {
             continue;
         };
         candidate_color_count += 1;
@@ -258,7 +286,7 @@ fn correction_report(
                 expected_surface: rust_expected,
                 expected_rgba,
                 actual_rgba,
-                candidate_rgba: color,
+                candidate_rgba: resolved_sample.rgba,
             },
             policy,
         ) else {
@@ -276,9 +304,16 @@ fn correction_report(
         *relation_counts
             .entry(decision.relation_to_expected.as_str().to_owned())
             .or_default() += 1;
-        decisions.push(decision);
+        applied_decisions.push(AppliedCorrectionDecision {
+            decision,
+            sample_geometry: resolved_sample.geometry,
+        });
         applied_count += 1;
     }
+    let decisions = applied_decisions
+        .iter()
+        .map(|applied| applied.decision.clone())
+        .collect::<Vec<_>>();
     apply_render_owner_sample_correction_decisions_rgba8(
         expected.width as u64,
         expected.height as u64,
@@ -293,18 +328,22 @@ fn correction_report(
         rust_hotspots: display_path(rust_path),
         image_width: expected.width,
         image_height: expected.height,
-        corrections: decisions
+        corrections: applied_decisions
             .iter()
-            .map(|decision| CorrectionManifestEntry {
-                x: decision.pixel.x(),
-                y: decision.pixel.y(),
-                rgba: decision.replacement_rgba,
-                surface: CorrectionManifestSurface {
-                    material_name: decision.sample.surface().material_name().to_owned(),
-                    triangle: decision.sample.surface().triangle(),
-                },
-                sample: decision.sample.sample().to_pair(),
-                relation_to_expected: decision.relation_to_expected.as_str().to_owned(),
+            .map(|applied| {
+                let decision = &applied.decision;
+                CorrectionManifestEntry {
+                    x: decision.pixel.x(),
+                    y: decision.pixel.y(),
+                    rgba: decision.replacement_rgba,
+                    surface: CorrectionManifestSurface {
+                        material_name: decision.sample.surface().material_name().to_owned(),
+                        triangle: decision.sample.surface().triangle(),
+                    },
+                    sample: decision.sample.sample().to_pair(),
+                    sample_geometry: applied.sample_geometry.clone(),
+                    relation_to_expected: decision.relation_to_expected.as_str().to_owned(),
+                }
             })
             .collect(),
     };
@@ -416,10 +455,10 @@ fn write_imqraw_rgba8(
     Ok(())
 }
 
-fn rust_subpixel_color_for_owner_sample(
+fn rust_subpixel_candidate_for_owner_sample(
     rust_hotspot: &Value,
     sample_key: &RenderOwnerSampleKey,
-) -> Option<[u8; 4]> {
+) -> Option<OwnerSampleResolvedCandidate> {
     rust_hotspot
         .get("subpixel_visible_candidates")
         .and_then(Value::as_array)?
@@ -432,10 +471,29 @@ fn rust_subpixel_color_for_owner_sample(
                     &candidate_surface,
                     RenderSamplePoint::from_pair(candidate_sample),
                 )
-                .then(|| candidate.pointer("/candidate/cpu_base_color_rgba"))
-                .flatten()
-                .and_then(rgba_array)
+                .then(|| {
+                    Some(OwnerSampleResolvedCandidate {
+                        rgba: rgba_array(candidate.pointer("/candidate/cpu_base_color_rgba")?)?,
+                        geometry: sample_geometry_from_candidate(candidate)?,
+                    })
+                })?
         })
+}
+
+fn sample_geometry_from_candidate(value: &Value) -> Option<CorrectionManifestSampleGeometry> {
+    let candidate = value.get("candidate")?;
+    Some(CorrectionManifestSampleGeometry {
+        node: candidate.get("node")?.as_u64()?,
+        mesh: candidate.get("mesh")?.as_u64()?,
+        primitive: candidate.get("primitive")?.as_u64()?,
+        triangle: candidate.get("triangle")?.as_u64()?,
+        indices: u64_array3(candidate.get("indices")?)?,
+        barycentric: f64_array3(candidate.get("barycentric")?)?,
+        raw_uv: f64_array2(candidate.get("raw_uv")?)?,
+        base_uv: f64_array2(candidate.get("base_uv")?)?,
+        depth: candidate.get("depth")?.as_f64()?,
+        pass: candidate.get("pass")?.as_str()?.to_owned(),
+    })
 }
 
 fn surface_at(value: &Value, pointer: &str) -> Option<RenderOwnerSurfaceKey> {
@@ -460,6 +518,29 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
 fn number_pair(value: Option<&Value>) -> Option<[f64; 2]> {
     let values = value?.as_array()?;
     Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
+}
+
+fn f64_array2(value: &Value) -> Option<[f64; 2]> {
+    let values = value.as_array()?;
+    Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
+}
+
+fn f64_array3(value: &Value) -> Option<[f64; 3]> {
+    let values = value.as_array()?;
+    Some([
+        values.first()?.as_f64()?,
+        values.get(1)?.as_f64()?,
+        values.get(2)?.as_f64()?,
+    ])
+}
+
+fn u64_array3(value: &Value) -> Option<[u64; 3]> {
+    let values = value.as_array()?;
+    Some([
+        values.first()?.as_u64()?,
+        values.get(1)?.as_u64()?,
+        values.get(2)?.as_u64()?,
+    ])
 }
 
 fn rgba_array(value: &Value) -> Option<[u8; 4]> {
@@ -568,8 +649,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "subpixel_visible_candidates": [{
                     "sample": [0.7, 0.5],
                     "candidate": {
+                        "node": 0,
+                        "mesh": 1,
+                        "primitive": 2,
+                        "pass": "base",
                         "material_name": "body",
                         "triangle": 7,
+                        "indices": [3, 4, 5],
+                        "barycentric": [0.2, 0.3, 0.5],
+                        "raw_uv": [0.25, 0.75],
+                        "base_uv": [0.3, 0.8],
+                        "depth": 0.42,
                         "cpu_base_color_rgba": [100, 100, 100, 255]
                     }
                 }]
@@ -603,6 +693,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].surface.material_name, "body");
     assert_eq!(manifest.corrections[0].surface.triangle, 7);
     assert_eq!(manifest.corrections[0].sample, [0.7, 0.5]);
+    assert_eq!(manifest.corrections[0].sample_geometry.node, 0);
+    assert_eq!(manifest.corrections[0].sample_geometry.mesh, 1);
+    assert_eq!(manifest.corrections[0].sample_geometry.primitive, 2);
+    assert_eq!(manifest.corrections[0].sample_geometry.triangle, 7);
+    assert_eq!(manifest.corrections[0].sample_geometry.indices, [3, 4, 5]);
+    assert_eq!(
+        manifest.corrections[0].sample_geometry.barycentric,
+        [0.2, 0.3, 0.5]
+    );
+    assert_eq!(manifest.corrections[0].sample_geometry.raw_uv, [0.25, 0.75]);
+    assert_eq!(manifest.corrections[0].sample_geometry.base_uv, [0.3, 0.8]);
+    assert_eq!(manifest.corrections[0].sample_geometry.depth, 0.42);
+    assert_eq!(manifest.corrections[0].sample_geometry.pass, "base");
     assert_eq!(
         manifest.corrections[0].relation_to_expected,
         "same-surface"

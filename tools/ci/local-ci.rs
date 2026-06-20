@@ -75,6 +75,8 @@ struct Options {
     render_bevy_pre_roll_frames: u32,
     #[arg(long)]
     render_bevy_release: bool,
+    #[arg(long)]
+    render_bevy_debug: bool,
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     render_screen_jitter_x: f32,
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
@@ -1258,7 +1260,7 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
     let light_units = render_light_units(options);
     let mut command = Command::new("cargo");
     command.arg("run");
-    if options.render_bevy_release {
+    if render_bevy_release(options) {
         command.arg("--release");
     }
     command
@@ -1341,6 +1343,10 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         command.arg("--expression").arg(expression);
     }
     run_command(command)
+}
+
+fn render_bevy_release(options: &Options) -> bool {
+    options.render_bevy_release || !options.render_bevy_debug
 }
 
 fn capture_ash_readback(

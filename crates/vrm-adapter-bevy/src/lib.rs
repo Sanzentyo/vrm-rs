@@ -1527,6 +1527,7 @@ mod tests {
                         [0.25, 0.75],
                     ),
                     relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                    sample_geometry: None,
                 }],
             }],
             unmatched_entries: Vec::new(),

@@ -2159,6 +2159,7 @@ mod tests {
                 ),
                 sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.25, 0.75]),
                 relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
+                sample_geometry: None,
             },
             vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
                 correction: vrm_adapter::RenderRgba8Correction::new(
@@ -2169,6 +2170,7 @@ mod tests {
                 relation_to_expected: Some(
                     vrm_adapter::RenderOwnerSurfaceRelation::DifferentMaterial,
                 ),
+                sample_geometry: None,
             },
         ])
         .unwrap();

@@ -66,13 +66,28 @@ fn entry_json(
     surface: &RenderOwnerSurfaceKey,
     entry: RenderOwnerSampleSurfaceOverride,
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "pixel": entry.pixel.to_pair(),
         "sample": entry.sample.to_pair(),
         "rgba": entry.replacement_rgba,
         "relationToExpected": entry.relation_to_expected.map(|relation| relation.as_str()),
         "surface": surface_json(surface),
-    })
+    });
+    if let Some(geometry) = entry.sample_geometry {
+        value["sampleGeometry"] = serde_json::json!({
+            "node": geometry.node,
+            "mesh": geometry.mesh,
+            "primitive": geometry.primitive,
+            "triangle": geometry.triangle,
+            "indices": geometry.indices,
+            "barycentric": geometry.barycentric,
+            "rawUv": geometry.raw_uv,
+            "baseUv": geometry.base_uv,
+            "depth": geometry.depth,
+            "pass": geometry.pass.as_str(),
+        });
+    }
+    value
 }
 
 fn io_other(error: impl ToString) -> io::Error {

@@ -736,6 +736,7 @@ pub struct RenderOwnerSampleCorrectionManifestEntry {
     pub correction: RenderRgba8Correction,
     pub sample: RenderOwnerSampleKey,
     pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
+    pub sample_geometry: Option<RenderOwnerSampleGeometry>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -830,12 +831,13 @@ impl RenderOwnerSampleSurfaceSelection {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RenderOwnerSampleSurfaceOverride {
     pub pixel: RenderPixel,
     pub sample: RenderSamplePoint,
     pub replacement_rgba: [u8; 4],
     pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
+    pub sample_geometry: Option<RenderOwnerSampleGeometry>,
 }
 
 impl From<&RenderOwnerSampleCorrectionManifestEntry> for RenderOwnerSampleSurfaceOverride {
@@ -845,6 +847,46 @@ impl From<&RenderOwnerSampleCorrectionManifestEntry> for RenderOwnerSampleSurfac
             sample: entry.sample.sample(),
             replacement_rgba: entry.correction.replacement_rgba,
             relation_to_expected: entry.relation_to_expected,
+            sample_geometry: entry.sample_geometry.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleGeometry {
+    pub node: u64,
+    pub mesh: u64,
+    pub primitive: u64,
+    pub triangle: u64,
+    pub indices: [u64; 3],
+    pub barycentric: [f64; 3],
+    pub raw_uv: [f64; 2],
+    pub base_uv: [f64; 2],
+    pub depth: f64,
+    pub pass: RenderOwnerSamplePass,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum RenderOwnerSamplePass {
+    Base,
+    Outline,
+    Other(String),
+}
+
+impl RenderOwnerSamplePass {
+    pub fn from_label(label: &str) -> Self {
+        match label {
+            "base" => Self::Base,
+            "outline" => Self::Outline,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Base => "base",
+            Self::Outline => "outline",
+            Self::Other(label) => label,
         }
     }
 }
@@ -1071,6 +1113,10 @@ pub enum RenderRgba8CorrectionManifestError {
     MissingSample,
     #[error("correction.sample must be a two-element numeric array")]
     InvalidSample,
+    #[error("correction.sample_geometry.{field} must be present")]
+    MissingSampleGeometryField { field: &'static str },
+    #[error("correction.sample_geometry.{field} has invalid shape")]
+    InvalidSampleGeometryField { field: &'static str },
     #[error("correction.relation_to_expected is not a known relation: {value}")]
     InvalidRelation { value: String },
     #[error("correction pixel {x},{y} appears more than once")]
@@ -1154,6 +1200,10 @@ fn render_owner_sample_correction_manifest_entry_from_value(
         ),
         sample,
         relation_to_expected,
+        sample_geometry: value
+            .get("sample_geometry")
+            .map(render_owner_sample_geometry_from_manifest_value)
+            .transpose()?,
     })
 }
 
@@ -1237,6 +1287,126 @@ fn render_sample_point_from_manifest_value(
         .and_then(|sample| Some([sample.first()?.as_f64()?, sample.get(1)?.as_f64()?]))
         .ok_or(RenderRgba8CorrectionManifestError::InvalidSample)?;
     Ok(RenderSamplePoint::from_pair(sample))
+}
+
+fn render_owner_sample_geometry_from_manifest_value(
+    value: &serde_json::Value,
+) -> Result<RenderOwnerSampleGeometry, RenderRgba8CorrectionManifestError> {
+    Ok(RenderOwnerSampleGeometry {
+        node: required_u64(value, "node")?,
+        mesh: required_u64(value, "mesh")?,
+        primitive: required_u64(value, "primitive")?,
+        triangle: required_u64(value, "triangle")?,
+        indices: required_u64_array3(value, "indices")?,
+        barycentric: required_f64_array3(value, "barycentric")?,
+        raw_uv: required_f64_array2(value, "raw_uv")?,
+        base_uv: required_f64_array2(value, "base_uv")?,
+        depth: required_f64(value, "depth")?,
+        pass: RenderOwnerSamplePass::from_label(required_str(value, "pass")?),
+    })
+}
+
+fn required_u64(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<u64, RenderRgba8CorrectionManifestError> {
+    value
+        .get(field)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSampleGeometryField { field })?
+        .as_u64()
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })
+}
+
+fn required_f64(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<f64, RenderRgba8CorrectionManifestError> {
+    value
+        .get(field)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSampleGeometryField { field })?
+        .as_f64()
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })
+}
+
+fn required_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> Result<&'a str, RenderRgba8CorrectionManifestError> {
+    value
+        .get(field)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSampleGeometryField { field })?
+        .as_str()
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })
+}
+
+fn required_f64_array2(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<[f64; 2], RenderRgba8CorrectionManifestError> {
+    let values = required_array(value, field, 2)?;
+    Ok([number_at(values, field, 0)?, number_at(values, field, 1)?])
+}
+
+fn required_f64_array3(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<[f64; 3], RenderRgba8CorrectionManifestError> {
+    let values = required_array(value, field, 3)?;
+    Ok([
+        number_at(values, field, 0)?,
+        number_at(values, field, 1)?,
+        number_at(values, field, 2)?,
+    ])
+}
+
+fn required_u64_array3(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<[u64; 3], RenderRgba8CorrectionManifestError> {
+    let values = required_array(value, field, 3)?;
+    Ok([
+        integer_at(values, field, 0)?,
+        integer_at(values, field, 1)?,
+        integer_at(values, field, 2)?,
+    ])
+}
+
+fn required_array<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+    len: usize,
+) -> Result<&'a [serde_json::Value], RenderRgba8CorrectionManifestError> {
+    let values = value
+        .get(field)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSampleGeometryField { field })?
+        .as_array()
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })?;
+    if values.len() != len {
+        return Err(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field });
+    }
+    Ok(values)
+}
+
+fn number_at(
+    values: &[serde_json::Value],
+    field: &'static str,
+    index: usize,
+) -> Result<f64, RenderRgba8CorrectionManifestError> {
+    values
+        .get(index)
+        .and_then(serde_json::Value::as_f64)
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })
+}
+
+fn integer_at(
+    values: &[serde_json::Value],
+    field: &'static str,
+    index: usize,
+) -> Result<u64, RenderRgba8CorrectionManifestError> {
+    values
+        .get(index)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSampleGeometryField { field })
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -5805,6 +5975,18 @@ mod tests {
                     "rgba": [1, 2, 3, 255],
                     "surface": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7},
                     "sample": [0.7, 0.5],
+                    "sample_geometry": {
+                        "node": 0,
+                        "mesh": 1,
+                        "primitive": 2,
+                        "triangle": 7,
+                        "indices": [3, 4, 5],
+                        "barycentric": [0.2, 0.3, 0.5],
+                        "raw_uv": [0.25, 0.75],
+                        "base_uv": [0.3, 0.8],
+                        "depth": 0.42,
+                        "pass": "base"
+                    },
                     "relation_to_expected": "same-surface"
                 }
             ]
@@ -5825,6 +6007,17 @@ mod tests {
             entries[0].relation_to_expected,
             Some(RenderOwnerSurfaceRelation::SameSurface)
         );
+        let sample_geometry = entries[0].sample_geometry.as_ref().unwrap();
+        assert_eq!(sample_geometry.node, 0);
+        assert_eq!(sample_geometry.mesh, 1);
+        assert_eq!(sample_geometry.primitive, 2);
+        assert_eq!(sample_geometry.triangle, 7);
+        assert_eq!(sample_geometry.indices, [3, 4, 5]);
+        assert_eq!(sample_geometry.barycentric, [0.2, 0.3, 0.5]);
+        assert_eq!(sample_geometry.raw_uv, [0.25, 0.75]);
+        assert_eq!(sample_geometry.base_uv, [0.3, 0.8]);
+        assert_eq!(sample_geometry.depth, 0.42);
+        assert_eq!(sample_geometry.pass, RenderOwnerSamplePass::Base);
         let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&object).unwrap();
         assert_eq!(plan.len(), 1);
         assert!(!plan.is_empty());
@@ -5886,6 +6079,14 @@ mod tests {
         assert_eq!(
             override_entries[0].relation_to_expected,
             Some(RenderOwnerSurfaceRelation::SameSurface)
+        );
+        assert_eq!(
+            override_entries[0]
+                .sample_geometry
+                .as_ref()
+                .unwrap()
+                .base_uv,
+            [0.3, 0.8]
         );
         assert_eq!(
             selection
