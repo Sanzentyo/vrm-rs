@@ -225,6 +225,13 @@ struct OwnerActualCullVisibility {
 struct OwnerMetadataRecovery {
     decoded_actual: u32,
     recovered_actual: u32,
+    id_delta: i64,
+    red_delta: i16,
+    green_delta: i16,
+    blue_delta: i16,
+    channel_manhattan_delta: u16,
+    channel_chebyshev_delta: u8,
+    channel_delta_class: String,
     count: u64,
 }
 
@@ -1326,12 +1333,66 @@ fn top_actual_metadata_recoveries(
     entries
         .into_iter()
         .take(top)
-        .map(|((decoded_actual, recovered_actual), count)| OwnerMetadataRecovery {
-            decoded_actual,
-            recovered_actual,
-            count,
+        .map(|((decoded_actual, recovered_actual), count)| {
+            let [red_delta, green_delta, blue_delta] =
+                owner_id_channel_deltas(decoded_actual, recovered_actual);
+            OwnerMetadataRecovery {
+                decoded_actual,
+                recovered_actual,
+                id_delta: i64::from(recovered_actual) - i64::from(decoded_actual),
+                red_delta,
+                green_delta,
+                blue_delta,
+                channel_manhattan_delta: red_delta.unsigned_abs()
+                    + green_delta.unsigned_abs()
+                    + blue_delta.unsigned_abs(),
+                channel_chebyshev_delta: red_delta
+                    .unsigned_abs()
+                    .max(green_delta.unsigned_abs())
+                    .max(blue_delta.unsigned_abs()) as u8,
+                channel_delta_class: owner_id_channel_delta_class([
+                    red_delta,
+                    green_delta,
+                    blue_delta,
+                ]),
+                count,
+            }
         })
         .collect()
+}
+
+fn owner_id_channel_deltas(decoded_actual: u32, recovered_actual: u32) -> [i16; 3] {
+    let decoded = owner_id_rgb(decoded_actual);
+    let recovered = owner_id_rgb(recovered_actual);
+    [
+        i16::from(recovered[0]) - i16::from(decoded[0]),
+        i16::from(recovered[1]) - i16::from(decoded[1]),
+        i16::from(recovered[2]) - i16::from(decoded[2]),
+    ]
+}
+
+fn owner_id_rgb(id: u32) -> [u8; 3] {
+    [
+        (id & 0xff) as u8,
+        ((id >> 8) & 0xff) as u8,
+        ((id >> 16) & 0xff) as u8,
+    ]
+}
+
+fn owner_id_channel_delta_class([red, green, blue]: [i16; 3]) -> String {
+    let nonzero = [
+        ("r", red),
+        ("g", green),
+        ("b", blue),
+    ]
+    .into_iter()
+    .filter(|(_, delta)| *delta != 0)
+    .collect::<Vec<_>>();
+    match nonzero.as_slice() {
+        [] => "same".to_owned(),
+        [(channel, delta)] => format!("{channel}{delta:+}"),
+        _ => format!("mixed({red:+},{green:+},{blue:+})"),
+    }
 }
 
 fn owner_label_contains_pixel(label: &OwnerLabel, pixel: OwnerPixel, pad: f64) -> bool {
@@ -3150,6 +3211,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         projection_relation(Some(&shared_edge_expected), Some(&reference_depth_actual)),
         "overlap-depth-close"
+    );
+    assert_eq!(owner_id_channel_deltas(19900, 19901), [1, 0, 0]);
+    assert_eq!(owner_id_channel_deltas(34459, 34715), [0, 1, 0]);
+    assert_eq!(
+        owner_id_channel_delta_class(owner_id_channel_deltas(34427, 34682)),
+        "mixed(-1,+1,+0)"
     );
     let report = compare_owner_images(
         "expected".to_owned(),

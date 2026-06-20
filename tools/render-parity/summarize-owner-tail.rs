@@ -48,6 +48,7 @@ struct OwnerTailReport {
     actual_raster_bounds_summary: Value,
     expected_raster_metadata_alignment_summary: Value,
     actual_raster_metadata_alignment_summary: Value,
+    top_actual_metadata_recoveries: Vec<Value>,
     top_unexplained_material_transitions: Vec<Value>,
     top_unexplained_details: Vec<TailDetail>,
 }
@@ -236,6 +237,7 @@ fn summarize_report(
             .get("actual_raster_metadata_alignment_summary")
             .cloned()
             .unwrap_or(Value::Null),
+        top_actual_metadata_recoveries: take_values(value, "top_actual_metadata_recoveries", top),
         top_unexplained_material_transitions: take_values(
             value,
             "top_unexplained_material_transitions",
@@ -767,6 +769,24 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         &report.actual_raster_metadata_alignment_summary,
     );
 
+    output.push_str("\n## Top Actual Metadata Recoveries\n\n");
+    output.push_str(
+        "| Count | Decoded | Recovered | ID Delta | RGB Delta | Class |\n|---:|---:|---:|---:|---|---|\n",
+    );
+    for item in &report.top_actual_metadata_recoveries {
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | ({:+}, {:+}, {:+}) | {} |\n",
+            u64_field(item, "count").unwrap_or(0),
+            u64_field(item, "decoded_actual").unwrap_or(0),
+            u64_field(item, "recovered_actual").unwrap_or(0),
+            i64_field(item, "id_delta").unwrap_or(0),
+            i64_field(item, "red_delta").unwrap_or(0),
+            i64_field(item, "green_delta").unwrap_or(0),
+            i64_field(item, "blue_delta").unwrap_or(0),
+            text_field(item, "channel_delta_class"),
+        ));
+    }
+
     output.push_str("\n## Top Actual Raster Metadata Reassignments\n\n");
     output.push_str(
         "| Owner | Pixels | Self Distance | Best Owner | Best Distance | Delta | Owner Mesh | Best Mesh |\n|---:|---:|---:|---:|---:|---:|---|---|\n",
@@ -1063,6 +1083,18 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "projection_relation": "overlap-depth-close",
             "count": 1
         }],
+        "top_actual_metadata_recoveries": [{
+            "decoded_actual": 34459,
+            "recovered_actual": 34715,
+            "id_delta": 256,
+            "red_delta": 0,
+            "green_delta": 1,
+            "blue_delta": 0,
+            "channel_manhattan_delta": 1,
+            "channel_chebyshev_delta": 1,
+            "channel_delta_class": "g+1",
+            "count": 34
+        }],
         "top_unexplained_expected_to_actual_details": [{
             "count": 1,
             "expected": {
@@ -1118,6 +1150,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
     );
     assert!(markdown.contains("Projection Gap Shape"));
+    assert!(markdown.contains("Top Actual Metadata Recoveries"));
+    assert!(markdown.contains("| 34 | 34459 | 34715 | 256 | (+0, +1, +0) | g+1 |"));
     assert!(markdown.contains("pixel_near_either_edge_05px"));
     assert!(markdown.contains("pixel_inside_both_screen_bounds"));
     assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));

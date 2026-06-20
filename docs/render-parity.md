@@ -1159,6 +1159,15 @@ release Bevy with the normal 40 pre-roll frames produces a valid nonzero capture
 Do not reduce the pre-roll to `1` for this recipe: that captures before the
 scene has rendered and creates an all-zero Bevy image.
 
+The owner comparator also reports metadata-recovery channel deltas. In the
+current full Seed-san outline-off owner report, Bevy's top recovered actual
+owners are mostly one-LSB neighbors (`r+1`, `g+1`, or small mixed channel
+deltas). A direct Bevy owner-color positive bias experiment was measured and
+rejected because it overcorrected the full fixture, flipping the dominant
+recoveries to `g-1` and increasing exact owner mismatches. Treat those deltas as
+evidence for local owner/fill ordering investigation, not as permission to apply
+a global diagnostic color bias.
+
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
 
