@@ -193,6 +193,8 @@ struct CaptureOptions {
     #[arg(long)]
     disable_owner_id_depth_bias: bool,
     #[arg(long)]
+    owner_id_strict_depth_compare: bool,
+    #[arg(long)]
     disable_owner_id_phase_order: bool,
     #[arg(long, value_enum, default_value_t = OwnerIdPhaseOrderPolicy::DrawIndex)]
     owner_id_phase_order_policy: OwnerIdPhaseOrderPolicy,
@@ -1173,7 +1175,7 @@ fn diagnostic_owner_ids(
                     "alphaCutoff": bevy_primitive_alpha_cutoff(primitive),
                     "depthWrite": bevy_primitive_depth_write(primitive),
                     "depthTest": true,
-                    "depthCompare": "greater-equal",
+                    "depthCompare": bevy_primitive_depth_compare(primitive),
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
                     "ownerColorSource": options.owner_id_color_source.as_str(),
@@ -1245,6 +1247,12 @@ fn bevy_primitive_depth_write(primitive: &BevyPrimitive) -> bool {
     }
 }
 
+fn bevy_primitive_depth_compare(primitive: &BevyPrimitive) -> &'static str {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => depth_compare_name(material.depth_compare),
+    }
+}
+
 fn bevy_primitive_depth_bias(primitive: &BevyPrimitive) -> f32 {
     match &primitive.material {
         BevyPrimitiveMaterial::Mtoon(material) => material.depth_bias,
@@ -1290,6 +1298,19 @@ fn alpha_mode_name(mode: AlphaMode) -> &'static str {
         AlphaMode::Add => "add",
         AlphaMode::Multiply => "multiply",
         AlphaMode::AlphaToCoverage => "alpha-to-coverage",
+    }
+}
+
+fn depth_compare_name(compare: CompareFunction) -> &'static str {
+    match compare {
+        CompareFunction::Greater => "greater",
+        CompareFunction::GreaterEqual => "greater-equal",
+        CompareFunction::Less => "less",
+        CompareFunction::LessEqual => "less-equal",
+        CompareFunction::Equal => "equal",
+        CompareFunction::NotEqual => "not-equal",
+        CompareFunction::Always => "always",
+        CompareFunction::Never => "never",
     }
 }
 
@@ -1892,6 +1913,7 @@ struct BevyMtoonMaterial {
     render_alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
     depth_write: bool,
+    depth_compare: CompareFunction,
     front_face: CaptureFrontFace,
     depth_bias: f32,
 }
@@ -1913,6 +1935,7 @@ impl BevyMtoonMaterial {
 struct BevyMtoonKey {
     cull_mode: Option<Face>,
     depth_write: bool,
+    depth_compare: CompareFunction,
     front_face: CaptureFrontFace,
     owner_id_no_blend: bool,
 }
@@ -1987,6 +2010,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonKey {
         Self {
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
+            depth_compare: material.depth_compare,
             front_face: material.front_face,
             owner_id_no_blend: material.is_owner_id_diagnostic(),
         }
@@ -2032,7 +2056,7 @@ impl Material for BevyMtoonMaterial {
         }
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
-            depth_stencil.depth_compare = CompareFunction::GreaterEqual;
+            depth_stencil.depth_compare = key.bind_group_data.depth_compare;
         }
         if key.bind_group_data.owner_id_no_blend
             && let Some(fragment) = &mut descriptor.fragment
@@ -2207,6 +2231,7 @@ fn bevy_mtoon_material(
         render_alpha_mode: bevy_render_alpha_mode(material_plan.alpha_mode),
         cull_mode: material_plan.cull_mode,
         depth_write: material_plan.depth_write,
+        depth_compare: bevy_depth_compare(context.options),
         front_face: context.options.front_face,
         depth_bias,
     }
@@ -2407,6 +2432,16 @@ fn bevy_render_alpha_mode(alpha_mode: AlphaMode) -> AlphaMode {
         AlphaMode::Blend
     } else {
         alpha_mode
+    }
+}
+
+fn bevy_depth_compare(options: &CaptureOptions) -> CompareFunction {
+    if options.diagnostic_render == DiagnosticRender::OwnerId
+        && options.owner_id_strict_depth_compare
+    {
+        CompareFunction::Greater
+    } else {
+        CompareFunction::GreaterEqual
     }
 }
 
@@ -2803,6 +2838,7 @@ fn write_capture(
         "normalMapScale": options.normal_map_scale,
         "diagnosticRender": options.diagnostic_render.as_str(),
         "disableOwnerIdDepthBias": options.disable_owner_id_depth_bias,
+        "ownerIdStrictDepthCompare": options.owner_id_strict_depth_compare,
         "disableOwnerIdPhaseOrder": options.disable_owner_id_phase_order,
         "ownerIdPhaseOrderPolicy": options.owner_id_phase_order_policy.as_str(),
         "ownerIdColorSource": options.owner_id_color_source.as_str(),
@@ -2939,6 +2975,24 @@ mod tests {
         assert!(late_same_render_order < second);
         assert!(first < next_render_order);
         assert!(late_same_render_order < next_render_order);
+    }
+
+    #[test]
+    fn owner_id_strict_depth_compare_is_diagnostic_only() {
+        let mut options = CaptureOptions::parse_from([
+            "bevy_render_capture",
+            "--fixture",
+            "fixture.vrm",
+            "--out",
+            "out.rgba.json",
+            "--diagnostic-render",
+            "owner-id",
+        ]);
+        assert_eq!(bevy_depth_compare(&options), CompareFunction::GreaterEqual);
+        options.owner_id_strict_depth_compare = true;
+        assert_eq!(bevy_depth_compare(&options), CompareFunction::Greater);
+        options.diagnostic_render = DiagnosticRender::Shaded;
+        assert_eq!(bevy_depth_compare(&options), CompareFunction::GreaterEqual);
     }
 
     #[test]

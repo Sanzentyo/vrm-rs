@@ -19,7 +19,11 @@
   color, ruling out owner-color transport again. A new diagnostic-only
   `draw-index-reverse` Bevy owner-id phase policy was added and measured; it
   worsens the compact tail to `52`, so the remaining blocker is not a simple
-  Transparent3d sort-direction inversion.
+  Transparent3d sort-direction inversion. A diagnostic
+  `--owner-id-strict-depth-compare` switch was also added to use strict
+  reverse-Z `greater` instead of `greater-equal`; it likewise worsens the
+  compact tail to `52`, rejecting the simple equal-depth-overwrite hypothesis
+  as a default fix.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent
