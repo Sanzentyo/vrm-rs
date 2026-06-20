@@ -771,11 +771,11 @@ fn markdown_report(report: &OwnerTailReport) -> String {
 
     output.push_str("\n## Top Actual Metadata Recoveries\n\n");
     output.push_str(
-        "| Count | Decoded | Recovered | ID Delta | RGB Delta | Class |\n|---:|---:|---:|---:|---|---|\n",
+        "| Count | Decoded | Recovered | ID Delta | RGB Delta | Class | Source Δ | Draw Δ | Relation |\n|---:|---:|---:|---:|---|---|---:|---:|---|\n",
     );
     for item in &report.top_actual_metadata_recoveries {
         output.push_str(&format!(
-            "| {} | {} | {} | {} | ({:+}, {:+}, {:+}) | {} |\n",
+            "| {} | {} | {} | {} | ({:+}, {:+}, {:+}) | {} | {} | {} | {}; {}; {}; {} |\n",
             u64_field(item, "count").unwrap_or(0),
             u64_field(item, "decoded_actual").unwrap_or(0),
             u64_field(item, "recovered_actual").unwrap_or(0),
@@ -784,6 +784,12 @@ fn markdown_report(report: &OwnerTailReport) -> String {
             i64_field(item, "green_delta").unwrap_or(0),
             i64_field(item, "blue_delta").unwrap_or(0),
             text_field(item, "channel_delta_class"),
+            optional_i64_cell(item, "source_triangle_delta"),
+            optional_i64_cell(item, "draw_index_delta"),
+            text_field(item, "mesh_relation"),
+            text_field(item, "material_relation"),
+            text_field(item, "triangle_relation"),
+            text_field(item, "projection_relation"),
         ));
     }
 
@@ -1005,6 +1011,12 @@ fn i64_field(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
 }
 
+fn optional_i64_cell(value: &Value, key: &str) -> String {
+    i64_field(value, key)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn f64_field(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
@@ -1093,6 +1105,22 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "channel_manhattan_delta": 1,
             "channel_chebyshev_delta": 1,
             "channel_delta_class": "g+1",
+            "decoded_mesh_name": "wear",
+            "recovered_mesh_name": "wear",
+            "decoded_material_name": "huku_bake",
+            "recovered_material_name": "huku_bake",
+            "decoded_triangle": 24,
+            "recovered_triangle": 25,
+            "decoded_source_triangle": 24,
+            "recovered_source_triangle": 25,
+            "decoded_draw_index": 100,
+            "recovered_draw_index": 101,
+            "source_triangle_delta": 1,
+            "draw_index_delta": 1,
+            "mesh_relation": "same-normalized-name",
+            "material_relation": "same-name",
+            "triangle_relation": "adjacent-triangle-index",
+            "projection_relation": "overlap-depth-close",
             "count": 34
         }],
         "top_unexplained_expected_to_actual_details": [{
@@ -1151,7 +1179,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(markdown.contains("Projection Gap Shape"));
     assert!(markdown.contains("Top Actual Metadata Recoveries"));
-    assert!(markdown.contains("| 34 | 34459 | 34715 | 256 | (+0, +1, +0) | g+1 |"));
+    assert!(markdown.contains(
+        "| 34 | 34459 | 34715 | 256 | (+0, +1, +0) | g+1 | 1 | 1 | same-normalized-name; same-name; adjacent-triangle-index; overlap-depth-close |"
+    ));
     assert!(markdown.contains("pixel_near_either_edge_05px"));
     assert!(markdown.contains("pixel_inside_both_screen_bounds"));
     assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));

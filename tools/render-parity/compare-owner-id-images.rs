@@ -232,6 +232,22 @@ struct OwnerMetadataRecovery {
     channel_manhattan_delta: u16,
     channel_chebyshev_delta: u8,
     channel_delta_class: String,
+    decoded_mesh_name: Option<String>,
+    recovered_mesh_name: Option<String>,
+    decoded_material_name: Option<String>,
+    recovered_material_name: Option<String>,
+    decoded_triangle: Option<u64>,
+    recovered_triangle: Option<u64>,
+    decoded_source_triangle: Option<u64>,
+    recovered_source_triangle: Option<u64>,
+    decoded_draw_index: Option<u64>,
+    recovered_draw_index: Option<u64>,
+    source_triangle_delta: Option<i64>,
+    draw_index_delta: Option<i64>,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
     count: u64,
 }
 
@@ -973,6 +989,7 @@ fn compare_owner_images(
         top_actual_cull_visibility: top_actual_cull_visibility(actual_cull_visibility, top),
         top_actual_metadata_recoveries: top_actual_metadata_recoveries(
             actual_metadata_recoveries,
+            actual_metadata,
             top,
         ),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
@@ -1320,6 +1337,7 @@ fn top_actual_cull_visibility(
 
 fn top_actual_metadata_recoveries(
     map: BTreeMap<(u32, u32), u64>,
+    metadata: &HashMap<u32, OwnerLabel>,
     top: usize,
 ) -> Vec<OwnerMetadataRecovery> {
     let mut entries = map.into_iter().collect::<Vec<_>>();
@@ -1336,6 +1354,8 @@ fn top_actual_metadata_recoveries(
         .map(|((decoded_actual, recovered_actual), count)| {
             let [red_delta, green_delta, blue_delta] =
                 owner_id_channel_deltas(decoded_actual, recovered_actual);
+            let decoded_label = metadata.get(&decoded_actual);
+            let recovered_label = metadata.get(&recovered_actual);
             OwnerMetadataRecovery {
                 decoded_actual,
                 recovered_actual,
@@ -1355,10 +1375,38 @@ fn top_actual_metadata_recoveries(
                     green_delta,
                     blue_delta,
                 ]),
+                decoded_mesh_name: decoded_label.and_then(|label| label.mesh_name.clone()),
+                recovered_mesh_name: recovered_label.and_then(|label| label.mesh_name.clone()),
+                decoded_material_name: decoded_label.and_then(|label| label.material_name.clone()),
+                recovered_material_name: recovered_label.and_then(|label| label.material_name.clone()),
+                decoded_triangle: decoded_label.and_then(|label| label.triangle),
+                recovered_triangle: recovered_label.and_then(|label| label.triangle),
+                decoded_source_triangle: decoded_label.and_then(|label| label.source_triangle),
+                recovered_source_triangle: recovered_label.and_then(|label| label.source_triangle),
+                decoded_draw_index: decoded_label.and_then(|label| label.draw_index),
+                recovered_draw_index: recovered_label.and_then(|label| label.draw_index),
+                source_triangle_delta: optional_u64_delta(
+                    decoded_label.and_then(|label| label.source_triangle),
+                    recovered_label.and_then(|label| label.source_triangle),
+                ),
+                draw_index_delta: optional_u64_delta(
+                    decoded_label.and_then(|label| label.draw_index),
+                    recovered_label.and_then(|label| label.draw_index),
+                ),
+                mesh_relation: mesh_relation(decoded_label, recovered_label),
+                material_relation: material_relation(decoded_label, recovered_label),
+                triangle_relation: triangle_relation(decoded_label, recovered_label),
+                projection_relation: projection_relation(decoded_label, recovered_label),
                 count,
             }
         })
         .collect()
+}
+
+fn optional_u64_delta(left: Option<u64>, right: Option<u64>) -> Option<i64> {
+    let left = i128::from(left?);
+    let right = i128::from(right?);
+    i64::try_from(right - left).ok()
 }
 
 fn owner_id_channel_deltas(decoded_actual: u32, recovered_actual: u32) -> [i16; 3] {

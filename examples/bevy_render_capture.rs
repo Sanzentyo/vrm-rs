@@ -196,6 +196,8 @@ struct CaptureOptions {
     disable_owner_id_phase_order: bool,
     #[arg(long, value_enum, default_value_t = OwnerIdPhaseOrderPolicy::DrawIndex)]
     owner_id_phase_order_policy: OwnerIdPhaseOrderPolicy,
+    #[arg(long, value_enum, default_value_t = OwnerIdColorSource::VertexColor)]
+    owner_id_color_source: OwnerIdColorSource,
     #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
     front_face: CaptureFrontFace,
 }
@@ -219,6 +221,21 @@ impl OwnerIdPhaseOrderPolicy {
             Self::OverlapTriangle => "overlap-triangle",
             Self::DrawIndex => "draw-index",
             Self::DrawIndexNoDepth => "draw-index-no-depth",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum OwnerIdColorSource {
+    VertexColor,
+    Uniform,
+}
+
+impl OwnerIdColorSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::VertexColor => "vertex-color",
+            Self::Uniform => "uniform",
         }
     }
 }
@@ -633,7 +650,7 @@ fn spawn_vrm_meshes(
     }
     primitives.sort_by_key(|primitive| primitive.render_order);
     if options.diagnostic_render == DiagnosticRender::OwnerId {
-        assign_owner_id_triangles(&mut primitives);
+        assign_owner_id_triangles(&mut primitives, options.owner_id_color_source);
         configure_owner_id_phase_order_offsets(&mut primitives, options);
     } else {
         assign_owner_id_colors(&mut primitives);
@@ -684,7 +701,10 @@ fn assign_owner_id_colors(primitives: &mut [BevyPrimitive]) {
     }
 }
 
-fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
+fn assign_owner_id_triangles(
+    primitives: &mut Vec<BevyPrimitive>,
+    color_source: OwnerIdColorSource,
+) {
     let mut next_id = 1;
     let mut owner_primitives = Vec::new();
     for mut primitive in primitives.drain(..) {
@@ -696,7 +716,9 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
         let triangle_count = vertex_count.div_ceil(3);
         for triangle_index in 0..triangle_count {
             let color = owner_id_color(next_id);
-            let Some(mesh) = owner_id_triangle_mesh(&primitive.mesh, triangle_index, color) else {
+            let vertex_color = (color_source == OwnerIdColorSource::VertexColor).then_some(color);
+            let Some(mesh) = owner_id_triangle_mesh(&primitive.mesh, triangle_index, vertex_color)
+            else {
                 continue;
             };
             let indices = original_indices
@@ -704,7 +726,10 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
                 .and_then(|slice| <[u32; 3]>::try_from(slice).ok())
                 .unwrap_or([0, 0, 0]);
             let mut material = primitive.material.clone();
-            material.set_owner_color(BVec4::ZERO);
+            material.set_owner_color(match color_source {
+                OwnerIdColorSource::VertexColor => BVec4::ZERO,
+                OwnerIdColorSource::Uniform => BVec4::from_array(color),
+            });
             let phase_order = primitive
                 .owner_source
                 .phase_order
@@ -731,7 +756,7 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
     *primitives = owner_primitives;
 }
 
-fn owner_id_triangle_mesh(source: &Mesh, triangle: usize, color: [f32; 4]) -> Option<Mesh> {
+fn owner_id_triangle_mesh(source: &Mesh, triangle: usize, color: Option<[f32; 4]>) -> Option<Mesh> {
     let start = triangle.checked_mul(3)?;
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -751,7 +776,9 @@ fn owner_id_triangle_mesh(source: &Mesh, triangle: usize, color: [f32; 4]) -> Op
     if let Some(uvs) = mesh_uv0(source).and_then(|items| items.get(start..start + 3)) {
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs.to_vec());
     }
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, [color; 3].to_vec());
+    if let Some(color) = color {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, [color; 3].to_vec());
+    }
     Some(mesh)
 }
 
@@ -1145,7 +1172,7 @@ fn diagnostic_owner_ids(
                     "depthCompare": "greater-equal",
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
-                    "ownerColorSource": "vertex-color",
+                    "ownerColorSource": options.owner_id_color_source.as_str(),
                     "bevyPhaseOrderOffset": primitive.transparent_order_offset,
                     "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
                     "bevySortDistanceOverride": owner_id_sort_distance_override(primitive, draw_index, options),
@@ -2762,6 +2789,7 @@ fn write_capture(
         "disableOwnerIdDepthBias": options.disable_owner_id_depth_bias,
         "disableOwnerIdPhaseOrder": options.disable_owner_id_phase_order,
         "ownerIdPhaseOrderPolicy": options.owner_id_phase_order_policy.as_str(),
+        "ownerIdColorSource": options.owner_id_color_source.as_str(),
         "frontFace": options.front_face.as_str(),
         "renderer": {
             "backend": "bevy",
@@ -3001,6 +3029,38 @@ mod tests {
         assert_eq!(
             positions,
             &[[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        );
+    }
+
+    #[test]
+    fn owner_id_triangle_mesh_can_use_vertex_or_uniform_color_source() {
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        );
+
+        let vertex_color_mesh = owner_id_triangle_mesh(&mesh, 0, Some([1.0, 0.0, 0.0, 1.0]))
+            .expect("owner triangle mesh should be generated");
+        assert!(vertex_color_mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+
+        let uniform_color_mesh = owner_id_triangle_mesh(&mesh, 0, None)
+            .expect("owner triangle mesh should be generated");
+        assert!(
+            uniform_color_mesh
+                .attribute(Mesh::ATTRIBUTE_COLOR)
+                .is_none()
         );
     }
 

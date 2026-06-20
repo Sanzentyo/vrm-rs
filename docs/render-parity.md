@@ -1168,6 +1168,17 @@ recoveries to `g-1` and increasing exact owner mismatches. Treat those deltas as
 evidence for local owner/fill ordering investigation, not as permission to apply
 a global diagnostic color bias.
 
+Bevy owner-id color transport is also switchable for diagnosis:
+`--owner-id-color-source vertex-color|uniform` on `bevy_render_capture` and
+`--render-owner-id-color-source` on the local CI script. The uniform path omits
+`COLOR_0` from the split diagnostic mesh and emits the owner ID from the
+per-triangle material uniform instead. `just
+render-parity-seed-owner-id-outline-off-uniform-diagnostic` showed the same
+Seed-san owner counters as the default vertex-color path, so the remaining
+residual is not caused by Bevy vertex-color interpolation or color transport.
+The recovery relation table instead points at same-mesh/same-material owners
+with source/draw deltas of `+1` or `+256`, often with disjoint projected bounds.
+
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
 
