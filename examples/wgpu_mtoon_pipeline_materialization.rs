@@ -441,6 +441,7 @@ mod tests {
 
         assert_eq!(layout[0].binding_type, WgpuBindingType::UniformBuffer);
         assert_eq!(layout[1].binding, owner_sample_override_binding());
+        assert!(layout[1].binding > 19);
         assert_eq!(layout[1].binding_type, WgpuBindingType::StorageBuffer);
         assert_eq!(layout[1].visibility, WgpuShaderStages::Fragment);
         assert_eq!(layout[2].texture_slot, Some(MtoonTextureSlot::Main));

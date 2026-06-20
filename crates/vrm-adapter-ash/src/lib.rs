@@ -2970,6 +2970,7 @@ mod tests {
         assert_eq!(buffers[0].surface, surface);
         assert_eq!(buffers[0].record_count(), 1);
         assert_eq!(buffers[0].binding, ash_owner_sample_override_binding());
+        assert!(buffers[0].binding > 19);
         assert!(
             buffers[0]
                 .usage

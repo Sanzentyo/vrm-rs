@@ -431,6 +431,7 @@ mod tests {
             base.descriptor_set_layout[1].binding,
             owner_sample_override_binding()
         );
+        assert!(base.descriptor_set_layout[1].binding > 19);
         assert_eq!(
             base.descriptor_set_layout[1].descriptor_type,
             VkDescriptorType::StorageBuffer

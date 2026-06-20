@@ -544,7 +544,7 @@ Current known coverage gaps:
 
 ## Current Coverage Snapshot
 
-Measured locally on 2026-06-20 with:
+Measured locally on 2026-06-21 with:
 
 ```powershell
 cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
@@ -553,9 +553,9 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
 | Workspace total | 78.82% | 80.60% |
-| `vrm-adapter-ash` | 65.15% | 68.78% |
+| `vrm-adapter-ash` | 65.17% | 68.79% |
 | `vrm-adapter-bevy` | 74.55% | 75.94% |
-| `vrm-adapter-wgpu` | 22.53% | 23.55% |
+| `vrm-adapter-wgpu` | 22.67% | 23.63% |
 | `vrm-adapter` | 74.30% | 80.58% |
 | `vrm-core` | 75.32% | 79.53% |
 | `vrm-diagnostics` | 87.50% | 90.60% |
