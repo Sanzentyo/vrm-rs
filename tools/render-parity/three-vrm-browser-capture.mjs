@@ -379,13 +379,21 @@ function capturePage(options) {
     };
   };
 
-  const barycentric = (point, a, b, c) => {
+  const barycentricWeights = (point, a, b, c) => {
     const denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
     if (Math.abs(denominator) <= 1.0e-5) return null;
     const w0 = ((b[1] - c[1]) * (point[0] - c[0]) + (c[0] - b[0]) * (point[1] - c[1])) / denominator;
     const w1 = ((c[1] - a[1]) * (point[0] - c[0]) + (a[0] - c[0]) * (point[1] - c[1])) / denominator;
     const w2 = 1.0 - w0 - w1;
-    return w0 >= -1.0e-4 && w1 >= -1.0e-4 && w2 >= -1.0e-4 ? [w0, w1, w2] : null;
+    return [w0, w1, w2];
+  };
+
+  const barycentric = (point, a, b, c) => {
+    const weights = barycentricWeights(point, a, b, c);
+    if (!weights) return null;
+    return weights[0] >= -1.0e-4 && weights[1] >= -1.0e-4 && weights[2] >= -1.0e-4
+      ? weights
+      : null;
   };
 
   const interpolateUv = (weights, a, b, c) => {
@@ -538,6 +546,76 @@ function capturePage(options) {
     const dg = left[1] - right[1];
     const db = left[2] - right[2];
     return Math.sqrt(dr * dr + dg * dg + db * db);
+  };
+
+  const addUniquePoint = (points, point) => {
+    if (!point || !point.every(Number.isFinite)) return;
+    if (points.some((existing) => (
+      Math.abs(existing[0] - point[0]) <= 1.0e-5
+      && Math.abs(existing[1] - point[1]) <= 1.0e-5
+    ))) return;
+    points.push(point);
+  };
+
+  const pointInPixel = (point, x, y) => (
+    point[0] >= x - 1.0e-4
+    && point[0] <= x + 1.0 + 1.0e-4
+    && point[1] >= y - 1.0e-4
+    && point[1] <= y + 1.0 + 1.0e-4
+  );
+
+  const segmentIntersection = (a, b, c, d) => {
+    const r = [b[0] - a[0], b[1] - a[1]];
+    const s = [d[0] - c[0], d[1] - c[1]];
+    const denominator = r[0] * s[1] - r[1] * s[0];
+    if (Math.abs(denominator) <= 1.0e-7) return null;
+    const delta = [c[0] - a[0], c[1] - a[1]];
+    const t = (delta[0] * s[1] - delta[1] * s[0]) / denominator;
+    const u = (delta[0] * r[1] - delta[1] * r[0]) / denominator;
+    if (t < -1.0e-5 || t > 1.0 + 1.0e-5 || u < -1.0e-5 || u > 1.0 + 1.0e-5) {
+      return null;
+    }
+    return [a[0] + t * r[0], a[1] + t * r[1]];
+  };
+
+  const pixelTriangleIntersectionPoint = (pixelX, pixelY, projected) => {
+    const triangle = [projected.a.screen, projected.b.screen, projected.c.screen];
+    const corners = [
+      [pixelX, pixelY],
+      [pixelX + 1, pixelY],
+      [pixelX + 1, pixelY + 1],
+      [pixelX, pixelY + 1],
+    ];
+    const points = [];
+    for (const corner of corners) {
+      if (barycentric(corner, triangle[0], triangle[1], triangle[2])) {
+        addUniquePoint(points, corner);
+      }
+    }
+    for (const vertex of triangle) {
+      if (pointInPixel(vertex, pixelX, pixelY)) addUniquePoint(points, vertex);
+    }
+    for (let triEdge = 0; triEdge < 3; triEdge += 1) {
+      const start = triangle[triEdge];
+      const end = triangle[(triEdge + 1) % 3];
+      for (let rectEdge = 0; rectEdge < 4; rectEdge += 1) {
+        addUniquePoint(points, segmentIntersection(
+          start,
+          end,
+          corners[rectEdge],
+          corners[(rectEdge + 1) % 4],
+        ));
+      }
+    }
+    if (points.length === 0) return null;
+    const point = points.reduce(
+      (sum, current) => [sum[0] + current[0], sum[1] + current[1]],
+      [0, 0],
+    ).map((value) => value / points.length);
+    const weights = barycentric(point, triangle[0], triangle[1], triangle[2])
+      ?? barycentricWeights(point, triangle[0], triangle[1], triangle[2]);
+    if (!weights) return null;
+    return { point, barycentric: weights, pointCount: points.length };
   };
 
   const materialAt = (mesh, materialIndex) => (
@@ -775,12 +853,16 @@ function capturePage(options) {
       renderedOwnerFrontmostCount: 0,
       renderedOwnerBestSubpixelCount: 0,
       renderedOwnerBestSubpixelFrontmostCount: 0,
+      renderedOwnerBestCoverageCount: 0,
+      renderedOwnerBestCoverageFrontmostCount: 0,
       renderedOwnerBestNeighborCount: 0,
       renderedOwnerBestNeighborFrontmostCount: 0,
       renderedOwnerDepthRanks: {},
       renderedOwnerBestSubpixelDepthRanks: {},
+      renderedOwnerBestCoverageDepthRanks: {},
       renderedOwnerBestNeighborDepthRanks: {},
       renderedOwnerBestSubpixelCenters: {},
+      renderedOwnerBestCoverageCenters: {},
       renderedOwnerBestNeighborOffsets: {},
     };
     const bump = (map, key) => {
@@ -802,6 +884,13 @@ function capturePage(options) {
         if (bestSubpixel.frontmost) summary.renderedOwnerBestSubpixelFrontmostCount += 1;
         bump(summary.renderedOwnerBestSubpixelDepthRanks, String(bestSubpixel.depthRank));
         bump(summary.renderedOwnerBestSubpixelCenters, sampleCenterKey(bestSubpixel.sampleCenter));
+      }
+      const bestCoverage = hotspot.renderedOwnerRecovery?.bestCoverage;
+      if (bestCoverage) {
+        summary.renderedOwnerBestCoverageCount += 1;
+        if (bestCoverage.frontmost) summary.renderedOwnerBestCoverageFrontmostCount += 1;
+        bump(summary.renderedOwnerBestCoverageDepthRanks, String(bestCoverage.depthRank));
+        bump(summary.renderedOwnerBestCoverageCenters, sampleCenterKey(bestCoverage.sampleCenter));
       }
       const bestNeighbor = hotspot.renderedOwnerRecovery?.bestNeighbor;
       if (bestNeighbor) {
@@ -940,6 +1029,18 @@ function capturePage(options) {
           if (match) subpixelMatches.push(match);
         }
       }
+      const coverageMatches = [];
+      for (const projected of projectedTriangles) {
+        if (projected.ownerId !== renderedOwner.id) continue;
+        const coverage = pixelTriangleIntersectionPoint(hotspot.x, hotspot.y, projected);
+        if (!coverage) continue;
+        const match = ownerMatchAtPoint(hotspot, coverage.point, renderedOwner);
+        if (match) {
+          match.coverageBarycentric = coverage.barycentric;
+          match.coveragePointCount = coverage.pointCount;
+          coverageMatches.push(match);
+        }
+      }
       const neighborMatches = [];
       for (const dy of [-1, 0, 1]) {
         for (const dx of [-1, 0, 1]) {
@@ -954,6 +1055,8 @@ function capturePage(options) {
         subpixelSteps: hotspotSubpixelSteps,
         subpixelMatches,
         bestSubpixel: subpixelMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.sampleCenter[0] - 0.5) + Math.abs(left.sampleCenter[1] - 0.5) - (Math.abs(right.sampleCenter[0] - 0.5) + Math.abs(right.sampleCenter[1] - 0.5)))[0] ?? null,
+        coverageMatches,
+        bestCoverage: coverageMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.sampleCenter[0] - 0.5) + Math.abs(left.sampleCenter[1] - 0.5) - (Math.abs(right.sampleCenter[0] - 0.5) + Math.abs(right.sampleCenter[1] - 0.5)))[0] ?? null,
         neighborMatches,
         bestNeighbor: neighborMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.pixelOffset[0]) + Math.abs(left.pixelOffset[1]) - (Math.abs(right.pixelOffset[0]) + Math.abs(right.pixelOffset[1])))[0] ?? null,
       };

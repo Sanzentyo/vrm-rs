@@ -83,8 +83,15 @@ recipes are convenience entry points. Use these first:
   cases without feeding expected/actual colors into manifest generation. The
   first run reports `64/64` rendered owners for wgpu/Bevy/Ash, center-frontmost
   matches `47/64`, `46/64`, and `45/64`, and 5x5 owner recovery `49/64` for all
-  three. That leaves a concrete `15/64` owner/fill coverage gap before any
-  material-color work should be promoted to default behavior.
+  three. The browser projection now also records a pixel-square/triangle
+  coverage-intersection recovery. That recovers `64/64` rendered owners for all
+  three backends, with depth-rank-1 counts wgpu `63/64`, Bevy `63/64`, and Ash
+  `64/64`. This is the current strongest evidence that the remaining owner gap
+  is a fill/coverage sample reconstruction issue, not a reason to choose
+  samples by RGB-distance oracle. The next implementation step is to make the
+  Rust-side sample-geometry mapper consume the same per-pixel coverage sample
+  so render-resolve manifests can be generated from owner/fill geometry rather
+  than fixed 5x5 grid hits.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
