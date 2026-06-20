@@ -3088,7 +3088,15 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("arrayLength(&owner_sample_overrides)"));
         assert!(MTOON_SHADER_SOURCE.contains("geometry_ids: vec4<u32>"));
         assert!(MTOON_SHADER_SOURCE.contains("geometry_uvs: vec4<f32>"));
-        assert!(MTOON_SHADER_SOURCE.contains("apply_owner_sample_override(input.position"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_override_index(input.position"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_has_geometry(owner_sample_index)"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_base_uv(owner_sample_index"));
+        assert!(
+            MTOON_SHADER_SOURCE.contains("use_owner_sample_geometry = owner_sample_has_geometry")
+        );
+        assert!(MTOON_SHADER_SOURCE.contains("textureSampleGrad("));
+        assert!(!MTOON_SHADER_SOURCE.contains("textureSampleLevel("));
+        assert!(!MTOON_SHADER_SOURCE.contains("apply_owner_sample_override"));
     }
 
     #[test]

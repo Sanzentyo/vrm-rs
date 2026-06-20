@@ -60,7 +60,18 @@ recipes are convenience entry points. Use these first:
   `RenderOwnerSampleCorrectionPlan`, so renderer experiments can inspect the
   selected surface/sample, look up entries by render pixel, or match a
   `RenderOwnerSurfaceKey` plus concrete `RenderOwnerSampleDrawKey` before
-  choosing how to evaluate that sample in the backend. The wgpu, Bevy, and Ash
+  choosing how to evaluate that sample in the backend. In the current wgpu and
+  Bevy capture shaders, geometry-bearing records are evaluated as material
+  samples rather than copied output colors: the recorded `raw_uv` drives the
+  normal shaded path and UV diagnostics, the recorded/transformed `base_uv`
+  drives base texture sampling, and texture lookups use the original surface UV
+  gradients via `textureSampleGrad` so a single routed pixel does not corrupt
+  implicit derivatives. `replacement_rgba` is only used by the explicit
+  readback-replacement upper-bound flag, not by the normal shader path. The
+  first depth3 no-readback check was byte-identical to the previous
+  geometry-bound render, so the remaining PSNR gap is an ownership/coverage
+  problem rather than a UV-only material-sampling problem. The
+  wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against
   the current non-diagnostic render surfaces plus `surfaceSelections[]` entries
