@@ -79,6 +79,8 @@ struct OwnerCompareReport {
     actual_near_id_matches_expected_owner_unexplained_tail_after_touching: u64,
     unexplained_owner_tail_mismatched_shared_nonzero: u64,
     unexplained_owner_tail_after_touching_mismatched_shared_nonzero: u64,
+    unresolved_owner_tail_after_near_id_mismatched_shared_nonzero: u64,
+    unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64,
     actual_metadata_bounds_miss_shared_nonzero: u64,
@@ -816,6 +818,8 @@ fn compare_owner_images(
     let mut actual_near_id_matches_expected_owner_unexplained_tail_after_touching = 0;
     let mut unexplained_owner_tail_mismatched_shared_nonzero = 0;
     let mut unexplained_owner_tail_after_touching_mismatched_shared_nonzero = 0;
+    let mut unresolved_owner_tail_after_near_id_mismatched_shared_nonzero = 0;
+    let mut unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_mismatched_shared_nonzero = 0;
     let mut actual_metadata_bounds_miss_shared_nonzero = 0;
@@ -927,11 +931,15 @@ fn compare_owner_images(
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
                         if actual_near_id_matches_expected {
                             actual_near_id_matches_expected_owner_unexplained_tail += 1;
+                        } else {
+                            unresolved_owner_tail_after_near_id_mismatched_shared_nonzero += 1;
                         }
                         if !same_projected_or_touching {
                             unexplained_owner_tail_after_touching_mismatched_shared_nonzero += 1;
                             if actual_near_id_matches_expected {
                                 actual_near_id_matches_expected_owner_unexplained_tail_after_touching += 1;
+                            } else {
+                                unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero += 1;
                             }
                         }
                         unexplained_projection_gaps.add(expected_label, actual_label, pixel);
@@ -1034,6 +1042,8 @@ fn compare_owner_images(
         actual_near_id_matches_expected_owner_unexplained_tail_after_touching,
         unexplained_owner_tail_mismatched_shared_nonzero,
         unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
+        unresolved_owner_tail_after_near_id_mismatched_shared_nonzero,
+        unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
         actual_not_visible_by_cull_policy_mismatched_shared_nonzero,
         actual_metadata_bounds_miss_shared_nonzero,
@@ -3617,6 +3627,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         report.unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
         2
+    );
+    assert_eq!(
+        report.unresolved_owner_tail_after_near_id_mismatched_shared_nonzero,
+        0
+    );
+    assert_eq!(
+        report.unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero,
+        0
     );
     assert_eq!(report.unexplained_projection_gap_summary.count, 2);
     assert_eq!(

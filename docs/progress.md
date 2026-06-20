@@ -44,6 +44,15 @@
   next decision from broad Bevy fill/geometry policy toward either proving and
   compensating owner-id diagnostic color quantization, or reclassifying
   near-ID-recoverable pixels separately from true geometry ownership tail.
+- Split that reclassification into explicit unresolved counters:
+  `unresolved_owner_tail_after_near_id_mismatched_shared_nonzero` and
+  `unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero`.
+  On the same compact Bevy-vs-wgpu topology summary, the conservative
+  historical tail remains `26`, while the near-ID-unresolved tail is now `0`.
+  Treat the compact Bevy-vs-wgpu owner-tail artifact as diagnostic-color
+  quantization/recovery evidence rather than an active geometry/fill blocker;
+  keep the original counters for audit and use the unresolved counters when
+  choosing the next render-parity blocker.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent

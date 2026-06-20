@@ -635,6 +635,17 @@ has `11853/11933` touching-local mismatches and `80` pixels left after touching
 classification, Bevy-vs-three-vrm has `7977/12140` and `149`, and Bevy-vs-wgpu
 has `2228/6332` and `99`.
 
+For Bevy owner-ID reports, keep the conservative tail counters separate from
+near-ID diagnostic-color recovery. `actual_near_id_matches_expected_owner_*`
+counts mismatches where the decoded actual owner is within the same small RGB
+owner-ID neighborhood as the expected owner. `unresolved_owner_tail_after_near_id_*`
+then reports the part of the conservative unexplained tail that remains after
+excluding those near-ID recoveries. The compact Seed-san topology Bevy-vs-wgpu
+diagnostic keeps its historical `26` conservative tail pixels, but the
+near-ID-unresolved tail is `0`; read that compact residual as owner-ID
+diagnostic quantization/recovery noise unless a future report shows nonzero
+`unresolved_owner_tail_after_near_id_*` counts.
+
 When auditing Bevy owner reports, keep the strict close-depth fields separate
 from near-depth convention checks. `same_projected_or_adjacent_triangle_*`
 still requires `overlap-depth-close` (`<= 0.001` WebGL-reference depth), while

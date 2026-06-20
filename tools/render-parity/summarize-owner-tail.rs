@@ -70,6 +70,8 @@ struct OwnerTailCounts {
     actual_near_id_matches_expected_owner_unexplained_tail_after_touching: Option<u64>,
     unexplained_owner_tail_mismatched_shared_nonzero: Option<u64>,
     unexplained_owner_tail_after_touching_mismatched_shared_nonzero: Option<u64>,
+    unresolved_owner_tail_after_near_id_mismatched_shared_nonzero: Option<u64>,
+    unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero: Option<u64>,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: Option<u64>,
     actual_metadata_bounds_miss_mismatched_shared_nonzero: Option<u64>,
     actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero: Option<u64>,
@@ -218,6 +220,14 @@ fn summarize_report(
             unexplained_owner_tail_after_touching_mismatched_shared_nonzero: u64_field(
                 value,
                 "unexplained_owner_tail_after_touching_mismatched_shared_nonzero",
+            ),
+            unresolved_owner_tail_after_near_id_mismatched_shared_nonzero: u64_field(
+                value,
+                "unresolved_owner_tail_after_near_id_mismatched_shared_nonzero",
+            ),
+            unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero: u64_field(
+                value,
+                "unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero",
             ),
             actual_not_visible_by_cull_policy_mismatched_shared_nonzero: u64_field(
                 value,
@@ -535,6 +545,20 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         report
             .counts
             .unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "unresolved_owner_tail_after_near_id_mismatched_shared_nonzero",
+        report
+            .counts
+            .unresolved_owner_tail_after_near_id_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero",
+        report
+            .counts
+            .unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero,
     );
     write_count(
         &mut output,
@@ -1162,6 +1186,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         "actual_near_id_matches_expected_owner_unexplained_tail_after_touching": 1,
         "unexplained_owner_tail_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_after_touching_mismatched_shared_nonzero": 1,
+        "unresolved_owner_tail_after_near_id_mismatched_shared_nonzero": 0,
+        "unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero": 0,
         "actual_not_visible_by_cull_policy_mismatched_shared_nonzero": 1,
         "actual_metadata_bounds_miss_mismatched_shared_nonzero": 1,
         "actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero": 1,
@@ -1343,6 +1369,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .contains("same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero"));
     assert!(
         markdown.contains("actual_near_id_matches_expected_owner_unexplained_tail_after_touching")
+    );
+    assert!(
+        markdown.contains("unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero")
     );
     assert!(
         markdown
