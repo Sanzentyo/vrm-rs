@@ -121,6 +121,16 @@ struct ReviewReport {
     top_actual_expected_surface_transitions: Vec<Value>,
     top_frontmost_texture_sampling_variants: Vec<Value>,
     top_nearest_sample_visible_texture_sampling_variants: Vec<Value>,
+    actual_best_subpixel_visible_count: Option<u64>,
+    expected_best_subpixel_visible_count: Option<u64>,
+    actual_best_subpixel_improved_count: Option<u64>,
+    expected_best_subpixel_improved_count: Option<u64>,
+    actual_best_subpixel_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_best_subpixel_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_best_subpixel_mean_cpu_base_color_improvement: Option<f64>,
+    expected_best_subpixel_mean_cpu_base_color_improvement: Option<f64>,
+    actual_best_subpixel_same_triangle_matches: Option<u64>,
+    expected_best_subpixel_same_triangle_matches: Option<u64>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -541,6 +551,43 @@ fn summarize_report(
             "nearest_sample_visible_texture_sampling_variants",
             top,
         ),
+        actual_best_subpixel_visible_count: u64_field(summary, "actual_best_subpixel_visible_count"),
+        expected_best_subpixel_visible_count: u64_field(
+            summary,
+            "expected_best_subpixel_visible_count",
+        ),
+        actual_best_subpixel_improved_count: u64_field(
+            summary,
+            "actual_best_subpixel_improved_count",
+        ),
+        expected_best_subpixel_improved_count: u64_field(
+            summary,
+            "expected_best_subpixel_improved_count",
+        ),
+        actual_best_subpixel_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_best_subpixel_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_best_subpixel_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_best_subpixel_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_best_subpixel_mean_cpu_base_color_improvement: f64_field(
+            summary,
+            "actual_best_subpixel_mean_cpu_base_color_improvement",
+        ),
+        expected_best_subpixel_mean_cpu_base_color_improvement: f64_field(
+            summary,
+            "expected_best_subpixel_mean_cpu_base_color_improvement",
+        ),
+        actual_best_subpixel_same_triangle_matches: u64_field(
+            summary,
+            "actual_best_subpixel_same_triangle_matches",
+        ),
+        expected_best_subpixel_same_triangle_matches: u64_field(
+            summary,
+            "expected_best_subpixel_same_triangle_matches",
+        ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
         top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
         top_missing_center_nearest_offsets: top_array(
@@ -770,6 +817,32 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(
         &report.top_nearest_sample_visible_texture_sampling_variants,
     ));
+    markdown.push_str("\n## Subpixel Frontmost Search\n\n");
+    markdown.push_str(&format!(
+        "- Visible actual/expected: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_best_subpixel_visible_count),
+        fmt_opt_u64(report.expected_best_subpixel_visible_count)
+    ));
+    markdown.push_str(&format!(
+        "- Improved actual/expected: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_best_subpixel_improved_count),
+        fmt_opt_u64(report.expected_best_subpixel_improved_count)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_best_subpixel_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_best_subpixel_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color improvement actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_best_subpixel_mean_cpu_base_color_improvement),
+        fmt_opt_f64(report.expected_best_subpixel_mean_cpu_base_color_improvement)
+    ));
+    markdown.push_str(&format!(
+        "- Same triangle actual/expected vs center frontmost: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_best_subpixel_same_triangle_matches),
+        fmt_opt_u64(report.expected_best_subpixel_same_triangle_matches)
+    ));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -952,6 +1025,16 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                     "tied": 0,
                     "mean_expected_minus_actual": 1.0
                 }],
+                "actual_best_subpixel_visible_count": 1,
+                "expected_best_subpixel_visible_count": 1,
+                "actual_best_subpixel_improved_count": 0,
+                "expected_best_subpixel_improved_count": 1,
+                "actual_best_subpixel_mean_cpu_base_color_rgb_distance": 0.5,
+                "expected_best_subpixel_mean_cpu_base_color_rgb_distance": 1.0,
+                "actual_best_subpixel_mean_cpu_base_color_improvement": 0.0,
+                "expected_best_subpixel_mean_cpu_base_color_improvement": 0.5,
+                "actual_best_subpixel_same_triangle_matches": 1,
+                "expected_best_subpixel_same_triangle_matches": 0,
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -997,9 +1080,11 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         Some(0.5)
     );
     assert_eq!(report.top_frontmost_texture_sampling_variants.len(), 1);
+    assert_eq!(report.expected_best_subpixel_improved_count, Some(1));
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Render Hotspot Summary"));
     assert!(markdown.contains("Texture Sampling Variants"));
+    assert!(markdown.contains("Subpixel Frontmost Search"));
     let mut options = Options {
         self_test: false,
         input: Some(PathBuf::from("self-test.json")),

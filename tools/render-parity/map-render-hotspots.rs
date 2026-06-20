@@ -80,6 +80,8 @@ struct Options {
     sample_center_x: f32,
     #[arg(long, default_value_t = 0.5)]
     sample_center_y: f32,
+    #[arg(long, default_value_t = 5)]
+    subpixel_steps: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -218,6 +220,16 @@ struct HotspotSummary {
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
     actual_expected_surface_transitions: Vec<SurfaceTransitionCount>,
+    actual_best_subpixel_visible_count: usize,
+    expected_best_subpixel_visible_count: usize,
+    actual_best_subpixel_improved_count: usize,
+    expected_best_subpixel_improved_count: usize,
+    actual_best_subpixel_mean_cpu_base_color_rgb_distance: Option<f32>,
+    expected_best_subpixel_mean_cpu_base_color_rgb_distance: Option<f32>,
+    actual_best_subpixel_mean_cpu_base_color_improvement: Option<f32>,
+    expected_best_subpixel_mean_cpu_base_color_improvement: Option<f32>,
+    actual_best_subpixel_same_triangle_matches: usize,
+    expected_best_subpixel_same_triangle_matches: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -319,7 +331,18 @@ struct Hotspot {
     nearest_sample_visible_cpu_base_color_actual_rgb_distance: Option<f32>,
     frontmost_texture_sampling_variants: Vec<TextureSamplingDistance>,
     nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingDistance>,
+    best_subpixel_visible_actual: Option<SubpixelMatch>,
+    best_subpixel_visible_expected: Option<SubpixelMatch>,
     candidates: Vec<HitCandidate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SubpixelMatch {
+    sample: [f32; 2],
+    rgb_distance: f32,
+    center_rgb_distance: Option<f32>,
+    improvement: Option<f32>,
+    candidate: CandidateMatch,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -521,6 +544,27 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 delta.actual,
                 delta.expected,
             );
+            let subpixel_candidates = subpixel_frontmost_visible_candidates(
+                delta.x,
+                delta.y,
+                &surfaces,
+                view_projection,
+                width,
+                height,
+                options.subpixel_steps,
+            );
+            let best_subpixel_visible_actual = best_subpixel_match(
+                &subpixel_candidates,
+                delta.actual,
+                frontmost_cpu_base_color_rgba
+                    .map(|color| rgb_distance(color, delta.actual)),
+            );
+            let best_subpixel_visible_expected = best_subpixel_match(
+                &subpixel_candidates,
+                delta.expected,
+                frontmost_cpu_base_color_rgba
+                    .map(|color| rgb_distance(color, delta.expected)),
+            );
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -578,6 +622,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                         .map(|color| rgb_distance(color, delta.actual)),
                 frontmost_texture_sampling_variants,
                 nearest_sample_visible_texture_sampling_variants,
+                best_subpixel_visible_actual,
+                best_subpixel_visible_expected,
                 candidates,
             }
         })
@@ -1012,6 +1058,62 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             |hotspot| hotspot.nearest_visible_actual.as_ref(),
             |hotspot| hotspot.nearest_visible_expected.as_ref(),
         ),
+        actual_best_subpixel_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.best_subpixel_visible_actual.is_some())
+            .count(),
+        expected_best_subpixel_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.best_subpixel_visible_expected.is_some())
+            .count(),
+        actual_best_subpixel_improved_count: subpixel_improved_count(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+        ),
+        expected_best_subpixel_improved_count: subpixel_improved_count(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+        ),
+        actual_best_subpixel_mean_cpu_base_color_rgb_distance: mean_subpixel_distance(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+        ),
+        expected_best_subpixel_mean_cpu_base_color_rgb_distance: mean_subpixel_distance(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+        ),
+        actual_best_subpixel_mean_cpu_base_color_improvement: mean_subpixel_improvement(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+        ),
+        expected_best_subpixel_mean_cpu_base_color_improvement: mean_subpixel_improvement(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+        ),
+        actual_best_subpixel_same_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot
+                        .best_subpixel_visible_actual
+                        .as_ref()
+                        .map(|matched| &matched.candidate),
+                )
+            })
+            .count(),
+        expected_best_subpixel_same_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot
+                        .best_subpixel_visible_expected
+                        .as_ref()
+                        .map(|matched| &matched.candidate),
+                )
+            })
+            .count(),
     }
 }
 
@@ -1277,6 +1379,44 @@ fn texture_sampling_variant_summary<'a>(
             mean_expected_minus_actual: entry.expected_minus_actual_sum / entry.count as f32,
         })
         .collect()
+}
+
+fn subpixel_improved_count(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> usize {
+    hotspots
+        .iter()
+        .filter_map(subpixel)
+        .filter(|matched| matched.improvement.is_some_and(|improvement| improvement > 0.0))
+        .count()
+}
+
+fn mean_subpixel_distance(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(subpixel)
+        .fold((0.0, 0usize), |(sum, count), matched| {
+            (sum + matched.rgb_distance, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn mean_subpixel_improvement(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(subpixel)
+        .filter_map(|matched| matched.improvement)
+        .fold((0.0, 0usize), |(sum, count), improvement| {
+            (sum + improvement, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
 }
 
 fn mean_frontmost_texture_gradient(hotspots: &[Hotspot]) -> Option<f32> {
@@ -1689,6 +1829,84 @@ fn nearest_sample_frontmost_candidate_match_by(
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .then_with(|| right.draw_index.cmp(&left.draw_index))
+        })
+}
+
+fn subpixel_frontmost_visible_candidates(
+    x: usize,
+    y: usize,
+    surfaces: &[Surface],
+    view_projection: Mat4,
+    width: usize,
+    height: usize,
+    steps: usize,
+) -> Vec<SubpixelCandidate> {
+    let steps = steps.max(1);
+    (0..steps)
+        .flat_map(|row| {
+            (0..steps).filter_map(move |column| {
+                let sample = [
+                    (column as f32 + 0.5) / steps as f32,
+                    (row as f32 + 0.5) / steps as f32,
+                ];
+                let point = [x as f32 + sample[0], y as f32 + sample[1]];
+                let candidates = surfaces
+                    .iter()
+                    .flat_map(|surface| {
+                        surface_candidates(
+                            surface,
+                            view_projection,
+                            point,
+                            [0, 0],
+                            width,
+                            height,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                frontmost_visible_candidate_match(&candidates)
+                    .map(|candidate| SubpixelCandidate { sample, candidate })
+            })
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug)]
+struct SubpixelCandidate {
+    sample: [f32; 2],
+    candidate: CandidateMatch,
+}
+
+fn best_subpixel_match(
+    candidates: &[SubpixelCandidate],
+    target: [u8; 4],
+    center_distance: Option<f32>,
+) -> Option<SubpixelMatch> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let rgb_distance = rgb_distance(candidate.candidate.cpu_base_color_rgba, target);
+            SubpixelMatch {
+                sample: candidate.sample,
+                rgb_distance,
+                center_rgb_distance: center_distance,
+                improvement: center_distance.map(|center| center - rgb_distance),
+                candidate: candidate.candidate.clone(),
+            }
+        })
+        .min_by(|left, right| {
+            left.rgb_distance
+                .partial_cmp(&right.rgb_distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    left.sample[1]
+                        .partial_cmp(&right.sample[1])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| {
+                    left.sample[0]
+                        .partial_cmp(&right.sample[0])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         })
 }
 
