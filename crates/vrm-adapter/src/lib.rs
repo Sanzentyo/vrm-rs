@@ -495,6 +495,72 @@ impl RenderOwnerSurfaceKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderSamplePoint {
+    x: f64,
+    y: f64,
+}
+
+impl RenderSamplePoint {
+    pub const DEFAULT_EPSILON: f64 = 0.001;
+
+    pub const fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    pub const fn from_pair(pair: [f64; 2]) -> Self {
+        Self::new(pair[0], pair[1])
+    }
+
+    pub const fn to_pair(self) -> [f64; 2] {
+        [self.x, self.y]
+    }
+
+    pub const fn x(self) -> f64 {
+        self.x
+    }
+
+    pub const fn y(self) -> f64 {
+        self.y
+    }
+
+    pub fn approximately_matches(self, other: Self, epsilon: f64) -> bool {
+        (self.x - other.x).abs() <= epsilon && (self.y - other.y).abs() <= epsilon
+    }
+
+    pub fn matches_default_epsilon(self, other: Self) -> bool {
+        self.approximately_matches(other, Self::DEFAULT_EPSILON)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleKey {
+    surface: RenderOwnerSurfaceKey,
+    sample: RenderSamplePoint,
+}
+
+impl RenderOwnerSampleKey {
+    pub fn new(surface: RenderOwnerSurfaceKey, sample: RenderSamplePoint) -> Self {
+        Self { surface, sample }
+    }
+
+    pub fn from_pair(surface: RenderOwnerSurfaceKey, sample: [f64; 2]) -> Self {
+        Self::new(surface, RenderSamplePoint::from_pair(sample))
+    }
+
+    pub fn surface(&self) -> &RenderOwnerSurfaceKey {
+        &self.surface
+    }
+
+    pub fn sample(&self) -> RenderSamplePoint {
+        self.sample
+    }
+
+    pub fn matches(&self, surface: &RenderOwnerSurfaceKey, sample: RenderSamplePoint) -> bool {
+        self.surface == *surface && self.sample.matches_default_epsilon(sample)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RenderOwnerSurfaceRelation {
     SameSurface,
@@ -4793,6 +4859,25 @@ mod tests {
             accepted_worse.outcome,
             RenderOwnerSampleCorrectionOutcome::Worsened
         );
+    }
+
+    #[test]
+    fn render_owner_sample_key_matches_surface_and_subpixel_sample_with_epsilon() {
+        let body = RenderOwnerSurfaceKey::new("body", 7);
+        let neighbor = RenderOwnerSurfaceKey::new("body", 8);
+        let key = RenderOwnerSampleKey::from_pair(body.clone(), [0.7, 0.5]);
+
+        assert_eq!(key.surface(), &body);
+        assert_eq!(key.sample().to_pair(), [0.7, 0.5]);
+        assert!(
+            key.sample()
+                .matches_default_epsilon(RenderSamplePoint::new(0.7005, 0.4995))
+        );
+        assert!(key.matches(&body, RenderSamplePoint::new(0.7005, 0.4995)));
+        assert!(!key.matches(&body, RenderSamplePoint::new(0.702, 0.5)));
+        assert!(!key.matches(&neighbor, RenderSamplePoint::new(0.7, 0.5)));
+        assert_eq!(RenderSamplePoint::from_pair([0.25, 0.75]).x(), 0.25);
+        assert_eq!(RenderSamplePoint::from_pair([0.25, 0.75]).y(), 0.75);
     }
 
     fn transform_matrix(transform: Transform) -> Mat4 {

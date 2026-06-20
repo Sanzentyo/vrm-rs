@@ -26,7 +26,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
     RenderOwnerSampleCorrectionOutcome, RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey,
-    evaluate_render_owner_sample_correction,
+    RenderOwnerSampleKey, RenderSamplePoint, evaluate_render_owner_sample_correction,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -200,9 +200,8 @@ fn correction_report(
         )) else {
             continue;
         };
-        let Some(color) =
-            rust_subpixel_color_for_surface_sample(rust_hotspot, &browser_best, sample)
-        else {
+        let sample_key = RenderOwnerSampleKey::from_pair(browser_best.clone(), sample);
+        let Some(color) = rust_subpixel_color_for_owner_sample(rust_hotspot, &sample_key) else {
             continue;
         };
         candidate_color_count += 1;
@@ -341,23 +340,22 @@ fn write_imqraw_rgba8(
     Ok(())
 }
 
-fn rust_subpixel_color_for_surface_sample(
+fn rust_subpixel_color_for_owner_sample(
     rust_hotspot: &Value,
-    surface: &RenderOwnerSurfaceKey,
-    sample: [f64; 2],
+    sample_key: &RenderOwnerSampleKey,
 ) -> Option<[u8; 4]> {
     rust_hotspot
         .get("subpixel_visible_candidates")
         .and_then(Value::as_array)?
         .iter()
-        .filter(|candidate| {
-            number_pair(candidate.get("sample")).is_some_and(|candidate_sample| {
-                sample_pair_matches(candidate_sample, sample)
-            })
-        })
         .find_map(|candidate| {
             let candidate_surface = surface_at(candidate, "/candidate")?;
-            (candidate_surface == *surface)
+            let candidate_sample = number_pair(candidate.get("sample"))?;
+            sample_key
+                .matches(
+                    &candidate_surface,
+                    RenderSamplePoint::from_pair(candidate_sample),
+                )
                 .then(|| candidate.pointer("/candidate/cpu_base_color_rgba"))
                 .flatten()
                 .and_then(rgba_array)
@@ -386,11 +384,6 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
 fn number_pair(value: Option<&Value>) -> Option<[f64; 2]> {
     let values = value?.as_array()?;
     Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
-}
-
-fn sample_pair_matches(left: [f64; 2], right: [f64; 2]) -> bool {
-    const EPSILON: f64 = 0.001;
-    (left[0] - right[0]).abs() <= EPSILON && (left[1] - right[1]).abs() <= EPSILON
 }
 
 fn rgba_array(value: &Value) -> Option<[u8; 4]> {

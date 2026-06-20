@@ -19,8 +19,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
-    RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation, normalize_owner_diagnostic_material_name,
-    rgb_distance_u8,
+    RenderOwnerSampleKey, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation, RenderSamplePoint,
+    normalize_owner_diagnostic_material_name, rgb_distance_u8,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -211,11 +211,8 @@ fn join_reports(
         let browser_best_sample_color = browser_best
             .as_ref()
             .zip(browser_best_sample)
-            .and_then(|(surface, sample)| rust_subpixel_color_for_surface_sample(
-                rust_hotspot,
-                surface,
-                sample,
-            ));
+            .map(|(surface, sample)| RenderOwnerSampleKey::from_pair(surface.owner_key(), sample))
+            .and_then(|sample_key| rust_subpixel_color_for_owner_sample(rust_hotspot, &sample_key));
         let browser_best_sample_actual_distance = browser_best_sample_color
             .zip(rgba_field(rust_hotspot, "actual"))
             .map(|(color, actual)| rgb_distance_u64(color, actual));
@@ -416,33 +413,26 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
     ))
 }
 
-fn rust_subpixel_color_for_surface_sample(
+fn rust_subpixel_color_for_owner_sample(
     rust_hotspot: &Value,
-    surface: &SurfaceSummary,
-    sample: [f64; 2],
+    sample_key: &RenderOwnerSampleKey,
 ) -> Option<[u64; 4]> {
     rust_hotspot
         .get("subpixel_visible_candidates")
         .and_then(Value::as_array)?
         .iter()
-        .filter(|candidate| {
-            number_pair(candidate.get("sample")).is_some_and(|candidate_sample| {
-                sample_pair_matches(candidate_sample, sample)
-            })
-        })
-        .filter_map(|candidate| {
+        .find_map(|candidate| {
             let candidate_surface = surface_at(candidate, "/candidate")?;
-            (candidate_surface == *surface)
+            let candidate_sample = number_pair(candidate.get("sample"))?;
+            sample_key
+                .matches(
+                    &candidate_surface.owner_key(),
+                    RenderSamplePoint::from_pair(candidate_sample),
+                )
                 .then(|| candidate.pointer("/candidate/cpu_base_color_rgba"))
                 .flatten()
                 .and_then(rgba_array)
         })
-        .next()
-}
-
-fn sample_pair_matches(left: [f64; 2], right: [f64; 2]) -> bool {
-    const EPSILON: f64 = 0.001;
-    (left[0] - right[0]).abs() <= EPSILON && (left[1] - right[1]).abs() <= EPSILON
 }
 
 fn rgba_field(value: &Value, key: &str) -> Option<[u64; 4]> {
