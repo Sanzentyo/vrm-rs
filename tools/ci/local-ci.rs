@@ -139,7 +139,7 @@ struct Options {
     render_normal_map_scale: f32,
     #[arg(long, value_enum, default_value_t = RenderDiagnosticMode::Shaded)]
     render_diagnostic_mode: RenderDiagnosticMode,
-    #[arg(long, value_enum, default_value_t = RenderOwnerIdPhaseOrderPolicy::Full)]
+    #[arg(long, value_enum, default_value_t = RenderOwnerIdPhaseOrderPolicy::DrawIndex)]
     render_owner_id_phase_order_policy: RenderOwnerIdPhaseOrderPolicy,
     #[arg(long, value_enum, default_value_t = RenderFrontFace::Ccw)]
     render_front_face: RenderFrontFace,
@@ -225,6 +225,7 @@ enum RenderOwnerIdPhaseOrderPolicy {
     Off,
     OverlapArea,
     OverlapTriangle,
+    DrawIndex,
 }
 
 impl RenderOwnerIdPhaseOrderPolicy {
@@ -234,6 +235,7 @@ impl RenderOwnerIdPhaseOrderPolicy {
             Self::Off => "off",
             Self::OverlapArea => "overlap-area",
             Self::OverlapTriangle => "overlap-triangle",
+            Self::DrawIndex => "draw-index",
         }
     }
 }

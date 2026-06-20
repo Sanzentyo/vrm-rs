@@ -70,6 +70,8 @@ use vrm_io::{
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
 const BEVY_PHASE_ORDER_OFFSET_SCALE: f32 = 0.000001;
+const BEVY_OWNER_ID_RENDER_ORDER_SORT_SCALE: f32 = 0.01;
+const BEVY_OWNER_ID_DRAW_INDEX_SORT_SCALE: f32 = 0.000001;
 const OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD: f32 = 4.0;
 const OWNER_ID_PHASE_ORDER_DEPTH_TOLERANCE: f32 = 0.001;
 
@@ -176,7 +178,7 @@ struct CaptureOptions {
     disable_owner_id_depth_bias: bool,
     #[arg(long)]
     disable_owner_id_phase_order: bool,
-    #[arg(long, value_enum, default_value_t = OwnerIdPhaseOrderPolicy::Full)]
+    #[arg(long, value_enum, default_value_t = OwnerIdPhaseOrderPolicy::DrawIndex)]
     owner_id_phase_order_policy: OwnerIdPhaseOrderPolicy,
     #[arg(long, value_enum, default_value_t = CaptureFrontFace::Ccw)]
     front_face: CaptureFrontFace,
@@ -188,6 +190,7 @@ enum OwnerIdPhaseOrderPolicy {
     Off,
     OverlapArea,
     OverlapTriangle,
+    DrawIndex,
 }
 
 impl OwnerIdPhaseOrderPolicy {
@@ -197,6 +200,7 @@ impl OwnerIdPhaseOrderPolicy {
             Self::Off => "off",
             Self::OverlapArea => "overlap-area",
             Self::OverlapTriangle => "overlap-triangle",
+            Self::DrawIndex => "draw-index",
         }
     }
 }
@@ -625,15 +629,20 @@ fn spawn_vrm_meshes(
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
     });
 
-    for primitive in primitives {
+    for (draw_index, primitive) in primitives.into_iter().enumerate() {
         let phase_order = owner_id_phase_order_offset(&primitive);
+        let sort_distance_override =
+            owner_id_sort_distance_override(&primitive, draw_index, options);
         let mesh = meshes.add(primitive.mesh);
         match primitive.material {
             BevyPrimitiveMaterial::Mtoon(material) => {
                 commands.spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mtoon_materials.add(material)),
-                    BevyMtoonPhaseOrder(phase_order),
+                    BevyMtoonPhaseOrder {
+                        offset: phase_order,
+                        distance_override: sort_distance_override,
+                    },
                     Transform::IDENTITY,
                 ));
             }
@@ -708,7 +717,7 @@ fn configure_owner_id_phase_order_offsets(
                 primitive.phase_order_offset_applied = primitive.transparent_order_offset;
             }
         }
-        OwnerIdPhaseOrderPolicy::Off => {
+        OwnerIdPhaseOrderPolicy::Off | OwnerIdPhaseOrderPolicy::DrawIndex => {
             for primitive in primitives {
                 primitive.phase_order_offset_applied = 0.0;
             }
@@ -810,7 +819,9 @@ fn owner_id_phase_order_projections_overlap(
     policy: OwnerIdPhaseOrderPolicy,
 ) -> bool {
     match policy {
-        OwnerIdPhaseOrderPolicy::Full | OwnerIdPhaseOrderPolicy::Off => false,
+        OwnerIdPhaseOrderPolicy::Full
+        | OwnerIdPhaseOrderPolicy::Off
+        | OwnerIdPhaseOrderPolicy::DrawIndex => false,
         OwnerIdPhaseOrderPolicy::OverlapArea => {
             screen_bounds_overlap_area(left.bounds, right.bounds)
                 >= OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD
@@ -1068,6 +1079,7 @@ fn diagnostic_owner_ids(
                     "depthBias": bevy_primitive_depth_bias(primitive),
                     "bevyPhaseOrderOffset": primitive.transparent_order_offset,
                     "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
+                    "bevySortDistanceOverride": owner_id_sort_distance_override(primitive, draw_index, options),
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
@@ -1143,6 +1155,18 @@ fn should_apply_owner_id_depth_bias(options: &CaptureOptions) -> bool {
 
 fn owner_id_phase_order_offset(primitive: &BevyPrimitive) -> f32 {
     primitive.phase_order_offset_applied
+}
+
+fn owner_id_sort_distance_override(
+    primitive: &BevyPrimitive,
+    draw_index: usize,
+    options: &CaptureOptions,
+) -> Option<f32> {
+    (options.diagnostic_render == DiagnosticRender::OwnerId
+        && !options.disable_owner_id_phase_order
+        && options.owner_id_phase_order_policy == OwnerIdPhaseOrderPolicy::DrawIndex
+        && primitive.material.needs_source_order_offset())
+    .then(|| owner_id_draw_index_sort_distance(primitive.render_order, draw_index))
 }
 
 fn alpha_mode_name(mode: AlphaMode) -> &'static str {
@@ -1559,7 +1583,10 @@ impl BevyPrimitiveMaterial {
 }
 
 #[derive(Clone, Copy, Component, Debug, ExtractComponent)]
-struct BevyMtoonPhaseOrder(f32);
+struct BevyMtoonPhaseOrder {
+    offset: f32,
+    distance_override: Option<f32>,
+}
 
 struct BevyImageHandles {
     color_images: Vec<Option<Handle<Image>>>,
@@ -2161,6 +2188,11 @@ fn material_transparent_order_offset(phase_order: i32, draw_order: i32) -> f32 {
     (phase_order as f32 + draw_order as f32) * BEVY_PHASE_ORDER_OFFSET_SCALE
 }
 
+fn owner_id_draw_index_sort_distance(render_order: i32, draw_index: usize) -> f32 {
+    render_order as f32 * BEVY_OWNER_ID_RENDER_ORDER_SORT_SCALE
+        + draw_index as f32 * BEVY_OWNER_ID_DRAW_INDEX_SORT_SCALE
+}
+
 fn bevy_source_order_offset(
     material: &BevyPrimitiveMaterial,
     phase_order: i32,
@@ -2383,7 +2415,11 @@ fn apply_mtoon_phase_order(
     for phase in phases.values_mut() {
         for item in &mut phase.items {
             if let Ok(order) = orders.get(item.entity.0) {
-                item.distance += order.0;
+                if let Some(distance) = order.distance_override {
+                    item.distance = distance;
+                } else {
+                    item.distance += order.offset;
+                }
             }
         }
     }
@@ -2707,6 +2743,19 @@ mod tests {
         let late = material_transparent_order_offset(19, 1);
 
         assert!(early < late);
+    }
+
+    #[test]
+    fn owner_id_draw_index_sort_key_orders_render_order_then_draw_index() {
+        let first = owner_id_draw_index_sort_distance(3000, 10);
+        let second = owner_id_draw_index_sort_distance(3000, 11);
+        let next_render_order = owner_id_draw_index_sort_distance(3001, 0);
+        let late_same_render_order = owner_id_draw_index_sort_distance(3000, 999);
+
+        assert!(first < second);
+        assert!(second < late_same_render_order);
+        assert!(second < next_render_order);
+        assert!(late_same_render_order < next_render_order);
     }
 
     #[test]

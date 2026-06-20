@@ -1034,10 +1034,17 @@ reports. `compare-owner-id-images.rs` preserves `bevyPhaseOrderOffset` and
 `unexplained_projection_gap_summary` aggregates expected/actual applied-offset
 counts, nonzero counts, means, and maxima. `summarize-owner-tail.rs` prints the
 same fields in `Projection Gap Shape` and annotates detail rows with the applied
-Bevy phase value. A refreshed topology Bevy-vs-wgpu summary under
-`.external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-current-phase/`
-has tail `40`, with all `40` unexplained pixels carrying nonzero actual Bevy
-phase offset and mean/max `0.00001900`.
+Bevy phase value.
+
+The current Bevy owner-id default is `draw-index`. That mode replaces Bevy's
+`Transparent3d.distance` only for owner-id captures with an explicit
+`(render_order, draw_index)` sort key. Ordinary shaded captures still use Bevy's
+normal distance sort, and the old additive offset behavior remains available as
+`--owner-id-phase-order-policy full`. The draw-index path preserves exact
+Bevy-vs-wgpu owner parity on the generated source-order controls:
+primitive-group, dense, UV-island, split, shared-vertex, subpixel, and
+front-face/cull all report `0` shared owner mismatches. On the compact topology
+extract it reduces the Bevy-vs-wgpu unexplained tail to `26`.
 
 To regenerate just that current-phase diagnostic after
 `render-parity-seed-owner-tail-topology-extract` has produced the reduced
@@ -1047,14 +1054,23 @@ fixture and wgpu baseline:
 just render-parity-seed-owner-tail-topology-current-phase-summary
 ```
 
+To reproduce older additive or overlap-localized experiments, pass the policy
+explicitly:
+
+```powershell
+just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-full-phase full
+just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-triangle-phase overlap-triangle
+```
+
 Do not globally shrink or remove the Bevy owner-id phase-order offset yet. A
 `1e-8` phase-order offset matches the topology no-bias improvement, but it
 regresses generated source-order guards that prove equal-depth MToon ordering:
 dense ownership gains `5913` Bevy-vs-wgpu mismatches, uv-island gains `9594`,
 and split ownership gains `1728`. Full no-bias is also unsafe for
-primitive-group, dense, and uv-island. The current `1e-6` offset remains the
-default because it preserves those source-order controls; the no-bias switches
-are an isolation tool for the source-derived topology tail.
+primitive-group, dense, and uv-island. The additive `1e-6` offset is retained as
+the `full` comparison policy, while `draw-index` is the operational owner-id
+default because it preserves those source-order controls and improves the
+compact topology tail.
 
 The Bevy capture also exposes an experimental overlap-localized policy:
 
@@ -1075,17 +1091,9 @@ identical or contained triangles. It improves the compact topology Bevy-vs-wgpu
 tail to `35`, with `19/35` residual tail pixels still carrying a nonzero Bevy
 phase offset, but it regresses source-order controls that must remain exact:
 dense ownership `0 -> 5883` mismatches and split ownership `0 -> 1728` while
-UV-island ownership remains exact. That rejects overlap localization as a
-default fix and keeps the next investigation on Bevy render-phase distance/order
-behavior or a more explicit owner-id diagnostic draw-order path.
-
-The compact topology recipe can reproduce these phase-policy experiments
-without regenerating the wgpu baseline:
-
-```powershell
-just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-current-phase full
-just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-triangle-phase overlap-triangle
-```
+UV-island ownership remains exact. That rejects overlap localization as the
+default fix and leaves the remaining tail focused on local Bevy coverage/fill
+behavior rather than broad source-order policy.
 
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
