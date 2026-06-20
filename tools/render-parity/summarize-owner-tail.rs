@@ -33,6 +33,14 @@ struct Options {
     markdown_out: Option<PathBuf>,
     #[arg(long, default_value_t = 16)]
     top: usize,
+    #[arg(long)]
+    max_mismatched_shared_nonzero: Option<u64>,
+    #[arg(long)]
+    max_unexplained_owner_tail: Option<u64>,
+    #[arg(long)]
+    max_unresolved_owner_tail_after_near_id: Option<u64>,
+    #[arg(long)]
+    max_unresolved_owner_tail_after_near_id_after_touching: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -160,6 +168,53 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(path) = &options.markdown_out {
         write_file(path, &markdown_report(&report))?;
+    }
+    validate_thresholds(&report, &options)?;
+    Ok(())
+}
+
+fn validate_thresholds(
+    report: &OwnerTailReport,
+    options: &Options,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_max(
+        "mismatched_shared_nonzero",
+        report.counts.mismatched_shared_nonzero,
+        options.max_mismatched_shared_nonzero,
+    )?;
+    check_max(
+        "unexplained_owner_tail_mismatched_shared_nonzero",
+        report.counts.unexplained_owner_tail_mismatched_shared_nonzero,
+        options.max_unexplained_owner_tail,
+    )?;
+    check_max(
+        "unresolved_owner_tail_after_near_id_mismatched_shared_nonzero",
+        report
+            .counts
+            .unresolved_owner_tail_after_near_id_mismatched_shared_nonzero,
+        options.max_unresolved_owner_tail_after_near_id,
+    )?;
+    check_max(
+        "unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero",
+        report
+            .counts
+            .unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero,
+        options.max_unresolved_owner_tail_after_near_id_after_touching,
+    )?;
+    Ok(())
+}
+
+fn check_max(
+    metric: &'static str,
+    actual: Option<u64>,
+    max: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(max) = max else {
+        return Ok(());
+    };
+    let actual = actual.ok_or_else(|| format!("{metric} is missing; cannot apply max {max}"))?;
+    if actual > max {
+        return Err(format!("{metric} {actual} exceeds max {max}").into());
     }
     Ok(())
 }
@@ -1394,5 +1449,23 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("either_small_bounds_area_le_4px"));
     assert!(markdown.contains("actual_bevy_phase_order_offset_applied_nonzero"));
     assert!(markdown.contains("bevy_phase=0.00001900"));
+    let mut options = Options {
+        self_test: false,
+        input: Some(PathBuf::from("owner.json")),
+        json_out: None,
+        markdown_out: None,
+        top: 16,
+        max_mismatched_shared_nonzero: Some(2),
+        max_unexplained_owner_tail: Some(1),
+        max_unresolved_owner_tail_after_near_id: Some(0),
+        max_unresolved_owner_tail_after_near_id_after_touching: Some(0),
+    };
+    validate_thresholds(&report, &options)?;
+    options.max_unexplained_owner_tail = Some(0);
+    let error = validate_thresholds(&report, &options)
+        .expect_err("tail threshold should reject excessive unexplained owners");
+    assert!(error
+        .to_string()
+        .contains("unexplained_owner_tail_mismatched_shared_nonzero 1 exceeds max 0"));
     Ok(())
 }

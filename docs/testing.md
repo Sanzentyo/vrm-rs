@@ -268,10 +268,10 @@ shader-derivative tangent-frame fallback; the current measured path is worse
 than generated tangents on Seed-san and is not the default guard.
 Use `just render-parity-outline-off` as a diagnostic for separating MToon
 outline expansion deltas from material, skinning, and pose deltas.
-Use `just render-parity-seed-owner-id-outline-off-diagnostic D:/git/three-vrm`
+Use `just render-parity-seed-owner-id-outline-off-diagnostic`
 to render Seed-san owner IDs with outlines disabled, matching the focused
 base-color residual slice. Use
-`just render-parity-seed-base-color-outline-off-owner-hotspots D:/git/three-vrm`
+`just render-parity-seed-base-color-outline-off-owner-hotspots`
 after `just render-parity-seed-base-color-outline-off-diagnostic` to project
 the top shared-body hotspot pixels through the browser owner diagnostic. The
 local runner's `--render-screen-jitter-x` and `--render-screen-jitter-y` options
@@ -286,7 +286,7 @@ frontmost visible candidates, `58/64` are within `0.25px` of an edge, and Rust's
 actual base-texture sample is closer to the CPU frontmost texture than the
 three-vrm rendered expected color for `43/64` hotspots.
 Use
-`just render-parity-seed-base-color-flat32-outline-off-diagnostic D:/git/three-vrm`
+`just render-parity-seed-base-color-flat32-outline-off-diagnostic`
 when you need a PNG-free low-gradient interior cross-check for the same focused
 Seed-san base-color slice. It writes direct `.imqraw` reports and delta reports
 under
@@ -321,7 +321,7 @@ frontmost texture gradients, with mean/max wgpu `4.7577` / `25.4951` and Bevy
 for real-model high-gradient UV island/material ownership rather than a simple
 same-surface high-frequency texture sampling or adjacent-edge fill-rule issue.
 Use
-`just render-parity-seed-base-color-flat32-gradient-owner-hotspots D:/git/three-vrm`
+`just render-parity-seed-base-color-flat32-gradient-owner-hotspots`
 to project the same gradient top-64 pixels through three-vrm's rendered
 `owner-id` diagnostic. Current owner projection confirms that the browser
 renders a non-zero owner for `64/64` gradient hotspots, but the rendered owner
@@ -331,7 +331,7 @@ recovery finds `49/64`, all depth-rank `1`, with centers spread across
 offsets. The strongest rendered-owner material bucket is `huku_bake` (`24/64`),
 matching the real-model UV/material-boundary interpretation.
 Use
-`just render-parity-seed-base-color-nearest-diagnostic D:/git/three-vrm` to
+`just render-parity-seed-base-color-nearest-diagnostic` to
 force nearest/no-mip texture sampling in three-vrm, wgpu, and Bevy for the same
 Seed-san base-color outline-off slice. The current nearest run reports
 `rgb-shared-nonblack-interior1px` wgpu `33.5501 dB` and Bevy `33.4815 dB`;
