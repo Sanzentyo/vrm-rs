@@ -71,6 +71,8 @@ struct ReviewReport {
     frontmost_visible_count: Option<u64>,
     nearest_sample_visible_frontmost_count: Option<u64>,
     missing_center_recovered_by_nearest_visible_count: Option<u64>,
+    strict_frontmost_visible_count: Option<u64>,
+    strict_frontmost_differs_from_loose_count: Option<u64>,
     frontmost_edge_lte_025px: Option<u64>,
     frontmost_edge_lte_050px: Option<u64>,
     frontmost_edge_lte_100px: Option<u64>,
@@ -105,6 +107,14 @@ struct ReviewReport {
     expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f64>,
     actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f64>,
     expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f64>,
+    actual_strict_frontmost_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_strict_frontmost_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_strict_frontmost_max_cpu_base_color_rgb_distance: Option<f64>,
+    expected_strict_frontmost_max_cpu_base_color_rgb_distance: Option<f64>,
+    actual_strict_frontmost_improved_count: Option<u64>,
+    expected_strict_frontmost_improved_count: Option<u64>,
+    strict_frontmost_same_material_count: Option<u64>,
+    strict_frontmost_same_triangle_count: Option<u64>,
     actual_frontmost_mean_uv_distance: Option<f64>,
     expected_frontmost_mean_uv_distance: Option<f64>,
     actual_frontmost_max_uv_distance: Option<f64>,
@@ -119,6 +129,7 @@ struct ReviewReport {
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
     top_actual_expected_surface_transitions: Vec<Value>,
+    top_strict_frontmost_surface_transitions: Vec<Value>,
     top_frontmost_texture_sampling_variants: Vec<Value>,
     top_nearest_sample_visible_texture_sampling_variants: Vec<Value>,
     actual_best_subpixel_visible_count: Option<u64>,
@@ -386,6 +397,11 @@ fn summarize_report(
             summary,
             "missing_center_recovered_by_nearest_visible_count",
         ),
+        strict_frontmost_visible_count: u64_field(summary, "strict_frontmost_visible_count"),
+        strict_frontmost_differs_from_loose_count: u64_field(
+            summary,
+            "strict_frontmost_differs_from_loose_count",
+        ),
         frontmost_edge_lte_025px: u64_field(summary, "frontmost_edge_distance_lte_025px"),
         frontmost_edge_lte_050px: u64_field(summary, "frontmost_edge_distance_lte_050px"),
         frontmost_edge_lte_100px: u64_field(summary, "frontmost_edge_distance_lte_100px"),
@@ -507,6 +523,38 @@ fn summarize_report(
             summary,
             "expected_nearest_sample_visible_max_cpu_base_color_rgb_distance",
         ),
+        actual_strict_frontmost_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_strict_frontmost_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_strict_frontmost_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_strict_frontmost_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_strict_frontmost_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_strict_frontmost_max_cpu_base_color_rgb_distance",
+        ),
+        expected_strict_frontmost_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_strict_frontmost_max_cpu_base_color_rgb_distance",
+        ),
+        actual_strict_frontmost_improved_count: u64_field(
+            summary,
+            "actual_strict_frontmost_improved_count",
+        ),
+        expected_strict_frontmost_improved_count: u64_field(
+            summary,
+            "expected_strict_frontmost_improved_count",
+        ),
+        strict_frontmost_same_material_count: u64_field(
+            summary,
+            "strict_frontmost_same_material_count",
+        ),
+        strict_frontmost_same_triangle_count: u64_field(
+            summary,
+            "strict_frontmost_same_triangle_count",
+        ),
         actual_frontmost_mean_uv_distance: f64_field(summary, "actual_frontmost_mean_uv_distance"),
         expected_frontmost_mean_uv_distance: f64_field(
             summary,
@@ -560,6 +608,11 @@ fn summarize_report(
         top_actual_expected_surface_transitions: top_array(
             summary,
             "actual_expected_surface_transitions",
+            top,
+        ),
+        top_strict_frontmost_surface_transitions: top_array(
+            summary,
+            "strict_frontmost_surface_transitions",
             top,
         ),
         top_frontmost_texture_sampling_variants: top_array(
@@ -852,6 +905,23 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_f64(report.expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance)
     ));
     markdown.push_str(&format!(
+        "- Strict frontmost visible/differs from loose: `{}` / `{}`\n",
+        fmt_opt_u64(report.strict_frontmost_visible_count),
+        fmt_opt_u64(report.strict_frontmost_differs_from_loose_count)
+    ));
+    markdown.push_str(&format!(
+        "- Strict frontmost CPU base-color mean RGB distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_strict_frontmost_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_strict_frontmost_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Strict frontmost improved actual/expected: `{}` / `{}`; same material/triangle vs loose: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_strict_frontmost_improved_count),
+        fmt_opt_u64(report.expected_strict_frontmost_improved_count),
+        fmt_opt_u64(report.strict_frontmost_same_material_count),
+        fmt_opt_u64(report.strict_frontmost_same_triangle_count)
+    ));
+    markdown.push_str(&format!(
         "- Missing-center nearest-sample mean RGB distance actual/expected: `{}` / `{}`\n",
         fmt_opt_f64(report.actual_missing_center_nearest_visible_mean_base_texture_rgb_distance),
         fmt_opt_f64(report.expected_missing_center_nearest_visible_mean_base_texture_rgb_distance)
@@ -905,6 +975,29 @@ fn markdown_report(report: &ReviewReport) -> String {
         ));
     }
     markdown.push('\n');
+    markdown.push_str("## Strict Frontmost Fill\n\n");
+    markdown.push_str(&format!(
+        "- Visible/differs from loose: `{}` / `{}`\n",
+        fmt_opt_u64(report.strict_frontmost_visible_count),
+        fmt_opt_u64(report.strict_frontmost_differs_from_loose_count)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_strict_frontmost_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_strict_frontmost_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Max CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_strict_frontmost_max_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_strict_frontmost_max_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Improved actual/expected: `{}` / `{}`; same material/triangle vs loose: `{}` / `{}`\n\n",
+        fmt_opt_u64(report.actual_strict_frontmost_improved_count),
+        fmt_opt_u64(report.expected_strict_frontmost_improved_count),
+        fmt_opt_u64(report.strict_frontmost_same_material_count),
+        fmt_opt_u64(report.strict_frontmost_same_triangle_count)
+    ));
     markdown.push_str("## Surface Transitions\n\n");
     markdown.push_str("Actual vs frontmost:\n\n");
     markdown.push_str(&value_table(&report.top_actual_surface_transitions));
@@ -912,6 +1005,10 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(&report.top_expected_surface_transitions));
     markdown.push_str("\nActual vs expected:\n\n");
     markdown.push_str(&value_table(&report.top_actual_expected_surface_transitions));
+    markdown.push_str("\nStrict vs loose frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_strict_frontmost_surface_transitions,
+    ));
     markdown.push_str("\n## Texture Sampling Variants\n\n");
     markdown.push_str("Frontmost:\n\n");
     markdown.push_str(&value_table(
@@ -1120,6 +1217,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "frontmost_visible_count": 1,
                 "nearest_sample_visible_frontmost_count": 1,
                 "missing_center_recovered_by_nearest_visible_count": 0,
+                "strict_frontmost_visible_count": 1,
+                "strict_frontmost_differs_from_loose_count": 0,
                 "frontmost_edge_distance_lte_025px": 1,
                 "frontmost_edge_distance_lte_050px": 1,
                 "frontmost_edge_distance_lte_100px": 1,
@@ -1152,6 +1251,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance": 1.25,
                 "actual_nearest_sample_visible_max_cpu_base_color_rgb_distance": 0.5,
                 "expected_nearest_sample_visible_max_cpu_base_color_rgb_distance": 1.5,
+                "actual_strict_frontmost_mean_cpu_base_color_rgb_distance": 0.5,
+                "expected_strict_frontmost_mean_cpu_base_color_rgb_distance": 1.5,
+                "actual_strict_frontmost_max_cpu_base_color_rgb_distance": 0.75,
+                "expected_strict_frontmost_max_cpu_base_color_rgb_distance": 1.75,
+                "actual_strict_frontmost_improved_count": 0,
+                "expected_strict_frontmost_improved_count": 0,
+                "strict_frontmost_same_material_count": 1,
+                "strict_frontmost_same_triangle_count": 1,
                 "actual_frontmost_mean_uv_distance": 0.1,
                 "expected_frontmost_mean_uv_distance": 0.2,
                 "actual_frontmost_max_uv_distance": 0.3,
@@ -1164,6 +1271,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "actual_frontmost_surface_transitions": [{"count": 1}],
                 "expected_frontmost_surface_transitions": [{"count": 1}],
                 "actual_expected_surface_transitions": [{"count": 1}],
+                "strict_frontmost_surface_transitions": [{"count": 1}],
                 "frontmost_texture_sampling_variants": [{
                     "mode": "linear_top_left_half_texel",
                     "count": 1,
@@ -1283,6 +1391,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         report.actual_frontmost_mean_cpu_base_color_rgb_distance,
         Some(0.5)
     );
+    assert_eq!(report.strict_frontmost_visible_count, Some(1));
+    assert_eq!(report.strict_frontmost_differs_from_loose_count, Some(0));
+    assert_eq!(
+        report.expected_strict_frontmost_mean_cpu_base_color_rgb_distance,
+        Some(1.5)
+    );
+    assert_eq!(report.strict_frontmost_same_triangle_count, Some(1));
+    assert_eq!(report.top_strict_frontmost_surface_transitions.len(), 1);
     assert_eq!(report.top_frontmost_texture_sampling_variants.len(), 1);
     assert_eq!(report.expected_best_subpixel_improved_count, Some(1));
     assert_eq!(
@@ -1295,6 +1411,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Render Hotspot Summary"));
     assert!(markdown.contains("Texture Sampling Variants"));
+    assert!(markdown.contains("Strict Frontmost Fill"));
     assert!(markdown.contains("Subpixel Frontmost Search"));
     assert!(markdown.contains("Expected fixed subpixel sample ranking"));
     assert!(markdown.contains("Depth-Near Source Order"));
