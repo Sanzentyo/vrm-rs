@@ -756,10 +756,65 @@ pub fn ash_owner_sample_override_buffer_plans(
         .collect()
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct AshOwnerSampleOverridePipelineUpload {
+    material: MaterialRef,
+    pipeline_plan_index: usize,
+    records: Vec<AshOwnerSampleOverrideRecord>,
+    usage: vk::BufferUsageFlags,
+}
+
+fn ash_owner_sample_override_buffers_for_pipelines(
+    plan: &AshVrmFramePlan,
+    owner_sample_selection: Option<&RenderOwnerSampleSelectionPlan>,
+) -> Result<Vec<AshOwnerSampleOverridePipelineUpload>, AshOwnerSampleOverridePlanError> {
+    plan.mtoon_pipelines
+        .iter()
+        .enumerate()
+        .map(|(pipeline_plan_index, pipeline)| {
+            let records = owner_sample_selection
+                .map(|selection| {
+                    selection
+                        .surfaces
+                        .iter()
+                        .filter(|surface| {
+                            pipeline
+                                .name
+                                .as_deref()
+                                .is_some_and(|name| name == surface.surface.material_name())
+                        })
+                        .flat_map(|surface| surface.overrides())
+                        .map(AshOwnerSampleOverrideRecord::from_override)
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .filter(|records| !records.is_empty())
+                .unwrap_or_else(|| vec![empty_ash_owner_sample_override_record()]);
+            Ok(AshOwnerSampleOverridePipelineUpload {
+                material: pipeline.material,
+                pipeline_plan_index,
+                records,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            })
+        })
+        .collect()
+}
+
+fn empty_ash_owner_sample_override_record() -> AshOwnerSampleOverrideRecord {
+    AshOwnerSampleOverrideRecord {
+        pixel: [u32::MAX, u32::MAX],
+        sample: [0.0, 0.0],
+        replacement_rgba: [0.0, 0.0, 0.0, 0.0],
+        relation_to_expected: 0,
+        _padding: [0; 3],
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshBufferRole {
     Vertex,
     Index,
+    OwnerSampleOverride,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -793,6 +848,7 @@ pub struct AshResolvedDescriptorBinding {
     pub stage_flags: vk::ShaderStageFlags,
     pub uniform_upload_index: Option<usize>,
     pub texture_upload_index: Option<usize>,
+    pub buffer_upload_index: Option<usize>,
     pub sampler: Option<AshSamplerPlan>,
 }
 
@@ -1111,9 +1167,29 @@ pub fn ash_drawable_frame_from_renderer_frame(
 }
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
+    ash_renderer_frame_from_plan_with_owner_sample_selection(plan, None)
+        .expect("empty owner/sample selection cannot fail")
+}
+
+pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
+    plan: &AshVrmFramePlan,
+    owner_sample_selection: Option<&RenderOwnerSampleSelectionPlan>,
+) -> Result<AshRendererFrame, AshOwnerSampleOverridePlanError> {
     let texture_indices = texture_ref_upload_indices(&plan.texture_uploads);
     let material_uniform_count = plan.mtoon_pipelines.len() * ASH_MTOON_UNIFORMS_PER_PIPELINE;
     let scene_uniform_upload_index = material_uniform_count;
+    let owner_sample_override_buffers =
+        ash_owner_sample_override_buffers_for_pipelines(plan, owner_sample_selection)?;
+    let owner_sample_override_buffer_indices = owner_sample_override_buffers
+        .iter()
+        .enumerate()
+        .map(|(index, upload)| {
+            (
+                (upload.material, upload.pipeline_plan_index),
+                plan.primitives.len() * 2 + index,
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let descriptor_sets = plan
         .mtoon_pipelines
         .iter()
@@ -1153,6 +1229,12 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
                             })
                             .copied()
                     }),
+                    buffer_upload_index: (binding.descriptor_type
+                        == vk::DescriptorType::STORAGE_BUFFER)
+                        .then(|| {
+                            owner_sample_override_buffer_indices
+                                [&(pipeline.material, pipeline_plan_index)]
+                        }),
                     sampler: binding.sampler,
                 })
                 .collect(),
@@ -1223,8 +1305,19 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
             phase_order,
         });
     }
+    buffers.extend(
+        owner_sample_override_buffers
+            .into_iter()
+            .map(|upload| AshBufferUpload {
+                role: AshBufferRole::OwnerSampleOverride,
+                usage: upload.usage,
+                stride: std::mem::size_of::<AshOwnerSampleOverrideRecord>() as u32,
+                count: upload.records.len() as u32,
+                bytes: bytemuck::cast_slice(&upload.records).to_vec(),
+            }),
+    );
     draw_calls.sort_by_key(|draw| (draw.render_order, draw.primitive_index));
-    AshRendererFrame {
+    Ok(AshRendererFrame {
         buffers,
         textures: plan
             .texture_uploads
@@ -1272,7 +1365,7 @@ pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame 
         pipelines,
         descriptor_sets,
         draw_calls,
-    }
+    })
 }
 
 pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
@@ -2644,7 +2737,7 @@ fn descriptor_bindings(
     slots: GltfMaterialTextureSlots,
 ) -> Vec<AshDescriptorBindingPlan> {
     let plan = slots.binding_plan();
-    let mut result = Vec::with_capacity(14);
+    let mut result = Vec::with_capacity(15);
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_uniform_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -2696,6 +2789,14 @@ fn descriptor_bindings(
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_render_extra_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        texture: None,
+        color_space: GltfMaterialTextureColorSpace::Linear,
+        sampler: None,
+    });
+    result.push(AshDescriptorBindingPlan {
+        binding: ash_owner_sample_override_binding(),
+        descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
         color_space: GltfMaterialTextureColorSpace::Linear,
@@ -3028,7 +3129,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(bindings.len(), 14);
+        assert_eq!(bindings.len(), 15);
         assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
         assert_eq!(
             bindings[0].descriptor_type,
@@ -3078,6 +3179,12 @@ mod tests {
         );
         assert_eq!(bindings[12].binding, ash_mtoon_uv_uniform_binding());
         assert_eq!(bindings[13].binding, ash_mtoon_render_extra_binding());
+        assert_eq!(bindings[14].binding, ash_owner_sample_override_binding());
+        assert_eq!(
+            bindings[14].descriptor_type,
+            vk::DescriptorType::STORAGE_BUFFER
+        );
+        assert_eq!(bindings[14].stage_flags, vk::ShaderStageFlags::FRAGMENT);
         assert_eq!(
             ash_texture_fallback_for_binding(ash_material_texture_binding(
                 GltfMaterialTextureSlot::Normal
@@ -3602,7 +3709,7 @@ mod tests {
             render_surfaces: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
-        assert_eq!(renderer_frame.buffers.len(), 2);
+        assert_eq!(renderer_frame.buffers.len(), 3);
         assert_eq!(renderer_frame.uniforms.len(), 4);
         assert_eq!(renderer_frame.pipelines.len(), 1);
         assert_eq!(
@@ -3677,6 +3784,18 @@ mod tests {
             Some(2)
         );
         assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[14].binding,
+            ash_owner_sample_override_binding()
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[14].descriptor_type,
+            vk::DescriptorType::STORAGE_BUFFER
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[14].buffer_upload_index,
+            Some(2)
+        );
+        assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
             ash_vrm_vertex_attributes()
         );
@@ -3690,6 +3809,15 @@ mod tests {
             renderer_frame.buffers[0].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER
         );
+        assert_eq!(
+            renderer_frame.buffers[2].role,
+            AshBufferRole::OwnerSampleOverride
+        );
+        assert_eq!(
+            renderer_frame.buffers[2].usage,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
+        );
+        assert_eq!(renderer_frame.buffers[2].count, 1);
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
 
@@ -3739,6 +3867,94 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn renderer_frame_binds_owner_sample_override_storage_buffer() {
+        let surface = RenderOwnerSurfaceKey::new("mat", 7);
+        let selection = RenderOwnerSampleSelectionPlan {
+            surfaces: vec![vrm_adapter::RenderOwnerSampleSurfaceSelection {
+                surface: surface.clone(),
+                entries: vec![vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                    correction: vrm_adapter::RenderRgba8Correction::new(
+                        vrm_adapter::RenderPixel::new(12, 34),
+                        [64, 128, 255, 255],
+                    ),
+                    sample: vrm_adapter::RenderOwnerSampleKey::from_pair(
+                        surface.clone(),
+                        [0.25, 0.75],
+                    ),
+                    relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                }],
+            }],
+            unmatched_entries: Vec::new(),
+        };
+        let mut plan = AshVrmFramePlan {
+            primitives: Vec::new(),
+            materials: Vec::new(),
+            texture_uploads: Vec::new(),
+            mtoon_pipelines: vec![AshMtoonPipelinePlan {
+                material: MaterialRef(0),
+                name: Some("mat".to_owned()),
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+                uniform: MtoonGpuUniform::zeroed(),
+                uv_uniform: AshMaterialUvUniform::default(),
+                render_extra_uniform: AshMaterialExtraUniform::default(),
+                uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+                alpha_cutoff: 0.5,
+                outline_width: 0.0,
+                base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                emissive_color: [0.0, 0.0, 0.0],
+            }],
+            scene_uniform: AshSceneUniform::default(),
+            diagnostic_owner_ids: Vec::new(),
+            render_surfaces: vec![surface],
+        };
+        plan.primitives.push(AshVrmPrimitive {
+            node: NodeRef(0),
+            material: Some(MaterialRef(0)),
+            pass: AshMtoonPass::Base,
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        });
+
+        let renderer_frame =
+            ash_renderer_frame_from_plan_with_owner_sample_selection(&plan, Some(&selection))
+                .unwrap();
+        let binding = renderer_frame
+            .descriptor_sets
+            .first()
+            .and_then(|set| {
+                set.bindings
+                    .iter()
+                    .find(|binding| binding.binding == ash_owner_sample_override_binding())
+            })
+            .unwrap();
+        let buffer_index = binding.buffer_upload_index.unwrap();
+        let buffer = &renderer_frame.buffers[buffer_index];
+        let record = bytemuck::pod_read_unaligned::<AshOwnerSampleOverrideRecord>(
+            &buffer.bytes[..std::mem::size_of::<AshOwnerSampleOverrideRecord>()],
+        );
+
+        assert_eq!(binding.descriptor_type, vk::DescriptorType::STORAGE_BUFFER);
+        assert_eq!(buffer.role, AshBufferRole::OwnerSampleOverride);
+        assert_eq!(buffer.count, 1);
+        assert_eq!(record.pixel, [12, 34]);
+        assert_eq!(record.sample, [0.25, 0.75]);
+        assert_eq!(record.replacement_rgba[2], 1.0);
+        assert_eq!(record.relation_to_expected, 1);
     }
 
     #[test]

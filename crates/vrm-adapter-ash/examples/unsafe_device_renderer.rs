@@ -173,6 +173,14 @@ struct CommandRecordContext<'a> {
     clear_alpha: f32,
 }
 
+struct DescriptorUpdateResources<'a> {
+    buffers: &'a [VulkanBuffer],
+    uniform_buffers: &'a [VulkanBuffer],
+    images: &'a [VulkanImage],
+    fallback_textures: &'a VulkanFallbackTextures,
+    samplers: &'a [vk::Sampler],
+}
+
 #[derive(Clone, Debug)]
 struct ReadbackFrame {
     rgba: Vec<u8>,
@@ -427,10 +435,13 @@ impl UnsafeAshDeviceRenderer {
         self.update_descriptor_sets(
             frame,
             &descriptor_sets,
-            &uniform_buffers,
-            &images,
-            &fallback_textures,
-            &samplers,
+            DescriptorUpdateResources {
+                buffers: &buffers,
+                uniform_buffers: &uniform_buffers,
+                images: &images,
+                fallback_textures: &fallback_textures,
+                samplers: &samplers,
+            },
         )?;
         let pipeline_layouts = descriptor_set_layouts
             .iter()
@@ -678,6 +689,13 @@ impl UnsafeAshDeviceRenderer {
             .filter(|binding| binding.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .count()
             .max(1) as u32;
+        let storage_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::STORAGE_BUFFER)
+            .count()
+            .max(1) as u32;
         let sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -686,6 +704,10 @@ impl UnsafeAshDeviceRenderer {
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: sampler_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: storage_count,
             },
         ];
         let info = vk::DescriptorPoolCreateInfo::default()
@@ -732,10 +754,7 @@ impl UnsafeAshDeviceRenderer {
         &self,
         frame: &AshRendererFrame,
         descriptor_sets: &[vk::DescriptorSet],
-        uniform_buffers: &[VulkanBuffer],
-        images: &[VulkanImage],
-        fallback_textures: &VulkanFallbackTextures,
-        samplers: &[vk::Sampler],
+        resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
         let mut sampler_index = 0;
         for (set_index, set) in frame.descriptor_sets.iter().enumerate() {
@@ -743,7 +762,8 @@ impl UnsafeAshDeviceRenderer {
             for binding in &set.bindings {
                 match binding.descriptor_type {
                     vk::DescriptorType::UNIFORM_BUFFER => {
-                        let uniform = uniform_buffers
+                        let uniform = resources
+                            .uniform_buffers
                             .get(binding.uniform_upload_index.ok_or(
                                 "uniform descriptor binding is missing a uniform upload index",
                             )?)
@@ -762,17 +782,18 @@ impl UnsafeAshDeviceRenderer {
                         }
                     }
                     vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                        let sampler = *samplers
+                        let sampler = *resources
+                            .samplers
                             .get(sampler_index)
                             .ok_or("descriptor set references a missing sampler")?;
                         sampler_index += 1;
                         let image = binding
                             .texture_upload_index
-                            .and_then(|index| images.get(index))
+                            .and_then(|index| resources.images.get(index))
                             .unwrap_or_else(|| {
                                 let fallback = ash_texture_fallback_for_binding(binding.binding)
                                     .unwrap_or(GltfMaterialTextureFallback::White);
-                                fallback_textures.get(fallback)
+                                resources.fallback_textures.get(fallback)
                             });
                         let image_info = [vk::DescriptorImageInfo::default()
                             .sampler(sampler)
@@ -783,6 +804,26 @@ impl UnsafeAshDeviceRenderer {
                             .dst_binding(binding.binding)
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::STORAGE_BUFFER => {
+                        let buffer = resources
+                            .buffers
+                            .get(binding.buffer_upload_index.ok_or(
+                                "storage descriptor binding is missing a buffer upload index",
+                            )?)
+                            .ok_or("descriptor set references a missing storage buffer")?;
+                        let buffer_info = [vk::DescriptorBufferInfo::default()
+                            .buffer(buffer.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .buffer_info(&buffer_info)];
                         unsafe {
                             self.device.update_descriptor_sets(&write, &[]);
                         }

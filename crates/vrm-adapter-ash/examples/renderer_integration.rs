@@ -136,6 +136,7 @@ impl MockAshRenderer {
         let base = match role {
             AshBufferRole::Vertex => 10_000,
             AshBufferRole::Index => 20_000,
+            AshBufferRole::OwnerSampleOverride => 25_000,
         };
         self.next_handle += 1;
         MockBufferHandle(base + self.next_handle)

@@ -477,7 +477,7 @@ mod tests {
             material.uniform.emissive_color_outline_width[0..3],
             [0.6, 0.3, 0.15]
         );
-        assert_eq!(material.uniform.rim_params, [2.5, 0.15, 3000.0, 3000.0]);
+        assert_eq!(material.uniform.rim_params, [2.5, 0.15, 3000.0, 0.0]);
         assert_eq!(material.uniform_size, MTOON_GPU_UNIFORM_SIZE);
         assert!(material.reference_wgsl.contains("mtoon_lit_shade_rate"));
     }
