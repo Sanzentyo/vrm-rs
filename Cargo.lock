@@ -4244,6 +4244,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vrm-adapter",
  "vrm-adapter-bevy",
+ "vrm-adapter-wgpu",
  "vrm-core",
  "vrm-diagnostics",
  "vrm-io",

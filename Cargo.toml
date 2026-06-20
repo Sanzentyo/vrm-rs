@@ -92,4 +92,5 @@ imq.workspace = true
 pollster.workspace = true
 serde_json.workspace = true
 vrm-adapter-bevy = { path = "crates/vrm-adapter-bevy", features = ["viewer"] }
+vrm-adapter-wgpu = { path = "crates/vrm-adapter-wgpu" }
 wgpu.workspace = true

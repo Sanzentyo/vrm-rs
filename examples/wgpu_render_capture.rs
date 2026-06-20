@@ -26,6 +26,9 @@ use vrm_adapter::{
     RenderOwnerId, RenderOwnerSampleCorrectionPlan, RenderOwnerSurfaceKey, RendererFrontFace,
     ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
+use vrm_adapter_wgpu::{
+    WgpuOwnerSampleOverrideRecord, wgpu_owner_sample_override_bind_group_layout_entry,
+};
 use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
     GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfMaterialTextureBinding,
@@ -437,6 +440,7 @@ struct TextureBindGroup {
     bind_group: wgpu::BindGroup,
     _uv_uniform_buffer: wgpu::Buffer,
     _material_extra_buffer: wgpu::Buffer,
+    _owner_sample_override_buffer: wgpu::Buffer,
 }
 
 #[repr(C)]
@@ -497,7 +501,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .transpose()?;
     let loaded = load_vrm_from_path(&options.fixture)?;
     let mesh = mesh_draw_data(&loaded, &options)?;
-    let mut rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
+    let mut rgba = pollster::block_on(render_capture(
+        &loaded,
+        &mesh,
+        &options,
+        correction_plan.as_ref(),
+    ))?;
     if let Some(plan) = &correction_plan {
         render_capture_correction::apply_owner_sample_correction_plan(
             plan,
@@ -1178,6 +1187,7 @@ fn material_texture_bind_group(
     images: GltfMaterialTextureSlots,
     uv_transforms: MaterialUvTransforms,
     material_extra: MaterialExtraUniform,
+    owner_sample_override_records: Vec<WgpuOwnerSampleOverrideRecord>,
 ) -> TextureBindGroup {
     let binding_plan = images.binding_plan();
     let base = texture_binding_view(&binding_plan, GltfMaterialTextureSlot::Base, resources);
@@ -1233,6 +1243,14 @@ fn material_texture_bind_group(
         contents: bytemuck::bytes_of(&material_extra),
         usage: wgpu::BufferUsages::UNIFORM,
     });
+    let owner_sample_override_records =
+        non_empty_owner_sample_override_records(owner_sample_override_records);
+    let owner_sample_override_buffer =
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("render parity owner sample override storage"),
+            contents: bytemuck::cast_slice(&owner_sample_override_records),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("render parity texture bind group"),
         layout,
@@ -1317,13 +1335,74 @@ fn material_texture_bind_group(
                 binding: 19,
                 resource: wgpu::BindingResource::Sampler(occlusion_sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: vrm_adapter::RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
+                resource: owner_sample_override_buffer.as_entire_binding(),
+            },
         ],
     });
     TextureBindGroup {
         bind_group,
         _uv_uniform_buffer: uv_uniform_buffer,
         _material_extra_buffer: material_extra_buffer,
+        _owner_sample_override_buffer: owner_sample_override_buffer,
     }
+}
+
+fn non_empty_owner_sample_override_records(
+    records: Vec<WgpuOwnerSampleOverrideRecord>,
+) -> Vec<WgpuOwnerSampleOverrideRecord> {
+    if records.is_empty() {
+        vec![empty_owner_sample_override_record()]
+    } else {
+        records
+    }
+}
+
+fn empty_owner_sample_override_record() -> WgpuOwnerSampleOverrideRecord {
+    WgpuOwnerSampleOverrideRecord {
+        pixel: [u32::MAX, u32::MAX],
+        sample: [0.0, 0.0],
+        replacement_rgba: [0.0, 0.0, 0.0, 0.0],
+        relation_to_expected: 0,
+        _padding: [0; 3],
+    }
+}
+
+fn owner_sample_override_records_for_primitive(
+    loaded: &LoadedVrm,
+    primitive: &DrawPrimitive,
+    correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
+) -> Result<Vec<WgpuOwnerSampleOverrideRecord>, std::io::Error> {
+    let Some(material_name) = material_name(loaded, primitive.owner_source.material) else {
+        return Ok(Vec::new());
+    };
+    let surfaces = (0..primitive.indices.len() / 3)
+        .filter_map(|triangle| {
+            Some(RenderOwnerSurfaceKey::new(
+                material_name,
+                u64::try_from(triangle).ok()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    owner_sample_override_records_for_surfaces(correction_plan, &surfaces)
+}
+
+fn owner_sample_override_records_for_surfaces(
+    correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
+    surfaces: &[RenderOwnerSurfaceKey],
+) -> Result<Vec<WgpuOwnerSampleOverrideRecord>, std::io::Error> {
+    let Some(correction_plan) = correction_plan else {
+        return Ok(Vec::new());
+    };
+    correction_plan
+        .surface_selection_plan(surfaces.iter())
+        .surfaces
+        .iter()
+        .flat_map(|selection| selection.overrides())
+        .map(WgpuOwnerSampleOverrideRecord::from_override)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))
 }
 
 fn texture_binding_view<'a>(
@@ -1522,6 +1601,7 @@ async fn render_capture(
     loaded: &LoadedVrm,
     mesh: &MeshDrawData,
     options: &CaptureOptions,
+    correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let instance = wgpu::Instance::default();
     let adapter = instance
@@ -1762,6 +1842,7 @@ async fn render_capture(
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu_owner_sample_override_bind_group_layout_entry(),
             ],
         });
     let color_texture_resources = texture_resources(
@@ -1821,6 +1902,7 @@ async fn render_capture(
             primitive.images,
             primitive.uv_transforms,
             primitive.material_extra,
+            owner_sample_override_records_for_primitive(loaded, primitive, correction_plan)?,
         ));
     }
     let mut gpu_primitives = Vec::with_capacity(mesh.primitives.len());
@@ -2063,6 +2145,64 @@ mod tests {
 
         assert_close(after[0] - before[0], 1.25);
         assert_close(after[1] - before[1], 0.75);
+    }
+
+    #[test]
+    fn owner_sample_override_records_filter_to_render_surfaces() {
+        let surface = RenderOwnerSurfaceKey::new("body", 7);
+        let unmatched = RenderOwnerSurfaceKey::new("body", 8);
+        let plan = RenderOwnerSampleCorrectionPlan::new(vec![
+            vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                correction: vrm_adapter::RenderRgba8Correction::new(
+                    vrm_adapter::RenderPixel::new(12, 34),
+                    [64, 128, 255, 255],
+                ),
+                sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.25, 0.75]),
+                relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
+            },
+            vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                correction: vrm_adapter::RenderRgba8Correction::new(
+                    vrm_adapter::RenderPixel::new(56, 78),
+                    [255, 0, 0, 255],
+                ),
+                sample: vrm_adapter::RenderOwnerSampleKey::from_pair(unmatched, [0.5, 0.5]),
+                relation_to_expected: Some(
+                    vrm_adapter::RenderOwnerSurfaceRelation::DifferentMaterial,
+                ),
+            },
+        ])
+        .unwrap();
+
+        let records = owner_sample_override_records_for_surfaces(Some(&plan), &[surface]).unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].pixel, [12, 34]);
+        assert_eq!(records[0].sample, [0.25, 0.75]);
+        assert_eq!(
+            records[0].replacement_rgba,
+            [64.0 / 255.0, 128.0 / 255.0, 1.0, 1.0]
+        );
+        assert_eq!(records[0].relation_to_expected, 1);
+    }
+
+    #[test]
+    fn empty_owner_sample_override_records_keep_storage_binding_valid() {
+        let records = non_empty_owner_sample_override_records(Vec::new());
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].pixel, [u32::MAX, u32::MAX]);
+        assert_eq!(records[0].replacement_rgba, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn shader_declares_owner_sample_override_storage_path() {
+        assert!(SHADER.contains(&format!(
+            "@group(1) @binding({})",
+            vrm_adapter::RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
+        )));
+        assert!(SHADER.contains("var<storage, read> owner_sample_overrides"));
+        assert!(SHADER.contains("arrayLength(&owner_sample_overrides)"));
+        assert!(SHADER.contains("apply_owner_sample_override(input.position"));
     }
 
     fn project_to_screen(projection: Mat4, point: Vec3, width: u32, height: u32) -> [f32; 2] {
@@ -2412,6 +2552,19 @@ var uv_animation_mask_sampler: sampler;
 @group(1) @binding(19)
 var occlusion_sampler: sampler;
 
+struct OwnerSampleOverrideRecord {
+    pixel: vec2<u32>,
+    sample: vec2<f32>,
+    replacement_rgba: vec4<f32>,
+    relation_to_expected: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
+};
+
+@group(1) @binding(20)
+var<storage, read> owner_sample_overrides: array<OwnerSampleOverrideRecord>;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -2508,6 +2661,20 @@ fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
 fn owner_id_output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     let rgb8 = round(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0) / 255.0;
     return vec4<f32>(rgb8, alpha);
+}
+
+fn apply_owner_sample_override(fragment_position: vec4<f32>, color: vec4<f32>) -> vec4<f32> {
+    let pixel = vec2<u32>(
+        u32(floor(fragment_position.x)),
+        u32(floor(fragment_position.y)),
+    );
+    for (var i = 0u; i < arrayLength(&owner_sample_overrides); i = i + 1u) {
+        let record = owner_sample_overrides[i];
+        if all(record.pixel == pixel) {
+            return record.replacement_rgba;
+        }
+    }
+    return color;
 }
 
 fn pbr_direct(
@@ -2653,27 +2820,27 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     }
     let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
     if material_extra.flags2.z > 0.5 {
-        return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+        return apply_owner_sample_override(input.position, vec4<f32>(vec3<f32>(1.0), opaque_alpha));
     }
     if material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5 {
-        return owner_id_output_color(input.color.rgb, opaque_alpha);
+        return apply_owner_sample_override(input.position, owner_id_output_color(input.color.rgb, opaque_alpha));
     }
     if material_extra.flags2.w > 2.5 {
         if material_extra.flags2.w > 3.5 {
-            return output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha);
+            return apply_owner_sample_override(input.position, output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha));
         }
-        return output_color(vec3<f32>(input.tex_coord, 0.0), opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(vec3<f32>(input.tex_coord, 0.0), opaque_alpha));
     }
     let diffuse = input.color.rgb * texel.rgb;
     if material_extra.flags2.w < -0.5 {
-        return output_color(input.color.rgb, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(input.color.rgb, opaque_alpha));
     }
     if material_extra.flags2.w > 0.5 {
-        return output_color(diffuse, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(diffuse, opaque_alpha));
     }
     let view_dir = normalize(uniforms.camera_pos.xyz - input.world_position);
     if material_extra.flags2.x > 0.5 {
-        return output_color(diffuse + input.emissive.rgb * emissive_texel, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(diffuse + input.emissive.rgb * emissive_texel, opaque_alpha));
     }
     if material_extra.flags.y > 0.5 {
         let direct = pbr_direct(
@@ -2690,7 +2857,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         if input.outline_color.a >= 0.0 {
             pbr_color = input.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, input.outline_color.a);
         }
-        return output_color(pbr_color, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(pbr_color, opaque_alpha));
     }
     let shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
     let shade = input.shade_color.rgb * shade_texel.rgb;
@@ -2729,6 +2896,6 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     if input.outline_color.a >= 0.0 {
         color = input.outline_color.rgb * mix(vec3<f32>(1.0), color, input.outline_color.a);
     }
-    return output_color(color, opaque_alpha);
+    return apply_owner_sample_override(input.position, output_color(color, opaque_alpha));
 }
 "#;
