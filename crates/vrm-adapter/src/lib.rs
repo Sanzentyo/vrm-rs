@@ -759,6 +759,43 @@ impl RenderOwnerSampleCorrectionPlanSurfaceCoverage {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RenderOwnerSampleSelectionPlan {
+    pub surfaces: Vec<RenderOwnerSampleSurfaceSelection>,
+    pub unmatched_entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
+}
+
+impl RenderOwnerSampleSelectionPlan {
+    pub fn entry_count(&self) -> usize {
+        self.surfaces
+            .iter()
+            .map(|surface| surface.entries.len())
+            .sum::<usize>()
+            + self.unmatched_entries.len()
+    }
+
+    pub fn matched_entry_count(&self) -> usize {
+        self.surfaces
+            .iter()
+            .map(|surface| surface.entries.len())
+            .sum()
+    }
+
+    pub fn unmatched_entry_count(&self) -> usize {
+        self.unmatched_entries.len()
+    }
+
+    pub fn all_entries_resolved(&self) -> bool {
+        self.unmatched_entries.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleSurfaceSelection {
+    pub surface: RenderOwnerSurfaceKey,
+    pub entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
+}
+
 impl RenderOwnerSampleCorrectionPlan {
     pub fn new(
         entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
@@ -860,6 +897,59 @@ impl RenderOwnerSampleCorrectionPlan {
                 .len()
                 .saturating_sub(unmatched_surfaces.len()),
             unmatched_surfaces,
+        }
+    }
+
+    pub fn surface_selection_plan<I, S>(&self, surfaces: I) -> RenderOwnerSampleSelectionPlan
+    where
+        I: IntoIterator<Item = S>,
+        S: Borrow<RenderOwnerSurfaceKey>,
+    {
+        let mut surface_entries = surfaces
+            .into_iter()
+            .map(|surface| (surface.borrow().clone(), Vec::new()))
+            .collect::<HashMap<_, Vec<RenderOwnerSampleCorrectionManifestEntry>>>();
+        let mut unmatched_entries = Vec::new();
+        for entry in &self.entries {
+            if let Some(entries) = surface_entries.get_mut(entry.sample.surface()) {
+                entries.push(entry.clone());
+            } else {
+                unmatched_entries.push(entry.clone());
+            }
+        }
+        let mut surfaces = surface_entries
+            .into_iter()
+            .filter(|(_, entries)| !entries.is_empty())
+            .map(|(surface, entries)| RenderOwnerSampleSurfaceSelection { surface, entries })
+            .collect::<Vec<_>>();
+        surfaces.sort_by(|left, right| {
+            left.surface
+                .material_name()
+                .cmp(right.surface.material_name())
+                .then_with(|| left.surface.triangle().cmp(&right.surface.triangle()))
+        });
+        unmatched_entries.sort_by(|left, right| {
+            left.sample
+                .surface()
+                .material_name()
+                .cmp(right.sample.surface().material_name())
+                .then_with(|| {
+                    left.sample
+                        .surface()
+                        .triangle()
+                        .cmp(&right.sample.surface().triangle())
+                })
+                .then_with(|| {
+                    left.correction
+                        .pixel
+                        .y()
+                        .cmp(&right.correction.pixel.y())
+                        .then_with(|| left.correction.pixel.x().cmp(&right.correction.pixel.x()))
+                })
+        });
+        RenderOwnerSampleSelectionPlan {
+            surfaces,
+            unmatched_entries,
         }
     }
 
@@ -5718,6 +5808,31 @@ mod tests {
         assert_eq!(missing_coverage.matched_surface_count, 0);
         assert_eq!(missing_coverage.unmatched_surfaces, vec![surface]);
         assert!(!missing_coverage.all_entries_resolved());
+        let selection = plan.surface_selection_plan([RenderOwnerSurfaceKey::new("body", 7)]);
+        assert_eq!(selection.entry_count(), 1);
+        assert_eq!(selection.matched_entry_count(), 1);
+        assert_eq!(selection.unmatched_entry_count(), 0);
+        assert!(selection.all_entries_resolved());
+        assert_eq!(selection.surfaces.len(), 1);
+        assert_eq!(
+            selection.surfaces[0].surface,
+            RenderOwnerSurfaceKey::new("body", 7)
+        );
+        assert_eq!(
+            selection.surfaces[0].entries[0].correction.pixel,
+            RenderPixel::new(1, 1)
+        );
+        let unmatched_selection =
+            plan.surface_selection_plan([RenderOwnerSurfaceKey::new("body", 8)]);
+        assert_eq!(unmatched_selection.entry_count(), 1);
+        assert_eq!(unmatched_selection.matched_entry_count(), 0);
+        assert_eq!(unmatched_selection.unmatched_entry_count(), 1);
+        assert!(!unmatched_selection.all_entries_resolved());
+        assert!(unmatched_selection.surfaces.is_empty());
+        assert_eq!(
+            unmatched_selection.unmatched_entries[0].sample.surface(),
+            &RenderOwnerSurfaceKey::new("body", 7)
+        );
     }
 
     #[test]

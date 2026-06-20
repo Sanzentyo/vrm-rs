@@ -26,21 +26,48 @@ pub fn owner_sample_correction_plan_metadata(
     plan: &RenderOwnerSampleCorrectionPlan,
     surfaces: impl IntoIterator<Item = RenderOwnerSurfaceKey>,
 ) -> serde_json::Value {
-    let coverage = plan.surface_coverage(surfaces);
+    let surfaces = surfaces.into_iter().collect::<Vec<_>>();
+    let coverage = plan.surface_coverage(surfaces.iter());
+    let selection = plan.surface_selection_plan(surfaces.iter());
     serde_json::json!({
         "manifest": path.to_string_lossy(),
-        "entryCount": coverage.entry_count,
+        "entryCount": selection.entry_count(),
         "surfaceCount": coverage.surface_count,
-        "matchedEntryCount": coverage.matched_entry_count,
-        "unmatchedEntryCount": coverage.unmatched_entry_count,
+        "matchedEntryCount": selection.matched_entry_count(),
+        "unmatchedEntryCount": selection.unmatched_entry_count(),
         "matchedSurfaceCount": coverage.matched_surface_count,
-        "allEntriesResolved": coverage.all_entries_resolved(),
-        "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
+        "allEntriesResolved": selection.all_entries_resolved(),
+        "surfaceSelections": selection.surfaces.iter().map(|surface| {
             serde_json::json!({
-                "materialName": surface.material_name(),
-                "triangle": surface.triangle(),
+                "surface": surface_json(&surface.surface),
+                "entryCount": surface.entries.len(),
+                "entries": surface.entries.iter().map(entry_json).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
+        "unmatchedEntries": selection.unmatched_entries.iter().map(entry_json).collect::<Vec<_>>(),
+        "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
+            surface_json(&surface)
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn surface_json(surface: &RenderOwnerSurfaceKey) -> serde_json::Value {
+    serde_json::json!({
+        "materialName": surface.material_name(),
+        "triangle": surface.triangle(),
+    })
+}
+
+fn entry_json(entry: &vrm_adapter::RenderOwnerSampleCorrectionManifestEntry) -> serde_json::Value {
+    serde_json::json!({
+        "pixel": [entry.correction.pixel.x(), entry.correction.pixel.y()],
+        "sample": entry.sample.sample().to_pair(),
+        "rgba": entry.correction.replacement_rgba,
+        "relationToExpected": entry.relation_to_expected.map(|relation| relation.as_str()),
+        "surface": {
+            "materialName": entry.sample.surface().material_name(),
+            "triangle": entry.sample.surface().triangle(),
+        },
     })
 }
 

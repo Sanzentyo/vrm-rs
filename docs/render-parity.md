@@ -61,9 +61,10 @@ recipes are convenience entry points. Use these first:
   earlier into draw/sample selection. The wgpu, Bevy, and Ash capture artifacts
   now also write `renderer.ownerSampleCorrectionPlan` metadata when a manifest
   is supplied, including matched/unmatched entry counts against the current
-  non-diagnostic render surfaces. This keeps the plan coverage visible even for
-  base-color or shaded captures where `diagnosticOwnerIds` is intentionally
-  empty.
+  non-diagnostic render surfaces plus `surfaceSelections[]` entries containing
+  the pixel, subpixel sample, replacement RGBA, and owner surface for each
+  renderer-consumable decision. This keeps the plan visible even for base-color
+  or shaded captures where `diagnosticOwnerIds` is intentionally empty.
 - `vrm-adapter-ash --example unsafe_device_renderer` accepts the same
   `--owner-sample-correction-manifest <path>` readback experiment flag. It
   applies the shared `vrm-adapter` manifest parser/applicator before writing

@@ -1500,21 +1500,46 @@ fn owner_sample_correction_plan_json(
     plan: &RenderOwnerSampleCorrectionPlan,
     surfaces: &[RenderOwnerSurfaceKey],
 ) -> serde_json::Value {
+    let selection = plan.surface_selection_plan(surfaces.iter());
     let coverage = plan.surface_coverage(surfaces.iter());
     json!({
         "manifest": path.to_string_lossy(),
-        "entryCount": coverage.entry_count,
+        "entryCount": selection.entry_count(),
         "surfaceCount": coverage.surface_count,
-        "matchedEntryCount": coverage.matched_entry_count,
-        "unmatchedEntryCount": coverage.unmatched_entry_count,
+        "matchedEntryCount": selection.matched_entry_count(),
+        "unmatchedEntryCount": selection.unmatched_entry_count(),
         "matchedSurfaceCount": coverage.matched_surface_count,
-        "allEntriesResolved": coverage.all_entries_resolved(),
-        "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
+        "allEntriesResolved": selection.all_entries_resolved(),
+        "surfaceSelections": selection.surfaces.iter().map(|surface| {
             json!({
-                "materialName": surface.material_name(),
-                "triangle": surface.triangle(),
+                "surface": owner_surface_json(&surface.surface),
+                "entryCount": surface.entries.len(),
+                "entries": surface.entries.iter().map(owner_sample_entry_json).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
+        "unmatchedEntries": selection.unmatched_entries.iter().map(owner_sample_entry_json).collect::<Vec<_>>(),
+        "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
+            owner_surface_json(&surface)
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn owner_surface_json(surface: &RenderOwnerSurfaceKey) -> serde_json::Value {
+    json!({
+        "materialName": surface.material_name(),
+        "triangle": surface.triangle(),
+    })
+}
+
+fn owner_sample_entry_json(
+    entry: &vrm_adapter::RenderOwnerSampleCorrectionManifestEntry,
+) -> serde_json::Value {
+    json!({
+        "pixel": [entry.correction.pixel.x(), entry.correction.pixel.y()],
+        "sample": entry.sample.sample().to_pair(),
+        "rgba": entry.correction.replacement_rgba,
+        "relationToExpected": entry.relation_to_expected.map(|relation| relation.as_str()),
+        "surface": owner_surface_json(entry.sample.surface()),
     })
 }
 
