@@ -230,6 +230,14 @@ struct HotspotSummary {
     expected_best_subpixel_mean_cpu_base_color_improvement: Option<f32>,
     actual_best_subpixel_same_triangle_matches: usize,
     expected_best_subpixel_same_triangle_matches: usize,
+    actual_best_subpixel_improved_same_triangle_count: usize,
+    expected_best_subpixel_improved_same_triangle_count: usize,
+    actual_best_subpixel_improved_different_triangle_count: usize,
+    expected_best_subpixel_improved_different_triangle_count: usize,
+    actual_best_subpixel_mean_sample_distance_from_center: Option<f32>,
+    expected_best_subpixel_mean_sample_distance_from_center: Option<f32>,
+    actual_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
+    expected_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1114,6 +1122,52 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
                 )
             })
             .count(),
+        actual_best_subpixel_improved_same_triangle_count: subpixel_improved_same_triangle_count(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+        ),
+        expected_best_subpixel_improved_same_triangle_count: subpixel_improved_same_triangle_count(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+        ),
+        actual_best_subpixel_improved_different_triangle_count:
+            subpixel_improved_different_triangle_count(
+                hotspots,
+                |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+            ),
+        expected_best_subpixel_improved_different_triangle_count:
+            subpixel_improved_different_triangle_count(
+                hotspots,
+                |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+            ),
+        actual_best_subpixel_mean_sample_distance_from_center: mean_subpixel_sample_distance(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
+        ),
+        expected_best_subpixel_mean_sample_distance_from_center: mean_subpixel_sample_distance(
+            hotspots,
+            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
+        ),
+        actual_best_subpixel_surface_transitions: surface_pair_transition_counts(
+            hotspots,
+            |hotspot| hotspot.frontmost_visible.as_ref(),
+            |hotspot| {
+                hotspot
+                    .best_subpixel_visible_actual
+                    .as_ref()
+                    .map(|matched| &matched.candidate)
+            },
+        ),
+        expected_best_subpixel_surface_transitions: surface_pair_transition_counts(
+            hotspots,
+            |hotspot| hotspot.frontmost_visible.as_ref(),
+            |hotspot| {
+                hotspot
+                    .best_subpixel_visible_expected
+                    .as_ref()
+                    .map(|matched| &matched.candidate)
+            },
+        ),
     }
 }
 
@@ -1392,6 +1446,41 @@ fn subpixel_improved_count(
         .count()
 }
 
+fn subpixel_improved_same_triangle_count(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> usize {
+    hotspots
+        .iter()
+        .filter(|hotspot| {
+            let Some(matched) = subpixel(hotspot) else {
+                return false;
+            };
+            matched.improvement.is_some_and(|improvement| improvement > 0.0)
+                && same_surface_triangle(hotspot.frontmost_visible.as_ref(), Some(&matched.candidate))
+        })
+        .count()
+}
+
+fn subpixel_improved_different_triangle_count(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> usize {
+    hotspots
+        .iter()
+        .filter(|hotspot| {
+            let Some(matched) = subpixel(hotspot) else {
+                return false;
+            };
+            matched.improvement.is_some_and(|improvement| improvement > 0.0)
+                && !same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    Some(&matched.candidate),
+                )
+        })
+        .count()
+}
+
 fn mean_subpixel_distance(
     hotspots: &[Hotspot],
     subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
@@ -1415,6 +1504,21 @@ fn mean_subpixel_improvement(
         .filter_map(|matched| matched.improvement)
         .fold((0.0, 0usize), |(sum, count), improvement| {
             (sum + improvement, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn mean_subpixel_sample_distance(
+    hotspots: &[Hotspot],
+    subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
+) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(subpixel)
+        .fold((0.0, 0usize), |(sum, count), matched| {
+            let dx = matched.sample[0] - 0.5;
+            let dy = matched.sample[1] - 0.5;
+            (sum + (dx * dx + dy * dy).sqrt(), count + 1)
         });
     (count > 0).then_some(sum / count as f32)
 }

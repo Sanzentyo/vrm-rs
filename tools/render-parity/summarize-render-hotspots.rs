@@ -131,6 +131,14 @@ struct ReviewReport {
     expected_best_subpixel_mean_cpu_base_color_improvement: Option<f64>,
     actual_best_subpixel_same_triangle_matches: Option<u64>,
     expected_best_subpixel_same_triangle_matches: Option<u64>,
+    actual_best_subpixel_improved_same_triangle_count: Option<u64>,
+    expected_best_subpixel_improved_same_triangle_count: Option<u64>,
+    actual_best_subpixel_improved_different_triangle_count: Option<u64>,
+    expected_best_subpixel_improved_different_triangle_count: Option<u64>,
+    actual_best_subpixel_mean_sample_distance_from_center: Option<f64>,
+    expected_best_subpixel_mean_sample_distance_from_center: Option<f64>,
+    top_actual_best_subpixel_surface_transitions: Vec<Value>,
+    top_expected_best_subpixel_surface_transitions: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -588,6 +596,40 @@ fn summarize_report(
             summary,
             "expected_best_subpixel_same_triangle_matches",
         ),
+        actual_best_subpixel_improved_same_triangle_count: u64_field(
+            summary,
+            "actual_best_subpixel_improved_same_triangle_count",
+        ),
+        expected_best_subpixel_improved_same_triangle_count: u64_field(
+            summary,
+            "expected_best_subpixel_improved_same_triangle_count",
+        ),
+        actual_best_subpixel_improved_different_triangle_count: u64_field(
+            summary,
+            "actual_best_subpixel_improved_different_triangle_count",
+        ),
+        expected_best_subpixel_improved_different_triangle_count: u64_field(
+            summary,
+            "expected_best_subpixel_improved_different_triangle_count",
+        ),
+        actual_best_subpixel_mean_sample_distance_from_center: f64_field(
+            summary,
+            "actual_best_subpixel_mean_sample_distance_from_center",
+        ),
+        expected_best_subpixel_mean_sample_distance_from_center: f64_field(
+            summary,
+            "expected_best_subpixel_mean_sample_distance_from_center",
+        ),
+        top_actual_best_subpixel_surface_transitions: top_array(
+            summary,
+            "actual_best_subpixel_surface_transitions",
+            top,
+        ),
+        top_expected_best_subpixel_surface_transitions: top_array(
+            summary,
+            "expected_best_subpixel_surface_transitions",
+            top,
+        ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
         top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
         top_missing_center_nearest_offsets: top_array(
@@ -843,6 +885,29 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_u64(report.actual_best_subpixel_same_triangle_matches),
         fmt_opt_u64(report.expected_best_subpixel_same_triangle_matches)
     ));
+    markdown.push_str(&format!(
+        "- Improved same-triangle actual/expected: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_best_subpixel_improved_same_triangle_count),
+        fmt_opt_u64(report.expected_best_subpixel_improved_same_triangle_count)
+    ));
+    markdown.push_str(&format!(
+        "- Improved different-triangle actual/expected: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_best_subpixel_improved_different_triangle_count),
+        fmt_opt_u64(report.expected_best_subpixel_improved_different_triangle_count)
+    ));
+    markdown.push_str(&format!(
+        "- Mean sample distance from center actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_best_subpixel_mean_sample_distance_from_center),
+        fmt_opt_f64(report.expected_best_subpixel_mean_sample_distance_from_center)
+    ));
+    markdown.push_str("\nActual best-subpixel vs center frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_actual_best_subpixel_surface_transitions,
+    ));
+    markdown.push_str("\nExpected best-subpixel vs center frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_expected_best_subpixel_surface_transitions,
+    ));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -1035,6 +1100,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected_best_subpixel_mean_cpu_base_color_improvement": 0.5,
                 "actual_best_subpixel_same_triangle_matches": 1,
                 "expected_best_subpixel_same_triangle_matches": 0,
+                "actual_best_subpixel_improved_same_triangle_count": 0,
+                "expected_best_subpixel_improved_same_triangle_count": 0,
+                "actual_best_subpixel_improved_different_triangle_count": 0,
+                "expected_best_subpixel_improved_different_triangle_count": 1,
+                "actual_best_subpixel_mean_sample_distance_from_center": 0.0,
+                "expected_best_subpixel_mean_sample_distance_from_center": 0.25,
+                "actual_best_subpixel_surface_transitions": [{"count": 1}],
+                "expected_best_subpixel_surface_transitions": [{"count": 1}],
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -1081,6 +1154,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(report.top_frontmost_texture_sampling_variants.len(), 1);
     assert_eq!(report.expected_best_subpixel_improved_count, Some(1));
+    assert_eq!(
+        report.expected_best_subpixel_improved_different_triangle_count,
+        Some(1)
+    );
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Render Hotspot Summary"));
     assert!(markdown.contains("Texture Sampling Variants"));
