@@ -22,9 +22,13 @@ recipes are convenience entry points. Use these first:
   gate that excludes a three-pixel local ownership band.
 - `just render-parity-current-blocker`: rerun the current owner/fill and
   texture/base-color blocker diagnostics. It now regenerates the compact
-  depth3 owner-hotspot extraction, owner/sample geometry manifests, wgpu/Bevy
+  depth3 owner-hotspot extraction, owner-id based owner/sample geometry manifests, wgpu/Bevy
   resolve captures, the Ash resolve readback, direct `.imqraw` reports, and
   raw/RGBA verification without applying final readback replacement.
+- `just render-parity-current-blocker-owner-sample-selection`: build the
+  standard render-resolve manifests from three-vrm rendered owner IDs and Rust
+  subpixel geometry only. This path does not read expected/actual color images,
+  so it is the default input for owner/fill-rule work.
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. It first regenerates the depth3 owner/fill inputs and the full
@@ -37,6 +41,10 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-seed-owner-hotspot-depth3-owner-sample-correction`: the
   compact depth3-only subset of the same correction path. Use this when the
   full Seed-san flat32 reports are unnecessary.
+- `just render-parity-seed-owner-hotspot-depth3-owner-sample-selection`: the
+  compact depth3 owner-id driven selection path. It should be preferred over
+  the correction recipe for render-resolve work because it matches rendered
+  ownership first and treats PSNR only as a later material/color check.
 - `just render-parity-seed-owner-hotspot-depth3-render-resolve-readback`:
   regenerate the compact depth3 owner/fill fixture, produce source-like
   owner/sample geometry manifests, feed them through the actual wgpu, Bevy, and
@@ -48,7 +56,7 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-seed-base-color-flat32-render-resolve-readback`: run the
   same no-readback owner/sample resolve model against the real Seed-san
   base-color, outline-off, flat32/gradient blocker. It first refreshes the full
-  owner/sample correction manifests, then renders wgpu, release-built Bevy, and
+  owner-id driven owner/sample selection manifests, then renders wgpu, release-built Bevy, and
   Ash with those manifests as geometry selections. The latest run raises the
   real Seed-san gradient-domain score from baseline wgpu `26.3277 dB` / Bevy
   `26.3322 dB` to render-resolve wgpu `28.9442 dB`, Bevy `29.1123 dB`, and Ash
@@ -57,6 +65,15 @@ recipes are convenience entry points. Use these first:
   selected-channel deltas remain high on the real fixture, so the next work is
   to remap the remaining post-resolve hotspots and broaden the surface
   selection model rather than tuning copied colors.
+- `just render-parity-seed-base-color-flat32-render-resolve-hotspots`: reuse the
+  current Seed-san render-resolve artifacts and summarize the remaining
+  gradient-domain deltas. The latest summaries show the residual is still
+  edge-local (`52-56/64` top hotspots within `0.25px` depending on backend),
+  low local texture-gradient (max `12.4097`), and subpixel-predictable
+  (`58-59/64` expected colors improve under best-subpixel search). Use this as
+  evidence about the remaining residual, but do not choose new default samples
+  by RGB-distance oracle; the next implementation step must first make the
+  rendered owner/fill-rule agree with three-vrm and then re-check color parity.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
