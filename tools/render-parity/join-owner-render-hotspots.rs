@@ -54,6 +54,12 @@ struct JoinReport {
     browser_best_subpixel_matches_rust_frontmost: u64,
     browser_best_subpixel_matches_rust_expected_best_subpixel: u64,
     browser_best_subpixel_matches_rust_actual_best_subpixel: u64,
+    browser_best_sample_rust_color_count: u64,
+    browser_best_sample_actual_color_closer: u64,
+    browser_best_sample_expected_color_closer: u64,
+    browser_best_sample_color_tied: u64,
+    browser_best_sample_mean_actual_rgb_distance: Option<f64>,
+    browser_best_sample_mean_expected_rgb_distance: Option<f64>,
     rendered_to_rust_frontmost: BTreeMap<String, u64>,
     rendered_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
     browser_best_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
@@ -73,6 +79,9 @@ struct JoinedHotspotLine {
     rust_expected_best_subpixel_sample: Option<[f64; 2]>,
     rust_actual_best_subpixel: Option<SurfaceSummary>,
     rust_actual_best_subpixel_sample: Option<[f64; 2]>,
+    browser_best_sample_cpu_base_color: Option<[u64; 4]>,
+    browser_best_sample_actual_rgb_distance: Option<f64>,
+    browser_best_sample_expected_rgb_distance: Option<f64>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -145,11 +154,19 @@ fn join_reports(
         browser_best_subpixel_matches_rust_frontmost: 0,
         browser_best_subpixel_matches_rust_expected_best_subpixel: 0,
         browser_best_subpixel_matches_rust_actual_best_subpixel: 0,
+        browser_best_sample_rust_color_count: 0,
+        browser_best_sample_actual_color_closer: 0,
+        browser_best_sample_expected_color_closer: 0,
+        browser_best_sample_color_tied: 0,
+        browser_best_sample_mean_actual_rgb_distance: None,
+        browser_best_sample_mean_expected_rgb_distance: None,
         rendered_to_rust_frontmost: BTreeMap::new(),
         rendered_to_rust_expected_best_subpixel: BTreeMap::new(),
         browser_best_to_rust_expected_best_subpixel: BTreeMap::new(),
         top_disagreements: Vec::new(),
     };
+    let mut browser_best_actual_distance_sum = 0.0;
+    let mut browser_best_expected_distance_sum = 0.0;
 
     for owner_hotspot in owner_hotspots {
         let Some((x, y)) = pixel_key(owner_hotspot) else {
@@ -167,6 +184,39 @@ fn join_reports(
         let rust_expected =
             surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
         let rust_actual = surface_at(rust_hotspot, "/best_subpixel_visible_actual/candidate");
+        let browser_best_sample =
+            number_pair(owner_hotspot.pointer("/renderedOwnerRecovery/bestSubpixel/sampleCenter"));
+        let browser_best_sample_color = browser_best
+            .as_ref()
+            .zip(browser_best_sample)
+            .and_then(|(surface, sample)| rust_subpixel_color_for_surface_sample(
+                rust_hotspot,
+                surface,
+                sample,
+            ));
+        let browser_best_sample_actual_distance = browser_best_sample_color
+            .zip(rgba_field(rust_hotspot, "actual"))
+            .map(|(color, actual)| rgb_distance_u64(color, actual));
+        let browser_best_sample_expected_distance = browser_best_sample_color
+            .zip(rgba_field(rust_hotspot, "expected"))
+            .map(|(color, expected)| rgb_distance_u64(color, expected));
+
+        if let (Some(actual), Some(expected)) = (
+            browser_best_sample_actual_distance,
+            browser_best_sample_expected_distance,
+        ) {
+            report.browser_best_sample_rust_color_count += 1;
+            browser_best_actual_distance_sum += actual;
+            browser_best_expected_distance_sum += expected;
+            match actual
+                .partial_cmp(&expected)
+                .unwrap_or(std::cmp::Ordering::Equal)
+            {
+                std::cmp::Ordering::Less => report.browser_best_sample_actual_color_closer += 1,
+                std::cmp::Ordering::Greater => report.browser_best_sample_expected_color_closer += 1,
+                std::cmp::Ordering::Equal => report.browser_best_sample_color_tied += 1,
+            }
+        }
 
         if rendered.is_some() {
             report.rendered_owner_count += 1;
@@ -223,9 +273,7 @@ fn join_reports(
                 y,
                 rendered_owner: rendered,
                 browser_best_subpixel: browser_best,
-                browser_best_subpixel_sample: number_pair(
-                    owner_hotspot.pointer("/renderedOwnerRecovery/bestSubpixel/sampleCenter"),
-                ),
+                browser_best_subpixel_sample: browser_best_sample,
                 browser_rendered_depth_rank: owner_hotspot
                     .get("renderedOwnerDepthRank")
                     .and_then(Value::as_u64),
@@ -238,8 +286,19 @@ fn join_reports(
                 rust_actual_best_subpixel_sample: number_pair(
                     rust_hotspot.pointer("/best_subpixel_visible_actual/sample"),
                 ),
+                browser_best_sample_cpu_base_color: browser_best_sample_color,
+                browser_best_sample_actual_rgb_distance: browser_best_sample_actual_distance,
+                browser_best_sample_expected_rgb_distance: browser_best_sample_expected_distance,
             });
         }
+    }
+
+    if report.browser_best_sample_rust_color_count > 0 {
+        let count = report.browser_best_sample_rust_color_count as f64;
+        report.browser_best_sample_mean_actual_rgb_distance =
+            Some(browser_best_actual_distance_sum / count);
+        report.browser_best_sample_mean_expected_rgb_distance =
+            Some(browser_best_expected_distance_sum / count);
     }
 
     Ok(report)
@@ -285,6 +344,61 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
     ))
 }
 
+fn rust_subpixel_color_for_surface_sample(
+    rust_hotspot: &Value,
+    surface: &SurfaceSummary,
+    sample: [f64; 2],
+) -> Option<[u64; 4]> {
+    rust_hotspot
+        .get("subpixel_visible_candidates")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|candidate| {
+            number_pair(candidate.get("sample")).is_some_and(|candidate_sample| {
+                sample_pair_matches(candidate_sample, sample)
+            })
+        })
+        .filter_map(|candidate| {
+            let candidate_surface = surface_at(candidate, "/candidate")?;
+            (candidate_surface == *surface)
+                .then(|| candidate.pointer("/candidate/cpu_base_color_rgba"))
+                .flatten()
+                .and_then(rgba_array)
+        })
+        .next()
+}
+
+fn sample_pair_matches(left: [f64; 2], right: [f64; 2]) -> bool {
+    const EPSILON: f64 = 0.001;
+    (left[0] - right[0]).abs() <= EPSILON && (left[1] - right[1]).abs() <= EPSILON
+}
+
+fn rgba_field(value: &Value, key: &str) -> Option<[u64; 4]> {
+    value.get(key).and_then(rgba_array)
+}
+
+fn rgba_array(value: &Value) -> Option<[u64; 4]> {
+    let values = value.as_array()?;
+    Some([
+        values.first()?.as_u64()?,
+        values.get(1)?.as_u64()?,
+        values.get(2)?.as_u64()?,
+        values.get(3)?.as_u64()?,
+    ])
+}
+
+fn rgb_distance_u64(left: [u64; 4], right: [u64; 4]) -> f64 {
+    left.iter()
+        .zip(right.iter())
+        .take(3)
+        .map(|(left, right)| {
+            let delta = *left as f64 - *right as f64;
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
 fn normalize_material(name: &str) -> String {
     name.strip_suffix(":vrm-rs-owner-id-diagnostic")
         .unwrap_or(name)
@@ -317,6 +431,18 @@ fn markdown_report(report: &JoinReport) -> String {
         report.browser_best_subpixel_matches_rust_expected_best_subpixel,
         report.browser_best_subpixel_matches_rust_actual_best_subpixel
     ));
+    output.push_str(&format!(
+        "- Browser best sample Rust color count: `{}`; actual/expected/tie closer: `{}` / `{}` / `{}`\n",
+        report.browser_best_sample_rust_color_count,
+        report.browser_best_sample_actual_color_closer,
+        report.browser_best_sample_expected_color_closer,
+        report.browser_best_sample_color_tied
+    ));
+    output.push_str(&format!(
+        "- Browser best sample mean actual/expected RGB distance: `{}` / `{}`\n\n",
+        fmt_opt_f64(report.browser_best_sample_mean_actual_rgb_distance),
+        fmt_opt_f64(report.browser_best_sample_mean_expected_rgb_distance)
+    ));
     output.push_str("## Rendered To Rust Expected Best\n\n");
     write_counts(&mut output, &report.rendered_to_rust_expected_best_subpixel);
     output.push_str("## Browser Best To Rust Expected Best\n\n");
@@ -328,11 +454,11 @@ fn markdown_report(report: &JoinReport) -> String {
     if report.top_disagreements.is_empty() {
         output.push_str("_None_\n");
     } else {
-        output.push_str("| Pixel | Rendered | Browser best | Rust frontmost | Rust expected-best | Samples |\n");
-        output.push_str("|---|---|---|---|---|---|\n");
+        output.push_str("| Pixel | Rendered | Browser best | Rust frontmost | Rust expected-best | Samples | Browser best color |\n");
+        output.push_str("|---|---|---|---|---|---|---|\n");
         for item in &report.top_disagreements {
             output.push_str(&format!(
-                "| {},{} | {} | {} | {} | {} | browser={} rust={} |\n",
+                "| {},{} | {} | {} | {} | {} | browser={} rust={} | rgba={} actual_dist={} expected_dist={} |\n",
                 item.x,
                 item.y,
                 surface_label(item.rendered_owner.as_ref()),
@@ -341,6 +467,9 @@ fn markdown_report(report: &JoinReport) -> String {
                 surface_label(item.rust_expected_best_subpixel.as_ref()),
                 fmt_pair(item.browser_best_subpixel_sample),
                 fmt_pair(item.rust_expected_best_subpixel_sample),
+                fmt_rgba(item.browser_best_sample_cpu_base_color),
+                fmt_opt_f64(item.browser_best_sample_actual_rgb_distance),
+                fmt_opt_f64(item.browser_best_sample_expected_rgb_distance),
             ));
         }
     }
@@ -368,6 +497,17 @@ fn fmt_pair(value: Option<[f64; 2]>) -> String {
         || "n/a".to_owned(),
         |value| format!("{:.3},{:.3}", value[0], value[1]),
     )
+}
+
+fn fmt_rgba(value: Option<[u64; 4]>) -> String {
+    value.map_or_else(
+        || "n/a".to_owned(),
+        |value| format!("{},{},{},{}", value[0], value[1], value[2], value[3]),
+    )
+}
+
+fn fmt_opt_f64(value: Option<f64>) -> String {
+    value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -404,6 +544,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "hotspots": [{
                 "x": 1,
                 "y": 2,
+                "actual": [10, 10, 10, 255],
+                "expected": [100, 100, 100, 255],
                 "frontmost_visible": {"materialName": "hair", "triangle": 3},
                 "best_subpixel_visible_expected": {
                     "sample": [0.7, 0.5],
@@ -412,7 +554,15 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "best_subpixel_visible_actual": {
                     "sample": [0.3, 0.5],
                     "candidate": {"material_name": "hair", "triangle": 3}
-                }
+                },
+                "subpixel_visible_candidates": [{
+                    "sample": [0.7, 0.5],
+                    "candidate": {
+                        "material_name": "body",
+                        "triangle": 7,
+                        "cpu_base_color_rgba": [100, 100, 100, 255]
+                    }
+                }]
             }]
         }"#,
     )?;
@@ -430,9 +580,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         report.browser_best_subpixel_matches_rust_expected_best_subpixel,
         1
     );
+    assert_eq!(report.browser_best_sample_rust_color_count, 1);
+    assert_eq!(report.browser_best_sample_expected_color_closer, 1);
     assert!(report.top_disagreements.is_empty());
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Rendered owner matches Rust frontmost"));
     assert!(markdown.contains("body:tri7 -> body:tri7"));
+    assert!(markdown.contains("Browser best sample Rust color count"));
     Ok(())
 }
