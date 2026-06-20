@@ -14,8 +14,10 @@ use std::time::Instant;
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_REFERENCE_WGSL, MtoonGpuMaterial,
     MtoonGpuTextureBindingPlan, MtoonGpuUniform, MtoonMaterializationOptions, MtoonRendererPass,
-    MtoonSamplerHint, MtoonTextureSlot, WorldMatrixAccess, WorldTransformUpdate,
-    apply_vrma_animation_frame_with_look_at, mtoon_gpu_materials,
+    MtoonSamplerHint, MtoonTextureSlot, RenderOwnerSampleSelectionPlan,
+    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
+    WorldMatrixAccess, WorldTransformUpdate, apply_vrma_animation_frame_with_look_at,
+    mtoon_gpu_materials,
 };
 use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation, VrmDocument};
 use vrm_io::{
@@ -103,6 +105,93 @@ pub struct WgpuMtoonSamplerPlan {
     pub address_mode_u: wgpu::AddressMode,
     pub address_mode_v: wgpu::AddressMode,
     pub normal_map_decode: bool,
+}
+
+pub const WGPU_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE: usize =
+    std::mem::size_of::<WgpuOwnerSampleOverrideRecord>();
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub struct WgpuOwnerSampleOverrideRecord {
+    pub pixel: [u32; 2],
+    pub sample: [f32; 2],
+    pub replacement_rgba: [f32; 4],
+    pub relation_to_expected: u32,
+    pub _padding: [u32; 3],
+}
+
+impl WgpuOwnerSampleOverrideRecord {
+    pub fn from_override(
+        value: RenderOwnerSampleSurfaceOverride,
+    ) -> Result<Self, WgpuOwnerSampleOverridePlanError> {
+        Ok(Self {
+            pixel: [
+                u32::try_from(value.pixel.x()).map_err(|_| {
+                    WgpuOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+                u32::try_from(value.pixel.y()).map_err(|_| {
+                    WgpuOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+            ],
+            sample: [value.sample.x() as f32, value.sample.y() as f32],
+            replacement_rgba: value
+                .replacement_rgba
+                .map(|channel| f32::from(channel) / 255.0),
+            relation_to_expected: owner_sample_relation_code(value.relation_to_expected),
+            _padding: [0; 3],
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WgpuOwnerSampleOverrideBufferPlan {
+    pub surface: RenderOwnerSurfaceKey,
+    pub records: Vec<WgpuOwnerSampleOverrideRecord>,
+    pub usage: wgpu::BufferUsages,
+    pub visibility: wgpu::ShaderStages,
+    pub binding_type: wgpu::BufferBindingType,
+}
+
+impl WgpuOwnerSampleOverrideBufferPlan {
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.records)
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WgpuOwnerSampleOverridePlanError {
+    PixelOutOfRange { x: u64, y: u64 },
+}
+
+pub fn wgpu_owner_sample_override_buffer_plans(
+    selection: &RenderOwnerSampleSelectionPlan,
+) -> Result<Vec<WgpuOwnerSampleOverrideBufferPlan>, WgpuOwnerSampleOverridePlanError> {
+    selection
+        .surfaces
+        .iter()
+        .map(|surface| {
+            Ok(WgpuOwnerSampleOverrideBufferPlan {
+                surface: surface.surface.clone(),
+                records: surface
+                    .overrides()
+                    .map(WgpuOwnerSampleOverrideRecord::from_override)
+                    .collect::<Result<Vec<_>, _>>()?,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                binding_type: wgpu::BufferBindingType::Storage { read_only: true },
+            })
+        })
+        .collect()
 }
 
 pub fn wgpu_mtoon_resource_plans(
@@ -206,6 +295,16 @@ fn wgpu_mtoon_sampler_plan(sampler: MtoonSamplerHint) -> WgpuMtoonSamplerPlan {
         address_mode_u: wgpu::AddressMode::Repeat,
         address_mode_v: wgpu::AddressMode::Repeat,
         normal_map_decode: matches!(sampler, MtoonSamplerHint::NormalMapLinearRepeat),
+    }
+}
+
+fn owner_sample_relation_code(relation: Option<RenderOwnerSurfaceRelation>) -> u32 {
+    match relation {
+        Some(RenderOwnerSurfaceRelation::SameSurface) => 1,
+        Some(RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle) => 2,
+        Some(RenderOwnerSurfaceRelation::DifferentMaterial) => 3,
+        Some(RenderOwnerSurfaceRelation::Missing) => 4,
+        None => 0,
     }
 }
 
@@ -1187,5 +1286,47 @@ mod tests {
         assert!(bindings[1].sampler.normal_map_decode);
         assert_eq!(bindings[2].slot, MtoonTextureSlot::OutlineWidth);
         assert!(bindings[2].visibility.contains(wgpu::ShaderStages::VERTEX));
+    }
+
+    #[test]
+    fn owner_sample_override_buffer_plans_are_storage_ready() {
+        let surface = RenderOwnerSurfaceKey::new("body", 7);
+        let plan = RenderOwnerSampleSelectionPlan {
+            surfaces: vec![vrm_adapter::RenderOwnerSampleSurfaceSelection {
+                surface: surface.clone(),
+                entries: vec![vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                    correction: vrm_adapter::RenderRgba8Correction::new(
+                        vrm_adapter::RenderPixel::new(12, 34),
+                        [64, 128, 255, 255],
+                    ),
+                    sample: vrm_adapter::RenderOwnerSampleKey::from_pair(
+                        surface.clone(),
+                        [0.25, 0.75],
+                    ),
+                    relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                }],
+            }],
+            unmatched_entries: Vec::new(),
+        };
+
+        let buffers = wgpu_owner_sample_override_buffer_plans(&plan).unwrap();
+
+        assert_eq!(buffers.len(), 1);
+        assert_eq!(buffers[0].surface, surface);
+        assert_eq!(buffers[0].record_count(), 1);
+        assert!(buffers[0].usage.contains(wgpu::BufferUsages::STORAGE));
+        assert!(buffers[0].visibility.contains(wgpu::ShaderStages::FRAGMENT));
+        assert_eq!(
+            buffers[0].binding_type,
+            wgpu::BufferBindingType::Storage { read_only: true }
+        );
+        assert_eq!(buffers[0].records[0].pixel, [12, 34]);
+        assert_eq!(buffers[0].records[0].sample, [0.25, 0.75]);
+        assert_eq!(buffers[0].records[0].replacement_rgba[2], 1.0);
+        assert_eq!(buffers[0].records[0].relation_to_expected, 1);
+        assert_eq!(
+            buffers[0].bytes().len(),
+            WGPU_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
+        );
     }
 }

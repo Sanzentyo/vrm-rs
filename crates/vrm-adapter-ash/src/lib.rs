@@ -19,8 +19,9 @@ use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
     MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, RenderOwnerId, RenderOwnerSurfaceKey, RendererFrontFace,
-    RendererMaterialAlphaMode, RendererMaterialCullMode, ScreenProjectionBounds,
+    MtoonTextureSlot, RenderOwnerId, RenderOwnerSampleSelectionPlan,
+    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
+    RendererFrontFace, RendererMaterialAlphaMode, RendererMaterialCullMode, ScreenProjectionBounds,
     ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
     ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
     project_triangle_to_screen, renderer_material_pipeline_plan,
@@ -650,6 +651,93 @@ pub struct AshVrmFramePlan {
     pub scene_uniform: AshSceneUniform,
     pub diagnostic_owner_ids: Vec<AshDiagnosticOwnerId>,
     pub render_surfaces: Vec<RenderOwnerSurfaceKey>,
+}
+
+pub const ASH_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE: usize =
+    std::mem::size_of::<AshOwnerSampleOverrideRecord>();
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct AshOwnerSampleOverrideRecord {
+    pub pixel: [u32; 2],
+    pub sample: [f32; 2],
+    pub replacement_rgba: [f32; 4],
+    pub relation_to_expected: u32,
+    pub _padding: [u32; 3],
+}
+
+impl AshOwnerSampleOverrideRecord {
+    pub fn from_override(
+        value: RenderOwnerSampleSurfaceOverride,
+    ) -> Result<Self, AshOwnerSampleOverridePlanError> {
+        Ok(Self {
+            pixel: [
+                u32::try_from(value.pixel.x()).map_err(|_| {
+                    AshOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+                u32::try_from(value.pixel.y()).map_err(|_| {
+                    AshOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+            ],
+            sample: [value.sample.x() as f32, value.sample.y() as f32],
+            replacement_rgba: value
+                .replacement_rgba
+                .map(|channel| f32::from(channel) / 255.0),
+            relation_to_expected: ash_owner_sample_relation_code(value.relation_to_expected),
+            _padding: [0; 3],
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshOwnerSampleOverrideBufferPlan {
+    pub surface: RenderOwnerSurfaceKey,
+    pub records: Vec<AshOwnerSampleOverrideRecord>,
+    pub usage: vk::BufferUsageFlags,
+    pub descriptor_type: vk::DescriptorType,
+    pub stage_flags: vk::ShaderStageFlags,
+}
+
+impl AshOwnerSampleOverrideBufferPlan {
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.records)
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshOwnerSampleOverridePlanError {
+    PixelOutOfRange { x: u64, y: u64 },
+}
+
+pub fn ash_owner_sample_override_buffer_plans(
+    selection: &RenderOwnerSampleSelectionPlan,
+) -> Result<Vec<AshOwnerSampleOverrideBufferPlan>, AshOwnerSampleOverridePlanError> {
+    selection
+        .surfaces
+        .iter()
+        .map(|surface| {
+            Ok(AshOwnerSampleOverrideBufferPlan {
+                surface: surface.surface.clone(),
+                records: surface
+                    .overrides()
+                    .map(AshOwnerSampleOverrideRecord::from_override)
+                    .collect::<Result<Vec<_>, _>>()?,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2185,6 +2273,16 @@ fn ash_renderer_alpha_mode_code(mode: RendererMaterialAlphaMode) -> u32 {
     }
 }
 
+fn ash_owner_sample_relation_code(relation: Option<RenderOwnerSurfaceRelation>) -> u32 {
+    match relation {
+        Some(RenderOwnerSurfaceRelation::SameSurface) => 1,
+        Some(RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle) => 2,
+        Some(RenderOwnerSurfaceRelation::DifferentMaterial) => 3,
+        Some(RenderOwnerSurfaceRelation::Missing) => 4,
+        None => 0,
+    }
+}
+
 fn assign_ash_owner_id_triangles(
     primitives: &mut [AshPrimitiveRecord],
     scene_options: AshSceneOptions,
@@ -2827,6 +2925,56 @@ mod tests {
     fn ash_sampler_hint_marks_normal_decode() {
         assert!(sampler_plan(MtoonSamplerHint::NormalMapLinearRepeat).normal_map_decode);
         assert!(!sampler_plan(MtoonSamplerHint::LinearRepeat).normal_map_decode);
+    }
+
+    #[test]
+    fn owner_sample_override_buffer_plans_are_storage_ready() {
+        let surface = RenderOwnerSurfaceKey::new("body", 7);
+        let selection = RenderOwnerSampleSelectionPlan {
+            surfaces: vec![vrm_adapter::RenderOwnerSampleSurfaceSelection {
+                surface: surface.clone(),
+                entries: vec![vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                    correction: vrm_adapter::RenderRgba8Correction::new(
+                        vrm_adapter::RenderPixel::new(12, 34),
+                        [64, 128, 255, 255],
+                    ),
+                    sample: vrm_adapter::RenderOwnerSampleKey::from_pair(
+                        surface.clone(),
+                        [0.25, 0.75],
+                    ),
+                    relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                }],
+            }],
+            unmatched_entries: Vec::new(),
+        };
+
+        let buffers = ash_owner_sample_override_buffer_plans(&selection).unwrap();
+
+        assert_eq!(buffers.len(), 1);
+        assert_eq!(buffers[0].surface, surface);
+        assert_eq!(buffers[0].record_count(), 1);
+        assert!(
+            buffers[0]
+                .usage
+                .contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+        );
+        assert_eq!(
+            buffers[0].descriptor_type,
+            vk::DescriptorType::STORAGE_BUFFER
+        );
+        assert!(
+            buffers[0]
+                .stage_flags
+                .contains(vk::ShaderStageFlags::FRAGMENT)
+        );
+        assert_eq!(buffers[0].records[0].pixel, [12, 34]);
+        assert_eq!(buffers[0].records[0].sample, [0.25, 0.75]);
+        assert_eq!(buffers[0].records[0].replacement_rgba[2], 1.0);
+        assert_eq!(buffers[0].records[0].relation_to_expected, 1);
+        assert_eq!(
+            buffers[0].bytes().len(),
+            ASH_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
+        );
     }
 
     #[test]
