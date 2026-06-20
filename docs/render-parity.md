@@ -28,7 +28,9 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-current-blocker-owner-sample-selection`: build the
   standard render-resolve manifests from three-vrm rendered owner IDs and Rust
   subpixel geometry only. This path does not read expected/actual color images,
-  so it is the default input for owner/fill-rule work.
+  so it is the default input for owner/fill-rule work. It regenerates the full
+  Seed-san `.s5` owner-hotspot projection before consuming it, avoiding stale
+  ignored JSON artifacts in the standard path.
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. It first regenerates the depth3 owner/fill inputs and the full

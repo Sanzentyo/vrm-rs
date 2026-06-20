@@ -127,6 +127,7 @@ render-parity-current-blocker three_vrm_root=".external-fixtures/three-vrm":
 
 # Apply browser owner/sample CPU colors to current raw outputs as a parity upper-bound experiment.
 render-parity-current-blocker-owner-sample-correction three_vrm_root=".external-fixtures/three-vrm":
+    just render-parity-seed-base-color-flat32-gradient-owner-hotspots-5x5 "{{ three_vrm_root }}"
     just render-parity-seed-owner-hotspot-depth3-owner-sample-correction "{{ three_vrm_root }}"
     just render-parity-seed-base-color-flat32-gradient-owner-render-join "{{ three_vrm_root }}"
     cargo +nightly -Zscript tools/render-parity/apply-owner-sample-correction.rs --expected .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.imqraw --actual .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/wgpu/Seed-san.frame000.imqraw --owner-hotspots .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.owner-hotspot-projection.gradient.0.5x0.5.s5.rgba.json --rust-hotspots .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.gradient.json --out .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-owner-sample-correction.gradient.s5.json --correction-manifest-out .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-owner-sample-correction.gradient.s5.manifest.json --only-expected-closer
@@ -134,6 +135,7 @@ render-parity-current-blocker-owner-sample-correction three_vrm_root=".external-
 
 # Build owner/sample geometry selections from rendered three-vrm owner IDs only.
 render-parity-current-blocker-owner-sample-selection three_vrm_root=".external-fixtures/three-vrm":
+    just render-parity-seed-base-color-flat32-gradient-owner-hotspots-5x5 "{{ three_vrm_root }}"
     just render-parity-seed-owner-hotspot-depth3-owner-sample-selection "{{ three_vrm_root }}"
     just render-parity-seed-base-color-flat32-gradient-owner-render-join "{{ three_vrm_root }}"
     cargo +nightly -Zscript tools/render-parity/build-owner-sample-selection.rs --owner-hotspots .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.owner-hotspot-projection.gradient.0.5x0.5.s5.rgba.json --rust-hotspots .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-vs-three-vrm.hotspots.gradient.json --out .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-owner-sample-selection.gradient.s5.json --manifest-out .external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.wgpu-owner-sample-selection.gradient.s5.manifest.json
