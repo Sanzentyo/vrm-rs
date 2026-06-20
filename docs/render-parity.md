@@ -70,7 +70,14 @@ recipes are convenience entry points. Use these first:
   readback-replacement upper-bound flag, not by the normal shader path. The
   first depth3 no-readback check was byte-identical to the previous
   geometry-bound render, so the remaining PSNR gap is an ownership/coverage
-  problem rather than a UV-only material-sampling problem. The
+  problem rather than a UV-only material-sampling problem. The wgpu capture now
+  has the first implementation of that ownership step: geometry-bearing records
+  are converted into one point vertex per selected pixel and drawn after the
+  normal pass with the same material bind group, so the selected surface owns
+  the pixel and material evaluation runs from the recorded sample geometry
+  without copying `replacement_rgba`. On the compact depth3 base-color fixture
+  this raises the wgpu selected raw comparison to `64.3542 dB` with max selected
+  channel delta `1`; Bevy and Ash still need the same resolve pass. The
   wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against

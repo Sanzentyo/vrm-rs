@@ -217,7 +217,9 @@ struct OwnerTriangle {
 struct GpuPrimitive {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    owner_sample_resolve_vertex_buffer: Option<wgpu::Buffer>,
     index_count: u32,
+    owner_sample_resolve_vertex_count: u32,
     texture_bind_group_index: usize,
     pipeline_index: usize,
 }
@@ -1355,6 +1357,123 @@ fn material_texture_bind_group(
     }
 }
 
+fn owner_sample_resolve_vertices_for_primitive(
+    primitive: &DrawPrimitive,
+    records: &[WgpuOwnerSampleOverrideRecord],
+    options: &CaptureOptions,
+) -> Vec<Vertex> {
+    records
+        .iter()
+        .filter(|record| record.geometry_flags != 0)
+        .filter_map(|record| owner_sample_resolve_vertex(primitive, record, options))
+        .collect()
+}
+
+fn owner_sample_resolve_vertex(
+    primitive: &DrawPrimitive,
+    record: &WgpuOwnerSampleOverrideRecord,
+    options: &CaptureOptions,
+) -> Option<Vertex> {
+    let indices = record.geometry_indices;
+    let [ia, ib, ic] = [
+        usize::try_from(indices[0]).ok()?,
+        usize::try_from(indices[1]).ok()?,
+        usize::try_from(indices[2]).ok()?,
+    ];
+    let a = *primitive.vertices.get(ia)?;
+    let b = *primitive.vertices.get(ib)?;
+    let c = *primitive.vertices.get(ic)?;
+    let barycentric = [
+        record.barycentric_depth[0],
+        record.barycentric_depth[1],
+        record.barycentric_depth[2],
+    ];
+    let mut vertex = interpolate_vertex(a, b, c, barycentric);
+    vertex.position = owner_sample_pixel_ndc(record.pixel, options)?;
+    vertex.tex_coord = record.geometry_uvs[..2].try_into().ok()?;
+    vertex._padding = 0.0;
+    Some(vertex)
+}
+
+fn owner_sample_pixel_ndc(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 3]> {
+    (pixel[0] < options.width && pixel[1] < options.height).then(|| {
+        let x = ((pixel[0] as f32 + 0.5) / options.width as f32) * 2.0 - 1.0;
+        let y = 1.0 - ((pixel[1] as f32 + 0.5) / options.height as f32) * 2.0;
+        [x, y, 0.0]
+    })
+}
+
+fn interpolate_vertex(a: Vertex, b: Vertex, c: Vertex, weights: [f32; 3]) -> Vertex {
+    Vertex {
+        position: interpolate_vec3(a.position, b.position, c.position, weights),
+        normal: normalize_or_fallback(
+            interpolate_vec3(a.normal, b.normal, c.normal, weights),
+            a.normal,
+        ),
+        tangent: normalize_tangent(interpolate_vec4(a.tangent, b.tangent, c.tangent, weights)),
+        tex_coord: interpolate_vec2(a.tex_coord, b.tex_coord, c.tex_coord, weights),
+        color: interpolate_vec4(a.color, b.color, c.color, weights),
+        shade_color: interpolate_vec4(a.shade_color, b.shade_color, c.shade_color, weights),
+        shading: interpolate_vec4(a.shading, b.shading, c.shading, weights),
+        emissive: interpolate_vec4(a.emissive, b.emissive, c.emissive, weights),
+        matcap_factor: interpolate_vec4(a.matcap_factor, b.matcap_factor, c.matcap_factor, weights),
+        rim_color: interpolate_vec4(a.rim_color, b.rim_color, c.rim_color, weights),
+        rim_params: interpolate_vec4(a.rim_params, b.rim_params, c.rim_params, weights),
+        outline_color: interpolate_vec4(a.outline_color, b.outline_color, c.outline_color, weights),
+        alpha_mode: interpolate_scalar(a.alpha_mode, b.alpha_mode, c.alpha_mode, weights),
+        normal_scale: interpolate_scalar(a.normal_scale, b.normal_scale, c.normal_scale, weights),
+        double_sided: interpolate_scalar(a.double_sided, b.double_sided, c.double_sided, weights),
+        _padding: 0.0,
+    }
+}
+
+fn interpolate_vec2(a: [f32; 2], b: [f32; 2], c: [f32; 2], weights: [f32; 3]) -> [f32; 2] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+    ]
+}
+
+fn interpolate_vec3(a: [f32; 3], b: [f32; 3], c: [f32; 3], weights: [f32; 3]) -> [f32; 3] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+    ]
+}
+
+fn interpolate_vec4(a: [f32; 4], b: [f32; 4], c: [f32; 4], weights: [f32; 3]) -> [f32; 4] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+        interpolate_scalar(a[3], b[3], c[3], weights),
+    ]
+}
+
+fn interpolate_scalar(a: f32, b: f32, c: f32, weights: [f32; 3]) -> f32 {
+    weights[0] * a + weights[1] * b + weights[2] * c
+}
+
+fn normalize_or_fallback(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+    let vector = Vec3::from_array(value);
+    if vector.length_squared() > f32::EPSILON {
+        vector.normalize().to_array()
+    } else {
+        fallback
+    }
+}
+
+fn normalize_tangent(value: [f32; 4]) -> [f32; 4] {
+    let tangent = Vec3::new(value[0], value[1], value[2]);
+    let normalized = if tangent.length_squared() > f32::EPSILON {
+        tangent.normalize()
+    } else {
+        Vec3::X
+    };
+    [normalized.x, normalized.y, normalized.z, value[3].signum()]
+}
+
 fn non_empty_owner_sample_override_records(
     records: Vec<WgpuOwnerSampleOverrideRecord>,
 ) -> Vec<WgpuOwnerSampleOverrideRecord> {
@@ -1610,6 +1729,56 @@ fn render_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: key.blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn owner_sample_resolve_pipeline(
+    device: &wgpu::Device,
+    uniform_layout: &wgpu::BindGroupLayout,
+    texture_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("render parity owner sample resolve pipeline layout"),
+        bind_group_layouts: &[Some(uniform_layout), Some(texture_layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("render parity owner sample resolve pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_owner_sample_resolve"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Vertex::layout()],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::PointList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -1915,9 +2084,19 @@ async fn render_capture(
             *key,
         )
     }));
+    let owner_sample_resolve_pipeline = owner_sample_resolve_pipeline(
+        &device,
+        &uniform_bind_group_layout,
+        &texture_bind_group_layout,
+        &shader,
+        format,
+    );
     let pipeline_indices = pipeline_indices(&pipeline_keys);
     let mut primitive_texture_bind_groups = Vec::with_capacity(mesh.primitives.len());
+    let mut primitive_owner_sample_records = Vec::with_capacity(mesh.primitives.len());
     for primitive in &mesh.primitives {
+        let owner_sample_records =
+            owner_sample_override_records_for_primitive(loaded, primitive, correction_plan)?;
         primitive_texture_bind_groups.push(material_texture_bind_group(
             &device,
             &texture_bind_group_layout,
@@ -1931,8 +2110,9 @@ async fn render_capture(
             primitive.images,
             primitive.uv_transforms,
             primitive.material_extra,
-            owner_sample_override_records_for_primitive(loaded, primitive, correction_plan)?,
+            owner_sample_records.clone(),
         ));
+        primitive_owner_sample_records.push(owner_sample_records);
     }
     let mut gpu_primitives = Vec::with_capacity(mesh.primitives.len());
     for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
@@ -1946,10 +2126,26 @@ async fn render_capture(
             contents: bytemuck::cast_slice(&primitive.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let owner_sample_resolve_vertices = owner_sample_resolve_vertices_for_primitive(
+            primitive,
+            &primitive_owner_sample_records[primitive_index],
+            options,
+        );
+        let owner_sample_resolve_vertex_count = u32::try_from(owner_sample_resolve_vertices.len())?;
+        let owner_sample_resolve_vertex_buffer =
+            (!owner_sample_resolve_vertices.is_empty()).then(|| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("render parity owner sample resolve vertices"),
+                    contents: bytemuck::cast_slice(&owner_sample_resolve_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            });
         gpu_primitives.push(GpuPrimitive {
             vertex_buffer,
             index_buffer,
+            owner_sample_resolve_vertex_buffer,
             index_count: u32::try_from(primitive.indices.len())?,
+            owner_sample_resolve_vertex_count,
             texture_bind_group_index: primitive_index,
             pipeline_index: pipeline_indices[&pipeline_key(primitive.policy, options.front_face)],
         });
@@ -2003,6 +2199,19 @@ async fn render_capture(
             pass.set_vertex_buffer(0, primitive.vertex_buffer.slice(..));
             pass.set_index_buffer(primitive.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..primitive.index_count, 0, 0..1);
+        }
+        pass.set_pipeline(&owner_sample_resolve_pipeline);
+        for primitive in &gpu_primitives {
+            let Some(resolve_vertex_buffer) = &primitive.owner_sample_resolve_vertex_buffer else {
+                continue;
+            };
+            pass.set_bind_group(
+                1,
+                &primitive_texture_bind_groups[primitive.texture_bind_group_index].bind_group,
+                &[],
+            );
+            pass.set_vertex_buffer(0, resolve_vertex_buffer.slice(..));
+            pass.draw(0..primitive.owner_sample_resolve_vertex_count, 0..1);
         }
     }
     encoder.copy_texture_to_buffer(
@@ -2239,6 +2448,53 @@ mod tests {
     }
 
     #[test]
+    fn owner_sample_resolve_vertices_use_record_pixel_uv_and_barycentric_attributes() {
+        let primitive = DrawPrimitive {
+            vertices: vec![
+                test_vertex([0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]),
+                test_vertex([1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 1.0]),
+                test_vertex([0.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]),
+            ],
+            indices: vec![0, 1, 2],
+            images: GltfMaterialTextureSlots::default(),
+            uv_transforms: MaterialUvTransforms::default(),
+            material_extra: MaterialExtraUniform::zeroed(),
+            policy: MaterialPolicy::default(),
+            owner_source: OwnerSource {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+                material: None,
+                pass: OwnerPass::Base,
+                render_order: 2000,
+                phase_order: None,
+            },
+            owner_ids: Vec::new(),
+        };
+        let options = test_options(4, 2);
+        let record = WgpuOwnerSampleOverrideRecord {
+            pixel: [1, 0],
+            sample: [0.5, 0.5],
+            replacement_rgba: [0.0; 4],
+            relation_to_expected: 1,
+            geometry_flags: 1,
+            sample_pass: 1,
+            _padding0: 0,
+            geometry_ids: [0, 0, 0, 0],
+            geometry_indices: [0, 1, 2, u32::MAX],
+            barycentric_depth: [0.25, 0.25, 0.5, 0.0],
+            geometry_uvs: [0.7, 0.8, 0.7, 0.8],
+        };
+
+        let vertices = owner_sample_resolve_vertices_for_primitive(&primitive, &[record], &options);
+
+        assert_eq!(vertices.len(), 1);
+        assert_eq!(vertices[0].position, [-0.25, 0.5, 0.0]);
+        assert_eq!(vertices[0].tex_coord, [0.7, 0.8]);
+        assert_eq!(vertices[0].color, [0.25, 0.25, 0.5, 1.0]);
+    }
+
+    #[test]
     fn empty_owner_sample_override_records_keep_storage_binding_valid() {
         let records = non_empty_owner_sample_override_records(Vec::new());
 
@@ -2260,10 +2516,72 @@ mod tests {
         assert!(SHADER.contains("owner_sample_override_index(input.position"));
         assert!(SHADER.contains("owner_sample_has_geometry(owner_sample_index)"));
         assert!(SHADER.contains("owner_sample_base_uv(owner_sample_index"));
+        assert!(SHADER.contains("fn vs_owner_sample_resolve"));
         assert!(SHADER.contains("use_owner_sample_geometry = owner_sample_has_geometry"));
         assert!(SHADER.contains("textureSampleGrad("));
         assert!(!SHADER.contains("textureSampleLevel("));
         assert!(!SHADER.contains("apply_owner_sample_override"));
+    }
+
+    fn test_vertex(position: [f32; 3], color: [f32; 4]) -> Vertex {
+        Vertex {
+            position,
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            tex_coord: [0.0, 0.0],
+            color,
+            shade_color: [1.0, 1.0, 1.0, 1.0],
+            shading: [0.0; 4],
+            emissive: [0.0; 4],
+            matcap_factor: [0.0; 4],
+            rim_color: [0.0; 4],
+            rim_params: [0.0; 4],
+            outline_color: [1.0, 1.0, 1.0, -1.0],
+            alpha_mode: 0.0,
+            normal_scale: 1.0,
+            double_sided: 0.0,
+            _padding: 0.0,
+        }
+    }
+
+    fn test_options(width: u32, height: u32) -> CaptureOptions {
+        CaptureOptions {
+            fixture: PathBuf::from("fixture.gltf"),
+            out: PathBuf::from("out.rgba.json"),
+            png_out: None,
+            imqraw_out: None,
+            owner_sample_correction_manifest: None,
+            apply_owner_sample_readback_replacement: false,
+            width,
+            height,
+            camera_y: 1.0,
+            camera_z: 5.0,
+            target_y: 1.0,
+            screen_jitter_x: 0.0,
+            screen_jitter_y: 0.0,
+            mtoon_exposure: 0.78,
+            mtoon_ambient_base: 0.12,
+            mtoon_ambient_gi_scale: 0.20,
+            pbr_ambient: 0.03183099,
+            direct_light_scale: 1.0,
+            directional_r: 1.0,
+            directional_g: 1.0,
+            directional_b: 1.0,
+            mtoon_light_accumulation: MtoonLightAccumulation::ThreeVrm,
+            mtoon_time: 0.0,
+            background: CaptureBackground::OpaqueBlack,
+            disable_outlines: false,
+            outline_width_scale: 1.0,
+            disable_normal_maps: false,
+            disable_texture_mips: false,
+            force_nearest_textures: false,
+            normal_map_mode: NormalMapMode::GeneratedTangents,
+            normal_map_scale: 1.0,
+            mtoon_v0_compat_shade: false,
+            expressions: Vec::new(),
+            diagnostic_render: DiagnosticRender::Shaded,
+            front_face: CaptureFrontFace::Ccw,
+        }
     }
 
     fn project_to_screen(projection: Mat4, point: Vec3, width: u32, height: u32) -> [f32; 2] {
@@ -2674,6 +2992,28 @@ fn vs_main(input: VertexIn) -> VertexOut {
     if input.outline_color.a >= 0.0 {
         out.position.z += 0.000001 * out.position.w;
     }
+    out.normal = normalize(input.normal);
+    out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
+    out.world_position = input.position;
+    out.tex_coord = input.tex_coord;
+    out.color = input.color;
+    out.shade_color = input.shade_color;
+    out.shading = input.shading;
+    out.emissive = input.emissive;
+    out.matcap_factor = input.matcap_factor;
+    out.rim_color = input.rim_color;
+    out.rim_params = input.rim_params;
+    out.outline_color = input.outline_color;
+    out.alpha_mode = input.alpha_mode;
+    out.normal_scale = input.normal_scale;
+    out.double_sided = input.double_sided;
+    return out;
+}
+
+@vertex
+fn vs_owner_sample_resolve(input: VertexIn) -> VertexOut {
+    var out: VertexOut;
+    out.position = vec4<f32>(input.position.xy, 0.0, 1.0);
     out.normal = normalize(input.normal);
     out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
     out.world_position = input.position;
