@@ -713,6 +713,72 @@ pub struct AshRendererFrame {
     pub draw_calls: Vec<AshDrawCallPlan>,
 }
 
+#[derive(Clone, Debug)]
+pub struct AshDrawableFramePlan {
+    pub render_pass: AshRenderPassPlan,
+    pub commands: Vec<AshCommandPlan>,
+    pub skipped_draws: Vec<AshSkippedDraw>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AshRenderPassPlan {
+    pub render_area: vk::Rect2D,
+    pub color_format: vk::Format,
+    pub depth_format: Option<vk::Format>,
+    pub color_clear: [f32; 4],
+    pub depth_stencil_clear: Option<AshDepthStencilClear>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshDepthStencilClear {
+    pub depth: f32,
+    pub stencil: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AshCommandPlan {
+    BindGraphicsPipeline {
+        pipeline_index: usize,
+    },
+    BindDescriptorSet {
+        pipeline_index: usize,
+        descriptor_set_index: usize,
+    },
+    BindVertexBuffer {
+        buffer_index: usize,
+        binding: u32,
+        offset: vk::DeviceSize,
+    },
+    BindIndexBuffer {
+        buffer_index: usize,
+        offset: vk::DeviceSize,
+        index_type: vk::IndexType,
+    },
+    DrawIndexed {
+        primitive_index: usize,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        vertex_offset: i32,
+        first_instance: u32,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshSkippedDraw {
+    pub primitive_index: usize,
+    pub reason: AshSkippedDrawReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshSkippedDrawReason {
+    MissingPipeline,
+    MissingDescriptorSet,
+    MissingVertexBuffer,
+    MissingIndexBuffer,
+    EmptyIndexRange,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshUniformScope {
     Material {
@@ -814,6 +880,128 @@ pub struct AshVertexAttributePlan {
     pub binding: u32,
     pub format: vk::Format,
     pub offset: u32,
+}
+
+pub fn ash_drawable_frame_from_renderer_frame(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+) -> AshDrawableFramePlan {
+    let first_pipeline = frame.pipelines.first();
+    let mut commands = Vec::new();
+    let mut skipped_draws = Vec::new();
+    let mut bound_pipeline = None;
+    let mut bound_descriptor_set = None;
+    let mut bound_vertex_buffer = None;
+    let mut bound_index_buffer = None;
+
+    for draw in &frame.draw_calls {
+        let Some(pipeline_plan_index) = draw.pipeline_plan_index else {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::MissingPipeline,
+            });
+            continue;
+        };
+        let Some(pipeline_index) = frame
+            .pipelines
+            .iter()
+            .position(|pipeline| pipeline.pipeline_plan_index == pipeline_plan_index)
+        else {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::MissingPipeline,
+            });
+            continue;
+        };
+        let Some(descriptor_set_index) = draw
+            .descriptor_set_index
+            .filter(|index| *index < frame.descriptor_sets.len())
+        else {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::MissingDescriptorSet,
+            });
+            continue;
+        };
+        if draw.vertex_buffer_index >= frame.buffers.len() {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::MissingVertexBuffer,
+            });
+            continue;
+        }
+        if draw.index_buffer_index >= frame.buffers.len() {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::MissingIndexBuffer,
+            });
+            continue;
+        }
+        if draw.index_count == 0 {
+            skipped_draws.push(AshSkippedDraw {
+                primitive_index: draw.primitive_index,
+                reason: AshSkippedDrawReason::EmptyIndexRange,
+            });
+            continue;
+        }
+
+        if bound_pipeline != Some(pipeline_index) {
+            commands.push(AshCommandPlan::BindGraphicsPipeline { pipeline_index });
+            bound_pipeline = Some(pipeline_index);
+            bound_descriptor_set = None;
+        }
+        if bound_descriptor_set != Some(descriptor_set_index) {
+            commands.push(AshCommandPlan::BindDescriptorSet {
+                pipeline_index,
+                descriptor_set_index,
+            });
+            bound_descriptor_set = Some(descriptor_set_index);
+        }
+        if bound_vertex_buffer != Some(draw.vertex_buffer_index) {
+            commands.push(AshCommandPlan::BindVertexBuffer {
+                buffer_index: draw.vertex_buffer_index,
+                binding: 0,
+                offset: 0,
+            });
+            bound_vertex_buffer = Some(draw.vertex_buffer_index);
+        }
+        if bound_index_buffer != Some(draw.index_buffer_index) {
+            commands.push(AshCommandPlan::BindIndexBuffer {
+                buffer_index: draw.index_buffer_index,
+                offset: 0,
+                index_type: vk::IndexType::UINT32,
+            });
+            bound_index_buffer = Some(draw.index_buffer_index);
+        }
+        commands.push(AshCommandPlan::DrawIndexed {
+            primitive_index: draw.primitive_index,
+            index_count: draw.index_count,
+            instance_count: 1,
+            first_index: 0,
+            vertex_offset: 0,
+            first_instance: 0,
+        });
+    }
+
+    AshDrawableFramePlan {
+        render_pass: AshRenderPassPlan {
+            render_area: vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent,
+            },
+            color_format: first_pipeline
+                .map(|pipeline| pipeline.color_format)
+                .unwrap_or(vk::Format::R8G8B8A8_UNORM),
+            depth_format: first_pipeline.and_then(|pipeline| pipeline.depth_format),
+            color_clear: [0.0, 0.0, 0.0, 1.0],
+            depth_stencil_clear: Some(AshDepthStencilClear {
+                depth: 1.0,
+                stencil: 0,
+            }),
+        },
+        commands,
+        skipped_draws,
+    }
 }
 
 pub fn ash_renderer_frame_from_plan(plan: &AshVrmFramePlan) -> AshRendererFrame {
@@ -3272,6 +3460,53 @@ mod tests {
         );
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+
+        let drawable = ash_drawable_frame_from_renderer_frame(
+            &renderer_frame,
+            vk::Extent2D {
+                width: 128,
+                height: 64,
+            },
+        );
+        assert_eq!(drawable.render_pass.render_area.extent.width, 128);
+        assert_eq!(drawable.render_pass.render_area.extent.height, 64);
+        assert_eq!(
+            drawable.render_pass.color_format,
+            vk::Format::R8G8B8A8_UNORM
+        );
+        assert_eq!(
+            drawable.render_pass.depth_format,
+            Some(ash_reference_depth_format())
+        );
+        assert!(drawable.skipped_draws.is_empty());
+        assert_eq!(
+            drawable.commands,
+            vec![
+                AshCommandPlan::BindGraphicsPipeline { pipeline_index: 0 },
+                AshCommandPlan::BindDescriptorSet {
+                    pipeline_index: 0,
+                    descriptor_set_index: 0,
+                },
+                AshCommandPlan::BindVertexBuffer {
+                    buffer_index: 0,
+                    binding: 0,
+                    offset: 0,
+                },
+                AshCommandPlan::BindIndexBuffer {
+                    buffer_index: 1,
+                    offset: 0,
+                    index_type: vk::IndexType::UINT32,
+                },
+                AshCommandPlan::DrawIndexed {
+                    primitive_index: 0,
+                    index_count: 1,
+                    instance_count: 1,
+                    first_index: 0,
+                    vertex_offset: 0,
+                    first_instance: 0,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -3346,6 +3581,39 @@ mod tests {
         assert_eq!(
             renderer_frame.pipelines[1].key.cull_mode,
             vk::CullModeFlags::FRONT
+        );
+    }
+
+    #[test]
+    fn drawable_frame_reports_skipped_draws_without_device_handles() {
+        let mut frame = AshRendererFrame::default();
+        frame.draw_calls.push(AshDrawCallPlan {
+            primitive_index: 7,
+            material: Some(MaterialRef(0)),
+            pipeline_plan_index: Some(99),
+            descriptor_set_index: Some(0),
+            vertex_buffer_index: 0,
+            index_buffer_index: 1,
+            index_count: 3,
+            render_order: 2000,
+            phase_order: 2000,
+        });
+
+        let drawable = ash_drawable_frame_from_renderer_frame(
+            &frame,
+            vk::Extent2D {
+                width: 16,
+                height: 16,
+            },
+        );
+
+        assert!(drawable.commands.is_empty());
+        assert_eq!(
+            drawable.skipped_draws,
+            vec![AshSkippedDraw {
+                primitive_index: 7,
+                reason: AshSkippedDrawReason::MissingPipeline,
+            }]
         );
     }
 

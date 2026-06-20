@@ -113,6 +113,12 @@ This makes Ash outline diagnostics comparable to wgpu/Bevy/three-vrm without
 making outline-off the default path.
 Ash descriptor plans derive Vulkan sampler filter, wrap, mipmap mode, and LOD
 clamps from the glTF texture sampler referenced by each material texture slot.
+For downstream command-buffer integration, `AshRendererFrame` can also be
+lowered into `AshDrawableFramePlan`. That plan keeps device handles out of the
+library but gives an ash app a directly recordable sequence of
+bind-pipeline/bind-descriptor-set/bind-vertex-buffer/bind-index-buffer/draw-indexed
+commands plus typed skipped-draw reasons, so real renderers do not need to infer
+draw order or descriptor linkage from the lower-level resource lists.
 `just render-parity-samples-ash-gated` now gates the opaque-black six-fixture
 sweep with Ash included at `rgb-visible >= 34 dB`; the latest local run passed
 with exact opaque-black alpha parity and Ash selected PSNRs Seed-san `34.6391`,

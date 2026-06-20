@@ -2,8 +2,9 @@ use ash::vk;
 use clap::Parser;
 use std::error::Error;
 use vrm_adapter_ash::{
-    AshBufferRole, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
-    ash_renderer_frame_from_plan, frame_plan_from_options,
+    AshBufferRole, AshCommandPlan, AshDrawableFramePlan, AshRendererFrame, AshSamplerPlan,
+    AshVrmFramePlanOptions, ash_drawable_frame_from_renderer_frame, ash_renderer_frame_from_plan,
+    frame_plan_from_options,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,7 +45,7 @@ struct MockAshRenderer {
 }
 
 impl MockAshRenderer {
-    fn upload_frame(&mut self, frame: &AshRendererFrame) {
+    fn upload_frame(&mut self, frame: &AshRendererFrame, drawable: &AshDrawableFramePlan) {
         self.buffers.clear();
         for buffer in &frame.buffers {
             let handle = self.alloc_buffer(buffer.role);
@@ -79,23 +80,56 @@ impl MockAshRenderer {
             let handle = self.alloc_descriptor_set();
             self.descriptor_sets.push((handle, set.bindings.len()));
         }
-        self.draws = frame
-            .draw_calls
-            .iter()
-            .map(|draw| MockRecordedDraw {
-                pipeline: draw
-                    .pipeline_plan_index
-                    .and_then(|index| self.pipelines.get(index).map(|pipeline| pipeline.0)),
-                descriptor_set: draw
-                    .descriptor_set_index
-                    .and_then(|index| self.descriptor_sets.get(index).map(|set| set.0)),
-                vertex_buffer: self.buffers[draw.vertex_buffer_index].0,
-                index_buffer: self.buffers[draw.index_buffer_index].0,
-                index_count: draw.index_count,
-                render_order: draw.render_order,
-                phase_order: draw.phase_order,
-            })
-            .collect();
+        self.draws.clear();
+        let mut pipeline = None;
+        let mut descriptor_set = None;
+        let mut vertex_buffer = None;
+        let mut index_buffer = None;
+        for command in &drawable.commands {
+            match *command {
+                AshCommandPlan::BindGraphicsPipeline { pipeline_index } => {
+                    pipeline = self
+                        .pipelines
+                        .get(pipeline_index)
+                        .map(|pipeline| pipeline.0);
+                }
+                AshCommandPlan::BindDescriptorSet {
+                    descriptor_set_index,
+                    ..
+                } => {
+                    descriptor_set = self
+                        .descriptor_sets
+                        .get(descriptor_set_index)
+                        .map(|set| set.0);
+                }
+                AshCommandPlan::BindVertexBuffer { buffer_index, .. } => {
+                    vertex_buffer = self.buffers.get(buffer_index).map(|buffer| buffer.0);
+                }
+                AshCommandPlan::BindIndexBuffer { buffer_index, .. } => {
+                    index_buffer = self.buffers.get(buffer_index).map(|buffer| buffer.0);
+                }
+                AshCommandPlan::DrawIndexed {
+                    primitive_index,
+                    index_count,
+                    ..
+                } => {
+                    let draw = frame
+                        .draw_calls
+                        .iter()
+                        .find(|draw| draw.primitive_index == primitive_index)
+                        .expect("drawable command references a planned draw");
+                    self.draws.push(MockRecordedDraw {
+                        pipeline,
+                        descriptor_set,
+                        vertex_buffer: vertex_buffer.expect("vertex buffer bound before draw"),
+                        index_buffer: index_buffer.expect("index buffer bound before draw"),
+                        index_count,
+                        render_order: draw.render_order,
+                        phase_order: draw.phase_order,
+                    });
+                }
+            }
+        }
     }
 
     fn alloc_buffer(&mut self, role: AshBufferRole) -> MockBufferHandle {
@@ -132,8 +166,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = AshVrmFramePlanOptions::parse();
     let frame_plan = frame_plan_from_options(&options)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
+    let drawable = ash_drawable_frame_from_renderer_frame(
+        &renderer_frame,
+        vk::Extent2D {
+            width: 512,
+            height: 512,
+        },
+    );
     let mut renderer = MockAshRenderer::default();
-    renderer.upload_frame(&renderer_frame);
+    renderer.upload_frame(&renderer_frame, &drawable);
     let total_indices = renderer
         .draws
         .iter()
@@ -161,11 +202,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             ^ (plan.max_lod.to_bits() as u64)
     });
     println!(
-        "ash renderer example: {} buffers, {} images, {} samplers, {} descriptor sets, {} draws, {} indices, checksum {}, sampler checksum {}",
+        "ash renderer example: {} buffers, {} images, {} samplers, {} descriptor sets, {} commands, {} skipped, {} draws, {} indices, checksum {}, sampler checksum {}",
         renderer.buffers.len(),
         renderer.images.len(),
         renderer.samplers.len(),
         renderer.descriptor_sets.len(),
+        drawable.commands.len(),
+        drawable.skipped_draws.len(),
         renderer.draws.len(),
         total_indices,
         command_checksum,
