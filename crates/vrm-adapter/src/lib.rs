@@ -696,6 +696,30 @@ pub struct RenderOwnerSampleCorrectionDecision {
     pub correction: RenderOwnerSampleCorrection,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RenderRgba8Correction {
+    pub pixel: RenderPixel,
+    pub replacement_rgba: [u8; 4],
+}
+
+impl RenderRgba8Correction {
+    pub const fn new(pixel: RenderPixel, replacement_rgba: [u8; 4]) -> Self {
+        Self {
+            pixel,
+            replacement_rgba,
+        }
+    }
+}
+
+impl From<&RenderOwnerSampleCorrectionDecision> for RenderRgba8Correction {
+    fn from(decision: &RenderOwnerSampleCorrectionDecision) -> Self {
+        Self {
+            pixel: decision.pixel,
+            replacement_rgba: decision.replacement_rgba,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum RenderOwnerSampleCorrectionApplyError {
     #[error(
@@ -743,6 +767,19 @@ pub fn apply_render_owner_sample_correction_decisions_rgba8(
     rgba: &mut [u8],
     decisions: &[RenderOwnerSampleCorrectionDecision],
 ) -> Result<usize, RenderOwnerSampleCorrectionApplyError> {
+    let corrections = decisions
+        .iter()
+        .map(RenderRgba8Correction::from)
+        .collect::<Vec<_>>();
+    apply_render_rgba8_corrections(width, height, rgba, &corrections)
+}
+
+pub fn apply_render_rgba8_corrections(
+    width: u64,
+    height: u64,
+    rgba: &mut [u8],
+    corrections: &[RenderRgba8Correction],
+) -> Result<usize, RenderOwnerSampleCorrectionApplyError> {
     let expected_len = width
         .checked_mul(height)
         .and_then(|pixels| pixels.checked_mul(4))
@@ -758,11 +795,11 @@ pub fn apply_render_owner_sample_correction_decisions_rgba8(
         );
     }
 
-    for decision in decisions {
-        let offset = rgba8_pixel_offset(width, height, decision.pixel, rgba.len())?;
-        rgba[offset..offset + 4].copy_from_slice(&decision.replacement_rgba);
+    for correction in corrections {
+        let offset = rgba8_pixel_offset(width, height, correction.pixel, rgba.len())?;
+        rgba[offset..offset + 4].copy_from_slice(&correction.replacement_rgba);
     }
-    Ok(decisions.len())
+    Ok(corrections.len())
 }
 
 fn rgba8_pixel_offset(
@@ -5186,6 +5223,12 @@ mod tests {
 
         assert_eq!(applied, 1);
         assert_eq!(&rgba[12..16], &[101, 100, 100, 255]);
+        let plain = RenderRgba8Correction::new(RenderPixel::new(0, 0), [9, 8, 7, 255]);
+        assert_eq!(
+            apply_render_rgba8_corrections(2, 2, &mut rgba, &[plain]).unwrap(),
+            1
+        );
+        assert_eq!(&rgba[0..4], &[9, 8, 7, 255]);
         assert_eq!(
             apply_render_owner_sample_correction_decisions_rgba8(
                 2,

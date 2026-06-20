@@ -5,6 +5,8 @@
 //! and writes the same RGBA JSON artifact consumed by
 //! `tools/render-parity/compare-psnr.mjs`.
 
+#[path = "common/render_capture_correction.rs"]
+mod render_capture_correction;
 #[path = "common/render_capture_imqraw.rs"]
 mod render_capture_imqraw;
 #[path = "common/render_capture_scene.rs"]
@@ -93,6 +95,8 @@ struct CaptureOptions {
     png_out: Option<PathBuf>,
     #[arg(long)]
     imqraw_out: Option<PathBuf>,
+    #[arg(long)]
+    owner_sample_correction_manifest: Option<PathBuf>,
     #[arg(long, default_value_t = 512)]
     width: u32,
     #[arg(long, default_value_t = 512)]
@@ -488,7 +492,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
     let mesh = mesh_draw_data(&loaded, &options)?;
-    let rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
+    let mut rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
+    if let Some(path) = &options.owner_sample_correction_manifest {
+        render_capture_correction::apply_owner_sample_correction_manifest(
+            path,
+            options.width,
+            options.height,
+            &mut rgba,
+        )?;
+    }
 
     write_rgba_json(&options, &rgba, &loaded, &mesh)?;
     if let Some(path) = &options.png_out {

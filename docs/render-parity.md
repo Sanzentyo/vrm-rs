@@ -31,6 +31,13 @@ recipes are convenience entry points. Use these first:
   existing raw images. The correction decision itself is shared through
   `vrm-adapter` owner/sample policy types so renderer-path experiments can use
   the same Sans I/O boundary.
+- `wgpu_render_capture` and `bevy_render_capture` accept
+  `--owner-sample-correction-manifest <path>` for renderer readback
+  experiments. The manifest is applied before RGBA JSON, PNG, and imqraw
+  artifacts are written, using the same `vrm-adapter` in-memory RGBA8
+  applicator as the raw correction tool. The manifest format is source-like:
+  `{"corrections":[{"x":1,"y":2,"rgba":[r,g,b,a]}]}`. `replacementRgba`
+  is also accepted for generated decision manifests.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
   legacy `.psnr.json` report is retained as a diagnostic cross-check over

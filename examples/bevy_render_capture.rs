@@ -4,6 +4,8 @@
 //! into an offscreen image and writes the shared RGBA JSON artifact consumed by
 //! `tools/render-parity/compare-psnr.mjs`.
 
+#[path = "common/render_capture_correction.rs"]
+mod render_capture_correction;
 #[path = "common/render_capture_imqraw.rs"]
 mod render_capture_imqraw;
 #[path = "common/render_capture_scene.rs"]
@@ -132,6 +134,8 @@ struct CaptureOptions {
     png_out: Option<PathBuf>,
     #[arg(long)]
     imqraw_out: Option<PathBuf>,
+    #[arg(long)]
+    owner_sample_correction_manifest: Option<PathBuf>,
     #[arg(long, default_value_t = 512)]
     width: u32,
     #[arg(long, default_value_t = 512)]
@@ -2824,7 +2828,7 @@ fn write_capture(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let row_bytes = options.width as usize * 4;
     let aligned_row_bytes = RenderDevice::align_copy_bytes_per_row(row_bytes);
-    let rgba = if row_bytes == aligned_row_bytes {
+    let mut rgba = if row_bytes == aligned_row_bytes {
         image_data.to_vec()
     } else {
         image_data
@@ -2833,6 +2837,14 @@ fn write_capture(
             .flat_map(|row| row[..row_bytes.min(row.len())].iter().copied())
             .collect()
     };
+    if let Some(path) = &options.owner_sample_correction_manifest {
+        render_capture_correction::apply_owner_sample_correction_manifest(
+            path,
+            options.width,
+            options.height,
+            &mut rgba,
+        )?;
+    }
 
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
