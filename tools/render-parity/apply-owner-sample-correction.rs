@@ -25,11 +25,11 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
-    RenderOwnerSampleCorrectionCandidate, RenderOwnerSampleCorrectionOutcome,
-    RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey, RenderOwnerSampleKey,
-    RenderOwnerSampleCorrectionDecision, RenderPixel, RenderSamplePoint,
     apply_render_owner_sample_correction_decisions_rgba8,
-    evaluate_render_owner_sample_correction_candidate,
+    evaluate_render_owner_sample_correction_candidate, RenderOwnerSampleCorrectionCandidate,
+    RenderOwnerSampleCorrectionDecision, RenderOwnerSampleCorrectionOutcome,
+    RenderOwnerSampleCorrectionPolicy, RenderOwnerSampleKey, RenderOwnerSurfaceKey, RenderPixel,
+    RenderSamplePoint,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -109,7 +109,16 @@ struct CorrectionManifestEntry {
     x: u64,
     y: u64,
     rgba: [u8; 4],
+    surface: CorrectionManifestSurface,
+    sample: [f64; 2],
     relation_to_expected: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CorrectionManifestSurface {
+    #[serde(rename = "materialName")]
+    material_name: String,
+    triangle: u64,
 }
 
 fn main() {
@@ -290,6 +299,11 @@ fn correction_report(
                 x: decision.pixel.x(),
                 y: decision.pixel.y(),
                 rgba: decision.replacement_rgba,
+                surface: CorrectionManifestSurface {
+                    material_name: decision.sample.surface().material_name().to_owned(),
+                    triangle: decision.sample.surface().triangle(),
+                },
+                sample: decision.sample.sample().to_pair(),
                 relation_to_expected: decision.relation_to_expected.as_str().to_owned(),
             })
             .collect(),
@@ -586,6 +600,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].x, 0);
     assert_eq!(manifest.corrections[0].y, 0);
     assert_eq!(manifest.corrections[0].rgba, [100, 100, 100, 255]);
+    assert_eq!(manifest.corrections[0].surface.material_name, "body");
+    assert_eq!(manifest.corrections[0].surface.triangle, 7);
+    assert_eq!(manifest.corrections[0].sample, [0.7, 0.5]);
     assert_eq!(
         manifest.corrections[0].relation_to_expected,
         "same-surface"

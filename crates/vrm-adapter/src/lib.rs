@@ -578,6 +578,16 @@ impl RenderOwnerSurfaceRelation {
             Self::Missing => "missing",
         }
     }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "same-surface" => Some(Self::SameSurface),
+            "same-material-different-triangle" => Some(Self::SameMaterialDifferentTriangle),
+            "different-material" => Some(Self::DifferentMaterial),
+            "missing" => Some(Self::Missing),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -720,9 +730,16 @@ impl From<&RenderOwnerSampleCorrectionDecision> for RenderRgba8Correction {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleCorrectionManifestEntry {
+    pub correction: RenderRgba8Correction,
+    pub sample: RenderOwnerSampleKey,
+    pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum RenderRgba8CorrectionManifestError {
-    #[error("owner sample correction manifest must be an array or contain corrections[]")]
+    #[error("owner sample correction manifest must contain corrections[]")]
     InvalidRoot,
     #[error("correction.x must be a u64")]
     MissingOrInvalidX,
@@ -738,23 +755,38 @@ pub enum RenderRgba8CorrectionManifestError {
     InvalidRgbaChannel { index: usize },
     #[error("correction.rgba channel {index} is outside u8 range: {value}")]
     RgbaChannelOutOfRange { index: usize, value: u64 },
+    #[error("correction.surface.materialName must be a string")]
+    MissingOrInvalidSurfaceMaterialName,
+    #[error("correction.surface.triangle must be a u64")]
+    MissingOrInvalidSurfaceTriangle,
+    #[error("correction.surface must be present")]
+    MissingSurface,
+    #[error("correction.sample must be present")]
+    MissingSample,
+    #[error("correction.sample must be a two-element numeric array")]
+    InvalidSample,
+    #[error("correction.relation_to_expected is not a known relation: {value}")]
+    InvalidRelation { value: String },
+}
+
+pub fn render_owner_sample_correction_manifest_entries_from_value(
+    value: &serde_json::Value,
+) -> Result<Vec<RenderOwnerSampleCorrectionManifestEntry>, RenderRgba8CorrectionManifestError> {
+    let corrections = value
+        .get("corrections")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidRoot)?;
+    corrections
+        .iter()
+        .map(render_owner_sample_correction_manifest_entry_from_value)
+        .collect()
 }
 
 pub fn render_rgba8_corrections_from_manifest_value(
     value: &serde_json::Value,
 ) -> Result<Vec<RenderRgba8Correction>, RenderRgba8CorrectionManifestError> {
-    let corrections = value
-        .as_array()
-        .or_else(|| {
-            value
-                .get("corrections")
-                .and_then(serde_json::Value::as_array)
-        })
-        .ok_or(RenderRgba8CorrectionManifestError::InvalidRoot)?;
-    corrections
-        .iter()
-        .map(render_rgba8_correction_from_manifest_entry)
-        .collect()
+    render_owner_sample_correction_manifest_entries_from_value(value)
+        .map(|entries| entries.into_iter().map(|entry| entry.correction).collect())
 }
 
 pub fn apply_render_rgba8_corrections_from_manifest_value(
@@ -767,9 +799,9 @@ pub fn apply_render_rgba8_corrections_from_manifest_value(
     apply_render_rgba8_corrections(width, height, rgba, &corrections).map_err(Into::into)
 }
 
-fn render_rgba8_correction_from_manifest_entry(
+fn render_owner_sample_correction_manifest_entry_from_value(
     value: &serde_json::Value,
-) -> Result<RenderRgba8Correction, RenderRgba8CorrectionManifestError> {
+) -> Result<RenderOwnerSampleCorrectionManifestEntry, RenderRgba8CorrectionManifestError> {
     let x = value
         .get("x")
         .and_then(serde_json::Value::as_u64)
@@ -780,12 +812,37 @@ fn render_rgba8_correction_from_manifest_entry(
         .ok_or(RenderRgba8CorrectionManifestError::MissingOrInvalidY)?;
     let rgba = value
         .get("rgba")
-        .or_else(|| value.get("replacementRgba"))
         .ok_or(RenderRgba8CorrectionManifestError::MissingRgba)?;
-    Ok(RenderRgba8Correction::new(
-        RenderPixel::new(x, y),
-        render_rgba8_manifest_channel_array(rgba)?,
-    ))
+    let surface = value
+        .get("surface")
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSurface)?;
+    let sample = value
+        .get("sample")
+        .ok_or(RenderRgba8CorrectionManifestError::MissingSample)?;
+    let sample = RenderOwnerSampleKey::new(
+        render_owner_surface_key_from_manifest_value(surface)?,
+        render_sample_point_from_manifest_value(sample)?,
+    );
+    let relation_to_expected = value
+        .get("relation_to_expected")
+        .or_else(|| value.get("relationToExpected"))
+        .and_then(serde_json::Value::as_str)
+        .map(|label| {
+            RenderOwnerSurfaceRelation::from_label(label).ok_or_else(|| {
+                RenderRgba8CorrectionManifestError::InvalidRelation {
+                    value: label.to_owned(),
+                }
+            })
+        })
+        .transpose()?;
+    Ok(RenderOwnerSampleCorrectionManifestEntry {
+        correction: RenderRgba8Correction::new(
+            RenderPixel::new(x, y),
+            render_rgba8_manifest_channel_array(rgba)?,
+        ),
+        sample,
+        relation_to_expected,
+    })
 }
 
 fn render_rgba8_manifest_channel_array(
@@ -814,6 +871,35 @@ fn render_rgba8_manifest_channel_array(
         })?;
     }
     Ok(rgba)
+}
+
+fn render_owner_surface_key_from_manifest_value(
+    value: &serde_json::Value,
+) -> Result<RenderOwnerSurfaceKey, RenderRgba8CorrectionManifestError> {
+    let material_name = value
+        .get("materialName")
+        .or_else(|| value.get("material_name"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingOrInvalidSurfaceMaterialName)?;
+    let triangle = value
+        .get("triangle")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingOrInvalidSurfaceTriangle)?;
+    Ok(RenderOwnerSurfaceKey::from_diagnostic_material_name(
+        material_name,
+        triangle,
+    ))
+}
+
+fn render_sample_point_from_manifest_value(
+    value: &serde_json::Value,
+) -> Result<RenderSamplePoint, RenderRgba8CorrectionManifestError> {
+    let sample = value
+        .as_array()
+        .filter(|sample| sample.len() == 2)
+        .and_then(|sample| Some([sample.first()?.as_f64()?, sample.get(1)?.as_f64()?]))
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidSample)?;
+    Ok(RenderSamplePoint::from_pair(sample))
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -5371,11 +5457,18 @@ mod tests {
     }
 
     #[test]
-    fn render_rgba8_correction_manifest_applies_object_and_array_forms() {
+    fn render_rgba8_correction_manifest_requires_owner_sample_entries() {
         let mut rgba = vec![0; 2 * 2 * 4];
         let object = serde_json::json!({
             "corrections": [
-                {"x": 1, "y": 1, "rgba": [1, 2, 3, 255]}
+                {
+                    "x": 1,
+                    "y": 1,
+                    "rgba": [1, 2, 3, 255],
+                    "surface": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7},
+                    "sample": [0.7, 0.5],
+                    "relation_to_expected": "same-surface"
+                }
             ]
         });
 
@@ -5384,14 +5477,16 @@ mod tests {
 
         assert_eq!(applied, 1);
         assert_eq!(&rgba[12..16], &[1, 2, 3, 255]);
-
-        let array = serde_json::json!([
-            {"x": 0, "y": 0, "replacementRgba": [9, 8, 7, 255]}
-        ]);
-        let corrections = render_rgba8_corrections_from_manifest_value(&array).unwrap();
-        assert_eq!(corrections.len(), 1);
-        assert_eq!(corrections[0].pixel.to_pair(), [0, 0]);
-        assert_eq!(corrections[0].replacement_rgba, [9, 8, 7, 255]);
+        let entries = render_owner_sample_correction_manifest_entries_from_value(&object).unwrap();
+        assert_eq!(entries.len(), 1);
+        let sample = &entries[0].sample;
+        assert_eq!(sample.surface().material_name(), "body");
+        assert_eq!(sample.surface().triangle(), 7);
+        assert_eq!(sample.sample().to_pair(), [0.7, 0.5]);
+        assert_eq!(
+            entries[0].relation_to_expected,
+            Some(RenderOwnerSurfaceRelation::SameSurface)
+        );
     }
 
     #[test]
@@ -5402,19 +5497,119 @@ mod tests {
         );
         assert_eq!(
             render_rgba8_corrections_from_manifest_value(&serde_json::json!([
-                {"x": 0, "y": 0, "rgba": [0, 1, 2]}
+                {
+                    "x": 0,
+                    "y": 0,
+                    "rgba": [0, 1, 2, 3],
+                    "surface": {"materialName": "body", "triangle": 1},
+                    "sample": [0.5, 0.5]
+                }
             ]))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidRoot
+        );
+        assert_eq!(
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5]
+                    }
+                ]
+            }))
             .unwrap_err(),
             RenderRgba8CorrectionManifestError::InvalidRgbaChannelCount { len: 3 }
         );
         assert_eq!(
-            render_rgba8_corrections_from_manifest_value(&serde_json::json!([
-                {"x": 0, "y": 0, "rgba": [0, 1, 2, 256]}
-            ]))
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "replacementRgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5]
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::MissingRgba
+        );
+        assert_eq!(
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 256],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5]
+                    }
+                ]
+            }))
             .unwrap_err(),
             RenderRgba8CorrectionManifestError::RgbaChannelOutOfRange {
                 index: 3,
                 value: 256,
+            }
+        );
+        assert_eq!(
+            render_owner_sample_correction_manifest_entries_from_value(&serde_json::json!({
+                "corrections": [
+                    {"x": 0, "y": 0, "rgba": [0, 1, 2, 3], "sample": [0.5, 0.5]}
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::MissingSurface
+        );
+        assert_eq!(
+            render_owner_sample_correction_manifest_entries_from_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5],
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidSample
+        );
+        assert_eq!(
+            render_owner_sample_correction_manifest_entries_from_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::MissingSample
+        );
+        assert_eq!(
+            render_owner_sample_correction_manifest_entries_from_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5],
+                        "relation_to_expected": "neighbor"
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidRelation {
+                value: "neighbor".to_owned(),
             }
         );
     }

@@ -48,9 +48,11 @@ recipes are convenience entry points. Use these first:
   `--owner-sample-correction-manifest <path>` for renderer readback
   experiments. The manifest is applied before RGBA JSON, PNG, and imqraw
   artifacts are written, using the same `vrm-adapter` in-memory RGBA8
-  applicator as the raw correction tool. The manifest format is source-like:
-  `{"corrections":[{"x":1,"y":2,"rgba":[r,g,b,a]}]}`. `replacementRgba`
-  is also accepted for generated decision manifests.
+  applicator as the raw correction tool. The manifest format is intentionally
+  strict and source-like: `corrections[]` entries must include `x`, `y`,
+  `rgba`, `surface { materialName, triangle }`, and `sample [x, y]`. Raw array
+  roots, `replacementRgba`, and entries without owner/sample source metadata are
+  rejected instead of being treated as compatibility shims.
 - `vrm-adapter-ash --example unsafe_device_renderer` accepts the same
   `--owner-sample-correction-manifest <path>` readback experiment flag. It
   applies the shared `vrm-adapter` manifest parser/applicator before writing
