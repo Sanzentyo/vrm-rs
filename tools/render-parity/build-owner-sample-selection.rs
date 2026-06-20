@@ -51,7 +51,10 @@ struct SelectionReport {
     owner_hotspot_count: u64,
     joined_count: u64,
     rendered_owner_count: u64,
+    rendered_owner_coverage_recovered_count: u64,
+    rendered_owner_subpixel_recovered_count: u64,
     rendered_owner_recovered_count: u64,
+    rendered_owner_center_shading_geometry_count: u64,
     selection_count: u64,
     missing_rust_count: u64,
     missing_rendered_owner_count: u64,
@@ -102,6 +105,25 @@ struct SelectionManifestSampleGeometry {
 struct ResolvedSample {
     rgba: [u8; 4],
     geometry: SelectionManifestSampleGeometry,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecoverySource {
+    Coverage,
+    Subpixel,
+}
+
+#[derive(Clone, Debug)]
+struct OwnerRecoverySample {
+    source: RecoverySource,
+    surface: RenderOwnerSurfaceKey,
+    sample: [f64; 2],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GeometrySource {
+    PixelCenter,
+    RecoveryPoint,
 }
 
 fn main() {
@@ -164,7 +186,10 @@ fn build_selection(
         owner_hotspot_count: owner_hotspots.len() as u64,
         joined_count: 0,
         rendered_owner_count: 0,
+        rendered_owner_coverage_recovered_count: 0,
+        rendered_owner_subpixel_recovered_count: 0,
         rendered_owner_recovered_count: 0,
+        rendered_owner_center_shading_geometry_count: 0,
         selection_count: 0,
         missing_rust_count: 0,
         missing_rendered_owner_count: 0,
@@ -190,34 +215,34 @@ fn build_selection(
             continue;
         }
 
-        let Some(surface) =
-            surface_at(owner_hotspot, "/renderedOwnerRecovery/bestSubpixel/candidate")
-        else {
+        let Some(recovery) = owner_recovery_sample(owner_hotspot) else {
             report.missing_recovery_count += 1;
             continue;
         };
-        let Some(sample) = number_pair(owner_hotspot.pointer(
-            "/renderedOwnerRecovery/bestSubpixel/sampleCenter",
-        )) else {
-            report.missing_recovery_count += 1;
-            continue;
-        };
+        match recovery.source {
+            RecoverySource::Coverage => report.rendered_owner_coverage_recovered_count += 1,
+            RecoverySource::Subpixel => report.rendered_owner_subpixel_recovered_count += 1,
+        }
         report.rendered_owner_recovered_count += 1;
 
-        let sample_key = RenderOwnerSampleKey::from_pair(surface.clone(), sample);
-        let Some(resolved_sample) = rust_subpixel_candidate_for_owner_sample(rust_hotspot, &sample_key)
+        let sample_key = RenderOwnerSampleKey::from_pair(recovery.surface.clone(), recovery.sample);
+        let Some((resolved_sample, geometry_source)) =
+            rust_candidate_for_owner_sample(rust_hotspot, &sample_key, recovery.source)
         else {
             report.missing_rust_sample_count += 1;
             continue;
         };
+        if geometry_source == GeometrySource::PixelCenter {
+            report.rendered_owner_center_shading_geometry_count += 1;
+        }
 
         corrections.push(SelectionManifestEntry {
             x,
             y,
             rgba: resolved_sample.rgba,
             surface: SelectionManifestSurface {
-                material_name: surface.material_name().to_owned(),
-                triangle: surface.triangle(),
+                material_name: recovery.surface.material_name().to_owned(),
+                triangle: recovery.surface.triangle(),
             },
             sample: sample_key.sample().to_pair(),
             sample_geometry: resolved_sample.geometry,
@@ -234,12 +259,62 @@ fn build_selection(
     Ok((report, manifest))
 }
 
-fn rust_subpixel_candidate_for_owner_sample(
+fn owner_recovery_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
+    recovery_sample_at(
+        owner_hotspot,
+        RecoverySource::Coverage,
+        "/renderedOwnerRecovery/bestCoverage",
+    )
+    .or_else(|| {
+        recovery_sample_at(
+            owner_hotspot,
+            RecoverySource::Subpixel,
+            "/renderedOwnerRecovery/bestSubpixel",
+        )
+    })
+}
+
+fn recovery_sample_at(
+    owner_hotspot: &Value,
+    source: RecoverySource,
+    pointer: &str,
+) -> Option<OwnerRecoverySample> {
+    Some(OwnerRecoverySample {
+        source,
+        surface: surface_at(owner_hotspot, &format!("{pointer}/candidate"))?,
+        sample: number_pair(owner_hotspot.pointer(&format!("{pointer}/sampleCenter")))?,
+    })
+}
+
+fn rust_candidate_for_owner_sample(
     rust_hotspot: &Value,
     sample_key: &RenderOwnerSampleKey,
-) -> Option<ResolvedSample> {
+    source: RecoverySource,
+) -> Option<(ResolvedSample, GeometrySource)> {
+    let candidate_arrays: &[&str] = match source {
+        RecoverySource::Coverage => &["coverage_visible_candidates", "subpixel_visible_candidates"],
+        RecoverySource::Subpixel => &["subpixel_visible_candidates"],
+    };
+    let recovery = candidate_arrays
+        .iter()
+        .find_map(|array_name| rust_candidate_in_array(rust_hotspot, array_name, sample_key))?;
+    if recovery.1 == GeometrySource::PixelCenter {
+        return Some(recovery);
+    }
+    if let Some(center) = rust_center_candidate_for_surface(rust_hotspot, sample_key.surface()) {
+        Some((center, GeometrySource::PixelCenter))
+    } else {
+        Some(recovery)
+    }
+}
+
+fn rust_candidate_in_array(
+    rust_hotspot: &Value,
+    array_name: &str,
+    sample_key: &RenderOwnerSampleKey,
+) -> Option<(ResolvedSample, GeometrySource)> {
     rust_hotspot
-        .get("subpixel_visible_candidates")
+        .get(array_name)
         .and_then(Value::as_array)?
         .iter()
         .find_map(|candidate| {
@@ -251,16 +326,55 @@ fn rust_subpixel_candidate_for_owner_sample(
             ) {
                 return None;
             }
+            let geometry_source = candidate
+                .get("center_candidate")
+                .map(|_| GeometrySource::PixelCenter)
+                .unwrap_or(GeometrySource::RecoveryPoint);
+            let candidate = candidate
+                .get("center_candidate")
+                .or_else(|| candidate.get("candidate"))?;
+            Some((
+                ResolvedSample {
+                    rgba: rgba_array(candidate.get("cpu_base_color_rgba")?).unwrap_or([0, 0, 0, 0]),
+                    geometry: sample_geometry_from_direct_candidate(candidate)?,
+                },
+                geometry_source,
+            ))
+        })
+}
+
+fn rust_center_candidate_for_surface(
+    rust_hotspot: &Value,
+    surface: &RenderOwnerSurfaceKey,
+) -> Option<ResolvedSample> {
+    rust_hotspot
+        .get("candidates")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|candidate| {
+            surface_at(candidate, "")
+                .as_ref()
+                .is_some_and(|candidate_surface| candidate_surface == surface)
+                && bool_field(candidate, "visible_by_policy").unwrap_or(false)
+                && i64_pair(candidate.get("sample_offset")).is_some_and(|offset| offset == [0, 0])
+        })
+        .min_by(|left, right| {
+            f64_field(left, "depth")
+                .partial_cmp(&f64_field(right, "depth"))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| u64_field(right, "draw_index").cmp(&u64_field(left, "draw_index")))
+        })
+        .and_then(|candidate| {
             Some(ResolvedSample {
-                rgba: rgba_array(candidate.pointer("/candidate/cpu_base_color_rgba")?)
-                    .unwrap_or([0, 0, 0, 0]),
-                geometry: sample_geometry_from_candidate(candidate)?,
+                rgba: rgba_array(candidate.get("cpu_base_color_rgba")?).unwrap_or([0, 0, 0, 0]),
+                geometry: sample_geometry_from_direct_candidate(candidate)?,
             })
         })
 }
 
-fn sample_geometry_from_candidate(value: &Value) -> Option<SelectionManifestSampleGeometry> {
-    let candidate = value.get("candidate")?;
+fn sample_geometry_from_direct_candidate(
+    candidate: &Value,
+) -> Option<SelectionManifestSampleGeometry> {
     Some(SelectionManifestSampleGeometry {
         node: candidate.get("node")?.as_u64()?,
         mesh: candidate.get("mesh")?.as_u64()?,
@@ -297,6 +411,26 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
 fn number_pair(value: Option<&Value>) -> Option<[f64; 2]> {
     let values = value?.as_array()?;
     Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
+}
+
+fn i64_pair(value: Option<&Value>) -> Option<[i64; 2]> {
+    let values = value?.as_array()?;
+    Some([values.first()?.as_i64()?, values.get(1)?.as_i64()?])
+}
+
+fn bool_field(value: &Value, field: &str) -> Option<bool> {
+    value.get(field)?.as_bool()
+}
+
+fn f64_field(value: &Value, field: &str) -> f64 {
+    value
+        .get(field)
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::INFINITY)
+}
+
+fn u64_field(value: &Value, field: &str) -> u64 {
+    value.get(field).and_then(Value::as_u64).unwrap_or(0)
 }
 
 fn rgba_array(value: &Value) -> Option<[u8; 4]> {
@@ -354,7 +488,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "owner": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7}
                 },
                 "renderedOwnerRecovery": {
-                    "bestSubpixel": {
+                    "bestCoverage": {
                         "sampleCenter": [0.7, 0.5],
                         "candidate": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7}
                     }
@@ -367,7 +501,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             "hotspots": [{
                 "x": 0,
                 "y": 0,
-                "subpixel_visible_candidates": [{
+                "coverage_visible_candidates": [{
                     "sample": [0.7, 0.5],
                     "candidate": {
                         "node": 0,
@@ -382,6 +516,20 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "base_uv": [0.3, 0.8],
                         "depth": 0.42,
                         "cpu_base_color_rgba": [100, 101, 102, 255]
+                    },
+                    "center_candidate": {
+                        "node": 0,
+                        "mesh": 1,
+                        "primitive": 2,
+                        "pass": "base",
+                        "material_name": "body",
+                        "triangle": 7,
+                        "indices": [3, 4, 5],
+                        "barycentric": [0.4, 0.4, 0.2],
+                        "raw_uv": [0.45, 0.55],
+                        "base_uv": [0.5, 0.6],
+                        "depth": 0.40,
+                        "cpu_base_color_rgba": [110, 111, 112, 255]
                     }
                 }]
             }]
@@ -392,11 +540,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.joined_count, 1);
     assert_eq!(report.rendered_owner_count, 1);
     assert_eq!(report.rendered_owner_recovered_count, 1);
+    assert_eq!(report.rendered_owner_coverage_recovered_count, 1);
+    assert_eq!(report.rendered_owner_center_shading_geometry_count, 1);
     assert_eq!(report.selection_count, 1);
     assert_eq!(manifest.corrections.len(), 1);
     assert_eq!(manifest.corrections[0].x, 0);
     assert_eq!(manifest.corrections[0].y, 0);
-    assert_eq!(manifest.corrections[0].rgba, [100, 101, 102, 255]);
+    assert_eq!(manifest.corrections[0].rgba, [110, 111, 112, 255]);
     assert_eq!(manifest.corrections[0].surface.material_name, "body");
     assert_eq!(manifest.corrections[0].surface.triangle, 7);
     assert_eq!(manifest.corrections[0].sample, [0.7, 0.5]);
@@ -407,11 +557,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].sample_geometry.indices, [3, 4, 5]);
     assert_eq!(
         manifest.corrections[0].sample_geometry.barycentric,
-        [0.2, 0.3, 0.5]
+        [0.4, 0.4, 0.2]
     );
-    assert_eq!(manifest.corrections[0].sample_geometry.raw_uv, [0.25, 0.75]);
-    assert_eq!(manifest.corrections[0].sample_geometry.base_uv, [0.3, 0.8]);
-    assert_eq!(manifest.corrections[0].sample_geometry.depth, 0.42);
+    assert_eq!(manifest.corrections[0].sample_geometry.raw_uv, [0.45, 0.55]);
+    assert_eq!(manifest.corrections[0].sample_geometry.base_uv, [0.5, 0.6]);
+    assert_eq!(manifest.corrections[0].sample_geometry.depth, 0.40);
     assert_eq!(manifest.corrections[0].sample_geometry.pass, "base");
     Ok(())
 }

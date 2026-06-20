@@ -394,6 +394,7 @@ struct Hotspot {
     frontmost_texture_sampling_variants: Vec<TextureSamplingDistance>,
     nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingDistance>,
     subpixel_visible_candidates: Vec<SubpixelCandidate>,
+    coverage_visible_candidates: Vec<SubpixelCandidate>,
     best_subpixel_visible_actual: Option<SubpixelMatch>,
     best_subpixel_visible_expected: Option<SubpixelMatch>,
     subpixel_coverage_cpu_base_color_rgba: Option<[u8; 4]>,
@@ -633,6 +634,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 height,
                 options.subpixel_steps,
             );
+            let coverage_candidates = coverage_frontmost_visible_candidates(
+                delta.x,
+                delta.y,
+                &surfaces,
+                view_projection,
+                width,
+                height,
+            );
             let best_subpixel_visible_actual = best_subpixel_match(
                 &subpixel_candidates,
                 delta.actual,
@@ -720,6 +729,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 frontmost_texture_sampling_variants,
                 nearest_sample_visible_texture_sampling_variants,
                 subpixel_visible_candidates: subpixel_candidates,
+                coverage_visible_candidates: coverage_candidates,
                 best_subpixel_visible_actual,
                 best_subpixel_visible_expected,
                 subpixel_coverage_cpu_base_color_rgba,
@@ -2429,8 +2439,89 @@ fn subpixel_frontmost_visible_candidates(
                     })
                     .collect::<Vec<_>>();
                 frontmost_visible_candidate_match(&candidates)
-                    .map(|candidate| SubpixelCandidate { sample, candidate })
+                    .map(|candidate| SubpixelCandidate {
+                        sample,
+                        candidate,
+                        center_candidate: None,
+                    })
             })
+        })
+        .collect()
+}
+
+fn coverage_frontmost_visible_candidates(
+    x: usize,
+    y: usize,
+    surfaces: &[Surface],
+    view_projection: Mat4,
+    width: usize,
+    height: usize,
+) -> Vec<SubpixelCandidate> {
+    surfaces
+        .iter()
+        .flat_map(|surface| {
+            surface
+                .indices
+                .chunks_exact(3)
+                .enumerate()
+                .filter_map(move |(triangle, indices)| {
+                    let [ia, ib, ic] = [indices[0], indices[1], indices[2]];
+                    let vertices = [
+                        project(
+                            surface.vertices.get(ia as usize)?,
+                            view_projection,
+                            width,
+                            height,
+                        )?,
+                        project(
+                            surface.vertices.get(ib as usize)?,
+                            view_projection,
+                            width,
+                            height,
+                        )?,
+                        project(
+                            surface.vertices.get(ic as usize)?,
+                            view_projection,
+                            width,
+                            height,
+                        )?,
+                    ];
+                    let point = pixel_triangle_intersection_point(
+                        x,
+                        y,
+                        vertices[0].screen,
+                        vertices[1].screen,
+                        vertices[2].screen,
+                    )?;
+                    let sample = [point[0] - x as f32, point[1] - y as f32];
+                    let candidate = hit_candidate_for_projected_triangle(
+                        surface,
+                        triangle,
+                        [ia, ib, ic],
+                        vertices,
+                        point,
+                        [0, 0],
+                        0.0,
+                        false,
+                    )?;
+                    let center = [x as f32 + 0.5, y as f32 + 0.5];
+                    let center_candidate = hit_candidate_for_projected_triangle(
+                        surface,
+                        triangle,
+                        [ia, ib, ic],
+                        vertices,
+                        center,
+                        [0, 0],
+                        0.0,
+                        true,
+                    )
+                    .map(|candidate| candidate_match(0, &candidate, 0.0));
+                    candidate.visible_by_policy.then(|| SubpixelCandidate {
+                        sample,
+                        candidate: candidate_match(0, &candidate, 0.0),
+                        center_candidate,
+                    })
+                })
         })
         .collect()
 }
@@ -2439,6 +2530,8 @@ fn subpixel_frontmost_visible_candidates(
 struct SubpixelCandidate {
     sample: [f32; 2],
     candidate: CandidateMatch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    center_candidate: Option<CandidateMatch>,
 }
 
 fn best_subpixel_match(
@@ -2550,113 +2643,135 @@ fn surface_candidates(
         .enumerate()
         .filter_map(|(triangle, indices)| {
             let [ia, ib, ic] = [indices[0], indices[1], indices[2]];
-            let a = project(
+            let vertices = [
+                project(
                 surface.vertices.get(ia as usize)?,
                 view_projection,
                 width,
                 height,
-            )?;
-            let b = project(
-                surface.vertices.get(ib as usize)?,
-                view_projection,
-                width,
-                height,
-            )?;
-            let c = project(
-                surface.vertices.get(ic as usize)?,
-                view_projection,
-                width,
-                height,
-            )?;
-            let barycentric = barycentric(point, a.screen, b.screen, c.screen)?;
-            let raw_uv = interpolate_perspective_correct_uv(barycentric, a, b, c);
-            let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
-            let base_texture_rgba_linear = surface
-                .base_texture
-                .as_ref()
-                .map(|texture| {
-                    texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft)
-                });
-            let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
-            let texture_color = base_texture_rgba_linear.unwrap_or([1.0, 1.0, 1.0, 1.0]);
-            let base_texture_sampling_rgba = surface
-                .base_texture
-                .as_ref()
-                .map(|texture| texture_sampling_colors(texture, base_uv))
-                .unwrap_or_default();
-            let base_texture_local_rgb_gradient = surface
-                .base_texture
-                .as_ref()
-                .map(|texture| base_texture_local_rgb_gradient(texture, base_uv));
-            let vertex_color = if surface.pbr_fallback {
-                interpolate_vertex_color(
-                    barycentric,
-                    surface.vertices.get(ia as usize)?,
+                )?,
+                project(
                     surface.vertices.get(ib as usize)?,
+                    view_projection,
+                    width,
+                    height,
+                )?,
+                project(
                     surface.vertices.get(ic as usize)?,
-                )
-            } else {
-                [1.0, 1.0, 1.0, 1.0]
-            };
-            let cpu_base_color_rgba =
-                multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
-                    .map(quantize_unorm8);
-            let vertex_alpha = if surface.pbr_fallback {
-                vertex_color[3]
-            } else {
-                1.0
-            };
-            let texture_alpha = texture_color[3];
-            let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
-            let signed_area = signed_area(a.screen, b.screen, c.screen);
-            let front_facing = signed_area < 0.0;
-            let visible_by_cull_policy =
-                visible_by_cull_policy(surface.policy.cull_mode, front_facing);
-            let visible_by_alpha_policy = visible_by_alpha_policy(surface.policy, alpha);
-            let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
-            let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
-            let nearest_edge_neighbor_triangles =
-                edge_neighbors(&surface.edge_adjacency, edge_indices, triangle);
-            Some(HitCandidate {
-                draw_index: surface.draw_index,
-                node: surface.node,
-                mesh: surface.mesh,
-                primitive: surface.primitive,
-                pass: surface.pass,
+                    view_projection,
+                    width,
+                    height,
+                )?,
+            ];
+            hit_candidate_for_projected_triangle(
+                surface,
                 triangle,
-                indices: [ia, ib, ic],
-                material: surface.material,
-                material_name: surface.material_name.clone(),
-                policy: surface.policy,
+                [ia, ib, ic],
+                vertices,
+                point,
                 sample_offset,
-                sample_distance: ((sample_offset[0] * sample_offset[0]
-                    + sample_offset[1] * sample_offset[1])
+                ((sample_offset[0] * sample_offset[0] + sample_offset[1] * sample_offset[1])
                     as f32)
                     .sqrt(),
-                depth: interpolate_scalar(barycentric, a.depth, b.depth, c.depth),
-                barycentric,
-                min_barycentric: barycentric
-                    .into_iter()
-                    .fold(f32::INFINITY, |left, right| left.min(right)),
-                edge_distance_pixels: nearest_edge.distance_pixels,
-                nearest_edge: nearest_edge.edge,
-                nearest_edge_indices: edge_indices,
-                nearest_edge_neighbor_triangles,
-                raw_uv,
-                base_uv,
-                base_texture_rgba,
-                cpu_base_color_rgba,
-                base_texture_sampling_rgba,
-                base_texture_local_rgb_gradient,
-                screen: [a.screen, b.screen, c.screen],
-                front_facing,
-                alpha,
-                visible_by_cull_policy,
-                visible_by_alpha_policy,
-                visible_by_policy: visible_by_cull_policy && visible_by_alpha_policy,
-            })
+                false,
+            )
         })
         .collect()
+}
+
+fn hit_candidate_for_projected_triangle(
+    surface: &Surface,
+    triangle: usize,
+    indices: [u32; 3],
+    vertices: [ProjectedVertex; 3],
+    point: [f32; 2],
+    sample_offset: [i32; 2],
+    sample_distance: f32,
+    allow_outside_triangle: bool,
+) -> Option<HitCandidate> {
+    let [ia, ib, ic] = indices;
+    let [a, b, c] = vertices;
+    let barycentric = if allow_outside_triangle {
+        barycentric_unclamped(point, a.screen, b.screen, c.screen)?
+    } else {
+        barycentric(point, a.screen, b.screen, c.screen)?
+    };
+    let raw_uv = interpolate_perspective_correct_uv(barycentric, a, b, c);
+    let base_uv = transform_tex_coord_0(raw_uv, surface.base_uv_transform);
+    let base_texture_rgba_linear = surface
+        .base_texture
+        .as_ref()
+        .map(|texture| texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft));
+    let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
+    let texture_color = base_texture_rgba_linear.unwrap_or([1.0, 1.0, 1.0, 1.0]);
+    let base_texture_sampling_rgba = surface
+        .base_texture
+        .as_ref()
+        .map(|texture| texture_sampling_colors(texture, base_uv))
+        .unwrap_or_default();
+    let base_texture_local_rgb_gradient = surface
+        .base_texture
+        .as_ref()
+        .map(|texture| base_texture_local_rgb_gradient(texture, base_uv));
+    let vertex_color = if surface.pbr_fallback {
+        interpolate_vertex_color(
+            barycentric,
+            surface.vertices.get(ia as usize)?,
+            surface.vertices.get(ib as usize)?,
+            surface.vertices.get(ic as usize)?,
+        )
+    } else {
+        [1.0, 1.0, 1.0, 1.0]
+    };
+    let cpu_base_color_rgba =
+        multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
+            .map(quantize_unorm8);
+    let vertex_alpha = if surface.pbr_fallback { vertex_color[3] } else { 1.0 };
+    let texture_alpha = texture_color[3];
+    let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
+    let signed_area = signed_area(a.screen, b.screen, c.screen);
+    let front_facing = signed_area < 0.0;
+    let visible_by_cull_policy = visible_by_cull_policy(surface.policy.cull_mode, front_facing);
+    let visible_by_alpha_policy = visible_by_alpha_policy(surface.policy, alpha);
+    let nearest_edge = nearest_triangle_edge(point, a.screen, b.screen, c.screen);
+    let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
+    let nearest_edge_neighbor_triangles =
+        edge_neighbors(&surface.edge_adjacency, edge_indices, triangle);
+    Some(HitCandidate {
+        draw_index: surface.draw_index,
+        node: surface.node,
+        mesh: surface.mesh,
+        primitive: surface.primitive,
+        pass: surface.pass,
+        triangle,
+        indices: [ia, ib, ic],
+        material: surface.material,
+        material_name: surface.material_name.clone(),
+        policy: surface.policy,
+        sample_offset,
+        sample_distance,
+        depth: interpolate_scalar(barycentric, a.depth, b.depth, c.depth),
+        barycentric,
+        min_barycentric: barycentric
+            .into_iter()
+            .fold(f32::INFINITY, |left, right| left.min(right)),
+        edge_distance_pixels: nearest_edge.distance_pixels,
+        nearest_edge: nearest_edge.edge,
+        nearest_edge_indices: edge_indices,
+        nearest_edge_neighbor_triangles,
+        raw_uv,
+        base_uv,
+        base_texture_rgba,
+        cpu_base_color_rgba,
+        base_texture_sampling_rgba,
+        base_texture_local_rgb_gradient,
+        screen: [a.screen, b.screen, c.screen],
+        front_facing,
+        alpha,
+        visible_by_cull_policy,
+        visible_by_alpha_policy,
+        visible_by_policy: visible_by_cull_policy && visible_by_alpha_policy,
+    })
 }
 
 fn capture_material_policy(loaded: &LoadedVrm, material: Option<usize>) -> MaterialPolicyReport {
@@ -2767,6 +2882,17 @@ fn project(
 }
 
 fn barycentric(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> Option<[f32; 3]> {
+    let [w0, w1, w2] = barycentric_unclamped(point, a, b, c)?;
+    let epsilon = -1.0e-4;
+    (w0 >= epsilon && w1 >= epsilon && w2 >= epsilon).then_some([w0, w1, w2])
+}
+
+fn barycentric_unclamped(
+    point: [f32; 2],
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+) -> Option<[f32; 3]> {
     let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
     if denominator.abs() <= 1.0e-5 {
         return None;
@@ -2774,8 +2900,88 @@ fn barycentric(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> Option
     let w0 = ((b[1] - c[1]) * (point[0] - c[0]) + (c[0] - b[0]) * (point[1] - c[1])) / denominator;
     let w1 = ((c[1] - a[1]) * (point[0] - c[0]) + (a[0] - c[0]) * (point[1] - c[1])) / denominator;
     let w2 = 1.0 - w0 - w1;
-    let epsilon = -1.0e-4;
-    (w0 >= epsilon && w1 >= epsilon && w2 >= epsilon).then_some([w0, w1, w2])
+    Some([w0, w1, w2])
+}
+
+fn pixel_triangle_intersection_point(
+    pixel_x: usize,
+    pixel_y: usize,
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+) -> Option<[f32; 2]> {
+    let x = pixel_x as f32;
+    let y = pixel_y as f32;
+    let triangle = [a, b, c];
+    let corners = [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]];
+    let mut points = Vec::<[f32; 2]>::new();
+
+    for corner in corners {
+        if barycentric(corner, a, b, c).is_some() {
+            add_unique_point(&mut points, corner);
+        }
+    }
+    for vertex in triangle {
+        if point_in_pixel(vertex, x, y) {
+            add_unique_point(&mut points, vertex);
+        }
+    }
+    for edge in 0..3 {
+        let start = triangle[edge];
+        let end = triangle[(edge + 1) % 3];
+        for rect_edge in 0..4 {
+            if let Some(point) =
+                segment_intersection(start, end, corners[rect_edge], corners[(rect_edge + 1) % 4])
+            {
+                add_unique_point(&mut points, point);
+            }
+        }
+    }
+
+    (!points.is_empty()).then(|| {
+        let sum = points
+            .iter()
+            .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
+        [sum[0] / points.len() as f32, sum[1] / points.len() as f32]
+    })
+}
+
+fn add_unique_point(points: &mut Vec<[f32; 2]>, point: [f32; 2]) {
+    if !point[0].is_finite() || !point[1].is_finite() {
+        return;
+    }
+    if points.iter().any(|existing| {
+        (existing[0] - point[0]).abs() <= 1.0e-5 && (existing[1] - point[1]).abs() <= 1.0e-5
+    }) {
+        return;
+    }
+    points.push(point);
+}
+
+fn point_in_pixel(point: [f32; 2], x: f32, y: f32) -> bool {
+    point[0] >= x - 1.0e-4
+        && point[0] <= x + 1.0 + 1.0e-4
+        && point[1] >= y - 1.0e-4
+        && point[1] <= y + 1.0 + 1.0e-4
+}
+
+fn segment_intersection(
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+    d: [f32; 2],
+) -> Option<[f32; 2]> {
+    let r = [b[0] - a[0], b[1] - a[1]];
+    let s = [d[0] - c[0], d[1] - c[1]];
+    let denominator = r[0] * s[1] - r[1] * s[0];
+    if denominator.abs() <= 1.0e-7 {
+        return None;
+    }
+    let delta = [c[0] - a[0], c[1] - a[1]];
+    let t = (delta[0] * s[1] - delta[1] * s[0]) / denominator;
+    let u = (delta[0] * r[1] - delta[1] * r[0]) / denominator;
+    (t >= -1.0e-5 && t <= 1.0 + 1.0e-5 && u >= -1.0e-5 && u <= 1.0 + 1.0e-5)
+        .then_some([a[0] + t * r[0], a[1] + t * r[1]])
 }
 
 fn view_projection(width: usize, height: usize, options: &Options) -> Mat4 {

@@ -59,12 +59,12 @@ recipes are convenience entry points. Use these first:
   owner-id driven owner/sample selection manifests, then renders wgpu, release-built Bevy, and
   Ash with those manifests as geometry selections. The owner-id manifest path
   deliberately does not read expected/actual color images. Its latest real
-  Seed-san run reports render-resolve wgpu `28.5090 dB`, Bevy `27.2176 dB`, and
-  Ash `30.7519 dB`, all with opaque-black alpha parity and verified direct
-  `.imqraw` artifacts. This is lower than the earlier color-distance
-  correction-derived wgpu/Bevy numbers, and that is expected: the standard path
-  now validates rendered owner/fill behavior first instead of choosing samples
-  by RGB-distance oracle. Use PSNR here only as a post-selection material/color
+  Seed-san coverage-resolve run now treats coverage as owner selection and
+  pixel-center barycentric data as shader input. It reports render-resolve wgpu
+  `30.6336 dB`, Bevy `28.2142 dB`, and Ash `35.8902 dB`, all with opaque-black
+  alpha parity and verified direct `.imqraw` artifacts. The standard path
+  validates rendered owner/fill behavior first instead of choosing samples by
+  RGB-distance oracle. Use PSNR here only as a post-selection material/color
   check.
 - `just render-parity-seed-base-color-flat32-render-resolve-hotspots`: reuse the
   current Seed-san render-resolve artifacts and summarize the remaining
@@ -83,15 +83,18 @@ recipes are convenience entry points. Use these first:
   cases without feeding expected/actual colors into manifest generation. The
   first run reports `64/64` rendered owners for wgpu/Bevy/Ash, center-frontmost
   matches `47/64`, `46/64`, and `45/64`, and 5x5 owner recovery `49/64` for all
-  three. The browser projection now also records a pixel-square/triangle
-  coverage-intersection recovery. That recovers `64/64` rendered owners for all
-  three backends, with depth-rank-1 counts wgpu `63/64`, Bevy `63/64`, and Ash
-  `64/64`. This is the current strongest evidence that the remaining owner gap
-  is a fill/coverage sample reconstruction issue, not a reason to choose
-  samples by RGB-distance oracle. The next implementation step is to make the
-  Rust-side sample-geometry mapper consume the same per-pixel coverage sample
-  so render-resolve manifests can be generated from owner/fill geometry rather
-  than fixed 5x5 grid hits.
+  three. The browser projection records a pixel-square/triangle
+  coverage-intersection recovery, and the Rust hotspot mapper now emits matching
+  `coverage_visible_candidates`. Coverage points are used only to identify the
+  owner surface; each coverage candidate also carries an unclamped pixel-center
+  `center_candidate` for material evaluation so the standard path does not turn
+  a fill/coverage centroid into a UV sample. Current standard manifests consume
+  that split model and recover center shading geometry for all selected owner
+  samples: real Seed-san wgpu `64/64`, Bevy `63/63`, and compact depth3
+  wgpu/Bevy `24/24` / `64/64`. After coverage resolve, post-resolve owner
+  projection again recovers `64/64` owner IDs for all three backends, so the
+  remaining real Seed-san blocker has moved from missing owner/fill geometry to
+  recovered-owner texture/base-color differences.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
