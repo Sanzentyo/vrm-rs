@@ -14,7 +14,7 @@ mod render_capture_scene;
 
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
@@ -51,7 +51,8 @@ struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
     tangent: [f32; 4],
-    tex_coord: [f32; 2],
+    tex_coord_clip: [f32; 4],
+    tex_coord_grad: [f32; 4],
     color: [f32; 4],
     shade_color: [f32; 4],
     shading: [f32; 4],
@@ -67,7 +68,7 @@ struct Vertex {
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 15] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32, 13 => Float32, 14 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 16] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32, 14 => Float32, 15 => Float32];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -785,7 +786,13 @@ fn draw_primitive(
                 position: transformed.position.to_array(),
                 normal: transformed.normal.to_array(),
                 tangent: transformed.tangent.to_array(),
-                tex_coord: transformed.tex_coord_0,
+                tex_coord_clip: [
+                    transformed.tex_coord_0[0],
+                    transformed.tex_coord_0[1],
+                    0.0,
+                    0.0,
+                ],
+                tex_coord_grad: [0.0, 0.0, 0.0, 0.0],
                 color: if shading.pbr_fallback {
                     multiply_rgba(shading.base_color, transformed.color_0)
                 } else {
@@ -974,7 +981,7 @@ fn generate_missing_tangents(vertices: &mut [Vertex], indices: &[u32], normal_sc
         .collect::<Vec<_>>();
     let tex_coords = vertices
         .iter()
-        .map(|vertex| vertex.tex_coord)
+        .map(|vertex| [vertex.tex_coord_clip[0], vertex.tex_coord_clip[1]])
         .collect::<Vec<_>>();
     let Some(generated) = generate_tangents(&positions, &normals, &tex_coords, indices) else {
         return;
@@ -1389,18 +1396,69 @@ fn owner_sample_resolve_vertex(
         record.barycentric_depth[2],
     ];
     let mut vertex = interpolate_vertex(a, b, c, barycentric);
-    vertex.position = owner_sample_pixel_ndc(record.pixel, options)?;
-    vertex.tex_coord = record.geometry_uvs[..2].try_into().ok()?;
+    let owner_sample_clip = owner_sample_pixel_ndc(record.pixel, options)?;
+    let [tex_coord_dx, tex_coord_dy] = owner_sample_uv_gradient(a, b, c, options)?;
+    vertex.tex_coord_clip = [
+        record.geometry_uvs[0],
+        record.geometry_uvs[1],
+        owner_sample_clip[0],
+        owner_sample_clip[1],
+    ];
+    vertex.tex_coord_grad = [
+        tex_coord_dx[0],
+        tex_coord_dx[1],
+        tex_coord_dy[0],
+        tex_coord_dy[1],
+    ];
     vertex._padding = 0.0;
     Some(vertex)
 }
 
-fn owner_sample_pixel_ndc(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 3]> {
+fn owner_sample_pixel_ndc(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 2]> {
     (pixel[0] < options.width && pixel[1] < options.height).then(|| {
         let x = ((pixel[0] as f32 + 0.5) / options.width as f32) * 2.0 - 1.0;
         let y = 1.0 - ((pixel[1] as f32 + 0.5) / options.height as f32) * 2.0;
-        [x, y, 0.0]
+        [x, y]
     })
+}
+
+fn owner_sample_uv_gradient(
+    a: Vertex,
+    b: Vertex,
+    c: Vertex,
+    options: &CaptureOptions,
+) -> Option<[[f32; 2]; 2]> {
+    let pa = project_world_to_pixel(a.position, options)?;
+    let pb = project_world_to_pixel(b.position, options)?;
+    let pc = project_world_to_pixel(c.position, options)?;
+    let dx1 = pb.x - pa.x;
+    let dy1 = pb.y - pa.y;
+    let dx2 = pc.x - pa.x;
+    let dy2 = pc.y - pa.y;
+    let det = dx1 * dy2 - dx2 * dy1;
+    if det.abs() <= f32::EPSILON {
+        return None;
+    }
+    let uv_a = Vec2::new(a.tex_coord_clip[0], a.tex_coord_clip[1]);
+    let uv_b = Vec2::new(b.tex_coord_clip[0], b.tex_coord_clip[1]);
+    let uv_c = Vec2::new(c.tex_coord_clip[0], c.tex_coord_clip[1]);
+    let duv1 = uv_b - uv_a;
+    let duv2 = uv_c - uv_a;
+    let duv_dx = (duv1 * dy2 - duv2 * dy1) / det;
+    let duv_dy = (duv2 * dx1 - duv1 * dx2) / det;
+    Some([duv_dx.to_array(), duv_dy.to_array()])
+}
+
+fn project_world_to_pixel(position: [f32; 3], options: &CaptureOptions) -> Option<Vec2> {
+    let clip = diagnostic_view_projection(options) * Vec3::from_array(position).extend(1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    Some(Vec2::new(
+        (ndc.x + 1.0) * 0.5 * options.width as f32,
+        (1.0 - ndc.y) * 0.5 * options.height as f32,
+    ))
 }
 
 fn interpolate_vertex(a: Vertex, b: Vertex, c: Vertex, weights: [f32; 3]) -> Vertex {
@@ -1411,7 +1469,18 @@ fn interpolate_vertex(a: Vertex, b: Vertex, c: Vertex, weights: [f32; 3]) -> Ver
             a.normal,
         ),
         tangent: normalize_tangent(interpolate_vec4(a.tangent, b.tangent, c.tangent, weights)),
-        tex_coord: interpolate_vec2(a.tex_coord, b.tex_coord, c.tex_coord, weights),
+        tex_coord_clip: interpolate_vec4(
+            a.tex_coord_clip,
+            b.tex_coord_clip,
+            c.tex_coord_clip,
+            weights,
+        ),
+        tex_coord_grad: interpolate_vec4(
+            a.tex_coord_grad,
+            b.tex_coord_grad,
+            c.tex_coord_grad,
+            weights,
+        ),
         color: interpolate_vec4(a.color, b.color, c.color, weights),
         shade_color: interpolate_vec4(a.shade_color, b.shade_color, c.shade_color, weights),
         shading: interpolate_vec4(a.shading, b.shading, c.shading, weights),
@@ -1425,13 +1494,6 @@ fn interpolate_vertex(a: Vertex, b: Vertex, c: Vertex, weights: [f32; 3]) -> Ver
         double_sided: interpolate_scalar(a.double_sided, b.double_sided, c.double_sided, weights),
         _padding: 0.0,
     }
-}
-
-fn interpolate_vec2(a: [f32; 2], b: [f32; 2], c: [f32; 2], weights: [f32; 3]) -> [f32; 2] {
-    [
-        interpolate_scalar(a[0], b[0], c[0], weights),
-        interpolate_scalar(a[1], b[1], c[1], weights),
-    ]
 }
 
 fn interpolate_vec3(a: [f32; 3], b: [f32; 3], c: [f32; 3], weights: [f32; 3]) -> [f32; 3] {
@@ -2489,8 +2551,13 @@ mod tests {
         let vertices = owner_sample_resolve_vertices_for_primitive(&primitive, &[record], &options);
 
         assert_eq!(vertices.len(), 1);
-        assert_eq!(vertices[0].position, [-0.25, 0.5, 0.0]);
-        assert_eq!(vertices[0].tex_coord, [0.7, 0.8]);
+        assert_eq!(vertices[0].position, [0.25, 0.5, 0.0]);
+        assert_eq!(&vertices[0].tex_coord_clip[0..2], &[0.7, 0.8]);
+        assert_eq!(&vertices[0].tex_coord_clip[2..4], &[-0.25, 0.5]);
+        assert!(
+            vertices[0].tex_coord_grad[0..2] != [0.0, 0.0]
+                || vertices[0].tex_coord_grad[2..4] != [0.0, 0.0]
+        );
         assert_eq!(vertices[0].color, [0.25, 0.25, 0.5, 1.0]);
     }
 
@@ -2528,7 +2595,8 @@ mod tests {
             position,
             normal: [0.0, 0.0, 1.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
-            tex_coord: [0.0, 0.0],
+            tex_coord_clip: [position[0], position[1], 0.0, 0.0],
+            tex_coord_grad: [0.0, 0.0, 0.0, 0.0],
             color,
             shade_color: [1.0, 1.0, 1.0, 1.0],
             shading: [0.0; 4],
@@ -2952,18 +3020,19 @@ struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) tangent: vec4<f32>,
-    @location(3) tex_coord: vec2<f32>,
-    @location(4) color: vec4<f32>,
-    @location(5) shade_color: vec4<f32>,
-    @location(6) shading: vec4<f32>,
-    @location(7) emissive: vec4<f32>,
-    @location(8) matcap_factor: vec4<f32>,
-    @location(9) rim_color: vec4<f32>,
-    @location(10) rim_params: vec4<f32>,
-    @location(11) outline_color: vec4<f32>,
-    @location(12) alpha_mode: f32,
-    @location(13) normal_scale: f32,
-    @location(14) double_sided: f32,
+    @location(3) tex_coord_clip: vec4<f32>,
+    @location(4) tex_coord_grad: vec4<f32>,
+    @location(5) color: vec4<f32>,
+    @location(6) shade_color: vec4<f32>,
+    @location(7) shading: vec4<f32>,
+    @location(8) emissive: vec4<f32>,
+    @location(9) matcap_factor: vec4<f32>,
+    @location(10) rim_color: vec4<f32>,
+    @location(11) rim_params: vec4<f32>,
+    @location(12) outline_color: vec4<f32>,
+    @location(13) alpha_mode: f32,
+    @location(14) normal_scale: f32,
+    @location(15) double_sided: f32,
 };
 
 struct VertexOut {
@@ -2971,18 +3040,17 @@ struct VertexOut {
     @location(0) normal: vec3<f32>,
     @location(1) tangent: vec4<f32>,
     @location(2) tex_coord: vec2<f32>,
-    @location(3) color: vec4<f32>,
-    @location(4) shade_color: vec4<f32>,
-    @location(5) shading: vec4<f32>,
-    @location(6) emissive: vec4<f32>,
-    @location(7) matcap_factor: vec4<f32>,
-    @location(8) world_position: vec3<f32>,
-    @location(9) rim_color: vec4<f32>,
-    @location(10) rim_params: vec4<f32>,
-    @location(11) outline_color: vec4<f32>,
-    @location(12) alpha_mode: f32,
-    @location(13) normal_scale: f32,
-    @location(14) double_sided: f32,
+    @location(3) tex_coord_grad: vec4<f32>,
+    @location(4) color: vec4<f32>,
+    @location(5) shade_color: vec4<f32>,
+    @location(6) shading: vec4<f32>,
+    @location(7) emissive: vec4<f32>,
+    @location(8) matcap_factor: vec4<f32>,
+    @location(9) world_position: vec3<f32>,
+    @location(10) rim_color: vec4<f32>,
+    @location(11) rim_params: vec4<f32>,
+    @location(12) outline_color: vec4<f32>,
+    @location(13) scalar_params: vec4<f32>,
 };
 
 @vertex
@@ -2995,7 +3063,8 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.normal = normalize(input.normal);
     out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
     out.world_position = input.position;
-    out.tex_coord = input.tex_coord;
+    out.tex_coord = input.tex_coord_clip.xy;
+    out.tex_coord_grad = input.tex_coord_grad;
     out.color = input.color;
     out.shade_color = input.shade_color;
     out.shading = input.shading;
@@ -3004,20 +3073,19 @@ fn vs_main(input: VertexIn) -> VertexOut {
     out.rim_color = input.rim_color;
     out.rim_params = input.rim_params;
     out.outline_color = input.outline_color;
-    out.alpha_mode = input.alpha_mode;
-    out.normal_scale = input.normal_scale;
-    out.double_sided = input.double_sided;
+    out.scalar_params = vec4<f32>(input.alpha_mode, input.normal_scale, input.double_sided, 0.0);
     return out;
 }
 
 @vertex
 fn vs_owner_sample_resolve(input: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.position = vec4<f32>(input.position.xy, 0.0, 1.0);
+    out.position = vec4<f32>(input.tex_coord_clip.zw, 0.0, 1.0);
     out.normal = normalize(input.normal);
     out.tangent = vec4<f32>(normalize(input.tangent.xyz), input.tangent.w);
     out.world_position = input.position;
-    out.tex_coord = input.tex_coord;
+    out.tex_coord = input.tex_coord_clip.xy;
+    out.tex_coord_grad = input.tex_coord_grad;
     out.color = input.color;
     out.shade_color = input.shade_color;
     out.shading = input.shading;
@@ -3026,9 +3094,7 @@ fn vs_owner_sample_resolve(input: VertexIn) -> VertexOut {
     out.rim_color = input.rim_color;
     out.rim_params = input.rim_params;
     out.outline_color = input.outline_color;
-    out.alpha_mode = input.alpha_mode;
-    out.normal_scale = input.normal_scale;
-    out.double_sided = input.double_sided;
+    out.scalar_params = vec4<f32>(input.alpha_mode, input.normal_scale, input.double_sided, 0.0);
     return out;
 }
 
@@ -3142,6 +3208,20 @@ fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f
     );
 }
 
+fn transform_uv_gradient(gradient: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f32> {
+    let scaled = gradient * offset_scale.zw;
+    let c = cos(rotation);
+    let s = sin(rotation);
+    return vec2<f32>(
+        c * scaled.x - s * scaled.y,
+        s * scaled.x + c * scaled.y,
+    );
+}
+
+fn flip_v_gradient(gradient: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(gradient.x, -gradient.y);
+}
+
 fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
     let mask_uv = transform_uv(
         uv,
@@ -3168,12 +3248,12 @@ fn surface_normal(
     normal_uv_dy: vec2<f32>,
     use_explicit_texture_grad: bool,
 ) -> vec3<f32> {
-    let face_sign = select(-1.0, 1.0, front_facing || input.double_sided < 0.5);
+    let face_sign = select(-1.0, 1.0, front_facing || input.scalar_params.z < 0.5);
     let geometric_normal = normalize(input.normal) * face_sign;
-    if input.normal_scale == 0.0 {
+    if input.scalar_params.y == 0.0 {
         return geometric_normal;
     }
-    let normal_scale = abs(input.normal_scale);
+    let normal_scale = abs(input.scalar_params.y);
     let tangent = normalize(input.tangent.xyz) * face_sign;
     let bitangent = normalize(cross(geometric_normal, tangent) * input.tangent.w) * face_sign;
     var sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz;
@@ -3185,7 +3265,7 @@ fn surface_normal(
         (1.0 - sampled.y * 2.0) * normal_scale,
         sampled.z * 2.0 - 1.0,
     );
-    if input.normal_scale < 0.0 {
+    if input.scalar_params.y < 0.0 {
         let use_view_derivative = material_extra.flags2.y > 0.5;
         let view_position = (uniforms.view * vec4<f32>(input.world_position, 1.0)).xyz;
         let view_normal = normalize((uniforms.view * vec4<f32>(geometric_normal, 0.0)).xyz);
@@ -3233,58 +3313,82 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         owner_sample_raw_uv(owner_sample_index, input.tex_coord),
         use_owner_sample_geometry,
     );
+    let use_explicit_texture_grad =
+        use_owner_sample_geometry && dot(abs(input.tex_coord_grad.xy) + abs(input.tex_coord_grad.zw), vec2<f32>(1.0)) > 0.0;
     let default_animated_uv = animate_uv(input.tex_coord);
     let sampled_animated_uv = animate_uv(sampled_raw_uv);
+    let sampled_animated_uv_dx = input.tex_coord_grad.xy;
+    let sampled_animated_uv_dy = input.tex_coord_grad.zw;
     let default_base_uv = transform_uv(default_animated_uv, material_uv.base_transform, material_uv.rotation_a.x);
     let sampled_base_uv = transform_uv(sampled_animated_uv, material_uv.base_transform, material_uv.rotation_a.x);
+    let sampled_base_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.base_transform, material_uv.rotation_a.x);
+    let sampled_base_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.base_transform, material_uv.rotation_a.x);
     let base_uv = select(
         default_base_uv,
         owner_sample_base_uv(owner_sample_index, sampled_base_uv),
         use_owner_sample_geometry,
     );
     let default_shade_uv = transform_uv(default_animated_uv, material_uv.shade_transform, material_uv.rotation_a.y);
+    let sampled_shade_uv = transform_uv(sampled_animated_uv, material_uv.shade_transform, material_uv.rotation_a.y);
+    let sampled_shade_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.shade_transform, material_uv.rotation_a.y);
+    let sampled_shade_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.shade_transform, material_uv.rotation_a.y);
     let shade_uv = select(
         default_shade_uv,
-        transform_uv(sampled_animated_uv, material_uv.shade_transform, material_uv.rotation_a.y),
+        sampled_shade_uv,
         use_owner_sample_geometry,
     );
     let default_shading_shift_uv = transform_uv(default_animated_uv, material_uv.shading_shift_transform, material_uv.rotation_a.z);
+    let sampled_shading_shift_uv = transform_uv(sampled_animated_uv, material_uv.shading_shift_transform, material_uv.rotation_a.z);
+    let sampled_shading_shift_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.shading_shift_transform, material_uv.rotation_a.z);
+    let sampled_shading_shift_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.shading_shift_transform, material_uv.rotation_a.z);
     let shading_shift_uv = select(
         default_shading_shift_uv,
-        transform_uv(sampled_animated_uv, material_uv.shading_shift_transform, material_uv.rotation_a.z),
+        sampled_shading_shift_uv,
         use_owner_sample_geometry,
     );
     let default_normal_uv = transform_uv(default_animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
+    let sampled_normal_uv = transform_uv(sampled_animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
+    let sampled_normal_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.normal_transform, material_uv.rotation_a.w);
+    let sampled_normal_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.normal_transform, material_uv.rotation_a.w);
     let normal_uv = select(
         default_normal_uv,
-        transform_uv(sampled_animated_uv, material_uv.normal_transform, material_uv.rotation_a.w),
+        sampled_normal_uv,
         use_owner_sample_geometry,
     );
     let default_rim_uv = transform_uv(default_animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    let sampled_rim_uv = transform_uv(sampled_animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    let sampled_rim_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.rim_transform, material_uv.rotation_b.x);
+    let sampled_rim_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.rim_transform, material_uv.rotation_b.x);
     let rim_uv = select(
         default_rim_uv,
-        transform_uv(sampled_animated_uv, material_uv.rim_transform, material_uv.rotation_b.x),
+        sampled_rim_uv,
         use_owner_sample_geometry,
     );
     let default_emissive_uv = transform_uv(default_animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let sampled_emissive_uv = transform_uv(sampled_animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let sampled_emissive_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.emissive_transform, material_uv.rotation_b.y);
+    let sampled_emissive_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.emissive_transform, material_uv.rotation_b.y);
     let emissive_uv = select(
         default_emissive_uv,
-        transform_uv(sampled_animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y),
+        sampled_emissive_uv,
         use_owner_sample_geometry,
     );
     let default_occlusion_uv = transform_uv(default_animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
+    let sampled_occlusion_uv = transform_uv(sampled_animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
+    let sampled_occlusion_uv_dx = transform_uv_gradient(sampled_animated_uv_dx, material_uv.occlusion_transform, material_uv.uv_animation.w);
+    let sampled_occlusion_uv_dy = transform_uv_gradient(sampled_animated_uv_dy, material_uv.occlusion_transform, material_uv.uv_animation.w);
     let occlusion_uv = select(
         default_occlusion_uv,
-        transform_uv(sampled_animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w),
+        sampled_occlusion_uv,
         use_owner_sample_geometry,
     );
     let normal = surface_normal(
         input,
         front_facing,
         normal_uv,
-        dpdx(default_normal_uv),
-        dpdy(default_normal_uv),
-        use_owner_sample_geometry,
+        select(dpdx(default_normal_uv), sampled_normal_uv_dx, use_explicit_texture_grad),
+        select(dpdy(default_normal_uv), sampled_normal_uv_dy, use_explicit_texture_grad),
+        use_explicit_texture_grad,
     );
     let ndotl = clamp(dot(normal, normalize(uniforms.light_dir.xyz)), -1.0, 1.0);
     let default_base_sample_uv = select(
@@ -3297,14 +3401,24 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
         material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5,
     );
+    let sampled_base_sample_uv_dx = select(
+        sampled_base_uv_dx,
+        flip_v_gradient(sampled_base_uv_dx),
+        material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5,
+    );
+    let sampled_base_sample_uv_dy = select(
+        sampled_base_uv_dy,
+        flip_v_gradient(sampled_base_uv_dy),
+        material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5,
+    );
     var raw_texel = textureSample(base_texture, base_sampler, base_sample_uv);
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         raw_texel = textureSampleGrad(
             base_texture,
             base_sampler,
             base_sample_uv,
-            dpdx(default_base_sample_uv),
-            dpdy(default_base_sample_uv),
+            sampled_base_sample_uv_dx,
+            sampled_base_sample_uv_dy,
         );
     }
     let texel_rgb = select(
@@ -3314,20 +3428,20 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     );
     let texel = vec4<f32>(texel_rgb, raw_texel.a);
     var emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         emissive_texel = textureSampleGrad(
             emissive_texture,
             emissive_sampler,
             emissive_uv,
-            dpdx(default_emissive_uv),
-            dpdy(default_emissive_uv),
+            sampled_emissive_uv_dx,
+            sampled_emissive_uv_dy,
         ).rgb;
     }
     let alpha = input.color.a * raw_texel.a;
-    if input.alpha_mode > 0.5 && input.alpha_mode < 1.5 && alpha < input.rim_params.w {
+    if input.scalar_params.x > 0.5 && input.scalar_params.x < 1.5 && alpha < input.rim_params.w {
         discard;
     }
-    let opaque_alpha = select(alpha, 1.0, input.alpha_mode < 1.5);
+    let opaque_alpha = select(alpha, 1.0, input.scalar_params.x < 1.5);
     if material_extra.flags2.z > 0.5 {
         return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
     }
@@ -3361,13 +3475,13 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
             material_extra.pbr_params.y,
         ) * uniforms.light_color.rgb * uniforms.light_dir.w;
         var occlusion_sample = textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r;
-        if use_owner_sample_geometry {
+        if use_explicit_texture_grad {
             occlusion_sample = textureSampleGrad(
                 occlusion_texture,
                 occlusion_sampler,
                 occlusion_uv,
-                dpdx(default_occlusion_uv),
-                dpdy(default_occlusion_uv),
+                sampled_occlusion_uv_dx,
+                sampled_occlusion_uv_dy,
             ).r;
         }
         let occlusion = (occlusion_sample - 1.0) * material_extra.pbr_params.z + 1.0;
@@ -3379,24 +3493,24 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         return output_color(pbr_color, opaque_alpha);
     }
     var shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         shade_texel = textureSampleGrad(
             shade_texture,
             shade_sampler,
             shade_uv,
-            dpdx(default_shade_uv),
-            dpdy(default_shade_uv),
+            sampled_shade_uv_dx,
+            sampled_shade_uv_dy,
         );
     }
     let shade = input.shade_color.rgb * shade_texel.rgb;
     var shift_texel = textureSample(shading_shift_texture, shading_shift_sampler, shading_shift_uv).r;
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         shift_texel = textureSampleGrad(
             shading_shift_texture,
             shading_shift_sampler,
             shading_shift_uv,
-            dpdx(default_shading_shift_uv),
-            dpdy(default_shading_shift_uv),
+            sampled_shading_shift_uv_dx,
+            sampled_shading_shift_uv_dy,
         ).r;
     }
     let shift = input.shading.x + shift_texel * input.shading.w;
@@ -3408,13 +3522,13 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         direct = min(direct, diffuse);
     }
     var sampled_occlusion_texel = textureSample(occlusion_texture, occlusion_sampler, occlusion_uv).r;
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         sampled_occlusion_texel = textureSampleGrad(
             occlusion_texture,
             occlusion_sampler,
             occlusion_uv,
-            dpdx(default_occlusion_uv),
-            dpdy(default_occlusion_uv),
+            sampled_occlusion_uv_dx,
+            sampled_occlusion_uv_dy,
         ).r;
     }
     let sampled_occlusion = (sampled_occlusion_texel - 1.0) * material_extra.pbr_params.z + 1.0;
@@ -3436,13 +3550,13 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         input.rim_params.y,
     );
     var rim_texel = textureSample(rim_texture, rim_sampler, rim_uv).rgb;
-    if use_owner_sample_geometry {
+    if use_explicit_texture_grad {
         rim_texel = textureSampleGrad(
             rim_texture,
             rim_sampler,
             rim_uv,
-            dpdx(default_rim_uv),
-            dpdy(default_rim_uv),
+            sampled_rim_uv_dx,
+            sampled_rim_uv_dy,
         ).rgb;
     }
     let rim_light = uniforms.light_color.rgb * uniforms.light_dir.w + vec3<f32>(uniforms.mtoon_lighting.w);

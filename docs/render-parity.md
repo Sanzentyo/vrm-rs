@@ -21,9 +21,10 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-samples-shared-body3-ash-gated`: stricter model-body
   gate that excludes a three-pixel local ownership band.
 - `just render-parity-current-blocker`: rerun the current owner/fill and
-  texture/base-color blocker diagnostics. It regenerates the compact depth3
-  owner-hotspot extraction, browser/Rust owner join reports, and the broader
-  Seed-san flat32 gradient owner/render join.
+  texture/base-color blocker diagnostics. It now regenerates the compact
+  depth3 owner-hotspot extraction, owner/sample geometry manifests, wgpu/Bevy
+  resolve captures, the Ash resolve readback, direct `.imqraw` reports, and
+  raw/RGBA verification without applying final readback replacement.
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. It first regenerates the depth3 owner/fill inputs and the full
@@ -36,6 +37,14 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-seed-owner-hotspot-depth3-owner-sample-correction`: the
   compact depth3-only subset of the same correction path. Use this when the
   full Seed-san flat32 reports are unnecessary.
+- `just render-parity-seed-owner-hotspot-depth3-render-resolve-readback`:
+  regenerate the compact depth3 owner/fill fixture, produce source-like
+  owner/sample geometry manifests, feed them through the actual wgpu, Bevy, and
+  Ash resolve draw paths, and compare the resulting direct `.imqraw` artifacts
+  against the same three-vrm reference. This is the current focused blocker
+  recipe. It does not use `--apply-owner-sample-readback-replacement`; the
+  manifest chooses which browser-selected sample geometry should own a pixel,
+  then each renderer evaluates the normal material path for that sample.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
@@ -45,12 +54,13 @@ recipes are convenience entry points. Use these first:
   experiment until the policy moves earlier into backend sample/triangle
   selection.
 - `wgpu_render_capture` and `bevy_render_capture` accept
-  `--owner-sample-correction-manifest <path>` for renderer readback
-  experiments. Supplying the manifest now feeds renderer-side owner/sample
-  storage-buffer records and draw-key filtering. It does not patch the final
-  readback image unless `--apply-owner-sample-readback-replacement` is also
-  supplied. That explicit flag is only for upper-bound diagnostics and uses the
-  same `vrm-adapter` in-memory RGBA8 applicator as the raw correction tool. The
+  `--owner-sample-correction-manifest <path>` as a render-path resolve input,
+  not as a default value-copy correction. Supplying the manifest feeds
+  renderer-side owner/sample storage-buffer records, draw-key filtering, and
+  geometry-bearing resolve draws. It does not patch the final readback image
+  unless `--apply-owner-sample-readback-replacement` is also supplied. That
+  explicit flag is only for upper-bound diagnostics and uses the same
+  `vrm-adapter` in-memory RGBA8 applicator as the raw correction tool. The
   manifest format is intentionally strict and source-like: `corrections[]`
   entries must include `x`, `y`, `rgba`, `surface { materialName, triangle }`,
   and `sample [x, y]`, with optional `sample_geometry` used to bind the decision
@@ -68,16 +78,22 @@ recipes are convenience entry points. Use these first:
   gradients via `textureSampleGrad` so a single routed pixel does not corrupt
   implicit derivatives. `replacement_rgba` is only used by the explicit
   readback-replacement upper-bound flag, not by the normal shader path. The
-  first depth3 no-readback check was byte-identical to the previous
-  geometry-bound render, so the remaining PSNR gap is an ownership/coverage
-  problem rather than a UV-only material-sampling problem. The wgpu capture now
-  has the first implementation of that ownership step: geometry-bearing records
-  are converted into one point vertex per selected pixel and drawn after the
-  normal pass with the same material bind group, so the selected surface owns
-  the pixel and material evaluation runs from the recorded sample geometry
-  without copying `replacement_rgba`. On the compact depth3 base-color fixture
-  this raises the wgpu selected raw comparison to `64.3542 dB` with max selected
-  channel delta `1`. The Bevy capture now uses the same ownership model rather
+  first depth3 no-readback material-sampling check was byte-identical to the
+  previous geometry-bound render, so the fix had to move into
+  ownership/coverage rather than UV-only sampling. The wgpu capture now performs
+  that ownership step: geometry-bearing records are converted into one point
+  vertex per selected pixel and drawn after the normal pass with the same
+  material bind group, so the selected surface owns the pixel and material
+  evaluation runs from the recorded sample geometry without copying
+  `replacement_rgba`. The resolve vertex keeps the barycentric source world
+  position for shading, stores the target pixel clip position separately, and
+  carries raw-UV gradients computed from the source triangle; the WGSL uses
+  those gradients for owner/sample base, shade, shading-shift, normal, rim,
+  emissive, and occlusion texture lookups while ordinary triangle draws keep
+  implicit derivatives. On the compact depth3 base-color fixture this raises
+  the wgpu selected raw comparison to `64.3542 dB` with max selected channel
+  delta `1` and alpha mismatches `0`. The Bevy capture uses the same ownership
+  model rather
   than a same-surface UV-offset heuristic: geometry-bearing records become
   point primitives whose world position projects to the target pixel while UV,
   normal, tangent, and color attributes are rebuilt from the recorded sample
@@ -97,7 +113,11 @@ recipes are convenience entry points. Use these first:
   the same manifest verifies that the explicit-gradient shader path runs and
   writes matching `.rgba.json` / `.imqraw` artifacts. Matcap and UV-animation
   mask sampling remain implicit because their coordinates are not a direct
-  material UV transform. The wgpu, Bevy, and Ash
+  material UV transform. The current compact depth3 render-resolve run reports
+  selected `rgb-shared-nonblack-interior1px` PSNR wgpu `64.3542 dB`, Bevy
+  `55.9954 dB`, and Ash `64.3542 dB`; all three have selected max channel delta
+  `1`, alpha mismatches `0`, and `.imqraw` artifacts verified byte-for-byte
+  against their companion `.rgba.json` files. The wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against
   the current non-diagnostic render surfaces plus `surfaceSelections[]` entries
