@@ -46,7 +46,7 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{Receiver, Sender};
-use glam::{Mat4, Vec3 as GVec3};
+use glam::{Mat4, Vec3 as GVec3, Vec4 as GVec4};
 use serde_json::json;
 use std::error::Error;
 use std::fs;
@@ -63,7 +63,7 @@ use vrm_adapter::{
     ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_adapter_bevy::{
-    bevy_owner_sample_override_buffer_plan_for_surfaces_and_draw,
+    BevyOwnerSampleOverrideRecord, bevy_owner_sample_override_buffer_plan_for_surfaces_and_draw,
     empty_bevy_owner_sample_override_record,
 };
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
@@ -694,7 +694,14 @@ fn spawn_vrm_meshes(
         let correction_plan =
             render_capture_correction::load_owner_sample_correction_manifest(path)?;
         let selection = correction_plan.surface_selection_plan(render_surfaces.iter());
-        bind_owner_sample_override_buffers(loaded, &mut primitives, &selection, storage_buffers)?;
+        let resolve_primitives = bind_owner_sample_override_buffers(
+            loaded,
+            &mut primitives,
+            &selection,
+            storage_buffers,
+            options,
+        )?;
+        primitives.extend(resolve_primitives);
     }
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
@@ -1206,7 +1213,9 @@ fn bind_owner_sample_override_buffers(
     primitives: &mut [BevyPrimitive],
     selection: &vrm_adapter::RenderOwnerSampleSelectionPlan,
     storage_buffers: &mut Assets<ShaderStorageBuffer>,
-) -> Result<(), Box<dyn Error>> {
+    options: &CaptureOptions,
+) -> Result<Vec<BevyPrimitive>, Box<dyn Error>> {
+    let mut resolve_primitives = Vec::new();
     for primitive in primitives {
         let surfaces = owner_sample_surfaces_for_primitive(loaded, primitive);
         let draw = owner_sample_draw_key(primitive.owner_source)?;
@@ -1220,8 +1229,126 @@ fn bind_owner_sample_override_buffers(
             RenderAssetUsages::default(),
         ));
         primitive.material.set_owner_sample_overrides(handle);
+        if !plan.is_sentinel_only()
+            && let Some(resolve) = owner_sample_resolve_primitive(primitive, &plan.records, options)
+        {
+            resolve_primitives.push(resolve);
+        }
     }
-    Ok(())
+    Ok(resolve_primitives)
+}
+
+fn owner_sample_resolve_primitive(
+    primitive: &BevyPrimitive,
+    records: &[BevyOwnerSampleOverrideRecord],
+    options: &CaptureOptions,
+) -> Option<BevyPrimitive> {
+    let mesh = owner_sample_resolve_mesh(&primitive.mesh, records, options)?;
+    let mut material = primitive.material.clone();
+    material.make_owner_sample_resolve();
+    Some(BevyPrimitive {
+        mesh,
+        material,
+        render_order: primitive.render_order.saturating_add(10_000),
+        transparent_order_offset: 1.0,
+        phase_order_offset_applied: 1.0,
+        owner_source: primitive.owner_source,
+        owner_ids: Vec::new(),
+    })
+}
+
+fn owner_sample_resolve_mesh(
+    source: &Mesh,
+    records: &[BevyOwnerSampleOverrideRecord],
+    options: &CaptureOptions,
+) -> Option<Mesh> {
+    let positions = mesh_positions(source)?;
+    let normals = mesh_normals(source);
+    let tangents = mesh_tangents(source);
+    let colors = mesh_colors(source);
+    let mut resolve_positions = Vec::new();
+    let mut resolve_normals = Vec::new();
+    let mut resolve_tangents = tangents.map(|_| Vec::new());
+    let mut resolve_uvs = Vec::new();
+    let mut resolve_colors = colors.map(|_| Vec::new());
+    for record in records.iter().filter(|record| record.geometry_flags != 0) {
+        let indices = record.geometry_indices;
+        let [ia, ib, ic] = [
+            usize::try_from(indices[0]).ok()?,
+            usize::try_from(indices[1]).ok()?,
+            usize::try_from(indices[2]).ok()?,
+        ];
+        positions.get(ia)?;
+        positions.get(ib)?;
+        positions.get(ic)?;
+        let weights = [
+            record.barycentric_depth[0],
+            record.barycentric_depth[1],
+            record.barycentric_depth[2],
+        ];
+        resolve_positions.push(owner_sample_pixel_world(record.pixel, options)?);
+        resolve_normals.push(normalize_or_fallback(
+            interpolate_vec3(
+                normals
+                    .and_then(|items| items.get(ia))
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 1.0]),
+                normals
+                    .and_then(|items| items.get(ib))
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 1.0]),
+                normals
+                    .and_then(|items| items.get(ic))
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 1.0]),
+                weights,
+            ),
+            [0.0, 0.0, 1.0],
+        ));
+        if let Some((source_tangents, resolve_tangents)) = tangents.zip(resolve_tangents.as_mut()) {
+            resolve_tangents.push(normalize_tangent(interpolate_vec4(
+                *source_tangents.get(ia).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
+                *source_tangents.get(ib).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
+                *source_tangents.get(ic).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
+                weights,
+            )));
+        }
+        resolve_uvs.push([record.geometry_uvs[0], record.geometry_uvs[1]]);
+        if let Some((source_colors, resolve_colors)) = colors.zip(resolve_colors.as_mut()) {
+            resolve_colors.push(interpolate_vec4(
+                *source_colors.get(ia).unwrap_or(&[1.0; 4]),
+                *source_colors.get(ib).unwrap_or(&[1.0; 4]),
+                *source_colors.get(ic).unwrap_or(&[1.0; 4]),
+                weights,
+            ));
+        }
+    }
+    if resolve_positions.is_empty() {
+        return None;
+    }
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::PointList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, resolve_positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, resolve_normals);
+    if let Some(resolve_tangents) = resolve_tangents {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, resolve_tangents);
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, resolve_uvs);
+    if let Some(resolve_colors) = resolve_colors {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, resolve_colors);
+    }
+    Some(mesh)
+}
+
+fn owner_sample_pixel_world(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 3]> {
+    (pixel[0] < options.width && pixel[1] < options.height).then_some(())?;
+    let ndc_x = (pixel[0] as f32 + 0.5) / options.width as f32 * 2.0 - 1.0;
+    let ndc_y = 1.0 - (pixel[1] as f32 + 0.5) / options.height as f32 * 2.0;
+    let clip = GVec4::new(ndc_x, ndc_y, 0.5, 1.0);
+    let world = diagnostic_view_projection(options).inverse() * clip;
+    (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
 }
 
 fn owner_sample_surfaces_for_primitive(
@@ -1537,6 +1664,53 @@ fn mesh_uv0(mesh: &Mesh) -> Option<&[[f32; 2]]> {
         VertexAttributeValues::Float32x2(uvs) => Some(uvs),
         _ => None,
     }
+}
+
+fn mesh_colors(mesh: &Mesh) -> Option<&[[f32; 4]]> {
+    match mesh.attribute(Mesh::ATTRIBUTE_COLOR)? {
+        VertexAttributeValues::Float32x4(colors) => Some(colors),
+        _ => None,
+    }
+}
+
+fn interpolate_vec3(a: [f32; 3], b: [f32; 3], c: [f32; 3], weights: [f32; 3]) -> [f32; 3] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+    ]
+}
+
+fn interpolate_vec4(a: [f32; 4], b: [f32; 4], c: [f32; 4], weights: [f32; 3]) -> [f32; 4] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+        interpolate_scalar(a[3], b[3], c[3], weights),
+    ]
+}
+
+fn interpolate_scalar(a: f32, b: f32, c: f32, weights: [f32; 3]) -> f32 {
+    weights[0] * a + weights[1] * b + weights[2] * c
+}
+
+fn normalize_or_fallback(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+    let vector = GVec3::from_array(value);
+    if vector.length_squared() > f32::EPSILON {
+        vector.normalize().to_array()
+    } else {
+        fallback
+    }
+}
+
+fn normalize_tangent(value: [f32; 4]) -> [f32; 4] {
+    let tangent = GVec3::new(value[0], value[1], value[2]);
+    let normalized = if tangent.length_squared() > f32::EPSILON {
+        tangent.normalize()
+    } else {
+        GVec3::X
+    };
+    [normalized.x, normalized.y, normalized.z, value[3].signum()]
 }
 
 fn node_name(loaded: &LoadedVrm, node: usize) -> Option<&str> {
@@ -1882,6 +2056,18 @@ impl BevyPrimitiveMaterial {
         match self {
             Self::Mtoon(material) => {
                 material.owner_sample_overrides = handle;
+            }
+        }
+    }
+
+    fn make_owner_sample_resolve(&mut self) {
+        match self {
+            Self::Mtoon(material) => {
+                material.depth_write = false;
+                material.depth_compare = CompareFunction::Always;
+                material.cull_mode = None;
+                material.depth_bias = 0.0;
+                material.render_alpha_mode = AlphaMode::Blend;
             }
         }
     }
@@ -3097,6 +3283,80 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("textureSampleGrad("));
         assert!(!MTOON_SHADER_SOURCE.contains("textureSampleLevel("));
         assert!(!MTOON_SHADER_SOURCE.contains("apply_owner_sample_override"));
+    }
+
+    #[test]
+    fn owner_sample_resolve_mesh_uses_record_pixel_and_sample_geometry() {
+        let mut source = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        source.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        );
+        source.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        );
+        source.insert_attribute(Mesh::ATTRIBUTE_TANGENT, vec![[1.0, 0.0, 0.0, 1.0]; 3]);
+        source.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        );
+        source.insert_attribute(
+            Mesh::ATTRIBUTE_COLOR,
+            vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ],
+        );
+
+        let options = CaptureOptions::parse_from([
+            "bevy_render_capture",
+            "--fixture",
+            "fixture.vrm",
+            "--out",
+            "out.rgba.json",
+            "--width",
+            "256",
+            "--height",
+            "128",
+            "--camera-z",
+            "3",
+        ]);
+        let record = BevyOwnerSampleOverrideRecord {
+            pixel: [12, 34],
+            sample: [0.3, 0.7],
+            replacement_rgba: [0.0; 4],
+            relation_to_expected: 1,
+            geometry_flags: 1,
+            sample_pass: 1,
+            _padding0: 0,
+            geometry_ids: [0, 0, 0, 0],
+            geometry_indices: [0, 1, 2, 0],
+            barycentric_depth: [0.2, 0.3, 0.5, 0.97],
+            geometry_uvs: [0.42, 0.43, 0.0, 0.0],
+        };
+
+        let mesh = owner_sample_resolve_mesh(&source, &[record], &options)
+            .expect("geometry-bearing record should build a resolve mesh");
+
+        assert_eq!(mesh.primitive_topology(), PrimitiveTopology::PointList);
+        assert_eq!(mesh_uv0(&mesh).unwrap(), &[[0.42, 0.43]]);
+        assert_eq!(mesh_normals(&mesh).unwrap(), &[[0.0, 0.0, 1.0]]);
+        assert_eq!(mesh_tangents(&mesh).unwrap(), &[[1.0, 0.0, 0.0, 1.0]]);
+        assert_eq!(mesh_colors(&mesh).unwrap(), &[[0.2, 0.3, 0.5, 1.0]]);
+
+        let position = mesh_positions(&mesh).unwrap()[0];
+        let clip = diagnostic_view_projection(&options)
+            * GVec4::new(position[0], position[1], position[2], 1.0);
+        let ndc = clip.truncate() / clip.w;
+        let projected_x = ((ndc.x + 1.0) * 0.5 * options.width as f32) - 0.5;
+        let projected_y = ((1.0 - ndc.y) * 0.5 * options.height as f32) - 0.5;
+        assert!((projected_x - 12.0).abs() <= 1.0e-4);
+        assert!((projected_y - 34.0).abs() <= 1.0e-4);
     }
 
     #[test]

@@ -77,7 +77,14 @@ recipes are convenience entry points. Use these first:
   the pixel and material evaluation runs from the recorded sample geometry
   without copying `replacement_rgba`. On the compact depth3 base-color fixture
   this raises the wgpu selected raw comparison to `64.3542 dB` with max selected
-  channel delta `1`; Bevy and Ash still need the same resolve pass. The
+  channel delta `1`. The Bevy capture now uses the same ownership model rather
+  than a same-surface UV-offset heuristic: geometry-bearing records become
+  point primitives whose world position projects to the target pixel while UV,
+  normal, tangent, and color attributes are rebuilt from the recorded sample
+  geometry. On the same compact depth3 base-color fixture this raises Bevy's
+  selected raw comparison from the previous `31.1386 dB` floor to `55.9954 dB`
+  with exact alpha, and all 64 manifest-selected pixels resolve within 1 LSB of
+  the manifest sample color. Ash still needs the same resolve pass. The
   wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against
