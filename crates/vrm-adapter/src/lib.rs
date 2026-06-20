@@ -452,6 +452,151 @@ pub fn screen_triangle_signed_area(screen: [[f32; 2]; 3]) -> f32 {
         - (screen[1][1] - screen[0][1]) * (screen[2][0] - screen[0][0])
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RenderOwnerSurfaceKey {
+    material_name: String,
+    triangle: u64,
+}
+
+impl RenderOwnerSurfaceKey {
+    pub const DIAGNOSTIC_MATERIAL_SUFFIX: &'static str = ":vrm-rs-owner-id-diagnostic";
+
+    pub fn new(material_name: impl Into<String>, triangle: u64) -> Self {
+        Self {
+            material_name: material_name.into(),
+            triangle,
+        }
+    }
+
+    pub fn from_diagnostic_material_name(material_name: &str, triangle: u64) -> Self {
+        Self::new(
+            normalize_owner_diagnostic_material_name(material_name),
+            triangle,
+        )
+    }
+
+    pub fn material_name(&self) -> &str {
+        &self.material_name
+    }
+
+    pub fn triangle(&self) -> u64 {
+        self.triangle
+    }
+
+    pub fn relation_to(&self, expected: Option<&Self>) -> RenderOwnerSurfaceRelation {
+        match expected {
+            Some(expected) if self == expected => RenderOwnerSurfaceRelation::SameSurface,
+            Some(expected) if self.material_name == expected.material_name => {
+                RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle
+            }
+            Some(_) => RenderOwnerSurfaceRelation::DifferentMaterial,
+            None => RenderOwnerSurfaceRelation::Missing,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RenderOwnerSurfaceRelation {
+    SameSurface,
+    SameMaterialDifferentTriangle,
+    DifferentMaterial,
+    Missing,
+}
+
+impl RenderOwnerSurfaceRelation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SameSurface => "same-surface",
+            Self::SameMaterialDifferentTriangle => "same-material-different-triangle",
+            Self::DifferentMaterial => "different-material",
+            Self::Missing => "missing",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderOwnerSampleCorrectionPolicy {
+    pub only_improving: bool,
+}
+
+impl RenderOwnerSampleCorrectionPolicy {
+    pub const fn improving_only() -> Self {
+        Self {
+            only_improving: true,
+        }
+    }
+
+    pub const fn allow_any() -> Self {
+        Self {
+            only_improving: false,
+        }
+    }
+}
+
+impl Default for RenderOwnerSampleCorrectionPolicy {
+    fn default() -> Self {
+        Self::improving_only()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderOwnerSampleCorrection {
+    pub before_rgb_distance: f64,
+    pub after_rgb_distance: f64,
+    pub outcome: RenderOwnerSampleCorrectionOutcome,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RenderOwnerSampleCorrectionOutcome {
+    Improved,
+    Worsened,
+    Tied,
+}
+
+pub fn evaluate_render_owner_sample_correction(
+    expected_rgba: [u8; 4],
+    actual_rgba: [u8; 4],
+    candidate_rgba: [u8; 4],
+    policy: RenderOwnerSampleCorrectionPolicy,
+) -> Option<RenderOwnerSampleCorrection> {
+    let before_rgb_distance = rgb_distance_u8(actual_rgba, expected_rgba);
+    let after_rgb_distance = rgb_distance_u8(candidate_rgba, expected_rgba);
+    if policy.only_improving && after_rgb_distance >= before_rgb_distance {
+        return None;
+    }
+    let outcome = match after_rgb_distance
+        .partial_cmp(&before_rgb_distance)
+        .unwrap_or(std::cmp::Ordering::Equal)
+    {
+        std::cmp::Ordering::Less => RenderOwnerSampleCorrectionOutcome::Improved,
+        std::cmp::Ordering::Greater => RenderOwnerSampleCorrectionOutcome::Worsened,
+        std::cmp::Ordering::Equal => RenderOwnerSampleCorrectionOutcome::Tied,
+    };
+    Some(RenderOwnerSampleCorrection {
+        before_rgb_distance,
+        after_rgb_distance,
+        outcome,
+    })
+}
+
+pub fn rgb_distance_u8(left: [u8; 4], right: [u8; 4]) -> f64 {
+    left.iter()
+        .zip(right.iter())
+        .take(3)
+        .map(|(left, right)| {
+            let delta = f64::from(*left) - f64::from(*right);
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+pub fn normalize_owner_diagnostic_material_name(name: &str) -> String {
+    name.strip_suffix(RenderOwnerSurfaceKey::DIAGNOSTIC_MATERIAL_SUFFIX)
+        .unwrap_or(name)
+        .to_owned()
+}
+
 pub trait SceneGraph {
     type Error;
 
@@ -4570,6 +4715,84 @@ mod tests {
 
         assert_eq!(projection.ndc_depth, 0.25);
         assert_eq!(projection.webgl_depth, 0.5);
+    }
+
+    #[test]
+    fn render_owner_surface_keys_normalize_diagnostic_material_names() {
+        let browser = RenderOwnerSurfaceKey::from_diagnostic_material_name(
+            "body:vrm-rs-owner-id-diagnostic",
+            7,
+        );
+        let expected = RenderOwnerSurfaceKey::new("body", 7);
+        let neighbor = RenderOwnerSurfaceKey::new("body", 8);
+        let other = RenderOwnerSurfaceKey::new("hair", 7);
+
+        assert_eq!(browser, expected);
+        assert_eq!(browser.material_name(), "body");
+        assert_eq!(browser.triangle(), 7);
+        assert_eq!(
+            browser.relation_to(Some(&expected)),
+            RenderOwnerSurfaceRelation::SameSurface
+        );
+        assert_eq!(
+            browser.relation_to(Some(&neighbor)),
+            RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle
+        );
+        assert_eq!(
+            browser.relation_to(Some(&other)),
+            RenderOwnerSurfaceRelation::DifferentMaterial
+        );
+        assert_eq!(
+            browser.relation_to(None),
+            RenderOwnerSurfaceRelation::Missing
+        );
+        assert_eq!(
+            RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle.as_str(),
+            "same-material-different-triangle"
+        );
+    }
+
+    #[test]
+    fn render_owner_sample_correction_policy_accepts_only_improvements_by_default() {
+        let expected = [100, 100, 100, 255];
+        let actual = [10, 10, 10, 255];
+        let improved = [99, 100, 101, 255];
+        let worsened = [0, 0, 0, 255];
+
+        let correction = evaluate_render_owner_sample_correction(
+            expected,
+            actual,
+            improved,
+            RenderOwnerSampleCorrectionPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            correction.outcome,
+            RenderOwnerSampleCorrectionOutcome::Improved
+        );
+        assert!(correction.after_rgb_distance < correction.before_rgb_distance);
+
+        assert_eq!(
+            evaluate_render_owner_sample_correction(
+                expected,
+                actual,
+                worsened,
+                RenderOwnerSampleCorrectionPolicy::improving_only(),
+            ),
+            None
+        );
+
+        let accepted_worse = evaluate_render_owner_sample_correction(
+            expected,
+            actual,
+            worsened,
+            RenderOwnerSampleCorrectionPolicy::allow_any(),
+        )
+        .unwrap();
+        assert_eq!(
+            accepted_worse.outcome,
+            RenderOwnerSampleCorrectionOutcome::Worsened
+        );
     }
 
     fn transform_matrix(transform: Transform) -> Mat4 {

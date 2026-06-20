@@ -8,6 +8,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 imq = { git = "https://github.com/Sanzentyo/imq.git", rev = "0fdc5263c0c21bd6d7bc55c194e98b593bf83bff", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+vrm-adapter = { path = "../../crates/vrm-adapter" }
 ---
 
 //! Apply browser owner/sample colors to a renderer raw image as a parity upper-bound experiment.
@@ -23,6 +24,10 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use vrm_adapter::{
+    RenderOwnerSampleCorrectionOutcome, RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey,
+    evaluate_render_owner_sample_correction,
+};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -57,12 +62,6 @@ struct RgbaImage {
     width: usize,
     height: usize,
     rgba: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct SurfaceSummary {
-    material_name: String,
-    triangle: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -209,25 +208,27 @@ fn correction_report(
         candidate_color_count += 1;
         let expected_rgba = pixel_rgba(expected, x, y)?;
         let actual_rgba = pixel_rgba(actual, x, y)?;
-        let before = rgb_distance_u8(actual_rgba, expected_rgba);
-        let after = rgb_distance_u8(color, expected_rgba);
-        if only_expected_closer && after >= before {
+        let policy = if only_expected_closer {
+            RenderOwnerSampleCorrectionPolicy::improving_only()
+        } else {
+            RenderOwnerSampleCorrectionPolicy::allow_any()
+        };
+        let Some(correction) =
+            evaluate_render_owner_sample_correction(expected_rgba, actual_rgba, color, policy)
+        else {
             skipped_not_expected_closer += 1;
             continue;
-        }
-        before_distance_sum += before;
-        after_distance_sum += after;
-        match after
-            .partial_cmp(&before)
-            .unwrap_or(std::cmp::Ordering::Equal)
-        {
-            std::cmp::Ordering::Less => improved += 1,
-            std::cmp::Ordering::Greater => worsened += 1,
-            std::cmp::Ordering::Equal => tied += 1,
-        }
+        };
+        before_distance_sum += correction.before_rgb_distance;
+        after_distance_sum += correction.after_rgb_distance;
+        match correction.outcome {
+            RenderOwnerSampleCorrectionOutcome::Improved => improved += 1,
+            RenderOwnerSampleCorrectionOutcome::Worsened => worsened += 1,
+            RenderOwnerSampleCorrectionOutcome::Tied => tied += 1,
+        };
         let rust_expected = surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
         *relation_counts
-            .entry(relation_label(Some(&browser_best), rust_expected.as_ref()).to_owned())
+            .entry(browser_best.relation_to(rust_expected.as_ref()).as_str().to_owned())
             .or_default() += 1;
         set_pixel_rgba(&mut corrected, x, y, color)?;
         applied_count += 1;
@@ -342,7 +343,7 @@ fn write_imqraw_rgba8(
 
 fn rust_subpixel_color_for_surface_sample(
     rust_hotspot: &Value,
-    surface: &SurfaceSummary,
+    surface: &RenderOwnerSurfaceKey,
     sample: [f64; 2],
 ) -> Option<[u8; 4]> {
     rust_hotspot
@@ -363,28 +364,16 @@ fn rust_subpixel_color_for_surface_sample(
         })
 }
 
-fn surface_at(value: &Value, pointer: &str) -> Option<SurfaceSummary> {
+fn surface_at(value: &Value, pointer: &str) -> Option<RenderOwnerSurfaceKey> {
     let value = value.pointer(pointer)?;
-    Some(SurfaceSummary {
-        material_name: normalize_material(
-            value
-                .get("materialName")
-                .or_else(|| value.get("material_name"))
-                .and_then(Value::as_str)?,
-        ),
-        triangle: value.get("triangle").and_then(Value::as_u64)?,
-    })
-}
-
-fn relation_label(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) -> &'static str {
-    match left.zip(right) {
-        Some((left, right)) if left == right => "same-surface",
-        Some((left, right)) if left.material_name == right.material_name => {
-            "same-material-different-triangle"
-        }
-        Some(_) => "different-material",
-        None => "missing",
-    }
+    RenderOwnerSurfaceKey::from_diagnostic_material_name(
+        value
+            .get("materialName")
+            .or_else(|| value.get("material_name"))
+            .and_then(Value::as_str)?,
+        value.get("triangle").and_then(Value::as_u64)?,
+    )
+    .into()
 }
 
 fn pixel_key(value: &Value) -> Option<(u64, u64)> {
@@ -445,18 +434,6 @@ fn set_pixel_rgba(
     Ok(())
 }
 
-fn rgb_distance_u8(left: [u8; 4], right: [u8; 4]) -> f64 {
-    left.iter()
-        .zip(right.iter())
-        .take(3)
-        .map(|(left, right)| {
-            let delta = f64::from(*left) - f64::from(*right);
-            delta * delta
-        })
-        .sum::<f64>()
-        .sqrt()
-}
-
 fn rgb_psnr(expected: &RgbaImage, actual: &RgbaImage) -> Option<f64> {
     let channel_count = expected.width.checked_mul(expected.height)?.checked_mul(3)?;
     if channel_count == 0 {
@@ -488,12 +465,6 @@ fn rgb_psnr(expected: &RgbaImage, actual: &RgbaImage) -> Option<f64> {
 
 fn mean(count: u64, sum: f64) -> Option<f64> {
     (count > 0).then(|| sum / count as f64)
-}
-
-fn normalize_material(name: &str) -> String {
-    name.strip_suffix(":vrm-rs-owner-id-diagnostic")
-        .unwrap_or(name)
-        .to_owned()
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn Error>> {

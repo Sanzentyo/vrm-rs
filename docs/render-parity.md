@@ -28,7 +28,9 @@ recipes are convenience entry points. Use these first:
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. This does not change renderer artifacts; it writes JSON reports
   showing how much a local sample/triangle ownership policy could improve the
-  existing raw images.
+  existing raw images. The correction decision itself is shared through
+  `vrm-adapter` owner/sample policy types so renderer-path experiments can use
+  the same Sans I/O boundary.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
   legacy `.psnr.json` report is retained as a diagnostic cross-check over
