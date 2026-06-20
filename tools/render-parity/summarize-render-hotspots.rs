@@ -119,6 +119,8 @@ struct ReviewReport {
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
     top_actual_expected_surface_transitions: Vec<Value>,
+    top_frontmost_texture_sampling_variants: Vec<Value>,
+    top_nearest_sample_visible_texture_sampling_variants: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -529,6 +531,16 @@ fn summarize_report(
             "actual_expected_surface_transitions",
             top,
         ),
+        top_frontmost_texture_sampling_variants: top_array(
+            summary,
+            "frontmost_texture_sampling_variants",
+            top,
+        ),
+        top_nearest_sample_visible_texture_sampling_variants: top_array(
+            summary,
+            "nearest_sample_visible_texture_sampling_variants",
+            top,
+        ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
         top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
         top_missing_center_nearest_offsets: top_array(
@@ -749,6 +761,15 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(&report.top_expected_surface_transitions));
     markdown.push_str("\nActual vs expected:\n\n");
     markdown.push_str(&value_table(&report.top_actual_expected_surface_transitions));
+    markdown.push_str("\n## Texture Sampling Variants\n\n");
+    markdown.push_str("Frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_frontmost_texture_sampling_variants,
+    ));
+    markdown.push_str("\nNearest-sample visible frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_nearest_sample_visible_texture_sampling_variants,
+    ));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -907,6 +928,30 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "actual_frontmost_surface_transitions": [{"count": 1}],
                 "expected_frontmost_surface_transitions": [{"count": 1}],
                 "actual_expected_surface_transitions": [{"count": 1}],
+                "frontmost_texture_sampling_variants": [{
+                    "mode": "linear_top_left_half_texel",
+                    "count": 1,
+                    "actual_mean_rgb_distance": 0.5,
+                    "expected_mean_rgb_distance": 1.5,
+                    "actual_max_rgb_distance": 0.5,
+                    "expected_max_rgb_distance": 1.5,
+                    "actual_closer": 1,
+                    "expected_closer": 0,
+                    "tied": 0,
+                    "mean_expected_minus_actual": 1.0
+                }],
+                "nearest_sample_visible_texture_sampling_variants": [{
+                    "mode": "nearest_top_left",
+                    "count": 1,
+                    "actual_mean_rgb_distance": 0.75,
+                    "expected_mean_rgb_distance": 1.75,
+                    "actual_max_rgb_distance": 0.75,
+                    "expected_max_rgb_distance": 1.75,
+                    "actual_closer": 1,
+                    "expected_closer": 0,
+                    "tied": 0,
+                    "mean_expected_minus_actual": 1.0
+                }],
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -951,7 +996,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         report.actual_frontmost_mean_cpu_base_color_rgb_distance,
         Some(0.5)
     );
-    assert!(markdown_report(&report).contains("Render Hotspot Summary"));
+    assert_eq!(report.top_frontmost_texture_sampling_variants.len(), 1);
+    let markdown = markdown_report(&report);
+    assert!(markdown.contains("Render Hotspot Summary"));
+    assert!(markdown.contains("Texture Sampling Variants"));
     let mut options = Options {
         self_test: false,
         input: Some(PathBuf::from("self-test.json")),

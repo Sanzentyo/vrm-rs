@@ -196,6 +196,8 @@ struct HotspotSummary {
     expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f32>,
     actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f32>,
     expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f32>,
+    frontmost_texture_sampling_variants: Vec<TextureSamplingVariantSummary>,
+    nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingVariantSummary>,
     frontmost_mean_base_texture_local_rgb_gradient: Option<f32>,
     frontmost_max_base_texture_local_rgb_gradient: Option<f32>,
     frontmost_base_texture_local_rgb_gradient_gte_32: usize,
@@ -315,7 +317,37 @@ struct Hotspot {
     nearest_sample_visible_cpu_base_color_rgba: Option<[u8; 4]>,
     nearest_sample_visible_cpu_base_color_expected_rgb_distance: Option<f32>,
     nearest_sample_visible_cpu_base_color_actual_rgb_distance: Option<f32>,
+    frontmost_texture_sampling_variants: Vec<TextureSamplingDistance>,
+    nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingDistance>,
     candidates: Vec<HitCandidate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TextureSamplingVariantSummary {
+    mode: &'static str,
+    count: usize,
+    actual_mean_rgb_distance: f32,
+    expected_mean_rgb_distance: f32,
+    actual_max_rgb_distance: f32,
+    expected_max_rgb_distance: f32,
+    actual_closer: usize,
+    expected_closer: usize,
+    tied: usize,
+    mean_expected_minus_actual: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TextureSamplingDistance {
+    mode: &'static str,
+    rgba: [u8; 4],
+    actual_rgb_distance: f32,
+    expected_rgb_distance: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TextureSamplingColor {
+    mode: &'static str,
+    rgba: [u8; 4],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -348,6 +380,7 @@ struct CandidateMatch {
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
     cpu_base_color_rgba: [u8; 4],
+    base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
 }
 
@@ -387,6 +420,7 @@ struct HitCandidate {
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
     cpu_base_color_rgba: [u8; 4],
+    base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
     screen: [[f32; 2]; 3],
     front_facing: bool,
@@ -480,6 +514,13 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let nearest_sample_visible_cpu_base_color_rgba = nearest_sample_visible_frontmost
                 .as_ref()
                 .map(|frontmost| frontmost.cpu_base_color_rgba);
+            let frontmost_texture_sampling_variants =
+                texture_sampling_distances(frontmost_visible.as_ref(), delta.actual, delta.expected);
+            let nearest_sample_visible_texture_sampling_variants = texture_sampling_distances(
+                nearest_sample_visible_frontmost.as_ref(),
+                delta.actual,
+                delta.expected,
+            );
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -535,6 +576,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 nearest_sample_visible_cpu_base_color_actual_rgb_distance:
                     nearest_sample_visible_cpu_base_color_rgba
                         .map(|color| rgb_distance(color, delta.actual)),
+                frontmost_texture_sampling_variants,
+                nearest_sample_visible_texture_sampling_variants,
                 candidates,
             }
         })
@@ -869,6 +912,16 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             max_frontmost_rgb_distance(hotspots, |hotspot| {
                 hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance
             }),
+        frontmost_texture_sampling_variants: texture_sampling_variant_summary(
+            hotspots.iter().flat_map(|hotspot| {
+                hotspot.frontmost_texture_sampling_variants.iter()
+            }),
+        ),
+        nearest_sample_visible_texture_sampling_variants: texture_sampling_variant_summary(
+            hotspots.iter().flat_map(|hotspot| {
+                hotspot.nearest_sample_visible_texture_sampling_variants.iter()
+            }),
+        ),
         frontmost_mean_base_texture_local_rgb_gradient: mean_frontmost_texture_gradient(hotspots),
         frontmost_max_base_texture_local_rgb_gradient: max_frontmost_texture_gradient(hotspots),
         frontmost_base_texture_local_rgb_gradient_gte_32: frontmost_texture_gradient_gte(
@@ -1153,6 +1206,77 @@ fn max_missing_center_nearest_rgb_distance(
         .filter(|hotspot| hotspot.frontmost_visible.is_none())
         .filter_map(distance)
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn texture_sampling_distances(
+    candidate: Option<&CandidateMatch>,
+    actual: [u8; 4],
+    expected: [u8; 4],
+) -> Vec<TextureSamplingDistance> {
+    candidate
+        .into_iter()
+        .flat_map(|candidate| candidate.base_texture_sampling_rgba.iter())
+        .map(|sample| TextureSamplingDistance {
+            mode: sample.mode,
+            rgba: sample.rgba,
+            actual_rgb_distance: rgb_distance(sample.rgba, actual),
+            expected_rgb_distance: rgb_distance(sample.rgba, expected),
+        })
+        .collect()
+}
+
+fn texture_sampling_variant_summary<'a>(
+    samples: impl Iterator<Item = &'a TextureSamplingDistance>,
+) -> Vec<TextureSamplingVariantSummary> {
+    #[derive(Default)]
+    struct Accum {
+        count: usize,
+        actual_sum: f32,
+        expected_sum: f32,
+        actual_max: f32,
+        expected_max: f32,
+        actual_closer: usize,
+        expected_closer: usize,
+        tied: usize,
+        expected_minus_actual_sum: f32,
+    }
+
+    let mut by_mode = BTreeMap::<&'static str, Accum>::new();
+    for sample in samples {
+        let entry = by_mode.entry(sample.mode).or_default();
+        entry.count += 1;
+        entry.actual_sum += sample.actual_rgb_distance;
+        entry.expected_sum += sample.expected_rgb_distance;
+        entry.actual_max = entry.actual_max.max(sample.actual_rgb_distance);
+        entry.expected_max = entry.expected_max.max(sample.expected_rgb_distance);
+        entry.expected_minus_actual_sum +=
+            sample.expected_rgb_distance - sample.actual_rgb_distance;
+        match sample
+            .actual_rgb_distance
+            .partial_cmp(&sample.expected_rgb_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+        {
+            std::cmp::Ordering::Less => entry.actual_closer += 1,
+            std::cmp::Ordering::Greater => entry.expected_closer += 1,
+            std::cmp::Ordering::Equal => entry.tied += 1,
+        }
+    }
+    by_mode
+        .into_iter()
+        .filter(|(_, entry)| entry.count > 0)
+        .map(|(mode, entry)| TextureSamplingVariantSummary {
+            mode,
+            count: entry.count,
+            actual_mean_rgb_distance: entry.actual_sum / entry.count as f32,
+            expected_mean_rgb_distance: entry.expected_sum / entry.count as f32,
+            actual_max_rgb_distance: entry.actual_max,
+            expected_max_rgb_distance: entry.expected_max,
+            actual_closer: entry.actual_closer,
+            expected_closer: entry.expected_closer,
+            tied: entry.tied,
+            mean_expected_minus_actual: entry.expected_minus_actual_sum / entry.count as f32,
+        })
+        .collect()
 }
 
 fn mean_frontmost_texture_gradient(hotspots: &[Hotspot]) -> Option<f32> {
@@ -1602,6 +1726,7 @@ fn candidate_match(
         base_uv: candidate.base_uv,
         base_texture_rgba: candidate.base_texture_rgba,
         cpu_base_color_rgba: candidate.cpu_base_color_rgba,
+        base_texture_sampling_rgba: candidate.base_texture_sampling_rgba.clone(),
         base_texture_local_rgb_gradient: candidate.base_texture_local_rgb_gradient,
     }
 }
@@ -1649,6 +1774,11 @@ fn surface_candidates(
                 });
             let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
             let texture_color = base_texture_rgba_linear.unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let base_texture_sampling_rgba = surface
+                .base_texture
+                .as_ref()
+                .map(|texture| texture_sampling_colors(texture, base_uv))
+                .unwrap_or_default();
             let base_texture_local_rgb_gradient = surface
                 .base_texture
                 .as_ref()
@@ -1711,6 +1841,7 @@ fn surface_candidates(
                 base_uv,
                 base_texture_rgba,
                 cpu_base_color_rgba,
+                base_texture_sampling_rgba,
                 base_texture_local_rgb_gradient,
                 screen: [a.screen, b.screen, c.screen],
                 front_facing,
@@ -1971,6 +2102,111 @@ fn base_texture_local_rgb_gradient(texture: &CpuRgba8Image, uv: [f32; 2]) -> f32
         })
         .map(|sample| rgb_distance(center, sample))
         .fold(0.0, f32::max)
+}
+
+fn texture_sampling_colors(texture: &CpuRgba8Image, uv: [f32; 2]) -> Vec<TextureSamplingColor> {
+    [
+        (
+            "linear_top_left_half_texel",
+            texture
+                .sample_rgba_repeat_linear(uv, Rgba8SamplingOrigin::TopLeft)
+                .map(quantize_unorm8),
+        ),
+        (
+            "linear_bottom_left_half_texel",
+            texture
+                .sample_rgba_repeat_linear(uv, Rgba8SamplingOrigin::BottomLeft)
+                .map(quantize_unorm8),
+        ),
+        (
+            "nearest_top_left",
+            sample_rgba8_repeat_nearest(texture, uv, Rgba8SamplingOrigin::TopLeft),
+        ),
+        (
+            "nearest_bottom_left",
+            sample_rgba8_repeat_nearest(texture, uv, Rgba8SamplingOrigin::BottomLeft),
+        ),
+        (
+            "linear_top_left_no_half_texel",
+            sample_rgba8_repeat_linear_no_half(texture, uv, Rgba8SamplingOrigin::TopLeft),
+        ),
+        (
+            "linear_bottom_left_no_half_texel",
+            sample_rgba8_repeat_linear_no_half(texture, uv, Rgba8SamplingOrigin::BottomLeft),
+        ),
+    ]
+    .into_iter()
+    .map(|(mode, rgba)| TextureSamplingColor { mode, rgba })
+    .collect()
+}
+
+fn sample_rgba8_repeat_nearest(
+    texture: &CpuRgba8Image,
+    uv: [f32; 2],
+    origin: Rgba8SamplingOrigin,
+) -> [u8; 4] {
+    let x = (uv[0].rem_euclid(1.0) * texture.width as f32).floor() as i32;
+    let y = match origin {
+        Rgba8SamplingOrigin::TopLeft => (uv[1].rem_euclid(1.0) * texture.height as f32).floor(),
+        Rgba8SamplingOrigin::BottomLeft => {
+            ((1.0 - uv[1]).rem_euclid(1.0) * texture.height as f32).floor()
+        }
+    } as i32;
+    rgba8_at_repeat(texture, x, y)
+}
+
+fn sample_rgba8_repeat_linear_no_half(
+    texture: &CpuRgba8Image,
+    uv: [f32; 2],
+    origin: Rgba8SamplingOrigin,
+) -> [u8; 4] {
+    let u = uv[0].rem_euclid(1.0);
+    let v = uv[1].rem_euclid(1.0);
+    let x = u * texture.width as f32;
+    let y = match origin {
+        Rgba8SamplingOrigin::TopLeft => v * texture.height as f32,
+        Rgba8SamplingOrigin::BottomLeft => (1.0 - v) * texture.height as f32,
+    };
+    let x0 = x.floor();
+    let y0 = y.floor();
+    let tx = x - x0;
+    let ty = y - y0;
+    let x0 = x0 as i32;
+    let y0 = y0 as i32;
+    std::array::from_fn(|channel| {
+        let top = lerp_u8(
+            channel_at_repeat(texture, x0, y0, channel),
+            channel_at_repeat(texture, x0 + 1, y0, channel),
+            tx,
+        );
+        let bottom = lerp_u8(
+            channel_at_repeat(texture, x0, y0 + 1, channel),
+            channel_at_repeat(texture, x0 + 1, y0 + 1, channel),
+            tx,
+        );
+        quantize_unorm8(lerp_f32(top, bottom, ty))
+    })
+}
+
+fn rgba8_at_repeat(texture: &CpuRgba8Image, x: i32, y: i32) -> [u8; 4] {
+    std::array::from_fn(|channel| channel_at_repeat(texture, x, y, channel))
+}
+
+fn channel_at_repeat(texture: &CpuRgba8Image, x: i32, y: i32, channel: usize) -> u8 {
+    let width = texture.width as i32;
+    let height = texture.height as i32;
+    let x = x.rem_euclid(width) as u32;
+    let y = y.rem_euclid(height) as u32;
+    let index = ((y * texture.width + x) * 4) as usize + channel;
+    texture.rgba.get(index).copied().unwrap_or(0)
+}
+
+fn lerp_u8(left: u8, right: u8, amount: f32) -> f32 {
+    lerp_f32(f32::from(left) / 255.0, f32::from(right) / 255.0, amount)
+}
+
+fn lerp_f32(left: f32, right: f32, amount: f32) -> f32 {
+    left + (right - left) * amount
 }
 
 fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
