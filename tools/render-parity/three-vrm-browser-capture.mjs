@@ -666,6 +666,7 @@ function capturePage(options) {
           depthTest: material?.depthTest ?? true,
           blending: material?.blending ?? null,
           premultipliedAlpha: material?.premultipliedAlpha ?? false,
+          ownerColorSource: 'vertex-color',
           renderOrder: mesh.renderOrder ?? 0,
           renderPhaseOrder: material?.type === 'ShaderMaterial' ? (mesh.renderOrder ?? 0) : null,
           triangle: Math.floor(offset / 3),

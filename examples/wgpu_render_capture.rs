@@ -2182,6 +2182,7 @@ fn diagnostic_owner_ids(
                     "depthTest": true,
                     "depthCompare": "less-equal",
                     "blend": primitive.policy.blend,
+                    "ownerColorSource": "vertex-color",
                     "triangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),

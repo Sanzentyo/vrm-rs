@@ -106,6 +106,7 @@ struct OwnerLabelSummary {
     depth_write: Option<bool>,
     depth_compare: Option<String>,
     blend: Option<bool>,
+    owner_color_source: Option<String>,
     screen_bounds: Option<Value>,
     depth: Option<f64>,
     webgl_depth: Option<f64>,
@@ -292,6 +293,7 @@ fn label_summary(value: &Value) -> OwnerLabelSummary {
         depth_write: bool_field(value, "depth_write"),
         depth_compare: string_field(value, "depth_compare"),
         blend: bool_field(value, "blend"),
+        owner_color_source: string_field(value, "owner_color_source"),
         screen_bounds: value.get("screen_bounds").cloned(),
         depth: f64_field(value, "depth"),
         webgl_depth: f64_field(value, "webgl_depth"),
@@ -776,8 +778,13 @@ fn label_cell(label: &OwnerLabelSummary) -> String {
         .bevy_phase_order_offset_applied
         .map(|value| format!(" / bevy_phase={value:.8}"))
         .unwrap_or_default();
+    let owner_color = label
+        .owner_color_source
+        .as_deref()
+        .map(|value| format!(" / owner_color={value}"))
+        .unwrap_or_default();
     format!(
-        "{} / {} / tri{} / material={} / draw{}{}",
+        "{} / {} / tri{} / material={} / draw{}{}{}",
         label.pass.as_deref().unwrap_or("unknown"),
         label.mesh_name.as_deref().unwrap_or("unknown"),
         label
@@ -790,6 +797,7 @@ fn label_cell(label: &OwnerLabelSummary) -> String {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "?".to_owned()),
         bevy_phase,
+        owner_color,
     )
 }
 

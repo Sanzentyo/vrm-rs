@@ -1116,9 +1116,10 @@ The same summary now reports raster pixel bounds per owner against projected
 metadata bounds. On the compact topology fixture, the wgpu reference has
 `0` owners whose center-sampled raster bounds exceed metadata bounds, while
 Bevy has `14` such owners and a worst center excess of `19.55310059px`
-(owner `90`). Bevy's owner-id diagnostic path also renders one triangle per
-draw with a uniform owner color and blend disabled, so the remaining tail is no
-longer attributable to vertex-color interpolation or owner-ID alpha blending.
+(owner `90`). Bevy's owner-id diagnostic path renders one triangle per draw,
+stores the encoded ID in vertex color, zeroes the material owner uniform, and
+disables blend, so the remaining tail is no longer attributable to uniform
+owner-color binding, vertex-color interpolation, or owner-ID alpha blending.
 The summary also reports raster-to-metadata alignment. Expected/wgpu has
 `0` owners whose self metadata center is more than `2px` or `4px` away from its
 raster bounds center, while Bevy has `5` owners / `22` pixels over `2px` and
@@ -1127,9 +1128,12 @@ aligning to metadata owner `89` at `0.417px` while being `19.846px` away from
 its own metadata. Bevy owner-id entities opt out of automatic batching and
 owner-id captures force render-app GPU preprocessing to `None`; neither change
 moves the compact tail, ruling out Bevy batching/indirect preprocessing for
-this residual. The generated owner controls still pass after these changes,
-which keeps the next target on real-model local Bevy coverage/fill or
-material-primitive assignment in the source-derived topology guard.
+this residual. The metadata field `ownerColorSource` is now emitted by
+three-vrm, wgpu, and Bevy and preserved in owner-tail summaries; current Bevy
+detail rows show `owner_color=vertex-color`. The generated owner controls still
+pass after these changes, which keeps the next target on real-model local Bevy
+coverage/fill or material-primitive assignment in the source-derived topology
+guard.
 
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.

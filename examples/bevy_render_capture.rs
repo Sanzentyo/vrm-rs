@@ -689,7 +689,8 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
         let vertex_count = primitive.mesh.count_vertices();
         let triangle_count = vertex_count.div_ceil(3);
         for triangle_index in 0..triangle_count {
-            let Some(mesh) = owner_id_triangle_mesh(&primitive.mesh, triangle_index) else {
+            let color = owner_id_color(next_id);
+            let Some(mesh) = owner_id_triangle_mesh(&primitive.mesh, triangle_index, color) else {
                 continue;
             };
             let indices = original_indices
@@ -697,7 +698,7 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
                 .and_then(|slice| <[u32; 3]>::try_from(slice).ok())
                 .unwrap_or([0, 0, 0]);
             let mut material = primitive.material.clone();
-            material.set_owner_color(BVec4::from_array(owner_id_color(next_id)));
+            material.set_owner_color(BVec4::ZERO);
             let phase_order = primitive
                 .owner_source
                 .phase_order
@@ -723,7 +724,7 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
     *primitives = owner_primitives;
 }
 
-fn owner_id_triangle_mesh(source: &Mesh, triangle: usize) -> Option<Mesh> {
+fn owner_id_triangle_mesh(source: &Mesh, triangle: usize, color: [f32; 4]) -> Option<Mesh> {
     let start = triangle.checked_mul(3)?;
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -743,6 +744,7 @@ fn owner_id_triangle_mesh(source: &Mesh, triangle: usize) -> Option<Mesh> {
     if let Some(uvs) = mesh_uv0(source).and_then(|items| items.get(start..start + 3)) {
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs.to_vec());
     }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, [color; 3].to_vec());
     Some(mesh)
 }
 
@@ -1136,6 +1138,7 @@ fn diagnostic_owner_ids(
                     "depthCompare": "greater-equal",
                     "blend": bevy_primitive_blend(primitive),
                     "depthBias": bevy_primitive_depth_bias(primitive),
+                    "ownerColorSource": "vertex-color",
                     "bevyPhaseOrderOffset": primitive.transparent_order_offset,
                     "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
                     "bevySortDistanceOverride": owner_id_sort_distance_override(primitive, draw_index, options),
