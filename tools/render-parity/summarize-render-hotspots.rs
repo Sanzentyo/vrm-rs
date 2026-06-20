@@ -41,6 +41,10 @@ struct Options {
     #[arg(long)]
     min_frontmost_visible_count: Option<u64>,
     #[arg(long)]
+    min_nearest_sample_visible_frontmost_count: Option<u64>,
+    #[arg(long)]
+    min_missing_center_recovered_by_nearest_visible_count: Option<u64>,
+    #[arg(long)]
     max_frontmost_base_texture_local_rgb_gradient_gte_32: Option<u64>,
     #[arg(long)]
     max_frontmost_max_base_texture_local_rgb_gradient: Option<f64>,
@@ -59,6 +63,8 @@ struct ReviewReport {
     sample_center: Option<[f64; 2]>,
     hotspot_count: u64,
     frontmost_visible_count: Option<u64>,
+    nearest_sample_visible_frontmost_count: Option<u64>,
+    missing_center_recovered_by_nearest_visible_count: Option<u64>,
     frontmost_edge_lte_025px: Option<u64>,
     frontmost_edge_lte_050px: Option<u64>,
     frontmost_edge_lte_100px: Option<u64>,
@@ -74,6 +80,14 @@ struct ReviewReport {
     expected_frontmost_mean_base_texture_rgb_distance: Option<f64>,
     actual_frontmost_max_base_texture_rgb_distance: Option<f64>,
     expected_frontmost_max_base_texture_rgb_distance: Option<f64>,
+    actual_nearest_sample_visible_mean_base_texture_rgb_distance: Option<f64>,
+    expected_nearest_sample_visible_mean_base_texture_rgb_distance: Option<f64>,
+    actual_nearest_sample_visible_max_base_texture_rgb_distance: Option<f64>,
+    expected_nearest_sample_visible_max_base_texture_rgb_distance: Option<f64>,
+    actual_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f64>,
+    expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f64>,
+    actual_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f64>,
+    expected_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f64>,
     actual_frontmost_mean_uv_distance: Option<f64>,
     expected_frontmost_mean_uv_distance: Option<f64>,
     actual_frontmost_max_uv_distance: Option<f64>,
@@ -87,6 +101,8 @@ struct ReviewReport {
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
+    top_nearest_sample_offsets: Vec<Value>,
+    top_missing_center_nearest_offsets: Vec<Value>,
     top_hotspots: Vec<HotspotLine>,
 }
 
@@ -171,6 +187,16 @@ fn validate_thresholds(
         "frontmost_visible_count",
         report.frontmost_visible_count,
         options.min_frontmost_visible_count,
+    )?;
+    check_min_u64(
+        "nearest_sample_visible_frontmost_count",
+        report.nearest_sample_visible_frontmost_count,
+        options.min_nearest_sample_visible_frontmost_count,
+    )?;
+    check_min_u64(
+        "missing_center_recovered_by_nearest_visible_count",
+        report.missing_center_recovered_by_nearest_visible_count,
+        options.min_missing_center_recovered_by_nearest_visible_count,
     )?;
     check_max_u64(
         "frontmost_base_texture_local_rgb_gradient_gte_32",
@@ -263,6 +289,14 @@ fn summarize_report(
         sample_center: number_pair(value.get("sample_center")),
         hotspot_count: hotspots.len() as u64,
         frontmost_visible_count: u64_field(summary, "frontmost_visible_count"),
+        nearest_sample_visible_frontmost_count: u64_field(
+            summary,
+            "nearest_sample_visible_frontmost_count",
+        ),
+        missing_center_recovered_by_nearest_visible_count: u64_field(
+            summary,
+            "missing_center_recovered_by_nearest_visible_count",
+        ),
         frontmost_edge_lte_025px: u64_field(summary, "frontmost_edge_distance_lte_025px"),
         frontmost_edge_lte_050px: u64_field(summary, "frontmost_edge_distance_lte_050px"),
         frontmost_edge_lte_100px: u64_field(summary, "frontmost_edge_distance_lte_100px"),
@@ -308,6 +342,38 @@ fn summarize_report(
             summary,
             "expected_frontmost_max_base_texture_rgb_distance",
         ),
+        actual_nearest_sample_visible_mean_base_texture_rgb_distance: f64_field(
+            summary,
+            "actual_nearest_sample_visible_mean_base_texture_rgb_distance",
+        ),
+        expected_nearest_sample_visible_mean_base_texture_rgb_distance: f64_field(
+            summary,
+            "expected_nearest_sample_visible_mean_base_texture_rgb_distance",
+        ),
+        actual_nearest_sample_visible_max_base_texture_rgb_distance: f64_field(
+            summary,
+            "actual_nearest_sample_visible_max_base_texture_rgb_distance",
+        ),
+        expected_nearest_sample_visible_max_base_texture_rgb_distance: f64_field(
+            summary,
+            "expected_nearest_sample_visible_max_base_texture_rgb_distance",
+        ),
+        actual_missing_center_nearest_visible_mean_base_texture_rgb_distance: f64_field(
+            summary,
+            "actual_missing_center_nearest_visible_mean_base_texture_rgb_distance",
+        ),
+        expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: f64_field(
+            summary,
+            "expected_missing_center_nearest_visible_mean_base_texture_rgb_distance",
+        ),
+        actual_missing_center_nearest_visible_max_base_texture_rgb_distance: f64_field(
+            summary,
+            "actual_missing_center_nearest_visible_max_base_texture_rgb_distance",
+        ),
+        expected_missing_center_nearest_visible_max_base_texture_rgb_distance: f64_field(
+            summary,
+            "expected_missing_center_nearest_visible_max_base_texture_rgb_distance",
+        ),
         actual_frontmost_mean_uv_distance: f64_field(summary, "actual_frontmost_mean_uv_distance"),
         expected_frontmost_mean_uv_distance: f64_field(
             summary,
@@ -350,6 +416,12 @@ fn summarize_report(
             top,
         ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
+        top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
+        top_missing_center_nearest_offsets: top_array(
+            summary,
+            "missing_center_nearest_visible_offsets",
+            top,
+        ),
         top_hotspots: top_hotspots(hotspots, top),
     })
 }
@@ -439,6 +511,11 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_u64(report.frontmost_visible_count)
     ));
     markdown.push_str(&format!(
+        "- Nearest-sample visible frontmost: `{}`; missing-center recovered: `{}`\n",
+        fmt_opt_u64(report.nearest_sample_visible_frontmost_count),
+        fmt_opt_u64(report.missing_center_recovered_by_nearest_visible_count)
+    ));
+    markdown.push_str(&format!(
         "- Edge distance <= 0.25 / 0.50 / 1.00 px: `{}` / `{}` / `{}`\n",
         fmt_opt_u64(report.frontmost_edge_lte_025px),
         fmt_opt_u64(report.frontmost_edge_lte_050px),
@@ -463,6 +540,16 @@ fn markdown_report(report: &ReviewReport) -> String {
         "- Base-texture mean RGB distance actual/expected: `{}` / `{}`\n",
         fmt_opt_f64(report.actual_frontmost_mean_base_texture_rgb_distance),
         fmt_opt_f64(report.expected_frontmost_mean_base_texture_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Nearest-sample base-texture mean RGB distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_nearest_sample_visible_mean_base_texture_rgb_distance),
+        fmt_opt_f64(report.expected_nearest_sample_visible_mean_base_texture_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Missing-center nearest-sample mean RGB distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_missing_center_nearest_visible_mean_base_texture_rgb_distance),
+        fmt_opt_f64(report.expected_missing_center_nearest_visible_mean_base_texture_rgb_distance)
     ));
     markdown.push_str(&format!(
         "- Base UV mean/max distance actual: `{}` / `{}`; expected: `{}` / `{}`\n",
@@ -511,6 +598,10 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(&report.top_expected_surface_transitions));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
+    markdown.push_str("\nNearest-sample offsets:\n\n");
+    markdown.push_str(&value_table(&report.top_nearest_sample_offsets));
+    markdown.push_str("\nMissing-center nearest offsets:\n\n");
+    markdown.push_str(&value_table(&report.top_missing_center_nearest_offsets));
     markdown
 }
 
@@ -608,65 +699,84 @@ fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn std::error::Err
 }
 
 fn self_test() -> Result<(), Box<dyn std::error::Error>> {
-    let value = serde_json::json!({
-        "fixture": "fixture.vrm",
-        "deltas": "deltas.json",
-        "width": 2,
-        "height": 2,
-        "sample_center": [0.5, 0.5],
-        "summary": {
-            "frontmost_visible_count": 1,
-            "frontmost_edge_distance_lte_025px": 1,
-            "frontmost_edge_distance_lte_050px": 1,
-            "frontmost_edge_distance_lte_100px": 1,
-            "actual_frontmost_material_matches": 1,
-            "expected_frontmost_material_matches": 0,
-            "actual_frontmost_triangle_matches": 1,
-            "expected_frontmost_triangle_matches": 0,
-            "actual_frontmost_edge_neighbor_matches": 1,
-            "expected_frontmost_edge_neighbor_matches": 1,
-            "actual_frontmost_pass_matches": 1,
-            "expected_frontmost_pass_matches": 1,
-            "actual_frontmost_mean_base_texture_rgb_distance": 1.0,
-            "expected_frontmost_mean_base_texture_rgb_distance": 2.0,
-            "actual_frontmost_mean_uv_distance": 0.1,
-            "expected_frontmost_mean_uv_distance": 0.2,
-            "actual_frontmost_max_uv_distance": 0.3,
-            "expected_frontmost_max_uv_distance": 0.4,
-            "frontmost_mean_base_texture_local_rgb_gradient": 10.0,
-            "frontmost_max_base_texture_local_rgb_gradient": 12.0,
-            "frontmost_base_texture_local_rgb_gradient_gte_32": 0,
-            "frontmost_base_texture_local_rgb_gradient_gte_64": 0,
-            "frontmost_base_texture_local_rgb_gradient_gte_96": 0,
-            "actual_frontmost_surface_transitions": [{"count": 1}],
-            "expected_frontmost_surface_transitions": [{"count": 1}],
-            "frontmost_nearest_edge_counts": [{"count": 1}]
-        },
-        "hotspots": [{
-            "x": 1,
-            "y": 1,
-            "max_channel_delta": 7,
-            "rgb_distance": 7.0,
-            "actual": [1, 2, 3, 255],
-            "expected": [4, 5, 6, 255],
-            "frontmost_base_texture_actual_rgb_distance": 1.0,
-            "frontmost_base_texture_expected_rgb_distance": 2.0,
-            "frontmost_visible": {
-                "pass": "base",
-                "material_name": "mat",
-                "node": 0,
-                "mesh": 0,
-                "primitive": 0,
-                "triangle": 0,
-                "edge_distance_pixels": 0.1,
-                "nearest_edge": 2,
-                "base_texture_local_rgb_gradient": 10.0
-            }
-        }]
-    });
+    let value = serde_json::from_str::<Value>(
+        r#"{
+            "fixture": "fixture.vrm",
+            "deltas": "deltas.json",
+            "width": 2,
+            "height": 2,
+            "sample_center": [0.5, 0.5],
+            "summary": {
+                "frontmost_visible_count": 1,
+                "nearest_sample_visible_frontmost_count": 1,
+                "missing_center_recovered_by_nearest_visible_count": 0,
+                "frontmost_edge_distance_lte_025px": 1,
+                "frontmost_edge_distance_lte_050px": 1,
+                "frontmost_edge_distance_lte_100px": 1,
+                "actual_frontmost_material_matches": 1,
+                "expected_frontmost_material_matches": 0,
+                "actual_frontmost_triangle_matches": 1,
+                "expected_frontmost_triangle_matches": 0,
+                "actual_frontmost_edge_neighbor_matches": 1,
+                "expected_frontmost_edge_neighbor_matches": 1,
+                "actual_frontmost_pass_matches": 1,
+                "expected_frontmost_pass_matches": 1,
+                "actual_frontmost_mean_base_texture_rgb_distance": 1.0,
+                "expected_frontmost_mean_base_texture_rgb_distance": 2.0,
+                "actual_nearest_sample_visible_mean_base_texture_rgb_distance": 1.5,
+                "expected_nearest_sample_visible_mean_base_texture_rgb_distance": 2.5,
+                "actual_nearest_sample_visible_max_base_texture_rgb_distance": 3.0,
+                "expected_nearest_sample_visible_max_base_texture_rgb_distance": 4.0,
+                "actual_missing_center_nearest_visible_mean_base_texture_rgb_distance": null,
+                "expected_missing_center_nearest_visible_mean_base_texture_rgb_distance": null,
+                "actual_missing_center_nearest_visible_max_base_texture_rgb_distance": null,
+                "expected_missing_center_nearest_visible_max_base_texture_rgb_distance": null,
+                "actual_frontmost_mean_uv_distance": 0.1,
+                "expected_frontmost_mean_uv_distance": 0.2,
+                "actual_frontmost_max_uv_distance": 0.3,
+                "expected_frontmost_max_uv_distance": 0.4,
+                "frontmost_mean_base_texture_local_rgb_gradient": 10.0,
+                "frontmost_max_base_texture_local_rgb_gradient": 12.0,
+                "frontmost_base_texture_local_rgb_gradient_gte_32": 0,
+                "frontmost_base_texture_local_rgb_gradient_gte_64": 0,
+                "frontmost_base_texture_local_rgb_gradient_gte_96": 0,
+                "actual_frontmost_surface_transitions": [{"count": 1}],
+                "expected_frontmost_surface_transitions": [{"count": 1}],
+                "frontmost_nearest_edge_counts": [{"count": 1}],
+                "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
+                "missing_center_nearest_visible_offsets": []
+            },
+            "hotspots": [{
+                "x": 1,
+                "y": 1,
+                "max_channel_delta": 7,
+                "rgb_distance": 7.0,
+                "actual": [1, 2, 3, 255],
+                "expected": [4, 5, 6, 255],
+                "frontmost_base_texture_actual_rgb_distance": 1.0,
+                "frontmost_base_texture_expected_rgb_distance": 2.0,
+                "frontmost_visible": {
+                    "pass": "base",
+                    "material_name": "mat",
+                    "node": 0,
+                    "mesh": 0,
+                    "primitive": 0,
+                    "triangle": 0,
+                    "edge_distance_pixels": 0.1,
+                    "nearest_edge": 2,
+                    "base_texture_local_rgb_gradient": 10.0
+                }
+            }]
+        }"#,
+    )?;
     let report = summarize_report(Path::new("self-test.json"), &value, 4)?;
     assert_eq!(report.hotspot_count, 1);
     assert_eq!(report.texture_distance_advantage.actual_closer, 1);
+    assert_eq!(report.nearest_sample_visible_frontmost_count, Some(1));
+    assert_eq!(
+        report.actual_nearest_sample_visible_mean_base_texture_rgb_distance,
+        Some(1.5)
+    );
     assert!(markdown_report(&report).contains("Render Hotspot Summary"));
     let mut options = Options {
         self_test: false,
@@ -677,6 +787,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         min_hotspot_count: Some(1),
         max_hotspot_count: Some(1),
         min_frontmost_visible_count: Some(1),
+        min_nearest_sample_visible_frontmost_count: Some(1),
+        min_missing_center_recovered_by_nearest_visible_count: Some(0),
         max_frontmost_base_texture_local_rgb_gradient_gte_32: Some(0),
         max_frontmost_max_base_texture_local_rgb_gradient: Some(12.0),
         min_texture_distance_actual_closer: Some(1),
