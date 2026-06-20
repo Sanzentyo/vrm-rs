@@ -26,8 +26,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
     RenderOwnerSampleCorrectionCandidate, RenderOwnerSampleCorrectionOutcome,
-    RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey, RenderOwnerSampleKey, RenderPixel,
-    RenderSamplePoint, evaluate_render_owner_sample_correction_candidate,
+    RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey, RenderOwnerSampleKey,
+    RenderOwnerSampleCorrectionDecision, RenderPixel, RenderSamplePoint,
+    apply_render_owner_sample_correction_decisions_rgba8,
+    evaluate_render_owner_sample_correction_candidate,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -182,6 +184,7 @@ fn correction_report(
     let mut worsened = 0;
     let mut tied = 0;
     let mut relation_counts = std::collections::BTreeMap::new();
+    let mut decisions = Vec::<RenderOwnerSampleCorrectionDecision>::new();
 
     for owner_hotspot in owner_hotspots {
         let Some((x, y)) = pixel_key(owner_hotspot) else {
@@ -239,14 +242,15 @@ fn correction_report(
         *relation_counts
             .entry(decision.relation_to_expected.as_str().to_owned())
             .or_default() += 1;
-        set_pixel_rgba(
-            &mut corrected,
-            decision.pixel.x(),
-            decision.pixel.y(),
-            decision.replacement_rgba,
-        )?;
+        decisions.push(decision);
         applied_count += 1;
     }
+    apply_render_owner_sample_correction_decisions_rgba8(
+        expected.width as u64,
+        expected.height as u64,
+        &mut corrected.rgba,
+        &decisions,
+    )?;
 
     let report = CorrectionReport {
         expected: display_path(expected_path),
@@ -424,22 +428,6 @@ fn pixel_rgba(image: &RgbaImage, x: u64, y: u64) -> Result<[u8; 4], Box<dyn Erro
         image.rgba[index + 2],
         image.rgba[index + 3],
     ])
-}
-
-fn set_pixel_rgba(
-    image: &mut RgbaImage,
-    x: u64,
-    y: u64,
-    color: [u8; 4],
-) -> Result<(), Box<dyn Error>> {
-    let x = usize::try_from(x)?;
-    let y = usize::try_from(y)?;
-    if x >= image.width || y >= image.height {
-        return Err(format!("pixel {x},{y} is outside {}x{}", image.width, image.height).into());
-    }
-    let index = (y * image.width + x) * 4;
-    image.rgba[index..index + 4].copy_from_slice(&color);
-    Ok(())
 }
 
 fn rgb_psnr(expected: &RgbaImage, actual: &RgbaImage) -> Option<f64> {

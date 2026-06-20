@@ -696,6 +696,28 @@ pub struct RenderOwnerSampleCorrectionDecision {
     pub correction: RenderOwnerSampleCorrection,
 }
 
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum RenderOwnerSampleCorrectionApplyError {
+    #[error(
+        "RGBA8 buffer length mismatch for {width}x{height}: expected {expected_len} bytes, got {actual_len}"
+    )]
+    BufferLengthMismatch {
+        width: u64,
+        height: u64,
+        expected_len: u64,
+        actual_len: usize,
+    },
+    #[error("RGBA8 buffer dimensions are too large: {width}x{height}")]
+    ImageTooLarge { width: u64, height: u64 },
+    #[error("correction pixel {x},{y} is outside {width}x{height}")]
+    PixelOutOfBounds {
+        x: u64,
+        y: u64,
+        width: u64,
+        height: u64,
+    },
+}
+
 pub fn evaluate_render_owner_sample_correction_candidate(
     candidate: RenderOwnerSampleCorrectionCandidate,
     policy: RenderOwnerSampleCorrectionPolicy,
@@ -713,6 +735,68 @@ pub fn evaluate_render_owner_sample_correction_candidate(
         replacement_rgba: candidate.candidate_rgba,
         correction,
     })
+}
+
+pub fn apply_render_owner_sample_correction_decisions_rgba8(
+    width: u64,
+    height: u64,
+    rgba: &mut [u8],
+    decisions: &[RenderOwnerSampleCorrectionDecision],
+) -> Result<usize, RenderOwnerSampleCorrectionApplyError> {
+    let expected_len = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(RenderOwnerSampleCorrectionApplyError::ImageTooLarge { width, height })?;
+    if usize::try_from(expected_len).ok() != Some(rgba.len()) {
+        return Err(
+            RenderOwnerSampleCorrectionApplyError::BufferLengthMismatch {
+                width,
+                height,
+                expected_len,
+                actual_len: rgba.len(),
+            },
+        );
+    }
+
+    for decision in decisions {
+        let offset = rgba8_pixel_offset(width, height, decision.pixel, rgba.len())?;
+        rgba[offset..offset + 4].copy_from_slice(&decision.replacement_rgba);
+    }
+    Ok(decisions.len())
+}
+
+fn rgba8_pixel_offset(
+    width: u64,
+    height: u64,
+    pixel: RenderPixel,
+    len: usize,
+) -> Result<usize, RenderOwnerSampleCorrectionApplyError> {
+    if pixel.x >= width || pixel.y >= height {
+        return Err(RenderOwnerSampleCorrectionApplyError::PixelOutOfBounds {
+            x: pixel.x,
+            y: pixel.y,
+            width,
+            height,
+        });
+    }
+    let offset = pixel
+        .y
+        .checked_mul(width)
+        .and_then(|row| row.checked_add(pixel.x))
+        .and_then(|pixel| pixel.checked_mul(4))
+        .and_then(|offset| usize::try_from(offset).ok())
+        .ok_or(RenderOwnerSampleCorrectionApplyError::ImageTooLarge { width, height })?;
+    if offset + 4 > len {
+        return Err(
+            RenderOwnerSampleCorrectionApplyError::BufferLengthMismatch {
+                width,
+                height,
+                expected_len: width.saturating_mul(height).saturating_mul(4),
+                actual_len: len,
+            },
+        );
+    }
+    Ok(offset)
 }
 
 pub fn rgb_distance_u8(left: [u8; 4], right: [u8; 4]) -> f64 {
@@ -5071,6 +5155,71 @@ mod tests {
         assert_eq!(
             decision.correction.outcome,
             RenderOwnerSampleCorrectionOutcome::Improved
+        );
+    }
+
+    #[test]
+    fn render_owner_sample_correction_decisions_apply_to_rgba8_buffer() {
+        let surface = RenderOwnerSurfaceKey::new("body", 7);
+        let candidate = RenderOwnerSampleCorrectionCandidate {
+            pixel: RenderPixel::new(1, 1),
+            sample: RenderOwnerSampleKey::from_pair(surface, [0.5, 0.5]),
+            expected_surface: None,
+            expected_rgba: [100, 100, 100, 255],
+            actual_rgba: [140, 100, 100, 255],
+            candidate_rgba: [101, 100, 100, 255],
+        };
+        let decision = evaluate_render_owner_sample_correction_candidate(
+            candidate,
+            RenderOwnerSampleCorrectionPolicy::improving_only(),
+        )
+        .unwrap();
+        let mut rgba = vec![0; 2 * 2 * 4];
+
+        let applied = apply_render_owner_sample_correction_decisions_rgba8(
+            2,
+            2,
+            &mut rgba,
+            std::slice::from_ref(&decision),
+        )
+        .unwrap();
+
+        assert_eq!(applied, 1);
+        assert_eq!(&rgba[12..16], &[101, 100, 100, 255]);
+        assert_eq!(
+            apply_render_owner_sample_correction_decisions_rgba8(
+                2,
+                2,
+                &mut rgba[..15],
+                std::slice::from_ref(&decision),
+            )
+            .unwrap_err(),
+            RenderOwnerSampleCorrectionApplyError::BufferLengthMismatch {
+                width: 2,
+                height: 2,
+                expected_len: 16,
+                actual_len: 15,
+            }
+        );
+
+        let out_of_bounds = RenderOwnerSampleCorrectionDecision {
+            pixel: RenderPixel::new(2, 1),
+            ..decision
+        };
+        assert_eq!(
+            apply_render_owner_sample_correction_decisions_rgba8(
+                2,
+                2,
+                &mut rgba,
+                &[out_of_bounds],
+            )
+            .unwrap_err(),
+            RenderOwnerSampleCorrectionApplyError::PixelOutOfBounds {
+                x: 2,
+                y: 1,
+                width: 2,
+                height: 2,
+            }
         );
     }
 
