@@ -7,6 +7,7 @@ edition = "2024"
 clap = { version = "4.6.1", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+vrm-adapter = { path = "../../crates/vrm-adapter" }
 ---
 
 //! Join browser owner-id hotspot projections with Rust CPU render hotspot reports.
@@ -17,6 +18,10 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use vrm_adapter::{
+    RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation, normalize_owner_diagnostic_material_name,
+    rgb_distance_u8,
+};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -94,6 +99,12 @@ struct JoinedHotspotLine {
 struct SurfaceSummary {
     material_name: String,
     triangle: u64,
+}
+
+impl SurfaceSummary {
+    fn owner_key(&self) -> RenderOwnerSurfaceKey {
+        RenderOwnerSurfaceKey::new(self.material_name.clone(), self.triangle)
+    }
 }
 
 fn main() {
@@ -373,14 +384,11 @@ fn bump_relation(
 }
 
 fn relation_label(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) -> &'static str {
-    match left.zip(right) {
-        Some((left, right)) if left == right => "same-surface",
-        Some((left, right)) if left.material_name == right.material_name => {
-            "same-material-different-triangle"
-        }
-        Some(_) => "different-material",
-        None => "missing",
-    }
+    let left = left.map(SurfaceSummary::owner_key);
+    let right = right.map(SurfaceSummary::owner_key);
+    left.as_ref()
+        .map(|left| left.relation_to(right.as_ref()).as_str())
+        .unwrap_or(RenderOwnerSurfaceRelation::Missing.as_str())
 }
 
 fn owner_surface(hotspot: &Value) -> Option<SurfaceSummary> {
@@ -391,7 +399,7 @@ fn owner_surface(hotspot: &Value) -> Option<SurfaceSummary> {
 fn surface_at(value: &Value, pointer: &str) -> Option<SurfaceSummary> {
     let value = value.pointer(pointer)?;
     Some(SurfaceSummary {
-        material_name: normalize_material(
+        material_name: normalize_owner_diagnostic_material_name(
             value
                 .get("materialName")
                 .or_else(|| value.get("material_name"))
@@ -452,21 +460,28 @@ fn rgba_array(value: &Value) -> Option<[u64; 4]> {
 }
 
 fn rgb_distance_u64(left: [u64; 4], right: [u64; 4]) -> f64 {
-    left.iter()
-        .zip(right.iter())
-        .take(3)
-        .map(|(left, right)| {
-            let delta = *left as f64 - *right as f64;
-            delta * delta
-        })
-        .sum::<f64>()
-        .sqrt()
+    match (rgba_u64_to_u8(left), rgba_u64_to_u8(right)) {
+        (Some(left), Some(right)) => rgb_distance_u8(left, right),
+        _ => left
+            .iter()
+            .zip(right.iter())
+            .take(3)
+            .map(|(left, right)| {
+                let delta = *left as f64 - *right as f64;
+                delta * delta
+            })
+            .sum::<f64>()
+            .sqrt(),
+    }
 }
 
-fn normalize_material(name: &str) -> String {
-    name.strip_suffix(":vrm-rs-owner-id-diagnostic")
-        .unwrap_or(name)
-        .to_owned()
+fn rgba_u64_to_u8(rgba: [u64; 4]) -> Option<[u8; 4]> {
+    Some([
+        u8::try_from(rgba[0]).ok()?,
+        u8::try_from(rgba[1]).ok()?,
+        u8::try_from(rgba[2]).ok()?,
+        u8::try_from(rgba[3]).ok()?,
+    ])
 }
 
 fn number_pair(value: Option<&Value>) -> Option<[f64; 2]> {
