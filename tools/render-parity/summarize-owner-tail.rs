@@ -498,6 +498,96 @@ fn markdown_report(report: &OwnerTailReport) -> String {
     write_projection_gap_count(&mut output, report, "pixel_inside_expected_only_screen_bounds");
     write_projection_gap_count(&mut output, report, "pixel_inside_actual_only_screen_bounds");
     write_projection_gap_count(&mut output, report, "pixel_inside_neither_screen_bounds");
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_expected_only_within_actual_bounds_025px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_expected_only_within_actual_bounds_05px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_expected_only_within_actual_bounds_1px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_expected_only_within_actual_bounds_2px",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "mean_expected_only_distance_to_actual_bounds",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "max_expected_only_distance_to_actual_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_actual_only_within_expected_bounds_025px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_actual_only_within_expected_bounds_05px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_actual_only_within_expected_bounds_1px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_actual_only_within_expected_bounds_2px",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_expected_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_actual_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_both_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_expected_only_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_actual_only_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_neither_screen_bounds",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "mean_actual_only_distance_to_expected_bounds",
+    );
+    write_projection_gap_value(
+        &mut output,
+        report,
+        "max_actual_only_distance_to_expected_bounds",
+    );
     write_projection_gap_count(&mut output, report, "pixel_near_expected_min_x_edge_05px");
     write_projection_gap_count(&mut output, report, "pixel_near_expected_max_x_edge_05px");
     write_projection_gap_count(&mut output, report, "pixel_near_expected_min_y_edge_05px");

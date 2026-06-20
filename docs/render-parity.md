@@ -1104,6 +1104,14 @@ owner-id depth writes enabled and narrows the next investigation to local
 coverage/fill or metadata recovery rather than making draw order fully
 dominant.
 
+The compact owner-tail summary also reports both center-sample and pixel-origin
+bounds classifications. With the current `draw-index` default, the
+Bevy-vs-wgpu topology tail remains `26`: center sampling puts `23/26` pixels
+inside the wgpu expected owner bounds only, and `22/23` of those are within
+`2px` of the Bevy actual owner bounds. Pixel-origin sampling still leaves
+`16/26` expected-only and `9/26` neither-inside pixels, so this is not just a
+center-vs-origin metadata convention mismatch.
+
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
 

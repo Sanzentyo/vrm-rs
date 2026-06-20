@@ -385,6 +385,24 @@ struct OwnerProjectionGapSummary {
     pixel_inside_expected_only_screen_bounds: u64,
     pixel_inside_actual_only_screen_bounds: u64,
     pixel_inside_neither_screen_bounds: u64,
+    pixel_inside_expected_only_within_actual_bounds_025px: u64,
+    pixel_inside_expected_only_within_actual_bounds_05px: u64,
+    pixel_inside_expected_only_within_actual_bounds_1px: u64,
+    pixel_inside_expected_only_within_actual_bounds_2px: u64,
+    pixel_inside_actual_only_within_expected_bounds_025px: u64,
+    pixel_inside_actual_only_within_expected_bounds_05px: u64,
+    pixel_inside_actual_only_within_expected_bounds_1px: u64,
+    pixel_inside_actual_only_within_expected_bounds_2px: u64,
+    pixel_origin_inside_expected_screen_bounds: u64,
+    pixel_origin_inside_actual_screen_bounds: u64,
+    pixel_origin_inside_both_screen_bounds: u64,
+    pixel_origin_inside_expected_only_screen_bounds: u64,
+    pixel_origin_inside_actual_only_screen_bounds: u64,
+    pixel_origin_inside_neither_screen_bounds: u64,
+    mean_expected_only_distance_to_actual_bounds: Option<f64>,
+    max_expected_only_distance_to_actual_bounds: Option<f64>,
+    mean_actual_only_distance_to_expected_bounds: Option<f64>,
+    max_actual_only_distance_to_expected_bounds: Option<f64>,
     pixel_near_expected_min_x_edge_05px: u64,
     pixel_near_expected_max_x_edge_05px: u64,
     pixel_near_expected_min_y_edge_05px: u64,
@@ -440,6 +458,24 @@ struct OwnerProjectionGapAccumulator {
     pixel_inside_expected_only_screen_bounds: u64,
     pixel_inside_actual_only_screen_bounds: u64,
     pixel_inside_neither_screen_bounds: u64,
+    pixel_inside_expected_only_within_actual_bounds_025px: u64,
+    pixel_inside_expected_only_within_actual_bounds_05px: u64,
+    pixel_inside_expected_only_within_actual_bounds_1px: u64,
+    pixel_inside_expected_only_within_actual_bounds_2px: u64,
+    pixel_inside_actual_only_within_expected_bounds_025px: u64,
+    pixel_inside_actual_only_within_expected_bounds_05px: u64,
+    pixel_inside_actual_only_within_expected_bounds_1px: u64,
+    pixel_inside_actual_only_within_expected_bounds_2px: u64,
+    pixel_origin_inside_expected_screen_bounds: u64,
+    pixel_origin_inside_actual_screen_bounds: u64,
+    pixel_origin_inside_both_screen_bounds: u64,
+    pixel_origin_inside_expected_only_screen_bounds: u64,
+    pixel_origin_inside_actual_only_screen_bounds: u64,
+    pixel_origin_inside_neither_screen_bounds: u64,
+    expected_only_distance_to_actual_bounds_sum: f64,
+    expected_only_distance_to_actual_bounds_max: f64,
+    actual_only_distance_to_expected_bounds_sum: f64,
+    actual_only_distance_to_expected_bounds_max: f64,
     pixel_near_expected_min_x_edge_05px: u64,
     pixel_near_expected_max_x_edge_05px: u64,
     pixel_near_expected_min_y_edge_05px: u64,
@@ -1629,8 +1665,23 @@ fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
 }
 
 fn pixel_bounds_relation(pixel: OwnerPixel, bounds: OwnerScreenBounds) -> PixelBoundsRelation {
-    let x = pixel.x as f64 + 0.5;
-    let y = pixel.y as f64 + 0.5;
+    pixel_bounds_relation_at(pixel, bounds, 0.5)
+}
+
+fn pixel_origin_bounds_relation(
+    pixel: OwnerPixel,
+    bounds: OwnerScreenBounds,
+) -> PixelBoundsRelation {
+    pixel_bounds_relation_at(pixel, bounds, 0.0)
+}
+
+fn pixel_bounds_relation_at(
+    pixel: OwnerPixel,
+    bounds: OwnerScreenBounds,
+    sample_offset: f64,
+) -> PixelBoundsRelation {
+    let x = pixel.x as f64 + sample_offset;
+    let y = pixel.y as f64 + sample_offset;
     let inside_x = (bounds.min_x..=bounds.max_x).contains(&x);
     let inside_y = (bounds.min_y..=bounds.max_y).contains(&y);
     let min_x_distance = (x - bounds.min_x).abs();
@@ -1868,6 +1919,47 @@ impl OwnerProjectionGapAccumulator {
                 .pixel_inside_expected_only_screen_bounds,
             pixel_inside_actual_only_screen_bounds: self.pixel_inside_actual_only_screen_bounds,
             pixel_inside_neither_screen_bounds: self.pixel_inside_neither_screen_bounds,
+            pixel_inside_expected_only_within_actual_bounds_025px: self
+                .pixel_inside_expected_only_within_actual_bounds_025px,
+            pixel_inside_expected_only_within_actual_bounds_05px: self
+                .pixel_inside_expected_only_within_actual_bounds_05px,
+            pixel_inside_expected_only_within_actual_bounds_1px: self
+                .pixel_inside_expected_only_within_actual_bounds_1px,
+            pixel_inside_expected_only_within_actual_bounds_2px: self
+                .pixel_inside_expected_only_within_actual_bounds_2px,
+            pixel_inside_actual_only_within_expected_bounds_025px: self
+                .pixel_inside_actual_only_within_expected_bounds_025px,
+            pixel_inside_actual_only_within_expected_bounds_05px: self
+                .pixel_inside_actual_only_within_expected_bounds_05px,
+            pixel_inside_actual_only_within_expected_bounds_1px: self
+                .pixel_inside_actual_only_within_expected_bounds_1px,
+            pixel_inside_actual_only_within_expected_bounds_2px: self
+                .pixel_inside_actual_only_within_expected_bounds_2px,
+            pixel_origin_inside_expected_screen_bounds: self
+                .pixel_origin_inside_expected_screen_bounds,
+            pixel_origin_inside_actual_screen_bounds: self.pixel_origin_inside_actual_screen_bounds,
+            pixel_origin_inside_both_screen_bounds: self.pixel_origin_inside_both_screen_bounds,
+            pixel_origin_inside_expected_only_screen_bounds: self
+                .pixel_origin_inside_expected_only_screen_bounds,
+            pixel_origin_inside_actual_only_screen_bounds: self
+                .pixel_origin_inside_actual_only_screen_bounds,
+            pixel_origin_inside_neither_screen_bounds: self.pixel_origin_inside_neither_screen_bounds,
+            mean_expected_only_distance_to_actual_bounds: mean(
+                self.expected_only_distance_to_actual_bounds_sum,
+                self.pixel_inside_expected_only_screen_bounds,
+            ),
+            max_expected_only_distance_to_actual_bounds: some_if_count(
+                self.expected_only_distance_to_actual_bounds_max,
+                self.pixel_inside_expected_only_screen_bounds,
+            ),
+            mean_actual_only_distance_to_expected_bounds: mean(
+                self.actual_only_distance_to_expected_bounds_sum,
+                self.pixel_inside_actual_only_screen_bounds,
+            ),
+            max_actual_only_distance_to_expected_bounds: some_if_count(
+                self.actual_only_distance_to_expected_bounds_max,
+                self.pixel_inside_actual_only_screen_bounds,
+            ),
             pixel_near_expected_min_x_edge_05px: self.pixel_near_expected_min_x_edge_05px,
             pixel_near_expected_max_x_edge_05px: self.pixel_near_expected_max_x_edge_05px,
             pixel_near_expected_min_y_edge_05px: self.pixel_near_expected_min_y_edge_05px,
@@ -1952,7 +2044,10 @@ impl OwnerProjectionGapAccumulator {
     ) {
         let expected_relation = pixel_bounds_relation(pixel, expected_bounds);
         let actual_relation = pixel_bounds_relation(pixel, actual_bounds);
-        self.add_inside_bounds_relation(expected_relation.inside, actual_relation.inside);
+        self.add_inside_bounds_relation(expected_relation, actual_relation);
+        let expected_origin_relation = pixel_origin_bounds_relation(pixel, expected_bounds);
+        let actual_origin_relation = pixel_origin_bounds_relation(pixel, actual_bounds);
+        self.add_origin_inside_bounds_relation(expected_origin_relation, actual_origin_relation);
 
         let near_expected_025 = expected_relation.min_edge_distance <= 0.25;
         let near_actual_025 = actual_relation.min_edge_distance <= 0.25;
@@ -1970,7 +2065,13 @@ impl OwnerProjectionGapAccumulator {
         self.add_near_edge_sides(expected_relation, actual_relation);
     }
 
-    fn add_inside_bounds_relation(&mut self, inside_expected: bool, inside_actual: bool) {
+    fn add_inside_bounds_relation(
+        &mut self,
+        expected_relation: PixelBoundsRelation,
+        actual_relation: PixelBoundsRelation,
+    ) {
+        let inside_expected = expected_relation.inside;
+        let inside_actual = actual_relation.inside;
         self.pixel_inside_expected_screen_bounds += u64::from(inside_expected);
         self.pixel_inside_actual_screen_bounds += u64::from(inside_actual);
         self.pixel_inside_both_screen_bounds += u64::from(inside_expected && inside_actual);
@@ -1978,6 +2079,65 @@ impl OwnerProjectionGapAccumulator {
             u64::from(inside_expected && !inside_actual);
         self.pixel_inside_actual_only_screen_bounds += u64::from(!inside_expected && inside_actual);
         self.pixel_inside_neither_screen_bounds += u64::from(!inside_expected && !inside_actual);
+        if inside_expected && !inside_actual {
+            self.add_expected_only_distance_to_actual_bounds(
+                actual_relation.min_edge_distance,
+            );
+        }
+        if !inside_expected && inside_actual {
+            self.add_actual_only_distance_to_expected_bounds(
+                expected_relation.min_edge_distance,
+            );
+        }
+    }
+
+    fn add_expected_only_distance_to_actual_bounds(&mut self, distance: f64) {
+        self.pixel_inside_expected_only_within_actual_bounds_025px +=
+            u64::from(distance <= 0.25);
+        self.pixel_inside_expected_only_within_actual_bounds_05px +=
+            u64::from(distance <= 0.5);
+        self.pixel_inside_expected_only_within_actual_bounds_1px +=
+            u64::from(distance <= 1.0);
+        self.pixel_inside_expected_only_within_actual_bounds_2px +=
+            u64::from(distance <= 2.0);
+        self.expected_only_distance_to_actual_bounds_sum += distance;
+        self.expected_only_distance_to_actual_bounds_max = self
+            .expected_only_distance_to_actual_bounds_max
+            .max(distance);
+    }
+
+    fn add_actual_only_distance_to_expected_bounds(&mut self, distance: f64) {
+        self.pixel_inside_actual_only_within_expected_bounds_025px +=
+            u64::from(distance <= 0.25);
+        self.pixel_inside_actual_only_within_expected_bounds_05px +=
+            u64::from(distance <= 0.5);
+        self.pixel_inside_actual_only_within_expected_bounds_1px +=
+            u64::from(distance <= 1.0);
+        self.pixel_inside_actual_only_within_expected_bounds_2px +=
+            u64::from(distance <= 2.0);
+        self.actual_only_distance_to_expected_bounds_sum += distance;
+        self.actual_only_distance_to_expected_bounds_max = self
+            .actual_only_distance_to_expected_bounds_max
+            .max(distance);
+    }
+
+    fn add_origin_inside_bounds_relation(
+        &mut self,
+        expected_relation: PixelBoundsRelation,
+        actual_relation: PixelBoundsRelation,
+    ) {
+        let inside_expected = expected_relation.inside;
+        let inside_actual = actual_relation.inside;
+        self.pixel_origin_inside_expected_screen_bounds += u64::from(inside_expected);
+        self.pixel_origin_inside_actual_screen_bounds += u64::from(inside_actual);
+        self.pixel_origin_inside_both_screen_bounds +=
+            u64::from(inside_expected && inside_actual);
+        self.pixel_origin_inside_expected_only_screen_bounds +=
+            u64::from(inside_expected && !inside_actual);
+        self.pixel_origin_inside_actual_only_screen_bounds +=
+            u64::from(!inside_expected && inside_actual);
+        self.pixel_origin_inside_neither_screen_bounds +=
+            u64::from(!inside_expected && !inside_actual);
     }
 
     fn add_near_edge_sides(
@@ -2621,6 +2781,74 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .unexplained_projection_gap_summary
             .pixel_inside_neither_screen_bounds,
         0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_expected_only_within_actual_bounds_2px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_inside_actual_only_within_expected_bounds_2px,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_expected_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_actual_screen_bounds,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_both_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_expected_only_screen_bounds,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_actual_only_screen_bounds,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_neither_screen_bounds,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .mean_expected_only_distance_to_actual_bounds,
+        None
+    );
+    assert_close(
+        report
+            .unexplained_projection_gap_summary
+            .mean_actual_only_distance_to_expected_bounds
+            .unwrap_or_default(),
+        5.5,
+    );
+    assert_close(
+        report
+            .unexplained_projection_gap_summary
+            .max_actual_only_distance_to_expected_bounds
+            .unwrap_or_default(),
+        5.5,
     );
     assert_eq!(
         report
