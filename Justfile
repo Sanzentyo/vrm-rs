@@ -121,6 +121,12 @@ render-parity-real-normal-maps-ash-gated three_vrm_root=".external-fixtures/thre
 
 # Focused render-parity diagnostics.
 
+# Regenerate the current highest-priority render-parity blocker reports.
+render-parity-current-blocker three_vrm_root=".external-fixtures/three-vrm":
+    just render-parity-seed-owner-hotspot-depth3-extract "{{ three_vrm_root }}"
+    just render-parity-seed-owner-hotspot-depth3-owner-render-join "{{ three_vrm_root }}"
+    just render-parity-seed-base-color-flat32-gradient-owner-render-join
+
 # Diagnostic: render Seed-san with flat white materials to separate geometry/pose coverage from material/shader color residuals.
 render-parity-seed-flat-diagnostic three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-seed-flat-diagnostic --render-background opaque-black --render-alpha-mismatch-tolerance 0 --render-psnr-metric rgb-nonblack-interior1px --render-fail-under 60 --render-mtoon-light-accumulation three-vrm --render-diagnostic-mode flat --render-fixture Seed-san.vrm

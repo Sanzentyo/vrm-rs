@@ -507,42 +507,9 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         "node",
         ["--check", "tools/render-parity/three-vrm-browser-capture.mjs"],
     )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/compare-imqraw.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/inspect-imqraw-deltas.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/summarize-owner-hotspots.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/join-owner-render-hotspots.rs",
-            "--help",
-        ],
-    )?;
+    for script in RENDER_TOOL_HELP_SCRIPTS {
+        run_cargo_script(script, ["--help"])?;
+    }
     run_cmd(
         "cargo",
         [
@@ -550,15 +517,6 @@ fn run_render_tool_self_tests() -> Result<(), String> {
             "-Zscript",
             "tools/render-parity/join-owner-render-hotspots.rs",
             "--self-test",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/summarize-owner-tail.rs",
-            "--help",
         ],
     )?;
     run_cmd(
@@ -576,88 +534,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
             "+nightly",
             "-Zscript",
             "tools/render-parity/summarize-render-hotspots.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/summarize-render-hotspots.rs",
             "--self-test",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-split-ownership-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-subpixel-ownership-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-shared-vertex-ownership-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-primitive-group-ownership-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-front-face-cull-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/extract-owner-tail-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-dense-ownership-fixture.rs",
-            "--help",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/render-parity/generate-transparent-mask-texture-fixture.rs",
-            "--help",
         ],
     )?;
     run_cmd(
@@ -680,6 +557,43 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         ],
     )
 }
+
+const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
+    "tools/ash/compile-ash-mtoon-base-shaders.rs",
+    "tools/render-parity/compare-imqraw.rs",
+    "tools/render-parity/compare-owner-id-images.rs",
+    "tools/render-parity/compare-swatch-colors.rs",
+    "tools/render-parity/extract-owner-tail-fixture.rs",
+    "tools/render-parity/generate-dense-ownership-fixture.rs",
+    "tools/render-parity/generate-front-face-cull-fixture.rs",
+    "tools/render-parity/generate-material-seam-fixture.rs",
+    "tools/render-parity/generate-morph-expression-fixture.rs",
+    "tools/render-parity/generate-mtoon-light-fixture.rs",
+    "tools/render-parity/generate-mtoon-texture-fixture.rs",
+    "tools/render-parity/generate-post-correction-fixture.rs",
+    "tools/render-parity/generate-primitive-group-ownership-fixture.rs",
+    "tools/render-parity/generate-screen-outline-fixture.rs",
+    "tools/render-parity/generate-shared-vertex-ownership-fixture.rs",
+    "tools/render-parity/generate-split-ownership-fixture.rs",
+    "tools/render-parity/generate-subpixel-ownership-fixture.rs",
+    "tools/render-parity/generate-texture-boundary-fixture.rs",
+    "tools/render-parity/generate-texture-selection-fixture.rs",
+    "tools/render-parity/generate-transparent-alpha-modes-fixture.rs",
+    "tools/render-parity/generate-transparent-depth-fixture.rs",
+    "tools/render-parity/generate-transparent-fixture.rs",
+    "tools/render-parity/generate-transparent-mask-texture-fixture.rs",
+    "tools/render-parity/generate-uv-boundary-fixture.rs",
+    "tools/render-parity/generate-uv-island-ownership-fixture.rs",
+    "tools/render-parity/inspect-imqraw-deltas.rs",
+    "tools/render-parity/inspect-mtoon-fixtures.rs",
+    "tools/render-parity/join-owner-render-hotspots.rs",
+    "tools/render-parity/map-render-hotspots.rs",
+    "tools/render-parity/summarize-owner-hotspots.rs",
+    "tools/render-parity/summarize-owner-tail.rs",
+    "tools/render-parity/summarize-render-hotspots.rs",
+    "tools/render-parity/validate-review-manifest.rs",
+    "tools/render-parity/verify-imqraw-rgba.rs",
+];
 
 fn ensure_no_github_actions_workflows() -> Result<(), String> {
     let workflows = Path::new(".github").join("workflows");
@@ -2484,6 +2398,12 @@ fn run_cargo_test_with_env<const N: usize, const M: usize>(
 fn run_cmd<const N: usize>(program: &str, args: [&str; N]) -> Result<(), String> {
     let mut command = Command::new(program);
     command.args(args);
+    run_command(command)
+}
+
+fn run_cargo_script<const N: usize>(script: &str, args: [&str; N]) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command.args(["+nightly", "-Zscript", script]).args(args);
     run_command(command)
 }
 

@@ -7,6 +7,32 @@ P3 render parity compares three rendering paths:
 - wgpu/custom-engine render.
 - Ash/Vulkan readback render when `--render-ash-readback` is enabled.
 
+## Recipe Map
+
+The implementation source of truth is `tools/ci/local-ci.rs`; `Justfile`
+recipes are convenience entry points. Use these first:
+
+- `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
+  gate for three-vrm, wgpu, Bevy, and Ash.
+- `just render-parity-real-transparent-ash-gated`: transparent-background
+  real-fixture regression gate.
+- `just render-parity-samples-nonblack-ash-gated`: model-body material/color
+  gate that ignores one-pixel silhouette noise.
+- `just render-parity-samples-shared-body3-ash-gated`: stricter model-body
+  gate that excludes a three-pixel local ownership band.
+- `just render-parity-current-blocker`: rerun the current owner/fill and
+  texture/base-color blocker diagnostics. It regenerates the compact depth3
+  owner-hotspot extraction, browser/Rust owner join reports, and the broader
+  Seed-san flat32 gradient owner/render join.
+- `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
+  direct raw-buffer comparisons. These are the preferred numeric path; the
+  legacy `.psnr.json` report is retained as a diagnostic cross-check over
+  `.rgba.json` artifacts.
+
+When adding a new source-like render diagnostic generator or analyzer, also add
+its `--help` smoke to `RENDER_TOOL_HELP_SCRIPTS` in `tools/ci/local-ci.rs` so
+`just ci` checks that the command-line surface still parses.
+
 Rendered artifacts remain under `.external-fixtures/render-parity/` and are not
 committed. Each renderer should export a source-like RGBA JSON artifact:
 
