@@ -94,6 +94,7 @@ struct OwnerLabelSummary {
     material_index: Option<i64>,
     material_slot: Option<u64>,
     triangle: Option<u64>,
+    source_triangle: Option<u64>,
     indices: Option<Vec<u64>>,
     render_order: Option<i64>,
     render_phase_order: Option<i64>,
@@ -278,6 +279,7 @@ fn label_summary(value: &Value) -> OwnerLabelSummary {
         material_index: i64_field(value, "material_index"),
         material_slot: u64_field(value, "material_slot"),
         triangle: u64_field(value, "triangle"),
+        source_triangle: u64_field(value, "source_triangle"),
         indices: value
             .get("indices")
             .and_then(Value::as_array)
@@ -600,6 +602,67 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         report,
         "pixel_origin_inside_neither_screen_bounds",
     );
+    write_projection_gap_count(&mut output, report, "with_screen_triangles");
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_expected_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_actual_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_both_screen_triangles",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_expected_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_actual_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_center_inside_neither_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_expected_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_actual_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_both_screen_triangles",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_expected_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_actual_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_origin_inside_neither_screen_triangle",
+    );
     write_projection_gap_value(
         &mut output,
         report,
@@ -783,14 +846,20 @@ fn label_cell(label: &OwnerLabelSummary) -> String {
         .as_deref()
         .map(|value| format!(" / owner_color={value}"))
         .unwrap_or_default();
+    let source_triangle = label
+        .source_triangle
+        .filter(|source_triangle| Some(*source_triangle) != label.triangle)
+        .map(|value| format!(" / src_tri{value}"))
+        .unwrap_or_default();
     format!(
-        "{} / {} / tri{} / material={} / draw{}{}{}",
+        "{} / {} / tri{}{} / material={} / draw{}{}{}",
         label.pass.as_deref().unwrap_or("unknown"),
         label.mesh_name.as_deref().unwrap_or("unknown"),
         label
             .triangle
             .map(|value| value.to_string())
             .unwrap_or_else(|| "?".to_owned()),
+        source_triangle,
         label.material_name.as_deref().unwrap_or("unknown-material"),
         label
             .draw_index

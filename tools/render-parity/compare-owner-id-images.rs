@@ -326,6 +326,7 @@ struct OwnerLabel {
     material_index: Option<i64>,
     material_slot: Option<u64>,
     triangle: Option<u64>,
+    source_triangle: Option<u64>,
     indices: Option<[u64; 3]>,
     render_order: Option<i64>,
     render_phase_order: Option<i64>,
@@ -349,6 +350,7 @@ struct OwnerLabel {
     alpha_cutoff: Option<f64>,
     depth_bias: Option<f64>,
     owner_color_source: Option<String>,
+    screen: Option<OwnerScreenTriangle>,
     screen_bounds: Option<OwnerScreenBounds>,
     depth: Option<f64>,
     webgl_depth: Option<f64>,
@@ -468,6 +470,19 @@ struct OwnerProjectionGapSummary {
     pixel_origin_inside_expected_only_screen_bounds: u64,
     pixel_origin_inside_actual_only_screen_bounds: u64,
     pixel_origin_inside_neither_screen_bounds: u64,
+    with_screen_triangles: u64,
+    pixel_center_inside_expected_screen_triangle: u64,
+    pixel_center_inside_actual_screen_triangle: u64,
+    pixel_center_inside_both_screen_triangles: u64,
+    pixel_center_inside_expected_only_screen_triangle: u64,
+    pixel_center_inside_actual_only_screen_triangle: u64,
+    pixel_center_inside_neither_screen_triangle: u64,
+    pixel_origin_inside_expected_screen_triangle: u64,
+    pixel_origin_inside_actual_screen_triangle: u64,
+    pixel_origin_inside_both_screen_triangles: u64,
+    pixel_origin_inside_expected_only_screen_triangle: u64,
+    pixel_origin_inside_actual_only_screen_triangle: u64,
+    pixel_origin_inside_neither_screen_triangle: u64,
     mean_expected_only_distance_to_actual_bounds: Option<f64>,
     max_expected_only_distance_to_actual_bounds: Option<f64>,
     mean_actual_only_distance_to_expected_bounds: Option<f64>,
@@ -541,6 +556,19 @@ struct OwnerProjectionGapAccumulator {
     pixel_origin_inside_expected_only_screen_bounds: u64,
     pixel_origin_inside_actual_only_screen_bounds: u64,
     pixel_origin_inside_neither_screen_bounds: u64,
+    with_screen_triangles: u64,
+    pixel_center_inside_expected_screen_triangle: u64,
+    pixel_center_inside_actual_screen_triangle: u64,
+    pixel_center_inside_both_screen_triangles: u64,
+    pixel_center_inside_expected_only_screen_triangle: u64,
+    pixel_center_inside_actual_only_screen_triangle: u64,
+    pixel_center_inside_neither_screen_triangle: u64,
+    pixel_origin_inside_expected_screen_triangle: u64,
+    pixel_origin_inside_actual_screen_triangle: u64,
+    pixel_origin_inside_both_screen_triangles: u64,
+    pixel_origin_inside_expected_only_screen_triangle: u64,
+    pixel_origin_inside_actual_only_screen_triangle: u64,
+    pixel_origin_inside_neither_screen_triangle: u64,
     expected_only_distance_to_actual_bounds_sum: f64,
     expected_only_distance_to_actual_bounds_max: f64,
     actual_only_distance_to_expected_bounds_sum: f64,
@@ -600,6 +628,11 @@ struct OwnerScreenBounds {
     min_y: f64,
     max_x: f64,
     max_y: f64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OwnerScreenTriangle {
+    points: [[f64; 2]; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1788,6 +1821,36 @@ fn pixel_origin_bounds_relation(
     pixel_bounds_relation_at(pixel, bounds, 0.0)
 }
 
+fn pixel_inside_screen_triangle(
+    pixel: OwnerPixel,
+    triangle: OwnerScreenTriangle,
+    sample_offset: f64,
+) -> bool {
+    let point = [pixel.x as f64 + sample_offset, pixel.y as f64 + sample_offset];
+    point_inside_screen_triangle(point, triangle)
+}
+
+fn point_inside_screen_triangle(point: [f64; 2], triangle: OwnerScreenTriangle) -> bool {
+    const EPSILON: f64 = 0.000000001;
+    let [a, b, c] = triangle.points;
+    let area = edge_function(a, b, c);
+    if area.abs() <= EPSILON {
+        return false;
+    }
+    let e0 = edge_function(a, b, point);
+    let e1 = edge_function(b, c, point);
+    let e2 = edge_function(c, a, point);
+    if area > 0.0 {
+        e0 >= -EPSILON && e1 >= -EPSILON && e2 >= -EPSILON
+    } else {
+        e0 <= EPSILON && e1 <= EPSILON && e2 <= EPSILON
+    }
+}
+
+fn edge_function(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])
+}
+
 fn pixel_bounds_relation_at(
     pixel: OwnerPixel,
     bounds: OwnerScreenBounds,
@@ -2020,6 +2083,9 @@ impl OwnerProjectionGapAccumulator {
             self.add_edge_distance(pixel, expected_bounds, actual_bounds);
             self.add_small_bounds(expected_bounds, actual_bounds);
         }
+        if let (Some(expected_triangle), Some(actual_triangle)) = (expected.screen, actual.screen) {
+            self.add_triangle_containment(pixel, expected_triangle, actual_triangle);
+        }
         if let (Some(expected_depth), Some(actual_depth)) =
             (owner_depth(expected), owner_depth(actual))
         {
@@ -2083,6 +2149,31 @@ impl OwnerProjectionGapAccumulator {
             pixel_origin_inside_actual_only_screen_bounds: self
                 .pixel_origin_inside_actual_only_screen_bounds,
             pixel_origin_inside_neither_screen_bounds: self.pixel_origin_inside_neither_screen_bounds,
+            with_screen_triangles: self.with_screen_triangles,
+            pixel_center_inside_expected_screen_triangle: self
+                .pixel_center_inside_expected_screen_triangle,
+            pixel_center_inside_actual_screen_triangle: self
+                .pixel_center_inside_actual_screen_triangle,
+            pixel_center_inside_both_screen_triangles: self
+                .pixel_center_inside_both_screen_triangles,
+            pixel_center_inside_expected_only_screen_triangle: self
+                .pixel_center_inside_expected_only_screen_triangle,
+            pixel_center_inside_actual_only_screen_triangle: self
+                .pixel_center_inside_actual_only_screen_triangle,
+            pixel_center_inside_neither_screen_triangle: self
+                .pixel_center_inside_neither_screen_triangle,
+            pixel_origin_inside_expected_screen_triangle: self
+                .pixel_origin_inside_expected_screen_triangle,
+            pixel_origin_inside_actual_screen_triangle: self
+                .pixel_origin_inside_actual_screen_triangle,
+            pixel_origin_inside_both_screen_triangles: self
+                .pixel_origin_inside_both_screen_triangles,
+            pixel_origin_inside_expected_only_screen_triangle: self
+                .pixel_origin_inside_expected_only_screen_triangle,
+            pixel_origin_inside_actual_only_screen_triangle: self
+                .pixel_origin_inside_actual_only_screen_triangle,
+            pixel_origin_inside_neither_screen_triangle: self
+                .pixel_origin_inside_neither_screen_triangle,
             mean_expected_only_distance_to_actual_bounds: mean(
                 self.expected_only_distance_to_actual_bounds_sum,
                 self.pixel_inside_expected_only_screen_bounds,
@@ -2277,6 +2368,40 @@ impl OwnerProjectionGapAccumulator {
             u64::from(!inside_expected && inside_actual);
         self.pixel_origin_inside_neither_screen_bounds +=
             u64::from(!inside_expected && !inside_actual);
+    }
+
+    fn add_triangle_containment(
+        &mut self,
+        pixel: OwnerPixel,
+        expected: OwnerScreenTriangle,
+        actual: OwnerScreenTriangle,
+    ) {
+        self.with_screen_triangles += 1;
+        let center_expected = pixel_inside_screen_triangle(pixel, expected, 0.5);
+        let center_actual = pixel_inside_screen_triangle(pixel, actual, 0.5);
+        self.pixel_center_inside_expected_screen_triangle += u64::from(center_expected);
+        self.pixel_center_inside_actual_screen_triangle += u64::from(center_actual);
+        self.pixel_center_inside_both_screen_triangles +=
+            u64::from(center_expected && center_actual);
+        self.pixel_center_inside_expected_only_screen_triangle +=
+            u64::from(center_expected && !center_actual);
+        self.pixel_center_inside_actual_only_screen_triangle +=
+            u64::from(!center_expected && center_actual);
+        self.pixel_center_inside_neither_screen_triangle +=
+            u64::from(!center_expected && !center_actual);
+
+        let origin_expected = pixel_inside_screen_triangle(pixel, expected, 0.0);
+        let origin_actual = pixel_inside_screen_triangle(pixel, actual, 0.0);
+        self.pixel_origin_inside_expected_screen_triangle += u64::from(origin_expected);
+        self.pixel_origin_inside_actual_screen_triangle += u64::from(origin_actual);
+        self.pixel_origin_inside_both_screen_triangles +=
+            u64::from(origin_expected && origin_actual);
+        self.pixel_origin_inside_expected_only_screen_triangle +=
+            u64::from(origin_expected && !origin_actual);
+        self.pixel_origin_inside_actual_only_screen_triangle +=
+            u64::from(!origin_expected && origin_actual);
+        self.pixel_origin_inside_neither_screen_triangle +=
+            u64::from(!origin_expected && !origin_actual);
     }
 
     fn add_near_edge_sides(
@@ -2724,6 +2849,7 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         material_index: value.get("materialIndex").and_then(Value::as_i64),
         material_slot: value.get("materialSlot").and_then(Value::as_u64),
         triangle: value.get("triangle").and_then(Value::as_u64),
+        source_triangle: value.get("sourceTriangle").and_then(Value::as_u64),
         indices: owner_indices(value.get("indices")),
         render_order: value.get("renderOrder").and_then(Value::as_i64),
         render_phase_order: value.get("renderPhaseOrder").and_then(Value::as_i64),
@@ -2749,6 +2875,7 @@ fn owner_label(value: &Value) -> Option<OwnerLabel> {
         alpha_cutoff: value.get("alphaCutoff").and_then(Value::as_f64),
         depth_bias: value.get("depthBias").and_then(Value::as_f64),
         owner_color_source: string_field(value, "ownerColorSource"),
+        screen: owner_screen_triangle(value.get("screen")),
         screen_bounds: owner_screen_bounds(value.get("screenBounds")),
         depth: value.get("depth").and_then(Value::as_f64),
         webgl_depth: value.get("webglDepth").and_then(Value::as_f64),
@@ -2780,6 +2907,28 @@ fn owner_screen_bounds(value: Option<&Value>) -> Option<OwnerScreenBounds> {
     })
 }
 
+fn owner_screen_triangle(value: Option<&Value>) -> Option<OwnerScreenTriangle> {
+    let values = value?.as_array()?;
+    let [a, b, c] = values.as_slice() else {
+        return None;
+    };
+    Some(OwnerScreenTriangle {
+        points: [
+            owner_screen_point(a)?,
+            owner_screen_point(b)?,
+            owner_screen_point(c)?,
+        ],
+    })
+}
+
+fn owner_screen_point(value: &Value) -> Option<[f64; 2]> {
+    let values = value.as_array()?;
+    let [x, y] = values.as_slice() else {
+        return None;
+    };
+    Some([x.as_f64()?, y.as_f64()?])
+}
+
 fn string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(ToOwned::to_owned)
 }
@@ -2796,6 +2945,20 @@ fn assert_close(actual: f64, expected: f64) {
 }
 
 fn self_test() -> Result<(), Box<dyn Error>> {
+    let triangle = OwnerScreenTriangle {
+        points: [[0.0, 0.0], [4.0, 0.0], [0.0, 4.0]],
+    };
+    assert!(pixel_inside_screen_triangle(
+        OwnerPixel { x: 1, y: 1 },
+        triangle,
+        0.5
+    ));
+    assert!(!pixel_inside_screen_triangle(
+        OwnerPixel { x: 3, y: 3 },
+        triangle,
+        0.5
+    ));
+
     let expected = RgbaImage {
         width: 4,
         height: 1,

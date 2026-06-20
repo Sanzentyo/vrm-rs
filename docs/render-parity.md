@@ -1135,6 +1135,21 @@ pass after these changes, which keeps the next target on real-model local Bevy
 coverage/fill or material-primitive assignment in the source-derived topology
 guard.
 
+The summary also contains direct screen-triangle containment counters, not only
+bounds counters. In the current compact Bevy-vs-wgpu topology run,
+`26/26` tail pixels are inside the wgpu expected screen triangle at pixel
+center, while `0/26` are inside the Bevy actual screen triangle at center.
+Pixel-origin sampling is still asymmetric (`12/26` expected, `0/26` actual).
+That points away from a pure bounds-reporting artifact and toward Bevy emitting
+a neighboring owner ID at another triangle's raster location.
+
+Owner metadata now also carries `sourceTriangle`. Bevy's split owner-id path
+keeps `triangle = 0` for the generated one-triangle draw mesh and records the
+pre-split source ordinal separately; wgpu and three-vrm set `sourceTriangle`
+equal to their source `triangle`. This compact topology fixture has one source
+triangle per generated mesh, but the field is intended to catch one-slot
+primitive-local ordering slips in broader Seed-san diagnostics.
+
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
 

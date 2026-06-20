@@ -670,6 +670,7 @@ function capturePage(options) {
           renderOrder: mesh.renderOrder ?? 0,
           renderPhaseOrder: material?.type === 'ShaderMaterial' ? (mesh.renderOrder ?? 0) : null,
           triangle: Math.floor(offset / 3),
+          sourceTriangle: Math.floor(offset / 3),
           indices,
           screen: projection?.screen ?? null,
           screenBounds: projection?.screenBounds ?? null,

@@ -2184,6 +2184,7 @@ fn diagnostic_owner_ids(
                     "blend": primitive.policy.blend,
                     "ownerColorSource": "vertex-color",
                     "triangle": owner.triangle,
+                    "sourceTriangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
                     "screenBounds": projection.map(|projection| json!({

@@ -715,6 +715,7 @@ fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
                 owner_ids: vec![OwnerTriangle {
                     id: next_id,
                     triangle: 0,
+                    source_triangle: triangle_index,
                     indices,
                 }],
             });
@@ -1143,6 +1144,7 @@ fn diagnostic_owner_ids(
                     "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
                     "bevySortDistanceOverride": owner_id_sort_distance_override(primitive, draw_index, options),
                     "triangle": owner.triangle,
+                    "sourceTriangle": owner.source_triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
                     "screenBounds": projection.map(|projection| json!({
@@ -1640,6 +1642,7 @@ struct OwnerSource {
 struct OwnerTriangle {
     id: u32,
     triangle: usize,
+    source_triangle: usize,
     indices: [u32; 3],
 }
 
