@@ -721,6 +721,102 @@ impl From<&RenderOwnerSampleCorrectionDecision> for RenderRgba8Correction {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum RenderRgba8CorrectionManifestError {
+    #[error("owner sample correction manifest must be an array or contain corrections[]")]
+    InvalidRoot,
+    #[error("correction.x must be a u64")]
+    MissingOrInvalidX,
+    #[error("correction.y must be a u64")]
+    MissingOrInvalidY,
+    #[error("correction.rgba must be present")]
+    MissingRgba,
+    #[error("correction.rgba must be an array")]
+    InvalidRgba,
+    #[error("correction.rgba must have exactly four channels, got {len}")]
+    InvalidRgbaChannelCount { len: usize },
+    #[error("correction.rgba channel {index} must be a u8 integer")]
+    InvalidRgbaChannel { index: usize },
+    #[error("correction.rgba channel {index} is outside u8 range: {value}")]
+    RgbaChannelOutOfRange { index: usize, value: u64 },
+}
+
+pub fn render_rgba8_corrections_from_manifest_value(
+    value: &serde_json::Value,
+) -> Result<Vec<RenderRgba8Correction>, RenderRgba8CorrectionManifestError> {
+    let corrections = value
+        .as_array()
+        .or_else(|| {
+            value
+                .get("corrections")
+                .and_then(serde_json::Value::as_array)
+        })
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidRoot)?;
+    corrections
+        .iter()
+        .map(render_rgba8_correction_from_manifest_entry)
+        .collect()
+}
+
+pub fn apply_render_rgba8_corrections_from_manifest_value(
+    width: u64,
+    height: u64,
+    rgba: &mut [u8],
+    value: &serde_json::Value,
+) -> Result<usize, RenderRgba8CorrectionManifestApplyError> {
+    let corrections = render_rgba8_corrections_from_manifest_value(value)?;
+    apply_render_rgba8_corrections(width, height, rgba, &corrections).map_err(Into::into)
+}
+
+fn render_rgba8_correction_from_manifest_entry(
+    value: &serde_json::Value,
+) -> Result<RenderRgba8Correction, RenderRgba8CorrectionManifestError> {
+    let x = value
+        .get("x")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingOrInvalidX)?;
+    let y = value
+        .get("y")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(RenderRgba8CorrectionManifestError::MissingOrInvalidY)?;
+    let rgba = value
+        .get("rgba")
+        .or_else(|| value.get("replacementRgba"))
+        .ok_or(RenderRgba8CorrectionManifestError::MissingRgba)?;
+    Ok(RenderRgba8Correction::new(
+        RenderPixel::new(x, y),
+        render_rgba8_manifest_channel_array(rgba)?,
+    ))
+}
+
+fn render_rgba8_manifest_channel_array(
+    value: &serde_json::Value,
+) -> Result<[u8; 4], RenderRgba8CorrectionManifestError> {
+    let channels = value
+        .as_array()
+        .ok_or(RenderRgba8CorrectionManifestError::InvalidRgba)?;
+    if channels.len() != 4 {
+        return Err(
+            RenderRgba8CorrectionManifestError::InvalidRgbaChannelCount {
+                len: channels.len(),
+            },
+        );
+    }
+    let mut rgba = [0; 4];
+    for (index, channel) in channels.iter().enumerate() {
+        let channel = channel
+            .as_u64()
+            .ok_or(RenderRgba8CorrectionManifestError::InvalidRgbaChannel { index })?;
+        rgba[index] = u8::try_from(channel).map_err(|_| {
+            RenderRgba8CorrectionManifestError::RgbaChannelOutOfRange {
+                index,
+                value: channel,
+            }
+        })?;
+    }
+    Ok(rgba)
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum RenderOwnerSampleCorrectionApplyError {
     #[error(
         "RGBA8 buffer length mismatch for {width}x{height}: expected {expected_len} bytes, got {actual_len}"
@@ -740,6 +836,14 @@ pub enum RenderOwnerSampleCorrectionApplyError {
         width: u64,
         height: u64,
     },
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum RenderRgba8CorrectionManifestApplyError {
+    #[error(transparent)]
+    Manifest(#[from] RenderRgba8CorrectionManifestError),
+    #[error(transparent)]
+    Apply(#[from] RenderOwnerSampleCorrectionApplyError),
 }
 
 pub fn evaluate_render_owner_sample_correction_candidate(
@@ -5262,6 +5366,55 @@ mod tests {
                 y: 1,
                 width: 2,
                 height: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn render_rgba8_correction_manifest_applies_object_and_array_forms() {
+        let mut rgba = vec![0; 2 * 2 * 4];
+        let object = serde_json::json!({
+            "corrections": [
+                {"x": 1, "y": 1, "rgba": [1, 2, 3, 255]}
+            ]
+        });
+
+        let applied =
+            apply_render_rgba8_corrections_from_manifest_value(2, 2, &mut rgba, &object).unwrap();
+
+        assert_eq!(applied, 1);
+        assert_eq!(&rgba[12..16], &[1, 2, 3, 255]);
+
+        let array = serde_json::json!([
+            {"x": 0, "y": 0, "replacementRgba": [9, 8, 7, 255]}
+        ]);
+        let corrections = render_rgba8_corrections_from_manifest_value(&array).unwrap();
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].pixel.to_pair(), [0, 0]);
+        assert_eq!(corrections[0].replacement_rgba, [9, 8, 7, 255]);
+    }
+
+    #[test]
+    fn render_rgba8_correction_manifest_reports_invalid_shape() {
+        assert_eq!(
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!({})).unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidRoot
+        );
+        assert_eq!(
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!([
+                {"x": 0, "y": 0, "rgba": [0, 1, 2]}
+            ]))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidRgbaChannelCount { len: 3 }
+        );
+        assert_eq!(
+            render_rgba8_corrections_from_manifest_value(&serde_json::json!([
+                {"x": 0, "y": 0, "rgba": [0, 1, 2, 256]}
+            ]))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::RgbaChannelOutOfRange {
+                index: 3,
+                value: 256,
             }
         );
     }

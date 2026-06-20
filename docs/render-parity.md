@@ -51,6 +51,11 @@ recipes are convenience entry points. Use these first:
   applicator as the raw correction tool. The manifest format is source-like:
   `{"corrections":[{"x":1,"y":2,"rgba":[r,g,b,a]}]}`. `replacementRgba`
   is also accepted for generated decision manifests.
+- `vrm-adapter-ash --example unsafe_device_renderer` accepts the same
+  `--owner-sample-correction-manifest <path>` readback experiment flag. It
+  applies the shared `vrm-adapter` manifest parser/applicator before writing
+  Ash RGBA JSON or imqraw artifacts and recomputes readback checksum metadata
+  after correction.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
   legacy `.psnr.json` report is retained as a diagnostic cross-check over

@@ -11,10 +11,10 @@ bevy = []
 bytemuck.workspace = true
 glam.workspace = true
 indexmap.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 vrm-core = { path = "../vrm-core" }
 vrm-runtime = { path = "../vrm-runtime" }
 
 [dev-dependencies]
-serde_json.workspace = true
 vrm-io = { path = "../vrm-io" }

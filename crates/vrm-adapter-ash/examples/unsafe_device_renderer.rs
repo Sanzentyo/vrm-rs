@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
+use vrm_adapter::apply_render_rgba8_corrections_from_manifest_value;
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
     AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
@@ -49,6 +50,9 @@ struct Options {
     /// Write the submitted/read-back offscreen color attachment as an imqraw bundle.
     #[arg(long)]
     imqraw_out: Option<PathBuf>,
+    /// Apply a source-like owner/sample correction manifest before writing readback artifacts.
+    #[arg(long)]
+    owner_sample_correction_manifest: Option<PathBuf>,
     /// Optional precompiled SPIR-V vertex shader for the offscreen graphics pipelines.
     ///
     /// The shader must use entry point `main` and match the example vertex input
@@ -175,8 +179,38 @@ struct ReadbackFrame {
 }
 
 impl ReadbackFrame {
+    fn from_rgba(rgba: Vec<u8>) -> Self {
+        let checksum = fnv1a64(&rgba);
+        let nonzero_pixels = rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel.iter().any(|channel| *channel != 0))
+            .count();
+        Self {
+            rgba,
+            checksum,
+            nonzero_pixels,
+        }
+    }
+
     fn byte_len(&self) -> usize {
         self.rgba.len()
+    }
+
+    fn apply_owner_sample_correction_manifest(
+        &mut self,
+        path: &Path,
+        width: u32,
+        height: u32,
+    ) -> Result<usize, Box<dyn Error>> {
+        let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(path)?)?;
+        let applied = apply_render_rgba8_corrections_from_manifest_value(
+            u64::from(width),
+            u64::from(height),
+            &mut self.rgba,
+            &value,
+        )?;
+        *self = Self::from_rgba(std::mem::take(&mut self.rgba));
+        Ok(applied)
     }
 }
 
@@ -1214,14 +1248,7 @@ impl UnsafeAshDeviceRenderer {
             self.device.unmap_memory(resources.readback.memory);
             bytes
         };
-        Ok(ReadbackFrame {
-            checksum: fnv1a64(&bytes),
-            nonzero_pixels: bytes
-                .chunks_exact(4)
-                .filter(|pixel| pixel.iter().any(|channel| *channel != 0))
-                .count(),
-            rgba: bytes,
-        })
+        Ok(ReadbackFrame::from_rgba(bytes))
     }
 
     fn find_memory_type(
@@ -1619,11 +1646,7 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
     let width = 2;
     let height = 1;
     let rgba = vec![255, 0, 0, 255, 0, 0, 255, 128];
-    let readback = ReadbackFrame {
-        checksum: fnv1a64(&rgba),
-        nonzero_pixels: 2,
-        rgba: rgba.clone(),
-    };
+    let readback = ReadbackFrame::from_rgba(rgba.clone());
     let json_path = options.out.clone().unwrap_or_else(|| {
         PathBuf::from("target/ash-artifact-self-test/ash-self-test.frame000.rgba.json")
     });
@@ -1782,6 +1805,28 @@ mod tests {
         assert_eq!(regions[2].image_subresource.mip_level, 2);
         assert_eq!(regions[2].image_extent.width, 1);
     }
+
+    #[test]
+    fn owner_sample_correction_manifest_updates_readback_metadata() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "vrm-rs-ash-owner-sample-correction-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, r#"{"corrections":[{"x":1,"y":0,"rgba":[0,0,0,0]}]}"#).unwrap();
+        let mut readback = ReadbackFrame::from_rgba(vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        let original_checksum = readback.checksum;
+
+        let applied = readback
+            .apply_owner_sample_correction_manifest(&path, 2, 1)
+            .unwrap();
+
+        let _ = fs::remove_file(&path);
+        assert_eq!(applied, 1);
+        assert_eq!(readback.rgba, vec![255, 0, 0, 255, 0, 0, 0, 0]);
+        assert_ne!(readback.checksum, original_checksum);
+        assert_eq!(readback.nonzero_pixels, 1);
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -1820,7 +1865,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         renderer.physical_device
     );
     if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
-        let summary = renderer.submit_and_readback(&resources)?;
+        let mut summary = renderer.submit_and_readback(&resources)?;
+        if let Some(path) = &options.owner_sample_correction_manifest {
+            let applied = summary.apply_owner_sample_correction_manifest(
+                path,
+                options.width.max(1),
+                options.height.max(1),
+            )?;
+            println!(
+                "ash owner/sample correction manifest: applied {} corrections from {}",
+                applied,
+                path.display()
+            );
+        }
         println!(
             "ash offscreen readback: {} bytes, {} nonzero pixels, checksum {:016x}",
             summary.byte_len(),
