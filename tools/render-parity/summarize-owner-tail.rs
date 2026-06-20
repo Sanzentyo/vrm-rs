@@ -49,6 +49,7 @@ struct OwnerTailReport {
     expected_raster_metadata_alignment_summary: Value,
     actual_raster_metadata_alignment_summary: Value,
     top_actual_metadata_recoveries: Vec<Value>,
+    top_actual_near_expected_owner_recoveries: Vec<Value>,
     top_unexplained_material_transitions: Vec<Value>,
     top_unexplained_details: Vec<TailDetail>,
 }
@@ -64,6 +65,9 @@ struct OwnerTailCounts {
     same_projected_or_adjacent_triangle_mismatched_shared_nonzero: Option<u64>,
     same_projected_or_touching_triangle_mismatched_shared_nonzero: Option<u64>,
     same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero: Option<u64>,
+    actual_near_id_matches_expected_owner_mismatched_shared_nonzero: Option<u64>,
+    actual_near_id_matches_expected_owner_unexplained_tail: Option<u64>,
+    actual_near_id_matches_expected_owner_unexplained_tail_after_touching: Option<u64>,
     unexplained_owner_tail_mismatched_shared_nonzero: Option<u64>,
     unexplained_owner_tail_after_touching_mismatched_shared_nonzero: Option<u64>,
     actual_not_visible_by_cull_policy_mismatched_shared_nonzero: Option<u64>,
@@ -195,6 +199,18 @@ fn summarize_report(
                 value,
                 "same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero",
             ),
+            actual_near_id_matches_expected_owner_mismatched_shared_nonzero: u64_field(
+                value,
+                "actual_near_id_matches_expected_owner_mismatched_shared_nonzero",
+            ),
+            actual_near_id_matches_expected_owner_unexplained_tail: u64_field(
+                value,
+                "actual_near_id_matches_expected_owner_unexplained_tail",
+            ),
+            actual_near_id_matches_expected_owner_unexplained_tail_after_touching: u64_field(
+                value,
+                "actual_near_id_matches_expected_owner_unexplained_tail_after_touching",
+            ),
             unexplained_owner_tail_mismatched_shared_nonzero: u64_field(
                 value,
                 "unexplained_owner_tail_mismatched_shared_nonzero",
@@ -238,6 +254,11 @@ fn summarize_report(
             .cloned()
             .unwrap_or(Value::Null),
         top_actual_metadata_recoveries: take_values(value, "top_actual_metadata_recoveries", top),
+        top_actual_near_expected_owner_recoveries: take_values(
+            value,
+            "top_actual_near_expected_owner_recoveries",
+            top,
+        ),
         top_unexplained_material_transitions: take_values(
             value,
             "top_unexplained_material_transitions",
@@ -479,6 +500,27 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         report
             .counts
             .same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "actual_near_id_matches_expected_owner_mismatched_shared_nonzero",
+        report
+            .counts
+            .actual_near_id_matches_expected_owner_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
+        "actual_near_id_matches_expected_owner_unexplained_tail",
+        report
+            .counts
+            .actual_near_id_matches_expected_owner_unexplained_tail,
+    );
+    write_count(
+        &mut output,
+        "actual_near_id_matches_expected_owner_unexplained_tail_after_touching",
+        report
+            .counts
+            .actual_near_id_matches_expected_owner_unexplained_tail_after_touching,
     );
     write_count(
         &mut output,
@@ -836,6 +878,30 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         ));
     }
 
+    output.push_str("\n## Top Near Expected Owner Recoveries\n\n");
+    output.push_str(
+        "| Count | Decoded Actual | Expected | ID Delta | RGB Delta | Class | Source Δ | Draw Δ | Relation |\n|---:|---:|---:|---:|---|---|---:|---:|---|\n",
+    );
+    for item in &report.top_actual_near_expected_owner_recoveries {
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | ({:+}, {:+}, {:+}) | {} | {} | {} | {}; {}; {}; {} |\n",
+            u64_field(item, "count").unwrap_or(0),
+            u64_field(item, "decoded_actual").unwrap_or(0),
+            u64_field(item, "expected_owner").unwrap_or(0),
+            i64_field(item, "id_delta").unwrap_or(0),
+            i64_field(item, "red_delta").unwrap_or(0),
+            i64_field(item, "green_delta").unwrap_or(0),
+            i64_field(item, "blue_delta").unwrap_or(0),
+            text_field(item, "channel_delta_class"),
+            optional_i64_cell(item, "source_triangle_delta"),
+            optional_i64_cell(item, "draw_index_delta"),
+            text_field(item, "mesh_relation"),
+            text_field(item, "material_relation"),
+            text_field(item, "triangle_relation"),
+            text_field(item, "projection_relation"),
+        ));
+    }
+
     output.push_str("\n## Top Actual Raster Metadata Reassignments\n\n");
     output.push_str(
         "| Owner | Pixels | Self Distance | Best Owner | Best Distance | Delta | Owner Mesh | Best Mesh |\n|---:|---:|---:|---:|---:|---:|---|---|\n",
@@ -1091,6 +1157,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         "same_projected_triangle_mismatched_shared_nonzero": 0,
         "same_projected_or_touching_triangle_mismatched_shared_nonzero": 1,
         "same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero": 1,
+        "actual_near_id_matches_expected_owner_mismatched_shared_nonzero": 2,
+        "actual_near_id_matches_expected_owner_unexplained_tail": 1,
+        "actual_near_id_matches_expected_owner_unexplained_tail_after_touching": 1,
         "unexplained_owner_tail_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_after_touching_mismatched_shared_nonzero": 1,
         "actual_not_visible_by_cull_policy_mismatched_shared_nonzero": 1,
@@ -1192,6 +1261,34 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "projection_relation": "overlap-depth-close",
             "count": 34
         }],
+        "top_actual_near_expected_owner_recoveries": [{
+            "decoded_actual": 11,
+            "expected_owner": 10,
+            "id_delta": -1,
+            "red_delta": -1,
+            "green_delta": 0,
+            "blue_delta": 0,
+            "channel_manhattan_delta": 1,
+            "channel_chebyshev_delta": 1,
+            "channel_delta_class": "r-1",
+            "decoded_mesh_name": "wear",
+            "expected_mesh_name": "wear_4",
+            "decoded_material_name": "huku_bake",
+            "expected_material_name": "huku_bake (Outline)",
+            "decoded_triangle": 50,
+            "expected_triangle": 42,
+            "decoded_source_triangle": 50,
+            "expected_source_triangle": 42,
+            "decoded_draw_index": 11,
+            "expected_draw_index": 10,
+            "source_triangle_delta": -8,
+            "draw_index_delta": -1,
+            "mesh_relation": "same-normalized-name",
+            "material_relation": "same-index",
+            "triangle_relation": "different-triangle",
+            "projection_relation": "overlap-depth-close",
+            "count": 12
+        }],
         "top_unexplained_expected_to_actual_details": [{
             "count": 1,
             "expected": {
@@ -1245,11 +1342,16 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown
         .contains("same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero"));
     assert!(
+        markdown.contains("actual_near_id_matches_expected_owner_unexplained_tail_after_touching")
+    );
+    assert!(
         markdown
             .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
     );
     assert!(markdown.contains("Projection Gap Shape"));
     assert!(markdown.contains("Top Actual Metadata Recoveries"));
+    assert!(markdown.contains("Top Near Expected Owner Recoveries"));
+    assert!(markdown.contains("| 12 | 11 | 10 | -1 | (-1, +0, +0) | r-1 | -8 | -1 |"));
     assert!(markdown.contains(
         "| 34 | 34459 | 34715 | 256 | (+0, +1, +0) | g+1 | 1 | 1 | same-normalized-name; same-name; adjacent-triangle-index; overlap-depth-close |"
     ));

@@ -32,6 +32,18 @@
   phase-offset removal. A diagnostic `--owner-id-strict-depth-compare` switch
   was also measured separately and likewise worsens the compact tail to `52`,
   rejecting the simple equal-depth-overwrite hypothesis as a default fix.
+- Added near-owner-ID recovery diagnostics to `compare-owner-id-images.rs` and
+  the compact `summarize-owner-tail.rs` markdown. The new counters keep the
+  existing tail semantics intact, but show whether decoding the actual RGB as a
+  nearby owner ID would match the expected owner. Re-running the compact
+  Bevy-vs-wgpu topology summary shows all current mismatches are recoverable in
+  that sense: `46/46` mismatched shared-nonzero pixels and `26/26`
+  unexplained-tail pixels have an actual owner ID within the same near-ID
+  window as the expected owner. The top recoveries are mostly one red-channel
+  LSB (`r-1` / `r+1`) with draw-index deltas of `-1` or `+1`. This shifts the
+  next decision from broad Bevy fill/geometry policy toward either proving and
+  compensating owner-id diagnostic color quantization, or reclassifying
+  near-ID-recoverable pixels separately from true geometry ownership tail.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent

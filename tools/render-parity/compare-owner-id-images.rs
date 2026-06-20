@@ -74,6 +74,9 @@ struct OwnerCompareReport {
     same_projected_or_adjacent_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_touching_triangle_mismatched_shared_nonzero: u64,
     same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero: u64,
+    actual_near_id_matches_expected_owner_mismatched_shared_nonzero: u64,
+    actual_near_id_matches_expected_owner_unexplained_tail: u64,
+    actual_near_id_matches_expected_owner_unexplained_tail_after_touching: u64,
     unexplained_owner_tail_mismatched_shared_nonzero: u64,
     unexplained_owner_tail_after_touching_mismatched_shared_nonzero: u64,
     actual_not_visible_by_cull_policy_shared_nonzero: u64,
@@ -96,6 +99,7 @@ struct OwnerCompareReport {
     top_render_policy_transitions: Vec<OwnerRenderPolicyTransition>,
     top_actual_cull_visibility: Vec<OwnerActualCullVisibility>,
     top_actual_metadata_recoveries: Vec<OwnerMetadataRecovery>,
+    top_actual_near_expected_owner_recoveries: Vec<OwnerNearExpectedRecovery>,
     top_expected_to_actual: Vec<OwnerTransition>,
     top_actual_to_expected: Vec<OwnerTransition>,
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
@@ -242,6 +246,36 @@ struct OwnerMetadataRecovery {
     recovered_source_triangle: Option<u64>,
     decoded_draw_index: Option<u64>,
     recovered_draw_index: Option<u64>,
+    source_triangle_delta: Option<i64>,
+    draw_index_delta: Option<i64>,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerNearExpectedRecovery {
+    decoded_actual: u32,
+    expected_owner: u32,
+    id_delta: i64,
+    red_delta: i16,
+    green_delta: i16,
+    blue_delta: i16,
+    channel_manhattan_delta: u16,
+    channel_chebyshev_delta: u8,
+    channel_delta_class: String,
+    decoded_mesh_name: Option<String>,
+    expected_mesh_name: Option<String>,
+    decoded_material_name: Option<String>,
+    expected_material_name: Option<String>,
+    decoded_triangle: Option<u64>,
+    expected_triangle: Option<u64>,
+    decoded_source_triangle: Option<u64>,
+    expected_source_triangle: Option<u64>,
+    decoded_draw_index: Option<u64>,
+    expected_draw_index: Option<u64>,
     source_triangle_delta: Option<i64>,
     draw_index_delta: Option<i64>,
     mesh_relation: String,
@@ -777,6 +811,9 @@ fn compare_owner_images(
     let mut same_projected_or_adjacent_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_touching_triangle_mismatched_shared_nonzero = 0;
     let mut same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero = 0;
+    let mut actual_near_id_matches_expected_owner_mismatched_shared_nonzero = 0;
+    let mut actual_near_id_matches_expected_owner_unexplained_tail = 0;
+    let mut actual_near_id_matches_expected_owner_unexplained_tail_after_touching = 0;
     let mut unexplained_owner_tail_mismatched_shared_nonzero = 0;
     let mut unexplained_owner_tail_after_touching_mismatched_shared_nonzero = 0;
     let mut actual_not_visible_by_cull_policy_shared_nonzero = 0;
@@ -798,6 +835,7 @@ fn compare_owner_images(
     let mut render_policy_transitions = BTreeMap::new();
     let mut actual_cull_visibility = BTreeMap::new();
     let mut actual_metadata_recoveries = BTreeMap::new();
+    let mut actual_near_expected_owner_recoveries = BTreeMap::new();
     let mut expected_to_actual_pixels = BTreeMap::new();
     let mut actual_to_expected_pixels = BTreeMap::new();
     let mut unexplained_expected_to_actual_pixels = BTreeMap::new();
@@ -875,10 +913,26 @@ fn compare_owner_images(
                         same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero +=
                             1;
                     }
-                    if !same_projected_or_adjacent && actual_metadata_recovery.is_none() {
+                    let actual_near_id_matches_expected =
+                        owner_id_is_near_candidate(right, left);
+                    if actual_near_id_matches_expected {
+                        actual_near_id_matches_expected_owner_mismatched_shared_nonzero += 1;
+                        *actual_near_expected_owner_recoveries
+                            .entry((right, left))
+                            .or_default() += 1;
+                    }
+                    let unexplained_tail =
+                        !same_projected_or_adjacent && actual_metadata_recovery.is_none();
+                    if unexplained_tail {
                         unexplained_owner_tail_mismatched_shared_nonzero += 1;
+                        if actual_near_id_matches_expected {
+                            actual_near_id_matches_expected_owner_unexplained_tail += 1;
+                        }
                         if !same_projected_or_touching {
                             unexplained_owner_tail_after_touching_mismatched_shared_nonzero += 1;
+                            if actual_near_id_matches_expected {
+                                actual_near_id_matches_expected_owner_unexplained_tail_after_touching += 1;
+                            }
                         }
                         unexplained_projection_gaps.add(expected_label, actual_label, pixel);
                         bump_owner_material_transition(
@@ -975,6 +1029,9 @@ fn compare_owner_images(
         same_projected_or_adjacent_triangle_mismatched_shared_nonzero,
         same_projected_or_touching_triangle_mismatched_shared_nonzero,
         same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
+        actual_near_id_matches_expected_owner_mismatched_shared_nonzero,
+        actual_near_id_matches_expected_owner_unexplained_tail,
+        actual_near_id_matches_expected_owner_unexplained_tail_after_touching,
         unexplained_owner_tail_mismatched_shared_nonzero,
         unexplained_owner_tail_after_touching_mismatched_shared_nonzero,
         actual_not_visible_by_cull_policy_shared_nonzero,
@@ -1014,6 +1071,12 @@ fn compare_owner_images(
         top_actual_metadata_recoveries: top_actual_metadata_recoveries(
             actual_metadata_recoveries,
             actual_metadata,
+            top,
+        ),
+        top_actual_near_expected_owner_recoveries: top_actual_near_expected_owner_recoveries(
+            actual_near_expected_owner_recoveries,
+            actual_metadata,
+            expected_metadata,
             top,
         ),
         top_expected_to_actual: top_transitions(expected_to_actual.clone(), top),
@@ -1427,6 +1490,75 @@ fn top_actual_metadata_recoveries(
         .collect()
 }
 
+fn top_actual_near_expected_owner_recoveries(
+    map: BTreeMap<(u32, u32), u64>,
+    actual_metadata: &HashMap<u32, OwnerLabel>,
+    expected_metadata: &HashMap<u32, OwnerLabel>,
+    top: usize,
+) -> Vec<OwnerNearExpectedRecovery> {
+    let mut entries = map.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.0.cmp(&right.0.0))
+            .then_with(|| left.0.1.cmp(&right.0.1))
+    });
+    entries
+        .into_iter()
+        .take(top)
+        .map(|((decoded_actual, expected_owner), count)| {
+            let [red_delta, green_delta, blue_delta] =
+                owner_id_channel_deltas(decoded_actual, expected_owner);
+            let decoded_label = actual_metadata.get(&decoded_actual);
+            let expected_label = expected_metadata.get(&expected_owner);
+            OwnerNearExpectedRecovery {
+                decoded_actual,
+                expected_owner,
+                id_delta: i64::from(expected_owner) - i64::from(decoded_actual),
+                red_delta,
+                green_delta,
+                blue_delta,
+                channel_manhattan_delta: red_delta.unsigned_abs()
+                    + green_delta.unsigned_abs()
+                    + blue_delta.unsigned_abs(),
+                channel_chebyshev_delta: red_delta
+                    .unsigned_abs()
+                    .max(green_delta.unsigned_abs())
+                    .max(blue_delta.unsigned_abs()) as u8,
+                channel_delta_class: owner_id_channel_delta_class([
+                    red_delta,
+                    green_delta,
+                    blue_delta,
+                ]),
+                decoded_mesh_name: decoded_label.and_then(|label| label.mesh_name.clone()),
+                expected_mesh_name: expected_label.and_then(|label| label.mesh_name.clone()),
+                decoded_material_name: decoded_label.and_then(|label| label.material_name.clone()),
+                expected_material_name: expected_label.and_then(|label| label.material_name.clone()),
+                decoded_triangle: decoded_label.and_then(|label| label.triangle),
+                expected_triangle: expected_label.and_then(|label| label.triangle),
+                decoded_source_triangle: decoded_label.and_then(|label| label.source_triangle),
+                expected_source_triangle: expected_label.and_then(|label| label.source_triangle),
+                decoded_draw_index: decoded_label.and_then(|label| label.draw_index),
+                expected_draw_index: expected_label.and_then(|label| label.draw_index),
+                source_triangle_delta: optional_u64_delta(
+                    decoded_label.and_then(|label| label.source_triangle),
+                    expected_label.and_then(|label| label.source_triangle),
+                ),
+                draw_index_delta: optional_u64_delta(
+                    decoded_label.and_then(|label| label.draw_index),
+                    expected_label.and_then(|label| label.draw_index),
+                ),
+                mesh_relation: mesh_relation(decoded_label, expected_label),
+                material_relation: material_relation(decoded_label, expected_label),
+                triangle_relation: triangle_relation(decoded_label, expected_label),
+                projection_relation: projection_relation(decoded_label, expected_label),
+                count,
+            }
+        })
+        .collect()
+}
+
 fn optional_u64_delta(left: Option<u64>, right: Option<u64>) -> Option<i64> {
     let left = i128::from(left?);
     let right = i128::from(right?);
@@ -1492,6 +1624,16 @@ fn recover_near_actual_owner(
                 .map(|_| candidate)
         })
         .min_by_key(|candidate| candidate.abs_diff(decoded_actual))
+}
+
+fn owner_id_is_near_candidate(decoded_actual: u32, candidate: u32) -> bool {
+    if decoded_actual == candidate || candidate == 0 {
+        return false;
+    }
+    let [red_delta, green_delta, blue_delta] = owner_id_channel_deltas(decoded_actual, candidate);
+    (-2..=2).contains(&red_delta)
+        && (-1..=1).contains(&green_delta)
+        && (-1..=1).contains(&blue_delta)
 }
 
 fn near_owner_id_candidates(id: u32) -> Vec<u32> {
@@ -3423,6 +3565,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         owner_id_channel_delta_class(owner_id_channel_deltas(34427, 34682)),
         "mixed(-1,+1,+0)"
     );
+    assert!(owner_id_is_near_candidate(3, 2));
+    assert!(owner_id_is_near_candidate(4, 5));
+    assert!(!owner_id_is_near_candidate(3, 3));
     let report = compare_owner_images(
         "expected".to_owned(),
         "actual".to_owned(),
@@ -3446,6 +3591,27 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         report.same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
         0
+    );
+    assert_eq!(
+        report.actual_near_id_matches_expected_owner_mismatched_shared_nonzero,
+        2
+    );
+    assert_eq!(
+        report.actual_near_id_matches_expected_owner_unexplained_tail,
+        2
+    );
+    assert_eq!(
+        report.actual_near_id_matches_expected_owner_unexplained_tail_after_touching,
+        2
+    );
+    assert_eq!(report.top_actual_near_expected_owner_recoveries.len(), 2);
+    assert_eq!(
+        report.top_actual_near_expected_owner_recoveries[0].decoded_actual,
+        3
+    );
+    assert_eq!(
+        report.top_actual_near_expected_owner_recoveries[0].expected_owner,
+        2
     );
     assert_eq!(report.unexplained_owner_tail_mismatched_shared_nonzero, 2);
     assert_eq!(
