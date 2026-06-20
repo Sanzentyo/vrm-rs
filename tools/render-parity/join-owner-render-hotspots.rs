@@ -60,6 +60,11 @@ struct JoinReport {
     browser_best_sample_color_tied: u64,
     browser_best_sample_mean_actual_rgb_distance: Option<f64>,
     browser_best_sample_mean_expected_rgb_distance: Option<f64>,
+    browser_best_to_rust_frontmost_relation: BTreeMap<String, u64>,
+    browser_best_to_rust_expected_best_relation: BTreeMap<String, u64>,
+    browser_best_to_rust_actual_best_relation: BTreeMap<String, u64>,
+    browser_best_expected_closer_to_expected_relation: BTreeMap<String, u64>,
+    browser_best_actual_closer_to_actual_relation: BTreeMap<String, u64>,
     rendered_to_rust_frontmost: BTreeMap<String, u64>,
     rendered_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
     browser_best_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
@@ -82,6 +87,7 @@ struct JoinedHotspotLine {
     browser_best_sample_cpu_base_color: Option<[u64; 4]>,
     browser_best_sample_actual_rgb_distance: Option<f64>,
     browser_best_sample_expected_rgb_distance: Option<f64>,
+    browser_best_to_expected_relation: String,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -160,6 +166,11 @@ fn join_reports(
         browser_best_sample_color_tied: 0,
         browser_best_sample_mean_actual_rgb_distance: None,
         browser_best_sample_mean_expected_rgb_distance: None,
+        browser_best_to_rust_frontmost_relation: BTreeMap::new(),
+        browser_best_to_rust_expected_best_relation: BTreeMap::new(),
+        browser_best_to_rust_actual_best_relation: BTreeMap::new(),
+        browser_best_expected_closer_to_expected_relation: BTreeMap::new(),
+        browser_best_actual_closer_to_actual_relation: BTreeMap::new(),
         rendered_to_rust_frontmost: BTreeMap::new(),
         rendered_to_rust_expected_best_subpixel: BTreeMap::new(),
         browser_best_to_rust_expected_best_subpixel: BTreeMap::new(),
@@ -216,6 +227,22 @@ fn join_reports(
                 std::cmp::Ordering::Greater => report.browser_best_sample_expected_color_closer += 1,
                 std::cmp::Ordering::Equal => report.browser_best_sample_color_tied += 1,
             }
+            match actual
+                .partial_cmp(&expected)
+                .unwrap_or(std::cmp::Ordering::Equal)
+            {
+                std::cmp::Ordering::Less => bump_relation(
+                    &mut report.browser_best_actual_closer_to_actual_relation,
+                    browser_best.as_ref(),
+                    rust_actual.as_ref(),
+                ),
+                std::cmp::Ordering::Greater => bump_relation(
+                    &mut report.browser_best_expected_closer_to_expected_relation,
+                    browser_best.as_ref(),
+                    rust_expected.as_ref(),
+                ),
+                std::cmp::Ordering::Equal => {}
+            }
         }
 
         if rendered.is_some() {
@@ -266,8 +293,25 @@ fn join_reports(
             browser_best.as_ref(),
             rust_expected.as_ref(),
         );
+        bump_relation(
+            &mut report.browser_best_to_rust_frontmost_relation,
+            browser_best.as_ref(),
+            rust_frontmost.as_ref(),
+        );
+        bump_relation(
+            &mut report.browser_best_to_rust_expected_best_relation,
+            browser_best.as_ref(),
+            rust_expected.as_ref(),
+        );
+        bump_relation(
+            &mut report.browser_best_to_rust_actual_best_relation,
+            browser_best.as_ref(),
+            rust_actual.as_ref(),
+        );
 
         if report.top_disagreements.len() < top && rendered.as_ref() != rust_expected.as_ref() {
+            let browser_best_to_expected_relation =
+                relation_label(browser_best.as_ref(), rust_expected.as_ref()).to_owned();
             report.top_disagreements.push(JoinedHotspotLine {
                 x,
                 y,
@@ -289,6 +333,7 @@ fn join_reports(
                 browser_best_sample_cpu_base_color: browser_best_sample_color,
                 browser_best_sample_actual_rgb_distance: browser_best_sample_actual_distance,
                 browser_best_sample_expected_rgb_distance: browser_best_sample_expected_distance,
+                browser_best_to_expected_relation,
             });
         }
     }
@@ -317,6 +362,25 @@ fn bump_pair(
 ) {
     let key = format!("{} -> {}", surface_label(left), surface_label(right));
     *counts.entry(key).or_default() += 1;
+}
+
+fn bump_relation(
+    counts: &mut BTreeMap<String, u64>,
+    left: Option<&SurfaceSummary>,
+    right: Option<&SurfaceSummary>,
+) {
+    *counts.entry(relation_label(left, right).to_owned()).or_default() += 1;
+}
+
+fn relation_label(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) -> &'static str {
+    match left.zip(right) {
+        Some((left, right)) if left == right => "same-surface",
+        Some((left, right)) if left.material_name == right.material_name => {
+            "same-material-different-triangle"
+        }
+        Some(_) => "different-material",
+        None => "missing",
+    }
 }
 
 fn owner_surface(hotspot: &Value) -> Option<SurfaceSummary> {
@@ -443,6 +507,29 @@ fn markdown_report(report: &JoinReport) -> String {
         fmt_opt_f64(report.browser_best_sample_mean_actual_rgb_distance),
         fmt_opt_f64(report.browser_best_sample_mean_expected_rgb_distance)
     ));
+    output.push_str("## Browser Best Surface Relations\n\n");
+    output.push_str("Browser best vs Rust frontmost:\n\n");
+    write_counts(&mut output, &report.browser_best_to_rust_frontmost_relation);
+    output.push_str("Browser best vs Rust expected-best:\n\n");
+    write_counts(
+        &mut output,
+        &report.browser_best_to_rust_expected_best_relation,
+    );
+    output.push_str("Browser best vs Rust actual-best:\n\n");
+    write_counts(
+        &mut output,
+        &report.browser_best_to_rust_actual_best_relation,
+    );
+    output.push_str("Browser best colors closer to expected, grouped by expected relation:\n\n");
+    write_counts(
+        &mut output,
+        &report.browser_best_expected_closer_to_expected_relation,
+    );
+    output.push_str("Browser best colors closer to actual, grouped by actual relation:\n\n");
+    write_counts(
+        &mut output,
+        &report.browser_best_actual_closer_to_actual_relation,
+    );
     output.push_str("## Rendered To Rust Expected Best\n\n");
     write_counts(&mut output, &report.rendered_to_rust_expected_best_subpixel);
     output.push_str("## Browser Best To Rust Expected Best\n\n");
@@ -454,17 +541,18 @@ fn markdown_report(report: &JoinReport) -> String {
     if report.top_disagreements.is_empty() {
         output.push_str("_None_\n");
     } else {
-        output.push_str("| Pixel | Rendered | Browser best | Rust frontmost | Rust expected-best | Samples | Browser best color |\n");
-        output.push_str("|---|---|---|---|---|---|---|\n");
+        output.push_str("| Pixel | Rendered | Browser best | Rust frontmost | Rust expected-best | Relation | Samples | Browser best color |\n");
+        output.push_str("|---|---|---|---|---|---|---|---|\n");
         for item in &report.top_disagreements {
             output.push_str(&format!(
-                "| {},{} | {} | {} | {} | {} | browser={} rust={} | rgba={} actual_dist={} expected_dist={} |\n",
+                "| {},{} | {} | {} | {} | {} | {} | browser={} rust={} | rgba={} actual_dist={} expected_dist={} |\n",
                 item.x,
                 item.y,
                 surface_label(item.rendered_owner.as_ref()),
                 surface_label(item.browser_best_subpixel.as_ref()),
                 surface_label(item.rust_frontmost.as_ref()),
                 surface_label(item.rust_expected_best_subpixel.as_ref()),
+                item.browser_best_to_expected_relation,
                 fmt_pair(item.browser_best_subpixel_sample),
                 fmt_pair(item.rust_expected_best_subpixel_sample),
                 fmt_rgba(item.browser_best_sample_cpu_base_color),
@@ -582,10 +670,23 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(report.browser_best_sample_rust_color_count, 1);
     assert_eq!(report.browser_best_sample_expected_color_closer, 1);
+    assert_eq!(
+        report
+            .browser_best_to_rust_expected_best_relation
+            .get("same-surface"),
+        Some(&1)
+    );
+    assert_eq!(
+        report
+            .browser_best_expected_closer_to_expected_relation
+            .get("same-surface"),
+        Some(&1)
+    );
     assert!(report.top_disagreements.is_empty());
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Rendered owner matches Rust frontmost"));
     assert!(markdown.contains("body:tri7 -> body:tri7"));
     assert!(markdown.contains("Browser best sample Rust color count"));
+    assert!(markdown.contains("Browser Best Surface Relations"));
     Ok(())
 }
