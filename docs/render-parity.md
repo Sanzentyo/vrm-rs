@@ -57,14 +57,15 @@ recipes are convenience entry points. Use these first:
   same no-readback owner/sample resolve model against the real Seed-san
   base-color, outline-off, flat32/gradient blocker. It first refreshes the full
   owner-id driven owner/sample selection manifests, then renders wgpu, release-built Bevy, and
-  Ash with those manifests as geometry selections. The latest run raises the
-  real Seed-san gradient-domain score from baseline wgpu `26.3277 dB` / Bevy
-  `26.3322 dB` to render-resolve wgpu `28.9442 dB`, Bevy `29.1123 dB`, and Ash
-  `30.7335 dB`, all with opaque-black alpha parity and verified direct
-  `.imqraw` artifacts. This is useful movement, but not a final fix: max
-  selected-channel deltas remain high on the real fixture, so the next work is
-  to remap the remaining post-resolve hotspots and broaden the surface
-  selection model rather than tuning copied colors.
+  Ash with those manifests as geometry selections. The owner-id manifest path
+  deliberately does not read expected/actual color images. Its latest real
+  Seed-san run reports render-resolve wgpu `28.5090 dB`, Bevy `27.2176 dB`, and
+  Ash `30.7519 dB`, all with opaque-black alpha parity and verified direct
+  `.imqraw` artifacts. This is lower than the earlier color-distance
+  correction-derived wgpu/Bevy numbers, and that is expected: the standard path
+  now validates rendered owner/fill behavior first instead of choosing samples
+  by RGB-distance oracle. Use PSNR here only as a post-selection material/color
+  check.
 - `just render-parity-seed-base-color-flat32-render-resolve-hotspots`: reuse the
   current Seed-san render-resolve artifacts and summarize the remaining
   gradient-domain deltas. The latest summaries show the residual is still
@@ -74,6 +75,16 @@ recipes are convenience entry points. Use these first:
   evidence about the remaining residual, but do not choose new default samples
   by RGB-distance oracle; the next implementation step must first make the
   rendered owner/fill-rule agree with three-vrm and then re-check color parity.
+- `just render-parity-seed-base-color-flat32-render-resolve-owner-render-join`:
+  remap the post-resolve residual pixels back through three-vrm's owner-id
+  diagnostic and join the rendered owner IDs with Rust hotspot candidates. This
+  is the next root-cause diagnostic for the real Seed-san blocker: it separates
+  unrecovered owner/fill-rule cases from recovered-owner texture/base-color
+  cases without feeding expected/actual colors into manifest generation. The
+  first run reports `64/64` rendered owners for wgpu/Bevy/Ash, center-frontmost
+  matches `47/64`, `46/64`, and `45/64`, and 5x5 owner recovery `49/64` for all
+  three. That leaves a concrete `15/64` owner/fill coverage gap before any
+  material-color work should be promoted to default behavior.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
