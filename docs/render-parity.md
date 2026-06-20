@@ -89,9 +89,15 @@ recipes are convenience entry points. Use these first:
   the target pixel and routed through the same material descriptor set instead
   of copying `replacement_rgba`. The first compact depth3 Ash device/readback
   run with this path reaches selected `64.3542 dB` with max selected-channel
-  delta `1`, matching the wgpu selected floor for this diagnostic. The remaining
-  Ash follow-up is explicit UV-gradient ABI work for shaded or heavily mipped
-  captures. The wgpu, Bevy, and Ash
+  delta `1`, matching the wgpu selected floor for this diagnostic. Ash resolve
+  vertices now also carry raw-UV `dx/dy` gradients computed from the source
+  triangle in screen space, and the reference GLSL consumes them with
+  `textureGrad` for main/base, shade, shading-shift, normal, rim, emissive,
+  occlusion, and outline-width texture lookups. A shaded Ash smoke readback with
+  the same manifest verifies that the explicit-gradient shader path runs and
+  writes matching `.rgba.json` / `.imqraw` artifacts. Matcap and UV-animation
+  mask sampling remain implicit because their coordinates are not a direct
+  material UV transform. The wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against
   the current non-diagnostic render surfaces plus `surfaceSelections[]` entries

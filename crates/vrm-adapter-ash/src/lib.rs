@@ -8,7 +8,7 @@
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -251,6 +251,8 @@ impl AshDiagnosticRender {
 pub struct AshVrmVertex {
     pub position: [f32; 3],
     pub tex_coord_0: [f32; 2],
+    pub tex_coord_0_dx: [f32; 2],
+    pub tex_coord_0_dy: [f32; 2],
     pub color_0: [f32; 4],
     pub normal: [f32; 3],
     pub tangent: [f32; 4],
@@ -1651,6 +1653,9 @@ fn ash_owner_sample_resolve_vertex(
     let mut vertex = ash_interpolate_vertex(a, b, c, weights);
     vertex.position = ash_owner_sample_pixel_world(record.pixel, scene_options)?;
     vertex.tex_coord_0 = [record.geometry_uvs[0], record.geometry_uvs[1]];
+    let [tex_coord_0_dx, tex_coord_0_dy] = ash_owner_sample_uv_gradient(a, b, c, scene_options)?;
+    vertex.tex_coord_0_dx = tex_coord_0_dx;
+    vertex.tex_coord_0_dy = tex_coord_0_dy;
     Some(vertex)
 }
 
@@ -1671,6 +1676,48 @@ fn ash_owner_sample_pixel_world(
     (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
 }
 
+fn ash_owner_sample_uv_gradient(
+    a: AshVrmVertex,
+    b: AshVrmVertex,
+    c: AshVrmVertex,
+    scene_options: AshSceneOptions,
+) -> Option<[[f32; 2]; 2]> {
+    let pa = ash_project_world_to_pixel(a.position, scene_options)?;
+    let pb = ash_project_world_to_pixel(b.position, scene_options)?;
+    let pc = ash_project_world_to_pixel(c.position, scene_options)?;
+    let dx1 = pb.x - pa.x;
+    let dy1 = pb.y - pa.y;
+    let dx2 = pc.x - pa.x;
+    let dy2 = pc.y - pa.y;
+    let det = dx1 * dy2 - dx2 * dy1;
+    if det.abs() <= f32::EPSILON {
+        return None;
+    }
+    let uv_a = Vec2::from_array(a.tex_coord_0);
+    let uv_b = Vec2::from_array(b.tex_coord_0);
+    let uv_c = Vec2::from_array(c.tex_coord_0);
+    let duv1 = uv_b - uv_a;
+    let duv2 = uv_c - uv_a;
+    let duv_dx = (duv1 * dy2 - duv2 * dy1) / det;
+    let duv_dy = (duv2 * dx1 - duv1 * dx2) / det;
+    Some([duv_dx.to_array(), duv_dy.to_array()])
+}
+
+fn ash_project_world_to_pixel(position: [f32; 3], scene_options: AshSceneOptions) -> Option<Vec2> {
+    let clip = scene_options.projection()
+        * scene_options.view()
+        * Vec4::new(position[0], position[1], position[2], 1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    let size = scene_options.sanitized_screen_projection_size();
+    Some(Vec2::new(
+        (ndc.x + 1.0) * 0.5 * size.width,
+        (ndc.y + 1.0) * 0.5 * size.height,
+    ))
+}
+
 fn ash_interpolate_vertex(
     a: AshVrmVertex,
     b: AshVrmVertex,
@@ -1680,6 +1727,18 @@ fn ash_interpolate_vertex(
     AshVrmVertex {
         position: interpolate_vec3(a.position, b.position, c.position, weights),
         tex_coord_0: interpolate_vec2(a.tex_coord_0, b.tex_coord_0, c.tex_coord_0, weights),
+        tex_coord_0_dx: interpolate_vec2(
+            a.tex_coord_0_dx,
+            b.tex_coord_0_dx,
+            c.tex_coord_0_dx,
+            weights,
+        ),
+        tex_coord_0_dy: interpolate_vec2(
+            a.tex_coord_0_dy,
+            b.tex_coord_0_dy,
+            c.tex_coord_0_dy,
+            weights,
+        ),
         color_0: interpolate_vec4(a.color_0, b.color_0, c.color_0, weights),
         normal: normalize_or_fallback(
             interpolate_vec3(a.normal, b.normal, c.normal, weights),
@@ -1755,29 +1814,41 @@ pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
         AshVertexAttributePlan {
             location: 2,
             binding: 0,
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            offset: std::mem::offset_of!(AshVrmVertex, color_0) as u32,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, tex_coord_0_dx) as u32,
         },
         AshVertexAttributePlan {
             location: 3,
             binding: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: std::mem::offset_of!(AshVrmVertex, normal) as u32,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, tex_coord_0_dy) as u32,
         },
         AshVertexAttributePlan {
             location: 4,
             binding: 0,
             format: vk::Format::R32G32B32A32_SFLOAT,
-            offset: std::mem::offset_of!(AshVrmVertex, tangent) as u32,
+            offset: std::mem::offset_of!(AshVrmVertex, color_0) as u32,
         },
         AshVertexAttributePlan {
             location: 5,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, normal) as u32,
+        },
+        AshVertexAttributePlan {
+            location: 6,
+            binding: 0,
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            offset: std::mem::offset_of!(AshVrmVertex, tangent) as u32,
+        },
+        AshVertexAttributePlan {
+            location: 7,
             binding: 0,
             format: vk::Format::R32_SFLOAT,
             offset: std::mem::offset_of!(AshVrmVertex, normal_scale) as u32,
         },
         AshVertexAttributePlan {
-            location: 6,
+            location: 8,
             binding: 0,
             format: vk::Format::R32_SFLOAT,
             offset: std::mem::offset_of!(AshVrmVertex, double_sided) as u32,
@@ -2159,6 +2230,8 @@ impl AshVrmFramePlanner {
                 AshVrmVertex {
                     position: vertex.position.to_array(),
                     tex_coord_0: vertex.tex_coord_0,
+                    tex_coord_0_dx: [0.0, 0.0],
+                    tex_coord_0_dy: [0.0, 0.0],
                     color_0: color,
                     normal: vertex.normal.to_array(),
                     tangent: vertex.tangent.to_array(),
@@ -3910,6 +3983,8 @@ mod tests {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
             tex_coord_0: [0.0, 0.0],
+            tex_coord_0_dx: [0.0, 0.0],
+            tex_coord_0_dy: [0.0, 0.0],
             color_0: [0.0, 0.0, 0.0, 1.0],
             normal: [0.0, 1.0, 0.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
@@ -3957,6 +4032,8 @@ mod tests {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
             tex_coord_0: [0.0, 0.0],
+            tex_coord_0_dx: [0.0, 0.0],
+            tex_coord_0_dy: [0.0, 0.0],
             color_0: [0.0, 0.0, 0.0, 1.0],
             normal: [0.0, 1.0, 0.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
@@ -4074,8 +4151,11 @@ mod tests {
         assert!(fragment_shader.contains("layout(set = 0, binding = 9, std140)"));
         assert!(fragment_shader.contains("layout(set = 0, binding = 10, std140)"));
         assert!(fragment_shader.contains("layout(set = 0, binding = 11, std140)"));
-        assert!(fragment_shader.contains("texture(emissive_texture, emissive_uv)"));
-        assert!(fragment_shader.contains("texture(occlusion_texture, occlusion_uv)"));
+        assert!(fragment_shader.contains("textureGrad(source, uv, dx, dy)"));
+        assert!(fragment_shader.contains("emissive_texture,\n        emissive_uv"));
+        assert!(fragment_shader.contains("occlusion_texture,\n            occlusion_uv"));
+        assert!(fragment_shader.contains("transform_uv_gradient(animated_uv_dx"));
+        assert!(fragment_shader.contains("flip_v_gradient(base_uv_dx)"));
         assert!(fragment_shader.contains("srgb_to_linear_color(raw_main_texel.rgb)"));
         assert!(fragment_shader.contains("base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y)"));
         assert!(fragment_shader.contains("material_extra.flags2.z > 0.5"));
@@ -4102,10 +4182,12 @@ mod tests {
         assert!(fragment_shader.contains("material_extra.flags2.x > 0.5"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 0, std140)"));
         assert!(vertex_shader.contains("layout(set = 0, binding = 9, std140)"));
-        assert!(vertex_shader.contains("layout(location = 3) in vec3 in_normal;"));
-        assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
-        assert!(vertex_shader.contains("layout(location = 5) in float in_normal_scale;"));
-        assert!(vertex_shader.contains("layout(location = 6) in float in_double_sided;"));
+        assert!(vertex_shader.contains("layout(location = 2) in vec2 in_tex_coord_0_dx;"));
+        assert!(vertex_shader.contains("layout(location = 3) in vec2 in_tex_coord_0_dy;"));
+        assert!(vertex_shader.contains("layout(location = 5) in vec3 in_normal;"));
+        assert!(vertex_shader.contains("layout(location = 6) in vec4 in_tangent;"));
+        assert!(vertex_shader.contains("layout(location = 7) in float in_normal_scale;"));
+        assert!(vertex_shader.contains("layout(location = 8) in float in_double_sided;"));
         assert!(vertex_shader.contains("gl_PointSize = 1.0;"));
         assert!(vertex_shader.contains("mtoon.flags.z == 1u"));
         assert!(vertex_shader.contains("gl_Position.z += 0.000001 * gl_Position.w"));
@@ -4124,6 +4206,8 @@ mod tests {
                 vertices: vec![AshVrmVertex {
                     position: [0.0, 0.0, 0.0],
                     tex_coord_0: [0.0, 0.0],
+                    tex_coord_0_dx: [0.0, 0.0],
+                    tex_coord_0_dy: [0.0, 0.0],
                     color_0: [1.0, 1.0, 1.0, 1.0],
                     normal: [0.0, 0.0, 1.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
@@ -4263,8 +4347,11 @@ mod tests {
             renderer_frame.pipelines[0].depth_format,
             Some(ash_reference_depth_format())
         );
-        assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 7);
-        assert_eq!(renderer_frame.buffers[1].stride, 72);
+        assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 9);
+        assert_eq!(
+            renderer_frame.buffers[1].stride,
+            std::mem::size_of::<AshVrmVertex>() as u32
+        );
         assert_eq!(
             renderer_frame.buffers[1].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER
@@ -4458,9 +4545,11 @@ mod tests {
             }],
             unmatched_entries: Vec::new(),
         };
-        let source_vertex = |position, color| AshVrmVertex {
+        let source_vertex = |position, tex_coord_0, color| AshVrmVertex {
             position,
-            tex_coord_0: [0.0, 0.0],
+            tex_coord_0,
+            tex_coord_0_dx: [0.0, 0.0],
+            tex_coord_0_dy: [0.0, 0.0],
             color_0: color,
             normal: [0.0, 0.0, 1.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
@@ -4485,9 +4574,9 @@ mod tests {
                 material: Some(MaterialRef(0)),
                 pass: AshMtoonPass::Base,
                 vertices: vec![
-                    source_vertex([0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]),
-                    source_vertex([1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 1.0]),
-                    source_vertex([0.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]),
+                    source_vertex([0.0, 0.0, 0.0], [0.0, 0.0], [1.0, 0.0, 0.0, 1.0]),
+                    source_vertex([1.0, 0.0, 0.0], [1.0, 0.0], [0.0, 1.0, 0.0, 1.0]),
+                    source_vertex([0.0, 1.0, 0.0], [0.0, 1.0], [0.0, 0.0, 1.0, 1.0]),
                 ],
                 indices: vec![0, 1, 2],
             }],
@@ -4546,6 +4635,7 @@ mod tests {
             &vertex_buffer.bytes[..std::mem::size_of::<AshVrmVertex>()],
         );
         assert_eq!(vertex.tex_coord_0, [0.42, 0.43]);
+        assert!(vertex.tex_coord_0_dx != [0.0, 0.0] || vertex.tex_coord_0_dy != [0.0, 0.0]);
         assert_eq!(vertex.color_0, [0.2, 0.3, 0.5, 1.0]);
         assert_eq!(
             vertex.position,
@@ -4570,6 +4660,8 @@ mod tests {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
             tex_coord_0: [0.0, 0.0],
+            tex_coord_0_dx: [0.0, 0.0],
+            tex_coord_0_dy: [0.0, 0.0],
             color_0: [1.0, 1.0, 1.0, 1.0],
             normal: [0.0, 0.0, 1.0],
             tangent: [1.0, 0.0, 0.0, 1.0],
@@ -4683,6 +4775,8 @@ mod tests {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
             tex_coord_0: [0.0, 0.0],
+            tex_coord_0_dx: [0.0, 0.0],
+            tex_coord_0_dy: [0.0, 0.0],
             color_0: [1.0, 1.0, 1.0, 1.0],
             normal: [0.0, 0.0, 1.0],
             tangent: [1.0, 0.0, 0.0, 1.0],

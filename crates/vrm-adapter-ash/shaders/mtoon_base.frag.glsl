@@ -58,12 +58,14 @@ layout(set = 0, binding = 11, std140) uniform AshMaterialExtraUniform {
 } material_extra;
 
 layout(location = 0) in vec2 in_tex_coord_0;
-layout(location = 1) in vec4 in_color_0;
-layout(location = 2) in vec3 in_normal;
-layout(location = 3) in vec4 in_tangent;
-layout(location = 4) in vec3 in_world_position;
-layout(location = 5) in float in_normal_scale;
-layout(location = 6) in float in_double_sided;
+layout(location = 1) in vec2 in_tex_coord_0_dx;
+layout(location = 2) in vec2 in_tex_coord_0_dy;
+layout(location = 3) in vec4 in_color_0;
+layout(location = 4) in vec3 in_normal;
+layout(location = 5) in vec4 in_tangent;
+layout(location = 6) in vec3 in_world_position;
+layout(location = 7) in float in_normal_scale;
+layout(location = 8) in float in_double_sided;
 
 layout(location = 0) out vec4 out_color;
 
@@ -148,6 +150,24 @@ vec2 transform_uv(vec2 uv, vec4 offset_scale, float rotation) {
     );
 }
 
+vec2 transform_uv_gradient(vec2 gradient, vec4 offset_scale, float rotation) {
+    vec2 scaled = gradient * offset_scale.zw;
+    float c = cos(rotation);
+    float s = sin(rotation);
+    return vec2(
+        c * scaled.x - s * scaled.y,
+        s * scaled.x + c * scaled.y
+    );
+}
+
+vec2 flip_v_gradient(vec2 gradient) {
+    return vec2(gradient.x, -gradient.y);
+}
+
+vec4 texture_grad_or_implicit(sampler2D source, vec2 uv, vec2 dx, vec2 dy, bool explicit_grad) {
+    return explicit_grad ? textureGrad(source, uv, dx, dy) : texture(source, uv);
+}
+
 vec2 mtoon_uv_animation(vec2 uv) {
     vec2 mask_uv = transform_uv(
         uv,
@@ -173,7 +193,7 @@ float mtoon_lit_shade_rate(float ndotl, float shift_texel) {
     return linearstep(-1.0 + toony, 1.0 - toony, ndotl + shift);
 }
 
-vec3 mtoon_normal(vec2 uv, bool front_facing) {
+vec3 mtoon_normal(vec2 uv, vec2 uv_dx, vec2 uv_dy, bool explicit_grad, bool front_facing) {
     float face_sign = (front_facing || in_double_sided < 0.5) ? 1.0 : -1.0;
     vec3 geometric_normal = normalize(in_normal) * face_sign;
     if (in_normal_scale == 0.0) {
@@ -182,7 +202,7 @@ vec3 mtoon_normal(vec2 uv, bool front_facing) {
     float normal_scale = abs(in_normal_scale);
     vec3 tangent = normalize(in_tangent.xyz) * face_sign;
     vec3 bitangent = normalize(cross(geometric_normal, tangent) * in_tangent.w) * face_sign;
-    vec3 sampled = texture(normal_texture, uv).xyz;
+    vec3 sampled = texture_grad_or_implicit(normal_texture, uv, uv_dx, uv_dy, explicit_grad).xyz;
     vec3 tangent_normal = vec3(
         (sampled.x * 2.0 - 1.0) * normal_scale,
         (1.0 - sampled.y * 2.0) * normal_scale,
@@ -196,8 +216,8 @@ vec3 mtoon_normal(vec2 uv, bool front_facing) {
         vec3 derivative_normal = use_view_derivative ? view_normal : geometric_normal;
         vec3 q0 = dFdx(derivative_position);
         vec3 q1 = dFdy(derivative_position);
-        vec2 st0 = dFdx(uv);
-        vec2 st1 = dFdy(uv);
+        vec2 st0 = explicit_grad ? uv_dx : dFdx(uv);
+        vec2 st1 = explicit_grad ? uv_dy : dFdy(uv);
         vec3 q1perp = cross(q1, derivative_normal);
         vec3 q0perp = cross(derivative_normal, q0);
         vec3 derivative_tangent = q1perp * st0.x + q0perp * st1.x;
@@ -239,23 +259,58 @@ vec2 matcap_uv_from_view(vec3 normal) {
 }
 
 void main() {
+    bool explicit_grad = dot(abs(in_tex_coord_0_dx) + abs(in_tex_coord_0_dy), vec2(1.0)) > 0.0;
     vec2 animated_uv = mtoon_uv_animation(in_tex_coord_0);
+    vec2 animated_uv_dx = in_tex_coord_0_dx;
+    vec2 animated_uv_dy = in_tex_coord_0_dy;
     vec2 base_uv = transform_uv(animated_uv, material_uv.base_transform, material_uv.rotation_a.x);
+    vec2 base_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.base_transform, material_uv.rotation_a.x);
+    vec2 base_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.base_transform, material_uv.rotation_a.x);
     vec2 shade_uv = transform_uv(animated_uv, material_uv.shade_transform, material_uv.rotation_a.y);
+    vec2 shade_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.shade_transform, material_uv.rotation_a.y);
+    vec2 shade_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.shade_transform, material_uv.rotation_a.y);
     vec2 shading_shift_uv = transform_uv(
         animated_uv,
         material_uv.shading_shift_transform,
         material_uv.rotation_a.z
     );
+    vec2 shading_shift_uv_dx = transform_uv_gradient(
+        animated_uv_dx,
+        material_uv.shading_shift_transform,
+        material_uv.rotation_a.z
+    );
+    vec2 shading_shift_uv_dy = transform_uv_gradient(
+        animated_uv_dy,
+        material_uv.shading_shift_transform,
+        material_uv.rotation_a.z
+    );
     vec2 normal_uv = transform_uv(animated_uv, material_uv.normal_transform, material_uv.rotation_a.w);
+    vec2 normal_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.normal_transform, material_uv.rotation_a.w);
+    vec2 normal_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.normal_transform, material_uv.rotation_a.w);
     vec2 rim_uv = transform_uv(animated_uv, material_uv.rim_transform, material_uv.rotation_b.x);
+    vec2 rim_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.rim_transform, material_uv.rotation_b.x);
+    vec2 rim_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.rim_transform, material_uv.rotation_b.x);
     vec2 emissive_uv = transform_uv(animated_uv, material_uv.emissive_transform, material_uv.rotation_b.y);
+    vec2 emissive_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.emissive_transform, material_uv.rotation_b.y);
+    vec2 emissive_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.emissive_transform, material_uv.rotation_b.y);
     vec2 occlusion_uv = transform_uv(animated_uv, material_uv.occlusion_transform, material_uv.uv_animation.w);
+    vec2 occlusion_uv_dx = transform_uv_gradient(animated_uv_dx, material_uv.occlusion_transform, material_uv.uv_animation.w);
+    vec2 occlusion_uv_dy = transform_uv_gradient(animated_uv_dy, material_uv.occlusion_transform, material_uv.uv_animation.w);
     vec2 base_sample_uv = base_uv;
+    vec2 base_sample_uv_dx = base_uv_dx;
+    vec2 base_sample_uv_dy = base_uv_dy;
     if (material_extra.flags2.w > 1.5 && material_extra.flags2.w < 2.5) {
         base_sample_uv = vec2(base_uv.x, 1.0 - base_uv.y);
+        base_sample_uv_dx = flip_v_gradient(base_uv_dx);
+        base_sample_uv_dy = flip_v_gradient(base_uv_dy);
     }
-    vec4 raw_main_texel = texture(main_texture, base_sample_uv);
+    vec4 raw_main_texel = texture_grad_or_implicit(
+        main_texture,
+        base_sample_uv,
+        base_sample_uv_dx,
+        base_sample_uv_dy,
+        explicit_grad
+    );
     vec3 main_texel_rgb = raw_main_texel.rgb;
     if (material_extra.flags2.w > 1.0 && material_extra.flags2.w < 1.5) {
         main_texel_rgb = srgb_to_linear_color(raw_main_texel.rgb);
@@ -292,11 +347,17 @@ void main() {
         return;
     }
 
-    vec3 normal = mtoon_normal(normal_uv, gl_FrontFacing);
+    vec3 normal = mtoon_normal(normal_uv, normal_uv_dx, normal_uv_dy, explicit_grad, gl_FrontFacing);
     vec3 light_dir = normalize(scene.light_dir.xyz);
     float ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
     vec3 view_dir = normalize(scene.camera_pos.xyz - in_world_position);
-    vec3 emissive = mtoon.emissive_color_outline_width.rgb * texture(emissive_texture, emissive_uv).rgb;
+    vec3 emissive = mtoon.emissive_color_outline_width.rgb * texture_grad_or_implicit(
+        emissive_texture,
+        emissive_uv,
+        emissive_uv_dx,
+        emissive_uv_dy,
+        explicit_grad
+    ).rgb;
 
     if (material_extra.flags2.x > 0.5) {
         out_color = output_color(diffuse + emissive, opaque_alpha);
@@ -311,7 +372,13 @@ void main() {
             material_extra.pbr_params.x,
             material_extra.pbr_params.y
         ) * scene.light_color.rgb * scene.light_dir.w;
-        float occlusion = (texture(occlusion_texture, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+        float occlusion = (texture_grad_or_implicit(
+            occlusion_texture,
+            occlusion_uv,
+            occlusion_uv_dx,
+            occlusion_uv_dy,
+            explicit_grad
+        ).r - 1.0) * material_extra.pbr_params.z + 1.0;
         vec3 ambient = diffuse * (1.0 - material_extra.pbr_params.x) * scene.mtoon_lighting.w * occlusion;
         vec3 pbr_color = direct + ambient + emissive;
         if (mtoon.flags.z == 1u) {
@@ -325,14 +392,32 @@ void main() {
         return;
     }
 
-    float shift_texel = texture(shading_shift_texture, shading_shift_uv).r;
+    float shift_texel = texture_grad_or_implicit(
+        shading_shift_texture,
+        shading_shift_uv,
+        shading_shift_uv_dx,
+        shading_shift_uv_dy,
+        explicit_grad
+    ).r;
     float shade_rate = mtoon_lit_shade_rate(ndotl, shift_texel);
-    vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture(shade_multiply_texture, shade_uv).rgb;
+    vec3 shade = mtoon.shade_color_factor_cutoff.rgb * texture_grad_or_implicit(
+        shade_multiply_texture,
+        shade_uv,
+        shade_uv_dx,
+        shade_uv_dy,
+        explicit_grad
+    ).rgb;
     vec3 direct = mix(shade, diffuse, shade_rate) * scene.light_color.rgb * scene.light_dir.w;
     if (material_extra.flags.x > 0.5) {
         direct = min(direct, diffuse);
     }
-    float sampled_occlusion = (texture(occlusion_texture, occlusion_uv).r - 1.0) * material_extra.pbr_params.z + 1.0;
+    float sampled_occlusion = (texture_grad_or_implicit(
+        occlusion_texture,
+        occlusion_uv,
+        occlusion_uv_dx,
+        occlusion_uv_dy,
+        explicit_grad
+    ).r - 1.0) * material_extra.pbr_params.z + 1.0;
     float occlusion = material_extra.flags.z > 0.5 ? 1.0 : sampled_occlusion;
     vec3 ambient = diffuse * (scene.mtoon_lighting.y + scene.mtoon_lighting.z * mtoon.lighting.z) * occlusion;
 
@@ -344,8 +429,20 @@ void main() {
     );
     vec3 rim_light = scene.light_color.rgb * scene.light_dir.w + vec3(scene.mtoon_lighting.w);
     vec3 rim_mix = mix(vec3(1.0), rim_light, mtoon.rim_color_lighting_mix.a);
-    vec3 rim = (rim_base + matcap) * texture(rim_multiply_texture, rim_uv).rgb * rim_mix;
-    float outline_mask = texture(outline_width_texture, base_uv).r;
+    vec3 rim = (rim_base + matcap) * texture_grad_or_implicit(
+        rim_multiply_texture,
+        rim_uv,
+        rim_uv_dx,
+        rim_uv_dy,
+        explicit_grad
+    ).rgb * rim_mix;
+    float outline_mask = texture_grad_or_implicit(
+        outline_width_texture,
+        base_uv,
+        base_uv_dx,
+        base_uv_dy,
+        explicit_grad
+    ).r;
     vec2 uv_mask_uv = transform_uv(
         in_tex_coord_0,
         material_uv.uv_animation_mask_transform,
