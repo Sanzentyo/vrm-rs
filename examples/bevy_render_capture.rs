@@ -209,6 +209,7 @@ enum OwnerIdPhaseOrderPolicy {
     OverlapArea,
     OverlapTriangle,
     DrawIndex,
+    DrawIndexReverse,
     DrawIndexNoDepth,
 }
 
@@ -220,6 +221,7 @@ impl OwnerIdPhaseOrderPolicy {
             Self::OverlapArea => "overlap-area",
             Self::OverlapTriangle => "overlap-triangle",
             Self::DrawIndex => "draw-index",
+            Self::DrawIndexReverse => "draw-index-reverse",
             Self::DrawIndexNoDepth => "draw-index-no-depth",
         }
     }
@@ -799,6 +801,7 @@ fn configure_owner_id_phase_order_offsets(
         }
         OwnerIdPhaseOrderPolicy::Off
         | OwnerIdPhaseOrderPolicy::DrawIndex
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverse
         | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => {
             for primitive in primitives {
                 primitive.phase_order_offset_applied = 0.0;
@@ -916,6 +919,7 @@ fn owner_id_phase_order_projections_overlap(
         OwnerIdPhaseOrderPolicy::Full
         | OwnerIdPhaseOrderPolicy::Off
         | OwnerIdPhaseOrderPolicy::DrawIndex
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverse
         | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => false,
         OwnerIdPhaseOrderPolicy::OverlapArea => {
             screen_bounds_overlap_area(left.bounds, right.bounds)
@@ -1264,10 +1268,17 @@ fn owner_id_sort_distance_override(
         && !options.disable_owner_id_phase_order
         && matches!(
             options.owner_id_phase_order_policy,
-            OwnerIdPhaseOrderPolicy::DrawIndex | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth
+            OwnerIdPhaseOrderPolicy::DrawIndex
+                | OwnerIdPhaseOrderPolicy::DrawIndexReverse
+                | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth
         )
         && primitive.material.needs_source_order_offset())
-    .then(|| owner_id_draw_index_sort_distance(primitive.render_order, draw_index))
+    .then(|| match options.owner_id_phase_order_policy {
+        OwnerIdPhaseOrderPolicy::DrawIndexReverse => {
+            owner_id_draw_index_reverse_sort_distance(primitive.render_order, draw_index)
+        }
+        _ => owner_id_draw_index_sort_distance(primitive.render_order, draw_index),
+    })
 }
 
 fn alpha_mode_name(mode: AlphaMode) -> &'static str {
@@ -2346,6 +2357,11 @@ fn owner_id_draw_index_sort_distance(render_order: i32, draw_index: usize) -> f3
         + draw_index as f32 * BEVY_OWNER_ID_DRAW_INDEX_SORT_SCALE
 }
 
+fn owner_id_draw_index_reverse_sort_distance(render_order: i32, draw_index: usize) -> f32 {
+    render_order as f32 * BEVY_OWNER_ID_RENDER_ORDER_SORT_SCALE
+        - draw_index as f32 * BEVY_OWNER_ID_DRAW_INDEX_SORT_SCALE
+}
+
 fn bevy_source_order_offset(
     material: &BevyPrimitiveMaterial,
     phase_order: i32,
@@ -2909,6 +2925,19 @@ mod tests {
         assert!(first < second);
         assert!(second < late_same_render_order);
         assert!(second < next_render_order);
+        assert!(late_same_render_order < next_render_order);
+    }
+
+    #[test]
+    fn owner_id_reverse_draw_index_sort_key_keeps_render_order_primary() {
+        let first = owner_id_draw_index_reverse_sort_distance(3000, 10);
+        let second = owner_id_draw_index_reverse_sort_distance(3000, 11);
+        let next_render_order = owner_id_draw_index_reverse_sort_distance(3001, 0);
+        let late_same_render_order = owner_id_draw_index_reverse_sort_distance(3000, 999);
+
+        assert!(second < first);
+        assert!(late_same_render_order < second);
+        assert!(first < next_render_order);
         assert!(late_same_render_order < next_render_order);
     }
 

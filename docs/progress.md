@@ -11,6 +11,15 @@
   the remaining Seed-san/compact topology owner-tail work a direct way to
   distinguish browser-style subpixel fill ownership from broader material or
   metadata drift.
+- Re-ran the compact Bevy-vs-wgpu topology owner-tail summary with the new
+  subpixel buckets. The current `draw-index` policy still has `26` unexplained
+  tail pixels; all `26` are inside the expected screen triangle at pixel center,
+  but only `3` are inside the actual screen triangle on a 3x3 same-pixel
+  subpixel grid. Uniform owner-color output produces the same counts as vertex
+  color, ruling out owner-color transport again. A new diagnostic-only
+  `draw-index-reverse` Bevy owner-id phase policy was added and measured; it
+  worsens the compact tail to `52`, so the remaining blocker is not a simple
+  Transparent3d sort-direction inversion.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent
