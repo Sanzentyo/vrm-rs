@@ -52,7 +52,10 @@ recipes are convenience entry points. Use these first:
   strict and source-like: `corrections[]` entries must include `x`, `y`,
   `rgba`, `surface { materialName, triangle }`, and `sample [x, y]`. Raw array
   roots, `replacementRgba`, and entries without owner/sample source metadata are
-  rejected instead of being treated as compatibility shims.
+  rejected instead of being treated as compatibility shims. The parser yields a
+  `RenderOwnerSampleCorrectionPlan`, so renderer experiments can inspect the
+  selected surface/sample before choosing whether to apply the current readback
+  correction or move the same decision earlier into draw/sample selection.
 - `vrm-adapter-ash --example unsafe_device_renderer` accepts the same
   `--owner-sample-correction-manifest <path>` readback experiment flag. It
   applies the shared `vrm-adapter` manifest parser/applicator before writing

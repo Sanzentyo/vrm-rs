@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
-use vrm_adapter::apply_render_rgba8_corrections_from_manifest_value;
+use vrm_adapter::RenderOwnerSampleCorrectionPlan;
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
     AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
@@ -203,12 +203,8 @@ impl ReadbackFrame {
         height: u32,
     ) -> Result<usize, Box<dyn Error>> {
         let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(path)?)?;
-        let applied = apply_render_rgba8_corrections_from_manifest_value(
-            u64::from(width),
-            u64::from(height),
-            &mut self.rgba,
-            &value,
-        )?;
+        let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&value)?;
+        let applied = plan.apply_rgba8(u64::from(width), u64::from(height), &mut self.rgba)?;
         *self = Self::from_rgba(std::mem::take(&mut self.rgba));
         Ok(applied)
     }
@@ -1813,7 +1809,11 @@ mod tests {
             "vrm-rs-ash-owner-sample-correction-{}.json",
             std::process::id()
         ));
-        fs::write(&path, r#"{"corrections":[{"x":1,"y":0,"rgba":[0,0,0,0]}]}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"corrections":[{"x":1,"y":0,"rgba":[0,0,0,0],"surface":{"materialName":"body","triangle":7},"sample":[0.5,0.5]}]}"#,
+        )
+        .unwrap();
         let mut readback = ReadbackFrame::from_rgba(vec![255, 0, 0, 255, 0, 0, 255, 255]);
         let original_checksum = readback.checksum;
 

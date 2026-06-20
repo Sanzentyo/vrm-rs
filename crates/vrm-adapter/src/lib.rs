@@ -737,6 +737,62 @@ pub struct RenderOwnerSampleCorrectionManifestEntry {
     pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleCorrectionPlan {
+    entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
+}
+
+impl RenderOwnerSampleCorrectionPlan {
+    pub fn new(
+        entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
+    ) -> Result<Self, RenderRgba8CorrectionManifestError> {
+        let mut pixels = HashSet::with_capacity(entries.len());
+        for entry in &entries {
+            if !pixels.insert(entry.correction.pixel) {
+                return Err(RenderRgba8CorrectionManifestError::DuplicatePixel {
+                    x: entry.correction.pixel.x(),
+                    y: entry.correction.pixel.y(),
+                });
+            }
+        }
+        Ok(Self { entries })
+    }
+
+    pub fn from_manifest_value(
+        value: &serde_json::Value,
+    ) -> Result<Self, RenderRgba8CorrectionManifestError> {
+        Self::new(render_owner_sample_correction_manifest_entries_from_value(
+            value,
+        )?)
+    }
+
+    pub fn entries(&self) -> &[RenderOwnerSampleCorrectionManifestEntry] {
+        &self.entries
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn rgba8_corrections(&self) -> impl Iterator<Item = RenderRgba8Correction> + '_ {
+        self.entries.iter().map(|entry| entry.correction)
+    }
+
+    pub fn apply_rgba8(
+        &self,
+        width: u64,
+        height: u64,
+        rgba: &mut [u8],
+    ) -> Result<usize, RenderOwnerSampleCorrectionApplyError> {
+        let corrections = self.rgba8_corrections().collect::<Vec<_>>();
+        apply_render_rgba8_corrections(width, height, rgba, &corrections)
+    }
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum RenderRgba8CorrectionManifestError {
     #[error("owner sample correction manifest must contain corrections[]")]
@@ -767,6 +823,8 @@ pub enum RenderRgba8CorrectionManifestError {
     InvalidSample,
     #[error("correction.relation_to_expected is not a known relation: {value}")]
     InvalidRelation { value: String },
+    #[error("correction pixel {x},{y} appears more than once")]
+    DuplicatePixel { x: u64, y: u64 },
 }
 
 pub fn render_owner_sample_correction_manifest_entries_from_value(
@@ -785,8 +843,12 @@ pub fn render_owner_sample_correction_manifest_entries_from_value(
 pub fn render_rgba8_corrections_from_manifest_value(
     value: &serde_json::Value,
 ) -> Result<Vec<RenderRgba8Correction>, RenderRgba8CorrectionManifestError> {
-    render_owner_sample_correction_manifest_entries_from_value(value)
-        .map(|entries| entries.into_iter().map(|entry| entry.correction).collect())
+    RenderOwnerSampleCorrectionPlan::from_manifest_value(value).map(|plan| {
+        plan.entries
+            .into_iter()
+            .map(|entry| entry.correction)
+            .collect()
+    })
 }
 
 pub fn apply_render_rgba8_corrections_from_manifest_value(
@@ -795,8 +857,8 @@ pub fn apply_render_rgba8_corrections_from_manifest_value(
     rgba: &mut [u8],
     value: &serde_json::Value,
 ) -> Result<usize, RenderRgba8CorrectionManifestApplyError> {
-    let corrections = render_rgba8_corrections_from_manifest_value(value)?;
-    apply_render_rgba8_corrections(width, height, rgba, &corrections).map_err(Into::into)
+    let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(value)?;
+    plan.apply_rgba8(width, height, rgba).map_err(Into::into)
 }
 
 fn render_owner_sample_correction_manifest_entry_from_value(
@@ -5487,6 +5549,10 @@ mod tests {
             entries[0].relation_to_expected,
             Some(RenderOwnerSurfaceRelation::SameSurface)
         );
+        let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&object).unwrap();
+        assert_eq!(plan.len(), 1);
+        assert!(!plan.is_empty());
+        assert_eq!(plan.entries()[0].sample.sample().to_pair(), [0.7, 0.5]);
     }
 
     #[test]
@@ -5611,6 +5677,28 @@ mod tests {
             RenderRgba8CorrectionManifestError::InvalidRelation {
                 value: "neighbor".to_owned(),
             }
+        );
+        assert_eq!(
+            RenderOwnerSampleCorrectionPlan::from_manifest_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5]
+                    },
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [4, 5, 6, 7],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.7, 0.5]
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::DuplicatePixel { x: 0, y: 0 }
         );
     }
 
