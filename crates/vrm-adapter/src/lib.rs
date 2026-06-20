@@ -645,6 +645,76 @@ pub fn evaluate_render_owner_sample_correction(
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RenderPixel {
+    x: u64,
+    y: u64,
+}
+
+impl RenderPixel {
+    pub const fn new(x: u64, y: u64) -> Self {
+        Self { x, y }
+    }
+
+    pub const fn x(self) -> u64 {
+        self.x
+    }
+
+    pub const fn y(self) -> u64 {
+        self.y
+    }
+
+    pub const fn to_pair(self) -> [u64; 2] {
+        [self.x, self.y]
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleCorrectionCandidate {
+    pub pixel: RenderPixel,
+    pub sample: RenderOwnerSampleKey,
+    pub expected_surface: Option<RenderOwnerSurfaceKey>,
+    pub expected_rgba: [u8; 4],
+    pub actual_rgba: [u8; 4],
+    pub candidate_rgba: [u8; 4],
+}
+
+impl RenderOwnerSampleCorrectionCandidate {
+    pub fn relation_to_expected(&self) -> RenderOwnerSurfaceRelation {
+        self.sample
+            .surface()
+            .relation_to(self.expected_surface.as_ref())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOwnerSampleCorrectionDecision {
+    pub pixel: RenderPixel,
+    pub sample: RenderOwnerSampleKey,
+    pub relation_to_expected: RenderOwnerSurfaceRelation,
+    pub replacement_rgba: [u8; 4],
+    pub correction: RenderOwnerSampleCorrection,
+}
+
+pub fn evaluate_render_owner_sample_correction_candidate(
+    candidate: RenderOwnerSampleCorrectionCandidate,
+    policy: RenderOwnerSampleCorrectionPolicy,
+) -> Option<RenderOwnerSampleCorrectionDecision> {
+    let correction = evaluate_render_owner_sample_correction(
+        candidate.expected_rgba,
+        candidate.actual_rgba,
+        candidate.candidate_rgba,
+        policy,
+    )?;
+    Some(RenderOwnerSampleCorrectionDecision {
+        pixel: candidate.pixel,
+        relation_to_expected: candidate.relation_to_expected(),
+        sample: candidate.sample,
+        replacement_rgba: candidate.candidate_rgba,
+        correction,
+    })
+}
+
 pub fn rgb_distance_u8(left: [u8; 4], right: [u8; 4]) -> f64 {
     left.iter()
         .zip(right.iter())
@@ -4963,6 +5033,44 @@ mod tests {
         assert_eq!(
             accepted_worse.outcome,
             RenderOwnerSampleCorrectionOutcome::Worsened
+        );
+    }
+
+    #[test]
+    fn render_owner_sample_correction_candidate_builds_renderer_decision() {
+        let surface = RenderOwnerSurfaceKey::from_diagnostic_material_name(
+            "body:vrm-rs-owner-id-diagnostic",
+            7,
+        );
+        let expected_surface = RenderOwnerSurfaceKey::new("body", 8);
+        let candidate = RenderOwnerSampleCorrectionCandidate {
+            pixel: RenderPixel::new(12, 34),
+            sample: RenderOwnerSampleKey::from_pair(surface, [0.7, 0.5]),
+            expected_surface: Some(expected_surface),
+            expected_rgba: [100, 100, 100, 255],
+            actual_rgba: [130, 100, 100, 255],
+            candidate_rgba: [104, 100, 100, 255],
+        };
+
+        assert_eq!(
+            candidate.relation_to_expected(),
+            RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle
+        );
+        let decision = evaluate_render_owner_sample_correction_candidate(
+            candidate,
+            RenderOwnerSampleCorrectionPolicy::improving_only(),
+        )
+        .expect("candidate should improve the target pixel");
+        assert_eq!(decision.pixel.to_pair(), [12, 34]);
+        assert_eq!(decision.sample.sample().to_pair(), [0.7, 0.5]);
+        assert_eq!(decision.replacement_rgba, [104, 100, 100, 255]);
+        assert_eq!(
+            decision.relation_to_expected,
+            RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle
+        );
+        assert_eq!(
+            decision.correction.outcome,
+            RenderOwnerSampleCorrectionOutcome::Improved
         );
     }
 

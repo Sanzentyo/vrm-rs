@@ -25,8 +25,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
-    RenderOwnerSampleCorrectionOutcome, RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey,
-    RenderOwnerSampleKey, RenderSamplePoint, evaluate_render_owner_sample_correction,
+    RenderOwnerSampleCorrectionCandidate, RenderOwnerSampleCorrectionOutcome,
+    RenderOwnerSampleCorrectionPolicy, RenderOwnerSurfaceKey, RenderOwnerSampleKey, RenderPixel,
+    RenderSamplePoint, evaluate_render_owner_sample_correction_candidate,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -207,17 +208,27 @@ fn correction_report(
         candidate_color_count += 1;
         let expected_rgba = pixel_rgba(expected, x, y)?;
         let actual_rgba = pixel_rgba(actual, x, y)?;
+        let rust_expected = surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
         let policy = if only_expected_closer {
             RenderOwnerSampleCorrectionPolicy::improving_only()
         } else {
             RenderOwnerSampleCorrectionPolicy::allow_any()
         };
-        let Some(correction) =
-            evaluate_render_owner_sample_correction(expected_rgba, actual_rgba, color, policy)
-        else {
+        let Some(decision) = evaluate_render_owner_sample_correction_candidate(
+            RenderOwnerSampleCorrectionCandidate {
+                pixel: RenderPixel::new(x, y),
+                sample: sample_key,
+                expected_surface: rust_expected,
+                expected_rgba,
+                actual_rgba,
+                candidate_rgba: color,
+            },
+            policy,
+        ) else {
             skipped_not_expected_closer += 1;
             continue;
         };
+        let correction = decision.correction;
         before_distance_sum += correction.before_rgb_distance;
         after_distance_sum += correction.after_rgb_distance;
         match correction.outcome {
@@ -225,11 +236,15 @@ fn correction_report(
             RenderOwnerSampleCorrectionOutcome::Worsened => worsened += 1,
             RenderOwnerSampleCorrectionOutcome::Tied => tied += 1,
         };
-        let rust_expected = surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
         *relation_counts
-            .entry(browser_best.relation_to(rust_expected.as_ref()).as_str().to_owned())
+            .entry(decision.relation_to_expected.as_str().to_owned())
             .or_default() += 1;
-        set_pixel_rgba(&mut corrected, x, y, color)?;
+        set_pixel_rgba(
+            &mut corrected,
+            decision.pixel.x(),
+            decision.pixel.y(),
+            decision.replacement_rgba,
+        )?;
         applied_count += 1;
     }
 
