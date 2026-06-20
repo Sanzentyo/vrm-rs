@@ -103,6 +103,8 @@ struct OwnerCompareReport {
     unexplained_projection_gap_summary: OwnerProjectionGapSummary,
     expected_raster_bounds_summary: OwnerRasterBoundsSummary,
     actual_raster_bounds_summary: OwnerRasterBoundsSummary,
+    expected_raster_metadata_alignment_summary: OwnerRasterMetadataAlignmentSummary,
+    actual_raster_metadata_alignment_summary: OwnerRasterMetadataAlignmentSummary,
     top_unexplained_material_transitions: Vec<OwnerMaterialTransition>,
     top_unexplained_expected_to_actual_details: Vec<OwnerTransitionDetail>,
 }
@@ -400,6 +402,35 @@ struct OwnerBoundsExcess {
     min_y: f64,
     max_y: f64,
     max: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct OwnerRasterMetadataAlignmentSummary {
+    owners_with_pixels: u64,
+    owners_with_screen_bounds: u64,
+    owners_aligned_to_self: u64,
+    owners_aligned_elsewhere: u64,
+    pixels_aligned_elsewhere: u64,
+    owners_aligned_elsewhere_over_2px: u64,
+    owners_aligned_elsewhere_over_4px: u64,
+    pixels_aligned_elsewhere_over_2px: u64,
+    pixels_aligned_elsewhere_over_4px: u64,
+    max_self_center_distance: Option<f64>,
+    top_aligned_elsewhere: Vec<OwnerRasterMetadataAlignment>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerRasterMetadataAlignment {
+    owner: u32,
+    pixels: u64,
+    self_center_distance: f64,
+    best_owner: u32,
+    best_center_distance: f64,
+    owner_delta: i64,
+    owner_mesh_name: Option<String>,
+    best_mesh_name: Option<String>,
+    owner_material_name: Option<String>,
+    best_material_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -928,6 +959,20 @@ fn compare_owner_images(
             top,
         ),
         actual_raster_bounds_summary: owner_raster_bounds_summary(
+            &actual_ids,
+            actual.width,
+            actual.height,
+            actual_metadata,
+            top,
+        ),
+        expected_raster_metadata_alignment_summary: owner_raster_metadata_alignment_summary(
+            &expected_ids,
+            expected.width,
+            expected.height,
+            expected_metadata,
+            top,
+        ),
+        actual_raster_metadata_alignment_summary: owner_raster_metadata_alignment_summary(
             &actual_ids,
             actual.width,
             actual.height,
@@ -2375,6 +2420,108 @@ fn owner_raster_bounds_summary(
             .then_with(|| left.owner.cmp(&right.owner))
     });
     summary.top_center_bounds_excess = gaps.into_iter().take(top).collect();
+    debug_assert!(height == 0 || ids.len() <= width.saturating_mul(height));
+    summary
+}
+
+fn owner_raster_metadata_alignment_summary(
+    ids: &[u32],
+    width: usize,
+    height: usize,
+    metadata: &HashMap<u32, OwnerLabel>,
+    top: usize,
+) -> OwnerRasterMetadataAlignmentSummary {
+    let row_width = width.max(1);
+    let mut raster_bounds = BTreeMap::<u32, OwnerTransitionPixels>::new();
+    for (index, &owner) in ids.iter().enumerate() {
+        if owner == 0 {
+            continue;
+        }
+        let pixel = OwnerPixel {
+            x: index % row_width,
+            y: index / row_width,
+        };
+        raster_bounds
+            .entry(owner)
+            .and_modify(|entry| entry.add(pixel))
+            .or_insert_with(|| OwnerTransitionPixels::new(pixel));
+    }
+
+    let screen_bounds = metadata
+        .iter()
+        .filter_map(|(owner, label)| label.screen_bounds.map(|bounds| (*owner, label, bounds)))
+        .collect::<Vec<_>>();
+    let mut summary = OwnerRasterMetadataAlignmentSummary {
+        owners_with_pixels: raster_bounds.len() as u64,
+        ..OwnerRasterMetadataAlignmentSummary::default()
+    };
+    let mut aligned_elsewhere = Vec::new();
+    for (owner, pixels) in raster_bounds {
+        let Some(owner_label) = metadata.get(&owner) else {
+            continue;
+        };
+        let Some(owner_bounds) = owner_label.screen_bounds else {
+            continue;
+        };
+        summary.owners_with_screen_bounds += 1;
+        let raster_bounds = pixels.bounds.to_center_screen_bounds();
+        let self_distance = screen_bounds_center_distance(raster_bounds, owner_bounds);
+        summary.max_self_center_distance = Some(
+            summary
+                .max_self_center_distance
+                .unwrap_or(0.0)
+                .max(self_distance),
+        );
+        let Some((best_owner, best_label, best_bounds)) = screen_bounds.iter().min_by(
+            |left, right| {
+                let left_distance = screen_bounds_center_distance(raster_bounds, left.2);
+                let right_distance = screen_bounds_center_distance(raster_bounds, right.2);
+                left_distance
+                    .partial_cmp(&right_distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.0.cmp(&right.0))
+            },
+        )
+        else {
+            continue;
+        };
+        if *best_owner == owner {
+            summary.owners_aligned_to_self += 1;
+            continue;
+        }
+        let best_distance = screen_bounds_center_distance(raster_bounds, *best_bounds);
+        summary.owners_aligned_elsewhere += 1;
+        summary.pixels_aligned_elsewhere += pixels.count();
+        if self_distance > 2.0 {
+            summary.owners_aligned_elsewhere_over_2px += 1;
+            summary.pixels_aligned_elsewhere_over_2px += pixels.count();
+        }
+        if self_distance > 4.0 {
+            summary.owners_aligned_elsewhere_over_4px += 1;
+            summary.pixels_aligned_elsewhere_over_4px += pixels.count();
+        }
+        aligned_elsewhere.push(OwnerRasterMetadataAlignment {
+            owner,
+            pixels: pixels.count(),
+            self_center_distance: self_distance,
+            best_owner: *best_owner,
+            best_center_distance: best_distance,
+            owner_delta: i64::from(owner) - i64::from(*best_owner),
+            owner_mesh_name: owner_label.mesh_name.clone(),
+            best_mesh_name: best_label.mesh_name.clone(),
+            owner_material_name: owner_label.material_name.clone(),
+            best_material_name: best_label.material_name.clone(),
+        });
+    }
+    aligned_elsewhere.sort_by(|left, right| {
+        right
+            .self_center_distance
+            .partial_cmp(&left.self_center_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.pixels.cmp(&left.pixels))
+            .then_with(|| left.owner.cmp(&right.owner))
+    });
+    summary.top_aligned_elsewhere = aligned_elsewhere.into_iter().take(top).collect();
     debug_assert!(height == 0 || ids.len() <= width.saturating_mul(height));
     summary
 }

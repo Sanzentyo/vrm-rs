@@ -1119,9 +1119,17 @@ Bevy has `14` such owners and a worst center excess of `19.55310059px`
 (owner `90`). Bevy's owner-id diagnostic path also renders one triangle per
 draw with a uniform owner color and blend disabled, so the remaining tail is no
 longer attributable to vertex-color interpolation or owner-ID alpha blending.
-The generated owner controls still pass after this change, which keeps the next
-target on real-model local Bevy coverage/fill or material-primitive assignment
-in the source-derived topology guard.
+The summary also reports raster-to-metadata alignment. Expected/wgpu has
+`0` owners whose self metadata center is more than `2px` or `4px` away from its
+raster bounds center, while Bevy has `5` owners / `22` pixels over `2px` and
+`3` owners / `12` pixels over `4px`. The largest row is actual owner `90`
+aligning to metadata owner `89` at `0.417px` while being `19.846px` away from
+its own metadata. Bevy owner-id entities opt out of automatic batching and
+owner-id captures force render-app GPU preprocessing to `None`; neither change
+moves the compact tail, ruling out Bevy batching/indirect preprocessing for
+this residual. The generated owner controls still pass after these changes,
+which keeps the next target on real-model local Bevy coverage/fill or
+material-primitive assignment in the source-derived topology guard.
 
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.

@@ -23,6 +23,8 @@ use bevy::render::Extract;
 use bevy::render::Render;
 use bevy::render::RenderApp;
 use bevy::render::RenderSystems;
+use bevy::render::batching::NoAutomaticBatching;
+use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_graph::{
@@ -80,8 +82,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let loaded = load_vrm_from_path(&options.fixture)?;
     let (tx, rx) = crossbeam_channel::bounded(1);
 
-    App::new()
-        .insert_resource(options.clone())
+    let mut app = App::new();
+    app.insert_resource(options.clone())
         .insert_resource(LoadedResource(loaded))
         .insert_resource(CaptureSender(tx))
         .insert_resource(SceneController::new(options.width, options.height, 40))
@@ -102,8 +104,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
         )))
-        .add_systems(Startup, setup)
-        .run();
+        .add_systems(Startup, setup);
+
+    if options.diagnostic_render == DiagnosticRender::OwnerId {
+        app.sub_app_mut(RenderApp)
+            .insert_resource(GpuPreprocessingSupport {
+                max_supported_mode: GpuPreprocessingMode::None,
+            });
+    }
+
+    app.run();
 
     rx.recv()?.map_err(|message| message.into())
 }
@@ -639,7 +649,7 @@ fn spawn_vrm_meshes(
         let mesh = meshes.add(primitive.mesh);
         match primitive.material {
             BevyPrimitiveMaterial::Mtoon(material) => {
-                commands.spawn((
+                let mut entity = commands.spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mtoon_materials.add(material)),
                     BevyMtoonPhaseOrder {
@@ -648,6 +658,9 @@ fn spawn_vrm_meshes(
                     },
                     Transform::IDENTITY,
                 ));
+                if options.diagnostic_render == DiagnosticRender::OwnerId {
+                    entity.insert(NoAutomaticBatching);
+                }
             }
         }
     }

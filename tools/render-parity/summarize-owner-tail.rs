@@ -46,6 +46,8 @@ struct OwnerTailReport {
     unexplained_projection_gap_summary: Value,
     expected_raster_bounds_summary: Value,
     actual_raster_bounds_summary: Value,
+    expected_raster_metadata_alignment_summary: Value,
+    actual_raster_metadata_alignment_summary: Value,
     top_unexplained_material_transitions: Vec<Value>,
     top_unexplained_details: Vec<TailDetail>,
 }
@@ -222,6 +224,14 @@ fn summarize_report(
             .unwrap_or(Value::Null),
         actual_raster_bounds_summary: value
             .get("actual_raster_bounds_summary")
+            .cloned()
+            .unwrap_or(Value::Null),
+        expected_raster_metadata_alignment_summary: value
+            .get("expected_raster_metadata_alignment_summary")
+            .cloned()
+            .unwrap_or(Value::Null),
+        actual_raster_metadata_alignment_summary: value
+            .get("actual_raster_metadata_alignment_summary")
             .cloned()
             .unwrap_or(Value::Null),
         top_unexplained_material_transitions: take_values(
@@ -679,6 +689,48 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         ));
     }
 
+    output.push_str("\n## Raster Metadata Alignment\n\n");
+    output.push_str("| Image | Metric | Value |\n|---|---|---:|\n");
+    write_raster_alignment_summary(
+        &mut output,
+        "expected",
+        &report.expected_raster_metadata_alignment_summary,
+    );
+    write_raster_alignment_summary(
+        &mut output,
+        "actual",
+        &report.actual_raster_metadata_alignment_summary,
+    );
+
+    output.push_str("\n## Top Actual Raster Metadata Reassignments\n\n");
+    output.push_str(
+        "| Owner | Pixels | Self Distance | Best Owner | Best Distance | Delta | Owner Mesh | Best Mesh |\n|---:|---:|---:|---:|---:|---:|---|---|\n",
+    );
+    for item in report
+        .actual_raster_metadata_alignment_summary
+        .get("top_aligned_elsewhere")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(8)
+    {
+        output.push_str(&format!(
+            "| {} | {} | {:.6} | {} | {:.6} | {} | {} | {} |\n",
+            u64_field(item, "owner").unwrap_or(0),
+            u64_field(item, "pixels").unwrap_or(0),
+            item.get("self_center_distance")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            u64_field(item, "best_owner").unwrap_or(0),
+            item.get("best_center_distance")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            i64_field(item, "owner_delta").unwrap_or(0),
+            markdown_text_field(item, "owner_mesh_name"),
+            markdown_text_field(item, "best_mesh_name"),
+        ));
+    }
+
     output.push_str("\n## Top Unexplained Material Transitions\n\n");
     output.push_str("| Count | Expected | Actual | Relation |\n|---:|---|---|---|\n");
     for transition in &report.top_unexplained_material_transitions {
@@ -801,6 +853,36 @@ fn write_raster_bounds_summary(output: &mut String, image: &str, summary: &Value
             output.push_str(&format!("| `{image}` | `{key}` | {value:.8} |\n"));
         }
     }
+}
+
+fn write_raster_alignment_summary(output: &mut String, image: &str, summary: &Value) {
+    for key in [
+        "owners_with_pixels",
+        "owners_with_screen_bounds",
+        "owners_aligned_to_self",
+        "owners_aligned_elsewhere",
+        "pixels_aligned_elsewhere",
+        "owners_aligned_elsewhere_over_2px",
+        "owners_aligned_elsewhere_over_4px",
+        "pixels_aligned_elsewhere_over_2px",
+        "pixels_aligned_elsewhere_over_4px",
+    ] {
+        if let Some(value) = summary.get(key).and_then(Value::as_u64) {
+            output.push_str(&format!("| `{image}` | `{key}` | {value} |\n"));
+        }
+    }
+    if let Some(value) = summary
+        .get("max_self_center_distance")
+        .and_then(Value::as_f64)
+    {
+        output.push_str(&format!(
+            "| `{image}` | `max_self_center_distance` | {value:.8} |\n"
+        ));
+    }
+}
+
+fn markdown_text_field(value: &Value, key: &str) -> String {
+    text_field(value, key)
 }
 
 fn text_field(value: &Value, key: &str) -> String {
