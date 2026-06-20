@@ -26,11 +26,24 @@ recipes are convenience entry points. Use these first:
   Seed-san flat32 gradient owner/render join.
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
-  experiment. This does not change renderer artifacts; it writes JSON reports
-  and `*.manifest.json` files showing how much a local sample/triangle
-  ownership policy could improve the existing raw images. The correction
-  decision itself is shared through `vrm-adapter` owner/sample policy types so
-  renderer-path experiments can use the same Sans I/O boundary.
+  experiment. It first regenerates the depth3 owner/fill inputs and the full
+  Seed-san flat32 5x5 owner/render join, then writes JSON reports and
+  `*.manifest.json` files showing how much a local sample/triangle ownership
+  policy could improve the existing raw images. This does not change renderer
+  artifacts. The correction decision itself is shared through `vrm-adapter`
+  owner/sample policy types so renderer-path experiments can use the same Sans
+  I/O boundary.
+- `just render-parity-seed-owner-hotspot-depth3-owner-sample-correction`: the
+  compact depth3-only subset of the same correction path. Use this when the
+  full Seed-san flat32 reports are unnecessary.
+- `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
+  the compact depth3 owner/fill fixture, produce owner/sample correction
+  manifests, feed those manifests back through `wgpu_render_capture` and
+  release-built `bevy_render_capture`, and compare the corrected renderer
+  artifacts against the same three-vrm `.imqraw` reference. This is the
+  renderer-readback version of the correction experiment; it should remain an
+  experiment until the policy moves earlier into backend sample/triangle
+  selection.
 - `wgpu_render_capture` and `bevy_render_capture` accept
   `--owner-sample-correction-manifest <path>` for renderer readback
   experiments. The manifest is applied before RGBA JSON, PNG, and imqraw
