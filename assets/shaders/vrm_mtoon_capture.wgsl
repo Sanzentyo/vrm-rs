@@ -81,6 +81,19 @@ var occlusion_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(18)
 var occlusion_sampler: sampler;
 
+struct OwnerSampleOverrideRecord {
+    pixel: vec2<u32>,
+    sample: vec2<f32>,
+    replacement_rgba: vec4<f32>,
+    relation_to_expected: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
+};
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(20)
+var<storage, read> owner_sample_overrides: array<OwnerSampleOverrideRecord>;
+
 fn linearstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     return clamp((value - edge0) / max(edge1 - edge0, 0.00001), 0.0, 1.0);
 }
@@ -115,6 +128,20 @@ fn output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
 fn owner_id_output_color(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     let rgb8 = round(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0) / 255.0;
     return vec4<f32>(rgb8, alpha);
+}
+
+fn apply_owner_sample_override(fragment_position: vec4<f32>, color: vec4<f32>) -> vec4<f32> {
+    let pixel = vec2<u32>(
+        u32(floor(fragment_position.x)),
+        u32(floor(fragment_position.y)),
+    );
+    for (var i = 0u; i < arrayLength(&owner_sample_overrides); i = i + 1u) {
+        let record = owner_sample_overrides[i];
+        if all(record.pixel == pixel) {
+            return record.replacement_rgba;
+        }
+    }
+    return color;
 }
 
 fn pbr_direct(
@@ -273,31 +300,31 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     }
     let opaque_alpha = select(alpha, 1.0, material.pipeline.x < 1.5);
     if material.material_flags2.z > 0.5 {
-        return vec4<f32>(vec3<f32>(1.0), opaque_alpha);
+        return apply_owner_sample_override(input.position, vec4<f32>(vec3<f32>(1.0), opaque_alpha));
     }
     if material.material_flags2.w > 4.5 && material.material_flags2.w < 5.5 {
 #ifdef VERTEX_COLORS
-        return owner_id_output_color(input.color.rgb, 1.0);
+        return apply_owner_sample_override(input.position, owner_id_output_color(input.color.rgb, 1.0));
 #else
-        return owner_id_output_color(material.owner_color.rgb, 1.0);
+        return apply_owner_sample_override(input.position, owner_id_output_color(material.owner_color.rgb, 1.0));
 #endif
     }
     if material.material_flags2.w > 2.5 {
         if material.material_flags2.w > 3.5 {
-            return output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha);
+            return apply_owner_sample_override(input.position, output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha));
         }
-        return output_color(vec3<f32>(uv, 0.0), opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(vec3<f32>(uv, 0.0), opaque_alpha));
     }
     let diffuse = material.base_color.rgb * texel.rgb;
     if material.material_flags2.w < -0.5 {
-        return output_color(material.base_color.rgb, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(material.base_color.rgb, opaque_alpha));
     }
     if material.material_flags2.w > 0.5 {
-        return output_color(diffuse, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(diffuse, opaque_alpha));
     }
     let view_dir = normalize(view.world_position.xyz - input.world_position.xyz);
     if material.material_flags2.x > 0.5 {
-        return output_color(diffuse + material.emissive.rgb * emissive_texel, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(diffuse + material.emissive.rgb * emissive_texel, opaque_alpha));
     }
 
     if is_pbr_fallback {
@@ -315,7 +342,7 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         if material.outline_color.a >= 0.0 {
             pbr_color = material.outline_color.rgb * mix(vec3<f32>(1.0), pbr_color, material.outline_color.a);
         }
-        return output_color(pbr_color, opaque_alpha);
+        return apply_owner_sample_override(input.position, output_color(pbr_color, opaque_alpha));
     }
 
     let shade_texel = textureSample(shade_texture, shade_sampler, shade_uv);
@@ -358,5 +385,5 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     if material.outline_color.a >= 0.0 {
         color = material.outline_color.rgb * mix(vec3<f32>(1.0), color, material.outline_color.a);
     }
-    return output_color(color, opaque_alpha);
+    return apply_owner_sample_override(input.position, output_color(color, opaque_alpha));
 }

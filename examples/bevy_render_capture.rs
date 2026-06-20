@@ -40,6 +40,7 @@ use bevy::render::render_resource::{
     TextureDataOrder, TextureFormat, TextureUsages,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
+use bevy::render::storage::ShaderStorageBuffer;
 use bevy::shader::ShaderRef;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
@@ -61,6 +62,9 @@ use vrm_adapter::{
     ScreenProjectionBounds, ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth,
     project_triangle_to_screen,
 };
+use vrm_adapter_bevy::{
+    bevy_owner_sample_override_buffer_plan_for_surfaces, empty_bevy_owner_sample_override_record,
+};
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -74,6 +78,8 @@ use vrm_io::{
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
+#[cfg(test)]
+const MTOON_SHADER_SOURCE: &str = include_str!("../assets/shaders/vrm_mtoon_capture.wgsl");
 const BEVY_PHASE_ORDER_OFFSET_SCALE: f32 = 0.000001;
 const BEVY_OWNER_ID_RENDER_ORDER_SORT_SCALE: f32 = 0.01;
 const BEVY_OWNER_ID_DRAW_INDEX_SORT_SCALE: f32 = 0.000001;
@@ -431,6 +437,7 @@ fn setup(
         &mut assets.meshes,
         &mut assets.mtoon_materials,
         &mut assets.images,
+        &mut assets.storage_buffers,
     ) {
         let _ = control.sender.0.send(Err(error.to_string()));
         control.app_exit_writer.write(AppExit::Success);
@@ -470,6 +477,7 @@ struct CaptureAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     mtoon_materials: ResMut<'w, Assets<BevyMtoonMaterial>>,
     images: ResMut<'w, Assets<Image>>,
+    storage_buffers: ResMut<'w, Assets<ShaderStorageBuffer>>,
 }
 
 #[derive(SystemParam)]
@@ -487,7 +495,12 @@ fn spawn_vrm_meshes(
     meshes: &mut Assets<Mesh>,
     mtoon_materials: &mut Assets<BevyMtoonMaterial>,
     images: &mut Assets<Image>,
+    storage_buffers: &mut Assets<ShaderStorageBuffer>,
 ) -> Result<(), Box<dyn Error>> {
+    let owner_sample_sentinel = storage_buffers.add(ShaderStorageBuffer::new(
+        bytemuck::bytes_of(&empty_bevy_owner_sample_override_record()),
+        RenderAssetUsages::default(),
+    ));
     let image_handles = BevyImageHandles {
         color_images: loaded
             .textures
@@ -585,6 +598,7 @@ fn spawn_vrm_meshes(
             skin_matrices: skin_matrices.as_deref(),
             options,
             image_handles: &image_handles,
+            owner_sample_overrides: owner_sample_sentinel.clone(),
         };
         for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
             let material_plan = BevyMaterialPlan::new(loaded, primitive.material);
@@ -673,6 +687,12 @@ fn spawn_vrm_meshes(
     }
     configure_owner_id_depth_policy(&mut primitives, options);
     let render_surfaces = render_owner_surfaces(loaded, &primitives);
+    if let Some(path) = &options.owner_sample_correction_manifest {
+        let correction_plan =
+            render_capture_correction::load_owner_sample_correction_manifest(path)?;
+        let selection = correction_plan.surface_selection_plan(render_surfaces.iter());
+        bind_owner_sample_override_buffers(loaded, &mut primitives, &selection, storage_buffers)?;
+    }
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
         render_surfaces,
@@ -1178,6 +1198,42 @@ fn render_owner_surfaces(
         .collect()
 }
 
+fn bind_owner_sample_override_buffers(
+    loaded: &LoadedVrm,
+    primitives: &mut [BevyPrimitive],
+    selection: &vrm_adapter::RenderOwnerSampleSelectionPlan,
+    storage_buffers: &mut Assets<ShaderStorageBuffer>,
+) -> Result<(), Box<dyn Error>> {
+    for primitive in primitives {
+        let surfaces = owner_sample_surfaces_for_primitive(loaded, primitive);
+        let plan = bevy_owner_sample_override_buffer_plan_for_surfaces(selection, surfaces.iter())?;
+        let handle = storage_buffers.add(ShaderStorageBuffer::new(
+            plan.bytes(),
+            RenderAssetUsages::default(),
+        ));
+        primitive.material.set_owner_sample_overrides(handle);
+    }
+    Ok(())
+}
+
+fn owner_sample_surfaces_for_primitive(
+    loaded: &LoadedVrm,
+    primitive: &BevyPrimitive,
+) -> Vec<RenderOwnerSurfaceKey> {
+    let source = primitive.owner_source;
+    let Some(material_name) = material_name(loaded, source.material) else {
+        return Vec::new();
+    };
+    (0..mesh_indices_u32(&primitive.mesh).len() / 3)
+        .filter_map(|triangle| {
+            Some(RenderOwnerSurfaceKey::new(
+                material_name,
+                u64::try_from(triangle).ok()?,
+            ))
+        })
+        .collect()
+}
+
 fn diagnostic_owner_ids(
     loaded: &LoadedVrm,
     primitives: &[BevyPrimitive],
@@ -1485,13 +1541,14 @@ fn owner_id_color_u8(id: u32) -> [u8; 4] {
     RenderOwnerId::new(id).to_rgba_u8()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct BevyPrimitiveContext<'a> {
     expression_effects: &'a GltfExpressionRenderEffects,
     world: Mat4,
     skin_matrices: Option<&'a [Mat4]>,
     options: &'a CaptureOptions,
     image_handles: &'a BevyImageHandles,
+    owner_sample_overrides: Handle<ShaderStorageBuffer>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1796,6 +1853,14 @@ impl BevyPrimitiveMaterial {
             }
         }
     }
+
+    fn set_owner_sample_overrides(&mut self, handle: Handle<ShaderStorageBuffer>) {
+        match self {
+            Self::Mtoon(material) => {
+                material.owner_sample_overrides = handle;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Component, Debug, ExtractComponent)]
@@ -1953,6 +2018,8 @@ struct BevyMtoonMaterial {
     #[texture(17)]
     #[sampler(18)]
     occlusion_texture: Handle<Image>,
+    #[storage(20, read_only)]
+    owner_sample_overrides: Handle<ShaderStorageBuffer>,
     shader_alpha_mode: AlphaMode,
     render_alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
@@ -2271,6 +2338,7 @@ fn bevy_mtoon_material(
             GltfMaterialTextureSlot::Occlusion,
             image_handles,
         ),
+        owner_sample_overrides: context.owner_sample_overrides.clone(),
         shader_alpha_mode: material_plan.alpha_mode,
         render_alpha_mode: bevy_render_alpha_mode(material_plan.alpha_mode),
         cull_mode: material_plan.cull_mode,
@@ -2985,6 +3053,14 @@ mod tests {
         let jitter = camera_jitter_world_pixels([2.0, 2.0], 180, 3.0);
 
         assert_close(jitter.x.abs(), jitter.y.abs());
+    }
+
+    #[test]
+    fn shader_declares_owner_sample_override_storage_path() {
+        assert!(MTOON_SHADER_SOURCE.contains("@binding(20)"));
+        assert!(MTOON_SHADER_SOURCE.contains("var<storage, read> owner_sample_overrides"));
+        assert!(MTOON_SHADER_SOURCE.contains("arrayLength(&owner_sample_overrides)"));
+        assert!(MTOON_SHADER_SOURCE.contains("apply_owner_sample_override(input.position"));
     }
 
     #[test]

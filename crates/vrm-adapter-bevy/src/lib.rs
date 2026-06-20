@@ -18,14 +18,17 @@ use bevy::prelude::{
     Quat as BevyQuat, Query, Res, ResMut, Resource, Transform as BevyTransform, Update,
     Vec3 as BevyVec3,
 };
+use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use vrm_adapter::{
     ConstraintRestAccess, HeadlessMeshPlan, MaterialAccess, MorphTargetAccess, MtoonGpuUniform,
     MtoonMaterialDescriptor, MtoonMaterializationOptions, MtoonPipelineAccess,
-    MtoonRendererMaterialPlan, MtoonRendererPass, SceneGraph, SkinVertexInfluence, SpringRestMap,
-    TransformAccess, ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldMatrixAccess,
-    WorldTransformAccess, WorldTransformUpdate, is_head_or_descendant, plan_headless_mesh,
+    MtoonRendererMaterialPlan, MtoonRendererPass, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
+    RenderOwnerSampleSelectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    RenderOwnerSurfaceRelation, SceneGraph, SkinVertexInfluence, SpringRestMap, TransformAccess,
+    ViewMode, VisibilityAccess, VrmRuntimeDriver, WorldMatrixAccess, WorldTransformAccess,
+    WorldTransformUpdate, is_head_or_descendant, plan_headless_mesh,
 };
 use vrm_core::Transform;
 use vrm_core::{
@@ -902,6 +905,145 @@ impl<M: Asset, I: Asset> BevyAssetMap<M, I> {
     }
 }
 
+pub const BEVY_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE: usize =
+    std::mem::size_of::<BevyOwnerSampleOverrideRecord>();
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub struct BevyOwnerSampleOverrideRecord {
+    pub pixel: [u32; 2],
+    pub sample: [f32; 2],
+    pub replacement_rgba: [f32; 4],
+    pub relation_to_expected: u32,
+    pub _padding: [u32; 3],
+}
+
+impl BevyOwnerSampleOverrideRecord {
+    pub fn from_override(
+        value: RenderOwnerSampleSurfaceOverride,
+    ) -> Result<Self, BevyOwnerSampleOverridePlanError> {
+        Ok(Self {
+            pixel: [
+                u32::try_from(value.pixel.x()).map_err(|_| {
+                    BevyOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+                u32::try_from(value.pixel.y()).map_err(|_| {
+                    BevyOwnerSampleOverridePlanError::PixelOutOfRange {
+                        x: value.pixel.x(),
+                        y: value.pixel.y(),
+                    }
+                })?,
+            ],
+            sample: [value.sample.x() as f32, value.sample.y() as f32],
+            replacement_rgba: value
+                .replacement_rgba
+                .map(|channel| f32::from(channel) / 255.0),
+            relation_to_expected: bevy_owner_sample_relation_code(value.relation_to_expected),
+            _padding: [0; 3],
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BevyOwnerSampleOverrideBufferPlan {
+    pub surfaces: Vec<RenderOwnerSurfaceKey>,
+    pub records: Vec<BevyOwnerSampleOverrideRecord>,
+    pub binding: u32,
+}
+
+impl BevyOwnerSampleOverrideBufferPlan {
+    pub fn bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.records)
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_sentinel_only(&self) -> bool {
+        self.records == [empty_bevy_owner_sample_override_record()]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BevyOwnerSampleOverridePlanError {
+    #[error("owner/sample override pixel is outside u32 range: ({x}, {y})")]
+    PixelOutOfRange { x: u64, y: u64 },
+}
+
+pub const fn bevy_owner_sample_override_binding() -> u32 {
+    RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
+}
+
+pub fn bevy_owner_sample_override_buffer_plans(
+    selection: &RenderOwnerSampleSelectionPlan,
+) -> Result<Vec<BevyOwnerSampleOverrideBufferPlan>, BevyOwnerSampleOverridePlanError> {
+    selection
+        .surfaces
+        .iter()
+        .map(|surface| {
+            Ok(BevyOwnerSampleOverrideBufferPlan {
+                surfaces: vec![surface.surface.clone()],
+                records: surface
+                    .overrides()
+                    .map(BevyOwnerSampleOverrideRecord::from_override)
+                    .collect::<Result<Vec<_>, _>>()?,
+                binding: bevy_owner_sample_override_binding(),
+            })
+        })
+        .collect()
+}
+
+pub fn bevy_owner_sample_override_buffer_plan_for_surfaces<'a, I, S>(
+    selection: &RenderOwnerSampleSelectionPlan,
+    surfaces: I,
+) -> Result<BevyOwnerSampleOverrideBufferPlan, BevyOwnerSampleOverridePlanError>
+where
+    I: IntoIterator<Item = S>,
+    S: std::borrow::Borrow<RenderOwnerSurfaceKey> + 'a,
+{
+    let surfaces = surfaces
+        .into_iter()
+        .map(|surface| surface.borrow().clone())
+        .collect::<Vec<_>>();
+    let mut records = surfaces
+        .iter()
+        .flat_map(|surface| selection.overrides_for_surface(surface))
+        .map(BevyOwnerSampleOverrideRecord::from_override)
+        .collect::<Result<Vec<_>, _>>()?;
+    if records.is_empty() {
+        records.push(empty_bevy_owner_sample_override_record());
+    }
+    Ok(BevyOwnerSampleOverrideBufferPlan {
+        surfaces,
+        records,
+        binding: bevy_owner_sample_override_binding(),
+    })
+}
+
+pub fn empty_bevy_owner_sample_override_record() -> BevyOwnerSampleOverrideRecord {
+    BevyOwnerSampleOverrideRecord {
+        pixel: [u32::MAX, u32::MAX],
+        sample: [0.0, 0.0],
+        replacement_rgba: [0.0, 0.0, 0.0, 0.0],
+        relation_to_expected: 0,
+        _padding: [0; 3],
+    }
+}
+
+fn bevy_owner_sample_relation_code(relation: Option<RenderOwnerSurfaceRelation>) -> u32 {
+    match relation {
+        Some(RenderOwnerSurfaceRelation::SameSurface) => 1,
+        Some(RenderOwnerSurfaceRelation::SameMaterialDifferentTriangle) => 2,
+        Some(RenderOwnerSurfaceRelation::DifferentMaterial) => 3,
+        Some(RenderOwnerSurfaceRelation::Missing) => 4,
+        None => 0,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BevyMtoonDescriptor {
     pub descriptor: MtoonMaterialDescriptor,
@@ -1367,6 +1509,56 @@ mod tests {
         assert_eq!(plans[0].textures.shading_shift, Some(TextureRef(4)));
         assert_eq!(plans[1].pass, BevyMtoonPass::Outline);
         assert_eq!(plans[1].outline_width, Some(0.01));
+    }
+
+    #[test]
+    fn owner_sample_override_buffer_plans_are_storage_ready() {
+        let surface = RenderOwnerSurfaceKey::new("body", 7);
+        let plan = RenderOwnerSampleSelectionPlan {
+            surfaces: vec![vrm_adapter::RenderOwnerSampleSurfaceSelection {
+                surface: surface.clone(),
+                entries: vec![vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                    correction: vrm_adapter::RenderRgba8Correction::new(
+                        vrm_adapter::RenderPixel::new(12, 34),
+                        [64, 128, 255, 255],
+                    ),
+                    sample: vrm_adapter::RenderOwnerSampleKey::from_pair(
+                        surface.clone(),
+                        [0.25, 0.75],
+                    ),
+                    relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                }],
+            }],
+            unmatched_entries: Vec::new(),
+        };
+
+        let buffers = bevy_owner_sample_override_buffer_plans(&plan).unwrap();
+        assert_eq!(BEVY_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE, 48);
+        assert_eq!(buffers.len(), 1);
+        assert_eq!(buffers[0].surfaces, std::slice::from_ref(&surface));
+        assert_eq!(buffers[0].binding, bevy_owner_sample_override_binding());
+        assert_eq!(buffers[0].record_count(), 1);
+        assert_eq!(
+            buffers[0].bytes().len(),
+            BEVY_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
+        );
+        assert_eq!(buffers[0].records[0].pixel, [12, 34]);
+        assert_eq!(buffers[0].records[0].sample, [0.25, 0.75]);
+        assert_eq!(buffers[0].records[0].replacement_rgba[2], 1.0);
+        assert_eq!(buffers[0].records[0].relation_to_expected, 1);
+
+        let combined =
+            bevy_owner_sample_override_buffer_plan_for_surfaces(&plan, [surface]).unwrap();
+        assert_eq!(combined.record_count(), 1);
+        assert!(!combined.is_sentinel_only());
+
+        let sentinel = bevy_owner_sample_override_buffer_plan_for_surfaces(
+            &plan,
+            [RenderOwnerSurfaceKey::new("other", 1)],
+        )
+        .unwrap();
+        assert_eq!(sentinel.record_count(), 1);
+        assert!(sentinel.is_sentinel_only());
     }
 
     #[test]

@@ -4155,6 +4155,7 @@ name = "vrm-adapter-bevy"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "glam 0.32.1",
  "thiserror 2.0.18",
  "vrm-adapter",
