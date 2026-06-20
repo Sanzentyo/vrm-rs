@@ -34,10 +34,12 @@ use vrm_io::{
 struct Options {
     #[arg(long)]
     fixture: PathBuf,
-    #[arg(long, required_unless_present = "hotspot_report")]
+    #[arg(long, required_unless_present_any = ["hotspot_report", "owner_hotspot_report"])]
     report: Option<PathBuf>,
     #[arg(long, conflicts_with = "report")]
     hotspot_report: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["report", "hotspot_report"])]
+    owner_hotspot_report: Option<PathBuf>,
     #[arg(
         long,
         default_value = ".external-fixtures/generated/owner-tail-extract.vrm.gltf"
@@ -49,6 +51,8 @@ struct Options {
     labels: LabelSelection,
     #[arg(long, value_enum, default_value_t = HotspotSelection::All)]
     hotspot_selection: HotspotSelection,
+    #[arg(long, value_enum, default_value_t = OwnerHotspotSelection::All)]
+    owner_hotspot_selection: OwnerHotspotSelection,
     #[arg(long, default_value_t = 0)]
     context_radius: usize,
     #[arg(long, default_value_t = 0)]
@@ -66,6 +70,13 @@ enum LabelSelection {
 enum HotspotSelection {
     Frontmost,
     Nearest,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum OwnerHotspotSelection {
+    Rendered,
+    Recovery,
     All,
 }
 
@@ -103,6 +114,57 @@ struct HotspotCandidate {
     triangle: usize,
     indices: [u32; 3],
     pass: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct OwnerDiagnosticHotspots {
+    #[serde(default)]
+    top: Vec<ThreeOwnerHotspot>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ThreeOwnerHotspot {
+    x: u32,
+    y: u32,
+    #[serde(rename = "renderedOwner")]
+    rendered_owner: Option<RenderedOwner>,
+    #[serde(default)]
+    frontmost: Option<ThreeOwnerCandidate>,
+    #[serde(rename = "renderedOwnerRecovery")]
+    rendered_owner_recovery: Option<RenderedOwnerRecovery>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RenderedOwner {
+    owner: Option<ThreeOwnerCandidate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RenderedOwnerRecovery {
+    #[serde(rename = "bestSubpixel")]
+    best_subpixel: Option<RecoveryCandidate>,
+    #[serde(rename = "bestNeighbor")]
+    best_neighbor: Option<RecoveryCandidate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RecoveryCandidate {
+    candidate: ThreeOwnerCandidate,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ThreeOwnerCandidate {
+    #[serde(rename = "meshName")]
+    mesh_name: String,
+    #[serde(rename = "materialName")]
+    material_name: Option<String>,
+    #[serde(default)]
+    pass: Option<String>,
+    triangle: usize,
+    #[serde(rename = "sourceTriangle")]
+    source_triangle: Option<usize>,
+    #[serde(default)]
+    indices: Option<[u32; 3]>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -156,6 +218,10 @@ enum LabelSide {
     HotspotActual,
     HotspotExpected,
     HotspotNearestSample,
+    OwnerHotspotRendered,
+    OwnerHotspotFrontmost,
+    OwnerHotspotBestSubpixel,
+    OwnerHotspotBestNeighbor,
 }
 
 impl LabelSide {
@@ -168,6 +234,10 @@ impl LabelSide {
             Self::HotspotActual => "hotspot-actual",
             Self::HotspotExpected => "hotspot-expected",
             Self::HotspotNearestSample => "hotspot-nearest-sample",
+            Self::OwnerHotspotRendered => "owner-hotspot-rendered",
+            Self::OwnerHotspotFrontmost => "owner-hotspot-frontmost",
+            Self::OwnerHotspotBestSubpixel => "owner-hotspot-best-subpixel",
+            Self::OwnerHotspotBestNeighbor => "owner-hotspot-best-neighbor",
         }
     }
 }
@@ -211,16 +281,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             options.context_shared_vertex_depth,
         )?;
         (report, extracted)
-    } else {
-        let report = options
-            .hotspot_report
-            .as_ref()
-            .ok_or("either --report or --hotspot-report is required")?;
+    } else if let Some(report) = &options.hotspot_report {
         let parsed = serde_json::from_slice::<HotspotReport>(&fs::read(report)?)?;
         let extracted = extract_hotspot_triangles(
             &loaded,
             &parsed,
             options.hotspot_selection,
+            options.limit,
+            options.context_radius,
+            options.context_shared_vertex_depth,
+        )?;
+        (report, extracted)
+    } else {
+        let report = options
+            .owner_hotspot_report
+            .as_ref()
+            .ok_or("either --report, --hotspot-report, or --owner-hotspot-report is required")?;
+        let value = serde_json::from_slice::<Value>(&fs::read(report)?)?;
+        let hotspots = value
+            .pointer("/reference/renderer/diagnosticHotspots")
+            .ok_or("missing reference.renderer.diagnosticHotspots")?
+            .clone();
+        let parsed = serde_json::from_value::<OwnerDiagnosticHotspots>(hotspots)?;
+        let extracted = extract_owner_hotspot_triangles(
+            &loaded,
+            &parsed,
+            options.owner_hotspot_selection,
             options.limit,
             options.context_radius,
             options.context_shared_vertex_depth,
@@ -308,6 +394,54 @@ fn extract_hotspot_triangles(
                 continue;
             }
             let Some(source) = resolve_hotspot_candidate(loaded, candidate) else {
+                continue;
+            };
+            append_seed_triangle(
+                loaded,
+                &world_matrices,
+                orientation,
+                &mut seen,
+                &mut out,
+                TriangleSeed {
+                    side,
+                    detail_index,
+                    count: 1,
+                    sample_pixels: vec![OwnerPixel {
+                        x: hotspot.x,
+                        y: hotspot.y,
+                    }],
+                    source,
+                },
+                context_radius,
+                context_shared_vertex_depth,
+            )?;
+        }
+    }
+    Ok(out)
+}
+
+fn extract_owner_hotspot_triangles(
+    loaded: &LoadedVrm,
+    report: &OwnerDiagnosticHotspots,
+    selection: OwnerHotspotSelection,
+    limit: usize,
+    context_radius: usize,
+    context_shared_vertex_depth: usize,
+) -> Result<Vec<ExtractedTriangle>, Box<dyn std::error::Error>> {
+    let world_matrices = vrm_rs::evaluated_world_matrices(loaded)?;
+    let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for (detail_index, hotspot) in report.top.iter().take(limit).enumerate() {
+        for (side, candidate) in selected_owner_hotspot_candidates(selection, hotspot) {
+            if !candidate
+                .pass
+                .as_deref()
+                .is_none_or(|pass| pass == "base")
+            {
+                continue;
+            }
+            let Some(source) = resolve_three_owner_candidate(loaded, candidate) else {
                 continue;
             };
             append_seed_triangle(
@@ -550,7 +684,7 @@ fn source_triangle(
     source: &ResolvedTriangle,
     triangle: usize,
 ) -> Option<ResolvedTriangle> {
-    let indices = primitive.indices.chunks_exact(3).nth(triangle)?;
+    let indices = source_triangle_indices(primitive, triangle)?;
     Some(ResolvedTriangle {
         node_index: source.node_index,
         mesh_index: source.mesh_index,
@@ -559,6 +693,11 @@ fn source_triangle(
         triangle,
         indices: [indices[0], indices[1], indices[2]],
     })
+}
+
+fn source_triangle_indices(primitive: &GltfPrimitiveData, triangle: usize) -> Option<[u32; 3]> {
+    let indices = primitive.indices.chunks_exact(3).nth(triangle)?;
+    Some([indices[0], indices[1], indices[2]])
 }
 
 fn selected_labels(labels: LabelSelection, detail: &OwnerDetail) -> Vec<(LabelSide, &OwnerLabel)> {
@@ -596,6 +735,40 @@ fn selected_hotspot_candidates(
     out
 }
 
+fn selected_owner_hotspot_candidates(
+    selection: OwnerHotspotSelection,
+    hotspot: &ThreeOwnerHotspot,
+) -> Vec<(LabelSide, &ThreeOwnerCandidate)> {
+    let mut out = Vec::new();
+    if matches!(selection, OwnerHotspotSelection::Rendered | OwnerHotspotSelection::All) {
+        if let Some(candidate) = hotspot.rendered_owner.as_ref().and_then(|owner| owner.owner.as_ref()) {
+            out.push((LabelSide::OwnerHotspotRendered, candidate));
+        }
+        if let Some(candidate) = &hotspot.frontmost {
+            out.push((LabelSide::OwnerHotspotFrontmost, candidate));
+        }
+    }
+    if matches!(selection, OwnerHotspotSelection::Recovery | OwnerHotspotSelection::All) {
+        if let Some(candidate) = hotspot
+            .rendered_owner_recovery
+            .as_ref()
+            .and_then(|recovery| recovery.best_subpixel.as_ref())
+            .map(|recovery| &recovery.candidate)
+        {
+            out.push((LabelSide::OwnerHotspotBestSubpixel, candidate));
+        }
+        if let Some(candidate) = hotspot
+            .rendered_owner_recovery
+            .as_ref()
+            .and_then(|recovery| recovery.best_neighbor.as_ref())
+            .map(|recovery| &recovery.candidate)
+        {
+            out.push((LabelSide::OwnerHotspotBestNeighbor, candidate));
+        }
+    }
+    out
+}
+
 fn resolve_hotspot_candidate(
     loaded: &LoadedVrm,
     candidate: &HotspotCandidate,
@@ -615,6 +788,47 @@ fn resolve_hotspot_candidate(
             indices: candidate.indices,
         }
     })
+}
+
+fn resolve_three_owner_candidate(
+    loaded: &LoadedVrm,
+    candidate: &ThreeOwnerCandidate,
+) -> Option<ResolvedTriangle> {
+    let target_mesh = normalized_name(&candidate.mesh_name);
+    let target_material = candidate.material_name.as_deref().map(base_material_name);
+    loaded
+        .scene
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_index, node)| node.mesh.map(|mesh_index| (node_index, mesh_index)))
+        .find_map(|(node_index, mesh_index)| {
+            let mesh = loaded.meshes.get(mesh_index)?;
+            (normalized_name(mesh.name.as_deref().unwrap_or("")) == target_mesh).then_some(())?;
+            mesh.primitives
+                .iter()
+                .enumerate()
+                .find_map(|(primitive_index, primitive)| {
+                    let material_name = loaded
+                        .material_display_name(primitive.material)
+                        .map(base_material_name);
+                    if material_name != target_material {
+                        return None;
+                    }
+                    let triangle = candidate.source_triangle.unwrap_or(candidate.triangle);
+                    let indices = source_triangle_indices(primitive, triangle)
+                        .or(candidate.indices)
+                        .unwrap_or([0, 0, 0]);
+                    source_triangle(primitive, &ResolvedTriangle {
+                        node_index,
+                        mesh_index,
+                        primitive_index,
+                        material: primitive.material,
+                        triangle,
+                        indices,
+                    }, triangle)
+                })
+        })
 }
 
 fn resolve_label(loaded: &LoadedVrm, label: &OwnerLabel) -> Option<ResolvedTriangle> {
@@ -1203,6 +1417,9 @@ fn normalized_name(name: &str) -> String {
 }
 
 fn base_material_name(name: &str) -> String {
+    let name = name
+        .strip_suffix(":vrm-rs-owner-id-diagnostic")
+        .unwrap_or(name);
     name.strip_suffix(" (Outline)").unwrap_or(name).to_owned()
 }
 
