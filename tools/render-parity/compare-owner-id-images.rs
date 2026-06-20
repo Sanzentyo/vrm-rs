@@ -8,6 +8,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 imq = { git = "https://github.com/Sanzentyo/imq.git", rev = "0fdc5263c0c21bd6d7bc55c194e98b593bf83bff", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+vrm-adapter = { path = "../../crates/vrm-adapter" }
 ---
 
 //! Compare two `owner-id` diagnostic imqraw images.
@@ -21,6 +22,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use vrm_adapter::RenderOwnerId;
 
 const WEBGL_DEPTH_CLOSE_TOLERANCE: f64 = 0.001;
 const WEBGL_DEPTH_NEAR_TOLERANCE: f64 = 0.02;
@@ -1586,11 +1588,7 @@ fn owner_id_channel_deltas(decoded_actual: u32, recovered_actual: u32) -> [i16; 
 }
 
 fn owner_id_rgb(id: u32) -> [u8; 3] {
-    [
-        (id & 0xff) as u8,
-        ((id >> 8) & 0xff) as u8,
-        ((id >> 16) & 0xff) as u8,
-    ]
+    RenderOwnerId::new(id).to_rgb_u8()
 }
 
 fn owner_id_channel_delta_class([red, green, blue]: [i16; 3]) -> String {

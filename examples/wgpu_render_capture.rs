@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RendererFrontFace, ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth,
-    project_triangle_to_screen,
+    RenderOwnerId, RendererFrontFace, ScreenProjectionSize, ScreenTriangleProjection,
+    ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -612,22 +612,11 @@ fn assign_owner_id_triangles(primitives: &mut [DrawPrimitive]) {
 }
 
 fn owner_id_color(id: u32) -> [f32; 4] {
-    let [r, g, b, a] = owner_id_color_u8(id);
-    [
-        f32::from(r) / 255.0,
-        f32::from(g) / 255.0,
-        f32::from(b) / 255.0,
-        f32::from(a) / 255.0,
-    ]
+    RenderOwnerId::new(id).to_rgba_f32()
 }
 
 fn owner_id_color_u8(id: u32) -> [u8; 4] {
-    [
-        (id & 0xff) as u8,
-        ((id >> 8) & 0xff) as u8,
-        ((id >> 16) & 0xff) as u8,
-        255,
-    ]
+    RenderOwnerId::new(id).to_rgba_u8()
 }
 
 #[derive(Clone, Copy)]

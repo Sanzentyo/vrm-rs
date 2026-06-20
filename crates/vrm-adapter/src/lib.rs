@@ -663,6 +663,61 @@ pub fn normalize_owner_diagnostic_material_name(name: &str) -> String {
         .to_owned()
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RenderOwnerId(pub u32);
+
+impl RenderOwnerId {
+    pub const TRANSPARENT_BACKGROUND: Self = Self(0);
+
+    #[inline(always)]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    #[inline(always)]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn from_rgb_u8(rgb: [u8; 3]) -> Self {
+        Self(u32::from_le_bytes([rgb[0], rgb[1], rgb[2], 0]))
+    }
+
+    #[inline(always)]
+    pub const fn from_rgba_u8(rgba: [u8; 4]) -> Self {
+        Self::from_rgb_u8([rgba[0], rgba[1], rgba[2]])
+    }
+
+    #[inline(always)]
+    pub const fn to_rgb_u8(self) -> [u8; 3] {
+        let bytes = self.0.to_le_bytes();
+        [bytes[0], bytes[1], bytes[2]]
+    }
+
+    #[inline(always)]
+    pub const fn to_rgba_u8(self) -> [u8; 4] {
+        let [r, g, b] = self.to_rgb_u8();
+        [r, g, b, 255]
+    }
+
+    #[inline(always)]
+    pub fn to_rgba_f32(self) -> [f32; 4] {
+        let [r, g, b, a] = self.to_rgba_u8();
+        [
+            f32::from(r) / 255.0,
+            f32::from(g) / 255.0,
+            f32::from(b) / 255.0,
+            f32::from(a) / 255.0,
+        ]
+    }
+
+    #[inline(always)]
+    pub const fn is_background(self) -> bool {
+        self.0 == 0
+    }
+}
+
 pub trait SceneGraph {
     type Error;
 
@@ -4878,6 +4933,24 @@ mod tests {
         assert!(!key.matches(&neighbor, RenderSamplePoint::new(0.7, 0.5)));
         assert_eq!(RenderSamplePoint::from_pair([0.25, 0.75]).x(), 0.25);
         assert_eq!(RenderSamplePoint::from_pair([0.25, 0.75]).y(), 0.75);
+    }
+
+    #[test]
+    fn render_owner_id_uses_shared_little_endian_rgb_encoding() {
+        let id = RenderOwnerId::new(0x0001_0203);
+
+        assert_eq!(id.get(), 0x0001_0203);
+        assert_eq!(id.to_rgb_u8(), [0x03, 0x02, 0x01]);
+        assert_eq!(id.to_rgba_u8(), [0x03, 0x02, 0x01, 255]);
+        assert_eq!(RenderOwnerId::from_rgb_u8([0x03, 0x02, 0x01]), id);
+        assert_eq!(RenderOwnerId::from_rgba_u8([0x03, 0x02, 0x01, 99]), id);
+        assert!(RenderOwnerId::TRANSPARENT_BACKGROUND.is_background());
+
+        let rgba = id.to_rgba_f32();
+        assert_eq!(rgba[0], 3.0 / 255.0);
+        assert_eq!(rgba[1], 2.0 / 255.0);
+        assert_eq!(rgba[2], 1.0 / 255.0);
+        assert_eq!(rgba[3], 1.0);
     }
 
     fn transform_matrix(transform: Transform) -> Mat4 {

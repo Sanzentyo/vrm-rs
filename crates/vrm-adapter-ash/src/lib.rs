@@ -19,10 +19,11 @@ use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
     MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, RendererFrontFace, RendererMaterialAlphaMode, RendererMaterialCullMode,
-    ScreenProjectionBounds, ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess,
-    WorldTransformUpdate, ZeroToOneDepth, apply_vrma_animation_frame_with_look_at,
-    mtoon_renderer_material_plans, project_triangle_to_screen, renderer_material_pipeline_plan,
+    MtoonTextureSlot, RenderOwnerId, RendererFrontFace, RendererMaterialAlphaMode,
+    RendererMaterialCullMode, ScreenProjectionBounds, ScreenProjectionSize,
+    ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate, ZeroToOneDepth,
+    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    project_triangle_to_screen, renderer_material_pipeline_plan,
 };
 use vrm_core::{Feature, MaterialRef, MtoonAlphaMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
@@ -2099,12 +2100,7 @@ fn ash_model_orientation() -> Mat4 {
 }
 
 fn ash_owner_id_color(id: u32) -> [f32; 4] {
-    [
-        f32::from((id & 0xff) as u8) / 255.0,
-        f32::from(((id >> 8) & 0xff) as u8) / 255.0,
-        f32::from(((id >> 16) & 0xff) as u8) / 255.0,
-        1.0,
-    ]
+    RenderOwnerId::new(id).to_rgba_f32()
 }
 
 fn ash_base_draw_order(loaded: &LoadedVrm, material: Option<MaterialRef>) -> AshPrimitiveDrawOrder {
@@ -2278,12 +2274,7 @@ fn ash_owner_id_triangles(
 }
 
 fn ash_owner_id_color_u8(id: u32) -> [u8; 4] {
-    [
-        (id & 0xff) as u8,
-        ((id >> 8) & 0xff) as u8,
-        ((id >> 16) & 0xff) as u8,
-        255,
-    ]
+    RenderOwnerId::new(id).to_rgba_u8()
 }
 
 fn ash_reference_view_projection(scene_options: AshSceneOptions) -> Mat4 {
