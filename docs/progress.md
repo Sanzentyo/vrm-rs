@@ -53,6 +53,24 @@
   quantization/recovery evidence rather than an active geometry/fill blocker;
   keep the original counters for audit and use the unresolved counters when
   choosing the next render-parity blocker.
+- Added a source-derived gradient-hotspot extraction path. `extract-owner-tail-fixture.rs`
+  can now consume `map-render-hotspots.rs` reports via `--hotspot-report` and
+  extract frontmost, nearest-actual, nearest-expected, and nearest-sample
+  candidate triangles into the same license-safe normalized VRM1 glTF shape used
+  by owner-tail extracts. `just render-parity-seed-gradient-hotspot-extract`
+  uses the current Seed-san flat32 gradient hotspot report to emit
+  `.external-fixtures/generated/seed-gradient-hotspot-extract.vrm.gltf`, rerender
+  it in base-color/outline-off mode, and summarize the resulting hotspot
+  residuals. The first run extracted `214` triangles and raised the reduced
+  fixture to wgpu `50.9391 dB` / Bevy `49.8443 dB` on
+  `rgb-shared-nonblack-interior1px`, max selected-channel delta `5` / `6`, exact
+  alpha. The reduced hotspot summaries leave only `11` wgpu and `26` Bevy
+  changed hotspot pixels, mostly still within `0.25px` of a frontmost edge
+  (`11/11` wgpu, `21/26` Bevy). This narrows the remaining Seed-san gradient
+  floor: the currently extracted top hotspot candidate triangles plus one
+  shared-vertex context layer do not reproduce the large real-fixture residual,
+  so the next extraction should preserve broader overlapping primitive/material
+  context or use three-vrm owner-hotspot labels directly.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent

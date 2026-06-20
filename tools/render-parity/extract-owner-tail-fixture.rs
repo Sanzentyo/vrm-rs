@@ -34,8 +34,10 @@ use vrm_io::{
 struct Options {
     #[arg(long)]
     fixture: PathBuf,
-    #[arg(long)]
-    report: PathBuf,
+    #[arg(long, required_unless_present = "hotspot_report")]
+    report: Option<PathBuf>,
+    #[arg(long, conflicts_with = "report")]
+    hotspot_report: Option<PathBuf>,
     #[arg(
         long,
         default_value = ".external-fixtures/generated/owner-tail-extract.vrm.gltf"
@@ -45,6 +47,8 @@ struct Options {
     limit: usize,
     #[arg(long, value_enum, default_value_t = LabelSelection::Both)]
     labels: LabelSelection,
+    #[arg(long, value_enum, default_value_t = HotspotSelection::All)]
+    hotspot_selection: HotspotSelection,
     #[arg(long, default_value_t = 0)]
     context_radius: usize,
     #[arg(long, default_value_t = 0)]
@@ -58,10 +62,47 @@ enum LabelSelection {
     Both,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum HotspotSelection {
+    Frontmost,
+    Nearest,
+    All,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct OwnerReport {
     #[serde(default)]
     top_unexplained_expected_to_actual_details: Vec<OwnerDetail>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HotspotReport {
+    #[serde(default)]
+    hotspots: Vec<Hotspot>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Hotspot {
+    x: u32,
+    y: u32,
+    #[serde(default)]
+    frontmost_visible: Option<HotspotCandidate>,
+    #[serde(default)]
+    nearest_visible_actual: Option<HotspotCandidate>,
+    #[serde(default)]
+    nearest_visible_expected: Option<HotspotCandidate>,
+    #[serde(default)]
+    nearest_sample_visible_frontmost: Option<HotspotCandidate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HotspotCandidate {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
+    triangle: usize,
+    indices: [u32; 3],
+    pass: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -111,6 +152,10 @@ enum LabelSide {
     Expected,
     Actual,
     Context,
+    HotspotFrontmost,
+    HotspotActual,
+    HotspotExpected,
+    HotspotNearestSample,
 }
 
 impl LabelSide {
@@ -119,6 +164,10 @@ impl LabelSide {
             Self::Expected => "expected",
             Self::Actual => "actual",
             Self::Context => "context",
+            Self::HotspotFrontmost => "hotspot-frontmost",
+            Self::HotspotActual => "hotspot-actual",
+            Self::HotspotExpected => "hotspot-expected",
+            Self::HotspotNearestSample => "hotspot-nearest-sample",
         }
     }
 }
@@ -151,15 +200,33 @@ struct FixtureBuilder {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::parse();
     let loaded = load_vrm_from_path(&options.fixture)?;
-    let report = serde_json::from_slice::<OwnerReport>(&fs::read(&options.report)?)?;
-    let extracted = extract_triangles(
-        &loaded,
-        &report,
-        options.labels,
-        options.limit,
-        options.context_radius,
-        options.context_shared_vertex_depth,
-    )?;
+    let (report_path, extracted) = if let Some(report) = &options.report {
+        let parsed = serde_json::from_slice::<OwnerReport>(&fs::read(report)?)?;
+        let extracted = extract_triangles(
+            &loaded,
+            &parsed,
+            options.labels,
+            options.limit,
+            options.context_radius,
+            options.context_shared_vertex_depth,
+        )?;
+        (report, extracted)
+    } else {
+        let report = options
+            .hotspot_report
+            .as_ref()
+            .ok_or("either --report or --hotspot-report is required")?;
+        let parsed = serde_json::from_slice::<HotspotReport>(&fs::read(report)?)?;
+        let extracted = extract_hotspot_triangles(
+            &loaded,
+            &parsed,
+            options.hotspot_selection,
+            options.limit,
+            options.context_radius,
+            options.context_shared_vertex_depth,
+        )?;
+        (report, extracted)
+    };
     if extracted.is_empty() {
         return Err("no owner-tail triangles could be resolved from the report".into());
     }
@@ -170,7 +237,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &options.out,
         format!(
             "{}\n",
-            fixture_json(&loaded, &options.fixture, &options.report, &extracted)?
+            fixture_json(&loaded, &options.fixture, report_path, &extracted)?
         ),
     )?;
     println!("{} ({} triangles)", options.out.display(), extracted.len());
@@ -202,54 +269,138 @@ fn extract_triangles(
             let Some(source) = resolve_label(loaded, label) else {
                 continue;
             };
-            let key = (
-                side.as_str(),
-                source.node_index,
-                source.mesh_index,
-                source.primitive_index,
-                source.triangle,
-            );
-            if !seen.insert(key) {
-                continue;
-            }
-            let vertices = bake_triangle(loaded, &world_matrices, orientation, &source)?;
-            out.push(ExtractedTriangle {
-                label_side: side,
-                detail_index,
-                count: detail.count,
-                sample_pixels: detail.sample_pixels.clone(),
-                source: source.clone(),
-                vertices: [vertices],
-            });
-            if context_radius > 0 {
-                append_context_triangles(
-                    loaded,
-                    &world_matrices,
-                    orientation,
-                    &mut seen,
-                    &mut out,
-                    detail,
+            append_seed_triangle(
+                loaded,
+                &world_matrices,
+                orientation,
+                &mut seen,
+                &mut out,
+                TriangleSeed {
+                    side,
                     detail_index,
-                    &source,
-                    context_radius,
-                )?;
-            }
-            if context_shared_vertex_depth > 0 {
-                append_shared_vertex_context_triangles(
-                    loaded,
-                    &world_matrices,
-                    orientation,
-                    &mut seen,
-                    &mut out,
-                    detail,
-                    detail_index,
-                    &source,
-                    context_shared_vertex_depth,
-                )?;
-            }
+                    count: detail.count,
+                    sample_pixels: detail.sample_pixels.clone(),
+                    source,
+                },
+                context_radius,
+                context_shared_vertex_depth,
+            )?;
         }
     }
     Ok(out)
+}
+
+fn extract_hotspot_triangles(
+    loaded: &LoadedVrm,
+    report: &HotspotReport,
+    selection: HotspotSelection,
+    limit: usize,
+    context_radius: usize,
+    context_shared_vertex_depth: usize,
+) -> Result<Vec<ExtractedTriangle>, Box<dyn std::error::Error>> {
+    let world_matrices = vrm_rs::evaluated_world_matrices(loaded)?;
+    let orientation = Mat4::from_rotation_y(std::f32::consts::PI);
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for (detail_index, hotspot) in report.hotspots.iter().take(limit).enumerate() {
+        for (side, candidate) in selected_hotspot_candidates(selection, hotspot) {
+            if candidate.pass != "base" {
+                continue;
+            }
+            let Some(source) = resolve_hotspot_candidate(loaded, candidate) else {
+                continue;
+            };
+            append_seed_triangle(
+                loaded,
+                &world_matrices,
+                orientation,
+                &mut seen,
+                &mut out,
+                TriangleSeed {
+                    side,
+                    detail_index,
+                    count: 1,
+                    sample_pixels: vec![OwnerPixel {
+                        x: hotspot.x,
+                        y: hotspot.y,
+                    }],
+                    source,
+                },
+                context_radius,
+                context_shared_vertex_depth,
+            )?;
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Debug)]
+struct TriangleSeed {
+    side: LabelSide,
+    detail_index: usize,
+    count: u64,
+    sample_pixels: Vec<OwnerPixel>,
+    source: ResolvedTriangle,
+}
+
+fn append_seed_triangle(
+    loaded: &LoadedVrm,
+    world_matrices: &[Mat4],
+    orientation: Mat4,
+    seen: &mut BTreeSet<(&'static str, usize, usize, usize, usize)>,
+    out: &mut Vec<ExtractedTriangle>,
+    seed: TriangleSeed,
+    context_radius: usize,
+    context_shared_vertex_depth: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let key = (
+        seed.side.as_str(),
+        seed.source.node_index,
+        seed.source.mesh_index,
+        seed.source.primitive_index,
+        seed.source.triangle,
+    );
+    if !seen.insert(key) {
+        return Ok(());
+    }
+    let vertices = bake_triangle(loaded, world_matrices, orientation, &seed.source)?;
+    out.push(ExtractedTriangle {
+        label_side: seed.side,
+        detail_index: seed.detail_index,
+        count: seed.count,
+        sample_pixels: seed.sample_pixels.clone(),
+        source: seed.source.clone(),
+        vertices: [vertices],
+    });
+    if context_radius > 0 {
+        append_context_triangles(
+            loaded,
+            world_matrices,
+            orientation,
+            seen,
+            out,
+            seed.count,
+            &seed.sample_pixels,
+            seed.detail_index,
+            &seed.source,
+            context_radius,
+        )?;
+    }
+    if context_shared_vertex_depth > 0 {
+        append_shared_vertex_context_triangles(
+            loaded,
+            world_matrices,
+            orientation,
+            seen,
+            out,
+            seed.count,
+            &seed.sample_pixels,
+            seed.detail_index,
+            &seed.source,
+            context_shared_vertex_depth,
+        )?;
+    }
+    Ok(())
 }
 
 fn append_context_triangles(
@@ -258,7 +409,8 @@ fn append_context_triangles(
     orientation: Mat4,
     seen: &mut BTreeSet<(&'static str, usize, usize, usize, usize)>,
     out: &mut Vec<ExtractedTriangle>,
-    detail: &OwnerDetail,
+    count: u64,
+    sample_pixels: &[OwnerPixel],
     detail_index: usize,
     source: &ResolvedTriangle,
     radius: usize,
@@ -297,8 +449,8 @@ fn append_context_triangles(
         out.push(ExtractedTriangle {
             label_side: LabelSide::Context,
             detail_index,
-            count: detail.count,
-            sample_pixels: detail.sample_pixels.clone(),
+            count,
+            sample_pixels: sample_pixels.to_vec(),
             source: context,
             vertices: [vertices],
         });
@@ -312,7 +464,8 @@ fn append_shared_vertex_context_triangles(
     orientation: Mat4,
     seen: &mut BTreeSet<(&'static str, usize, usize, usize, usize)>,
     out: &mut Vec<ExtractedTriangle>,
-    detail: &OwnerDetail,
+    count: u64,
+    sample_pixels: &[OwnerPixel],
     detail_index: usize,
     source: &ResolvedTriangle,
     depth: usize,
@@ -383,8 +536,8 @@ fn append_shared_vertex_context_triangles(
         out.push(ExtractedTriangle {
             label_side: LabelSide::Context,
             detail_index,
-            count: detail.count,
-            sample_pixels: detail.sample_pixels.clone(),
+            count,
+            sample_pixels: sample_pixels.to_vec(),
             source: context,
             vertices: [vertices],
         });
@@ -417,6 +570,51 @@ fn selected_labels(labels: LabelSelection, detail: &OwnerDetail) -> Vec<(LabelSi
             (LabelSide::Actual, &detail.actual),
         ],
     }
+}
+
+fn selected_hotspot_candidates(
+    selection: HotspotSelection,
+    hotspot: &Hotspot,
+) -> Vec<(LabelSide, &HotspotCandidate)> {
+    let mut out = Vec::new();
+    if matches!(selection, HotspotSelection::Frontmost | HotspotSelection::All) {
+        if let Some(candidate) = &hotspot.frontmost_visible {
+            out.push((LabelSide::HotspotFrontmost, candidate));
+        }
+        if let Some(candidate) = &hotspot.nearest_sample_visible_frontmost {
+            out.push((LabelSide::HotspotNearestSample, candidate));
+        }
+    }
+    if matches!(selection, HotspotSelection::Nearest | HotspotSelection::All) {
+        if let Some(candidate) = &hotspot.nearest_visible_actual {
+            out.push((LabelSide::HotspotActual, candidate));
+        }
+        if let Some(candidate) = &hotspot.nearest_visible_expected {
+            out.push((LabelSide::HotspotExpected, candidate));
+        }
+    }
+    out
+}
+
+fn resolve_hotspot_candidate(
+    loaded: &LoadedVrm,
+    candidate: &HotspotCandidate,
+) -> Option<ResolvedTriangle> {
+    let primitive = loaded
+        .meshes
+        .get(candidate.mesh)?
+        .primitives
+        .get(candidate.primitive)?;
+    triangle_matches(primitive, candidate.triangle, candidate.indices).map(|triangle| {
+        ResolvedTriangle {
+            node_index: candidate.node,
+            mesh_index: candidate.mesh,
+            primitive_index: candidate.primitive,
+            material: primitive.material,
+            triangle,
+            indices: candidate.indices,
+        }
+    })
 }
 
 fn resolve_label(loaded: &LoadedVrm, label: &OwnerLabel) -> Option<ResolvedTriangle> {
