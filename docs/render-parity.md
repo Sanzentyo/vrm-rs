@@ -45,6 +45,18 @@ recipes are convenience entry points. Use these first:
   recipe. It does not use `--apply-owner-sample-readback-replacement`; the
   manifest chooses which browser-selected sample geometry should own a pixel,
   then each renderer evaluates the normal material path for that sample.
+- `just render-parity-seed-base-color-flat32-render-resolve-readback`: run the
+  same no-readback owner/sample resolve model against the real Seed-san
+  base-color, outline-off, flat32/gradient blocker. It first refreshes the full
+  owner/sample correction manifests, then renders wgpu, release-built Bevy, and
+  Ash with those manifests as geometry selections. The latest run raises the
+  real Seed-san gradient-domain score from baseline wgpu `26.3277 dB` / Bevy
+  `26.3322 dB` to render-resolve wgpu `28.9442 dB`, Bevy `29.1123 dB`, and Ash
+  `30.7335 dB`, all with opaque-black alpha parity and verified direct
+  `.imqraw` artifacts. This is useful movement, but not a final fix: max
+  selected-channel deltas remain high on the real fixture, so the next work is
+  to remap the remaining post-resolve hotspots and broaden the surface
+  selection model rather than tuning copied colors.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and
