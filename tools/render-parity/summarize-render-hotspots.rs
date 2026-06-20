@@ -141,6 +141,17 @@ struct ReviewReport {
     top_expected_best_subpixel_surface_transitions: Vec<Value>,
     top_actual_subpixel_sample_summaries: Vec<Value>,
     top_expected_subpixel_sample_summaries: Vec<Value>,
+    source_order_depth_epsilon: Option<f64>,
+    depth_near_later_visible_count: Option<u64>,
+    actual_depth_near_later_improved_count: Option<u64>,
+    expected_depth_near_later_improved_count: Option<u64>,
+    actual_depth_near_later_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_depth_near_later_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_depth_near_later_mean_cpu_base_color_improvement: Option<f64>,
+    expected_depth_near_later_mean_cpu_base_color_improvement: Option<f64>,
+    depth_near_later_same_material_count: Option<u64>,
+    depth_near_later_same_triangle_count: Option<u64>,
+    top_depth_near_later_surface_transitions: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -642,6 +653,45 @@ fn summarize_report(
             "expected_subpixel_sample_summaries",
             top,
         ),
+        source_order_depth_epsilon: f64_field(summary, "source_order_depth_epsilon"),
+        depth_near_later_visible_count: u64_field(summary, "depth_near_later_visible_count"),
+        actual_depth_near_later_improved_count: u64_field(
+            summary,
+            "actual_depth_near_later_improved_count",
+        ),
+        expected_depth_near_later_improved_count: u64_field(
+            summary,
+            "expected_depth_near_later_improved_count",
+        ),
+        actual_depth_near_later_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_depth_near_later_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_depth_near_later_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_depth_near_later_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_depth_near_later_mean_cpu_base_color_improvement: f64_field(
+            summary,
+            "actual_depth_near_later_mean_cpu_base_color_improvement",
+        ),
+        expected_depth_near_later_mean_cpu_base_color_improvement: f64_field(
+            summary,
+            "expected_depth_near_later_mean_cpu_base_color_improvement",
+        ),
+        depth_near_later_same_material_count: u64_field(
+            summary,
+            "depth_near_later_same_material_count",
+        ),
+        depth_near_later_same_triangle_count: u64_field(
+            summary,
+            "depth_near_later_same_triangle_count",
+        ),
+        top_depth_near_later_surface_transitions: top_array(
+            summary,
+            "depth_near_later_surface_transitions",
+            top,
+        ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
         top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
         top_missing_center_nearest_offsets: top_array(
@@ -926,6 +976,36 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(
         &report.top_expected_subpixel_sample_summaries,
     ));
+    markdown.push_str("\n## Depth-Near Source Order\n\n");
+    markdown.push_str(&format!(
+        "- Depth epsilon: `{}`; later visible candidates: `{}`\n",
+        fmt_opt_f64(report.source_order_depth_epsilon),
+        fmt_opt_u64(report.depth_near_later_visible_count)
+    ));
+    markdown.push_str(&format!(
+        "- Improved actual/expected: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_depth_near_later_improved_count),
+        fmt_opt_u64(report.expected_depth_near_later_improved_count)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_depth_near_later_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_depth_near_later_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color improvement actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_depth_near_later_mean_cpu_base_color_improvement),
+        fmt_opt_f64(report.expected_depth_near_later_mean_cpu_base_color_improvement)
+    ));
+    markdown.push_str(&format!(
+        "- Same material/triangle vs center frontmost: `{}` / `{}`\n",
+        fmt_opt_u64(report.depth_near_later_same_material_count),
+        fmt_opt_u64(report.depth_near_later_same_triangle_count)
+    ));
+    markdown.push_str("\nDepth-near later vs center frontmost:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_depth_near_later_surface_transitions,
+    ));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -1148,6 +1228,17 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                     "mean_cpu_base_color_improvement": 0.5,
                     "mean_sample_distance_from_center": 0.25
                 }],
+                "source_order_depth_epsilon": 0.00001,
+                "depth_near_later_visible_count": 1,
+                "actual_depth_near_later_improved_count": 0,
+                "expected_depth_near_later_improved_count": 1,
+                "actual_depth_near_later_mean_cpu_base_color_rgb_distance": 0.6,
+                "expected_depth_near_later_mean_cpu_base_color_rgb_distance": 0.9,
+                "actual_depth_near_later_mean_cpu_base_color_improvement": -0.1,
+                "expected_depth_near_later_mean_cpu_base_color_improvement": 0.6,
+                "depth_near_later_same_material_count": 1,
+                "depth_near_later_same_triangle_count": 0,
+                "depth_near_later_surface_transitions": [{"count": 1}],
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -1199,11 +1290,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         Some(1)
     );
     assert_eq!(report.top_expected_subpixel_sample_summaries.len(), 1);
+    assert_eq!(report.depth_near_later_visible_count, Some(1));
+    assert_eq!(report.expected_depth_near_later_improved_count, Some(1));
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Render Hotspot Summary"));
     assert!(markdown.contains("Texture Sampling Variants"));
     assert!(markdown.contains("Subpixel Frontmost Search"));
     assert!(markdown.contains("Expected fixed subpixel sample ranking"));
+    assert!(markdown.contains("Depth-Near Source Order"));
     let mut options = Options {
         self_test: false,
         input: Some(PathBuf::from("self-test.json")),

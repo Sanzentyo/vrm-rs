@@ -82,6 +82,8 @@ struct Options {
     sample_center_y: f32,
     #[arg(long, default_value_t = 5)]
     subpixel_steps: usize,
+    #[arg(long, default_value_t = 0.00001)]
+    source_order_depth_epsilon: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -240,6 +242,17 @@ struct HotspotSummary {
     expected_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
     actual_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
     expected_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
+    source_order_depth_epsilon: f32,
+    depth_near_later_visible_count: usize,
+    actual_depth_near_later_improved_count: usize,
+    expected_depth_near_later_improved_count: usize,
+    actual_depth_near_later_mean_cpu_base_color_rgb_distance: Option<f32>,
+    expected_depth_near_later_mean_cpu_base_color_rgb_distance: Option<f32>,
+    actual_depth_near_later_mean_cpu_base_color_improvement: Option<f32>,
+    expected_depth_near_later_mean_cpu_base_color_improvement: Option<f32>,
+    depth_near_later_same_material_count: usize,
+    depth_near_later_same_triangle_count: usize,
+    depth_near_later_surface_transitions: Vec<SurfaceTransitionCount>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -337,6 +350,7 @@ struct Hotspot {
     frontmost_visible: Option<CandidateMatch>,
     nearest_sample_visible_frontmost: Option<CandidateMatch>,
     nearest_sample_any_frontmost: Option<CandidateMatch>,
+    depth_near_later_visible: Option<CandidateMatch>,
     frontmost_base_uv_srgb: Option<[u8; 4]>,
     frontmost_base_texture_rgba: Option<[u8; 4]>,
     frontmost_expected_rgb_distance: Option<f32>,
@@ -352,6 +366,9 @@ struct Hotspot {
     nearest_sample_visible_cpu_base_color_rgba: Option<[u8; 4]>,
     nearest_sample_visible_cpu_base_color_expected_rgb_distance: Option<f32>,
     nearest_sample_visible_cpu_base_color_actual_rgb_distance: Option<f32>,
+    depth_near_later_cpu_base_color_rgba: Option<[u8; 4]>,
+    depth_near_later_cpu_base_color_expected_rgb_distance: Option<f32>,
+    depth_near_later_cpu_base_color_actual_rgb_distance: Option<f32>,
     frontmost_texture_sampling_variants: Vec<TextureSamplingDistance>,
     nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingDistance>,
     subpixel_visible_candidates: Vec<SubpixelCandidate>,
@@ -541,6 +558,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let frontmost_any = frontmost_any_candidate_match(&candidates);
             let frontmost_alpha_visible = frontmost_alpha_visible_candidate_match(&candidates);
             let frontmost_visible = frontmost_visible_candidate_match(&candidates);
+            let depth_near_later_visible = depth_near_later_visible_candidate_match(
+                &candidates,
+                frontmost_visible.as_ref(),
+                options.source_order_depth_epsilon,
+            );
             let nearest_sample_visible_frontmost =
                 nearest_sample_visible_frontmost_candidate_match(&candidates);
             let nearest_sample_any_frontmost =
@@ -561,6 +583,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let nearest_sample_visible_cpu_base_color_rgba = nearest_sample_visible_frontmost
                 .as_ref()
                 .map(|frontmost| frontmost.cpu_base_color_rgba);
+            let depth_near_later_cpu_base_color_rgba = depth_near_later_visible
+                .as_ref()
+                .map(|candidate| candidate.cpu_base_color_rgba);
             let frontmost_texture_sampling_variants =
                 texture_sampling_distances(frontmost_visible.as_ref(), delta.actual, delta.expected);
             let nearest_sample_visible_texture_sampling_variants = texture_sampling_distances(
@@ -615,6 +640,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 frontmost_visible,
                 nearest_sample_visible_frontmost,
                 nearest_sample_any_frontmost,
+                depth_near_later_visible,
                 frontmost_base_uv_srgb,
                 frontmost_base_texture_rgba,
                 frontmost_expected_rgb_distance: frontmost_base_uv_srgb
@@ -644,6 +670,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 nearest_sample_visible_cpu_base_color_actual_rgb_distance:
                     nearest_sample_visible_cpu_base_color_rgba
                         .map(|color| rgb_distance(color, delta.actual)),
+                depth_near_later_cpu_base_color_rgba,
+                depth_near_later_cpu_base_color_expected_rgb_distance:
+                    depth_near_later_cpu_base_color_rgba
+                        .map(|color| rgb_distance(color, delta.expected)),
+                depth_near_later_cpu_base_color_actual_rgb_distance:
+                    depth_near_later_cpu_base_color_rgba.map(|color| rgb_distance(color, delta.actual)),
                 frontmost_texture_sampling_variants,
                 nearest_sample_visible_texture_sampling_variants,
                 subpixel_visible_candidates: subpixel_candidates,
@@ -653,7 +685,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             }
         })
         .collect();
-    let summary = summarize_hotspots(&hotspots);
+    let summary = summarize_hotspots(&hotspots, options.source_order_depth_epsilon);
 
     let report = HotspotReport {
         fixture: display_path(fixture),
@@ -727,7 +759,7 @@ fn read_delta_report(path: &Path) -> Result<DeltaReport, Box<dyn Error>> {
     Ok(serde_json::from_value(value)?)
 }
 
-fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
+fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> HotspotSummary {
     HotspotSummary {
         hotspot_count: hotspots.len(),
         frontmost_any_count: hotspots
@@ -1195,6 +1227,64 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             |hotspot| hotspot.expected,
             |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
         ),
+        source_order_depth_epsilon,
+        depth_near_later_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.depth_near_later_visible.is_some())
+            .count(),
+        actual_depth_near_later_improved_count: depth_near_later_improved_count(
+            hotspots,
+            |hotspot| hotspot.depth_near_later_cpu_base_color_actual_rgb_distance,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_depth_near_later_improved_count: depth_near_later_improved_count(
+            hotspots,
+            |hotspot| hotspot.depth_near_later_cpu_base_color_expected_rgb_distance,
+            |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_depth_near_later_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.depth_near_later_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_depth_near_later_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.depth_near_later_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_depth_near_later_mean_cpu_base_color_improvement:
+            depth_near_later_mean_improvement(
+                hotspots,
+                |hotspot| hotspot.depth_near_later_cpu_base_color_actual_rgb_distance,
+                |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+            ),
+        expected_depth_near_later_mean_cpu_base_color_improvement:
+            depth_near_later_mean_improvement(
+                hotspots,
+                |hotspot| hotspot.depth_near_later_cpu_base_color_expected_rgb_distance,
+                |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+            ),
+        depth_near_later_same_material_count: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_material(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.depth_near_later_visible.as_ref(),
+                )
+            })
+            .count(),
+        depth_near_later_same_triangle_count: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot.depth_near_later_visible.as_ref(),
+                )
+            })
+            .count(),
+        depth_near_later_surface_transitions: surface_pair_transition_counts(
+            hotspots,
+            |hotspot| hotspot.frontmost_visible.as_ref(),
+            |hotspot| hotspot.depth_near_later_visible.as_ref(),
+        ),
     }
 }
 
@@ -1547,6 +1637,36 @@ fn mean_subpixel_sample_distance(
             let dy = matched.sample[1] - 0.5;
             (sum + (dx * dx + dy * dy).sqrt(), count + 1)
         });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn depth_near_later_improved_count(
+    hotspots: &[Hotspot],
+    depth_near_distance: impl Fn(&Hotspot) -> Option<f32>,
+    frontmost_distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> usize {
+    hotspots
+        .iter()
+        .filter(|hotspot| {
+            matches!(
+                (depth_near_distance(hotspot), frontmost_distance(hotspot)),
+                (Some(depth_near), Some(frontmost)) if depth_near < frontmost
+            )
+        })
+        .count()
+}
+
+fn depth_near_later_mean_improvement(
+    hotspots: &[Hotspot],
+    depth_near_distance: impl Fn(&Hotspot) -> Option<f32>,
+    frontmost_distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Option<f32> {
+    let (sum, count) = hotspots.iter().fold((0.0, 0usize), |(sum, count), hotspot| {
+        match (depth_near_distance(hotspot), frontmost_distance(hotspot)) {
+            (Some(depth_near), Some(frontmost)) => (sum + (frontmost - depth_near), count + 1),
+            _ => (sum, count),
+        }
+    });
     (count > 0).then_some(sum / count as f32)
 }
 
@@ -2020,6 +2140,43 @@ fn frontmost_alpha_visible_candidate_match(candidates: &[HitCandidate]) -> Optio
 
 fn frontmost_visible_candidate_match(candidates: &[HitCandidate]) -> Option<CandidateMatch> {
     frontmost_candidate_match_by(candidates, |candidate| candidate.visible_by_policy)
+}
+
+fn depth_near_later_visible_candidate_match(
+    candidates: &[HitCandidate],
+    frontmost: Option<&CandidateMatch>,
+    depth_epsilon: f32,
+) -> Option<CandidateMatch> {
+    let frontmost = frontmost?;
+    let min_depth = frontmost.depth - depth_epsilon;
+    let max_depth = frontmost.depth + depth_epsilon;
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.sample_offset == [0, 0]
+                && candidate.depth >= -1.0
+                && candidate.visible_by_policy
+                && candidate.draw_index > frontmost.draw_index
+                && (min_depth..=max_depth).contains(&candidate.depth)
+        })
+        .map(|(candidate_index, candidate)| {
+            candidate_match(
+                candidate_index,
+                candidate,
+                uv_distance(candidate.base_uv, frontmost.base_uv),
+            )
+        })
+        .max_by(|left, right| {
+            left.draw_index
+                .cmp(&right.draw_index)
+                .then_with(|| {
+                    (right.depth - frontmost.depth)
+                        .abs()
+                        .partial_cmp(&(left.depth - frontmost.depth).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        })
 }
 
 fn nearest_sample_any_frontmost_candidate_match(
