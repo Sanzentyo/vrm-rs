@@ -12,7 +12,9 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
-use vrm_adapter::{RenderOwnerSampleCorrectionPlan, RenderOwnerSurfaceKey};
+use vrm_adapter::{
+    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+};
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
     AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
@@ -1514,10 +1516,12 @@ fn owner_sample_correction_plan_json(
             json!({
                 "surface": owner_surface_json(&surface.surface),
                 "entryCount": surface.entries.len(),
-                "entries": surface.entries.iter().map(owner_sample_entry_json).collect::<Vec<_>>(),
+                "entries": surface.overrides().map(|entry| owner_sample_entry_json(&surface.surface, entry)).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
-        "unmatchedEntries": selection.unmatched_entries.iter().map(owner_sample_entry_json).collect::<Vec<_>>(),
+        "unmatchedEntries": selection.unmatched_entries.iter().map(|entry| {
+            owner_sample_entry_json(entry.sample.surface(), RenderOwnerSampleSurfaceOverride::from(entry))
+        }).collect::<Vec<_>>(),
         "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
             owner_surface_json(&surface)
         }).collect::<Vec<_>>(),
@@ -1532,14 +1536,15 @@ fn owner_surface_json(surface: &RenderOwnerSurfaceKey) -> serde_json::Value {
 }
 
 fn owner_sample_entry_json(
-    entry: &vrm_adapter::RenderOwnerSampleCorrectionManifestEntry,
+    surface: &RenderOwnerSurfaceKey,
+    entry: RenderOwnerSampleSurfaceOverride,
 ) -> serde_json::Value {
     json!({
-        "pixel": [entry.correction.pixel.x(), entry.correction.pixel.y()],
-        "sample": entry.sample.sample().to_pair(),
-        "rgba": entry.correction.replacement_rgba,
+        "pixel": entry.pixel.to_pair(),
+        "sample": entry.sample.to_pair(),
+        "rgba": entry.replacement_rgba,
         "relationToExpected": entry.relation_to_expected.map(|relation| relation.as_str()),
-        "surface": owner_surface_json(entry.sample.surface()),
+        "surface": owner_surface_json(surface),
     })
 }
 

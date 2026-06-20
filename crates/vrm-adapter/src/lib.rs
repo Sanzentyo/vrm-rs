@@ -766,6 +766,14 @@ pub struct RenderOwnerSampleSelectionPlan {
 }
 
 impl RenderOwnerSampleSelectionPlan {
+    pub fn is_empty(&self) -> bool {
+        self.surfaces.is_empty() && self.unmatched_entries.is_empty()
+    }
+
+    pub fn surface_count(&self) -> usize {
+        self.surfaces.len()
+    }
+
     pub fn entry_count(&self) -> usize {
         self.surfaces
             .iter()
@@ -788,12 +796,57 @@ impl RenderOwnerSampleSelectionPlan {
     pub fn all_entries_resolved(&self) -> bool {
         self.unmatched_entries.is_empty()
     }
+
+    pub fn selection_for_surface(
+        &self,
+        surface: &RenderOwnerSurfaceKey,
+    ) -> Option<&RenderOwnerSampleSurfaceSelection> {
+        self.surfaces
+            .iter()
+            .find(|selection| selection.surface == *surface)
+    }
+
+    pub fn overrides_for_surface<'a>(
+        &'a self,
+        surface: &'a RenderOwnerSurfaceKey,
+    ) -> impl Iterator<Item = RenderOwnerSampleSurfaceOverride> + 'a {
+        self.selection_for_surface(surface)
+            .into_iter()
+            .flat_map(RenderOwnerSampleSurfaceSelection::overrides)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderOwnerSampleSurfaceSelection {
     pub surface: RenderOwnerSurfaceKey,
     pub entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
+}
+
+impl RenderOwnerSampleSurfaceSelection {
+    pub fn overrides(&self) -> impl Iterator<Item = RenderOwnerSampleSurfaceOverride> + '_ {
+        self.entries
+            .iter()
+            .map(RenderOwnerSampleSurfaceOverride::from)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderOwnerSampleSurfaceOverride {
+    pub pixel: RenderPixel,
+    pub sample: RenderSamplePoint,
+    pub replacement_rgba: [u8; 4],
+    pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
+}
+
+impl From<&RenderOwnerSampleCorrectionManifestEntry> for RenderOwnerSampleSurfaceOverride {
+    fn from(entry: &RenderOwnerSampleCorrectionManifestEntry) -> Self {
+        Self {
+            pixel: entry.correction.pixel,
+            sample: entry.sample.sample(),
+            replacement_rgba: entry.correction.replacement_rgba,
+            relation_to_expected: entry.relation_to_expected,
+        }
+    }
 }
 
 impl RenderOwnerSampleCorrectionPlan {
@@ -5813,6 +5866,8 @@ mod tests {
         assert_eq!(selection.matched_entry_count(), 1);
         assert_eq!(selection.unmatched_entry_count(), 0);
         assert!(selection.all_entries_resolved());
+        assert_eq!(selection.surface_count(), 1);
+        assert!(!selection.is_empty());
         assert_eq!(selection.surfaces.len(), 1);
         assert_eq!(
             selection.surfaces[0].surface,
@@ -5821,6 +5876,34 @@ mod tests {
         assert_eq!(
             selection.surfaces[0].entries[0].correction.pixel,
             RenderPixel::new(1, 1)
+        );
+        let override_entries = selection.surfaces[0].overrides().collect::<Vec<_>>();
+        assert_eq!(override_entries.len(), 1);
+        assert_eq!(override_entries[0].pixel, RenderPixel::new(1, 1));
+        assert_eq!(override_entries[0].sample.to_pair(), [0.7, 0.5]);
+        assert_eq!(override_entries[0].replacement_rgba, [1, 2, 3, 255]);
+        assert_eq!(
+            override_entries[0].relation_to_expected,
+            Some(RenderOwnerSurfaceRelation::SameSurface)
+        );
+        assert_eq!(
+            selection
+                .selection_for_surface(&RenderOwnerSurfaceKey::new("body", 7))
+                .unwrap()
+                .surface,
+            RenderOwnerSurfaceKey::new("body", 7)
+        );
+        assert_eq!(
+            selection
+                .overrides_for_surface(&RenderOwnerSurfaceKey::new("body", 7))
+                .count(),
+            1
+        );
+        assert_eq!(
+            selection
+                .overrides_for_surface(&RenderOwnerSurfaceKey::new("body", 9))
+                .count(),
+            0
         );
         let unmatched_selection =
             plan.surface_selection_plan([RenderOwnerSurfaceKey::new("body", 8)]);
