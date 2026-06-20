@@ -27,10 +27,10 @@ recipes are convenience entry points. Use these first:
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. This does not change renderer artifacts; it writes JSON reports
-  showing how much a local sample/triangle ownership policy could improve the
-  existing raw images. The correction decision itself is shared through
-  `vrm-adapter` owner/sample policy types so renderer-path experiments can use
-  the same Sans I/O boundary.
+  and `*.manifest.json` files showing how much a local sample/triangle
+  ownership policy could improve the existing raw images. The correction
+  decision itself is shared through `vrm-adapter` owner/sample policy types so
+  renderer-path experiments can use the same Sans I/O boundary.
 - `wgpu_render_capture` and `bevy_render_capture` accept
   `--owner-sample-correction-manifest <path>` for renderer readback
   experiments. The manifest is applied before RGBA JSON, PNG, and imqraw

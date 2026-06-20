@@ -52,6 +52,8 @@ struct Options {
     out: Option<PathBuf>,
     #[arg(long)]
     corrected_imqraw_out: Option<PathBuf>,
+    #[arg(long)]
+    correction_manifest_out: Option<PathBuf>,
     #[arg(long, default_value_t = 0)]
     expected_index: usize,
     #[arg(long, default_value_t = 0)]
@@ -90,6 +92,26 @@ struct CorrectionReport {
     corrected_relation_to_expected: std::collections::BTreeMap<String, u64>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct CorrectionManifest {
+    generator: &'static str,
+    expected: String,
+    actual: String,
+    owner_hotspots: String,
+    rust_hotspots: String,
+    image_width: usize,
+    image_height: usize,
+    corrections: Vec<CorrectionManifestEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CorrectionManifestEntry {
+    x: u64,
+    y: u64,
+    rgba: [u8; 4],
+    relation_to_expected: String,
+}
+
 fn main() {
     if let Err(error) = run(Options::parse()) {
         eprintln!("{error}");
@@ -117,7 +139,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let actual = read_imqraw_rgba8(actual_path, options.actual_index)?;
     let owner = serde_json::from_str::<Value>(&fs::read_to_string(owner_path)?)?;
     let rust = serde_json::from_str::<Value>(&fs::read_to_string(rust_path)?)?;
-    let (report, corrected) = correction_report(
+    let (report, corrected, manifest) = correction_report(
         expected_path,
         actual_path,
         owner_path,
@@ -137,6 +159,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     if let Some(path) = &options.corrected_imqraw_out {
         write_imqraw_rgba8(path, corrected.width, corrected.height, &corrected.rgba)?;
     }
+    if let Some(path) = &options.correction_manifest_out {
+        write_file(path, &format!("{}\n", serde_json::to_string_pretty(&manifest)?))?;
+    }
     Ok(())
 }
 
@@ -151,7 +176,7 @@ fn correction_report(
     owner: &Value,
     rust: &Value,
     only_expected_closer: bool,
-) -> Result<(CorrectionReport, RgbaImage), Box<dyn Error>> {
+) -> Result<(CorrectionReport, RgbaImage, CorrectionManifest), Box<dyn Error>> {
     if expected.width != actual.width || expected.height != actual.height {
         return Err(format!(
             "image dimensions differ: expected {}x{}, actual {}x{}",
@@ -251,6 +276,24 @@ fn correction_report(
         &mut corrected.rgba,
         &decisions,
     )?;
+    let manifest = CorrectionManifest {
+        generator: "vrm-rs tools/render-parity/apply-owner-sample-correction.rs",
+        expected: display_path(expected_path),
+        actual: display_path(actual_path),
+        owner_hotspots: display_path(owner_path),
+        rust_hotspots: display_path(rust_path),
+        image_width: expected.width,
+        image_height: expected.height,
+        corrections: decisions
+            .iter()
+            .map(|decision| CorrectionManifestEntry {
+                x: decision.pixel.x(),
+                y: decision.pixel.y(),
+                rgba: decision.replacement_rgba,
+                relation_to_expected: decision.relation_to_expected.as_str().to_owned(),
+            })
+            .collect(),
+    };
 
     let report = CorrectionReport {
         expected: display_path(expected_path),
@@ -273,7 +316,7 @@ fn correction_report(
         corrected_pixel_tied: tied,
         corrected_relation_to_expected: relation_counts,
     };
-    Ok((report, corrected))
+    Ok((report, corrected, manifest))
 }
 
 fn read_imqraw_rgba8(path: &Path, index: usize) -> Result<RgbaImage, Box<dyn Error>> {
@@ -519,7 +562,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
-    let (report, corrected) = correction_report(
+    let (report, corrected, manifest) = correction_report(
         Path::new("expected.imqraw"),
         Path::new("actual.imqraw"),
         Path::new("owner.json"),
@@ -539,6 +582,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         Some(&1)
     );
     assert_eq!(&corrected.rgba[0..4], &[100, 100, 100, 255]);
+    assert_eq!(manifest.corrections.len(), 1);
+    assert_eq!(manifest.corrections[0].x, 0);
+    assert_eq!(manifest.corrections[0].y, 0);
+    assert_eq!(manifest.corrections[0].rgba, [100, 100, 100, 255]);
+    assert_eq!(
+        manifest.corrections[0].relation_to_expected,
+        "same-surface"
+    );
     assert!(
         report.after_all_rgb_psnr.unwrap_or_default()
             > report.before_all_rgb_psnr.unwrap_or_default()
