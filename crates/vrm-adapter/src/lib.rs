@@ -3143,6 +3143,7 @@ pub struct MtoonShaderParameters {
 pub const MTOON_REFERENCE_WGSL: &str = include_str!("mtoon_reference.wgsl");
 pub const MTOON_GPU_MATERIAL_GROUP: u32 = 1;
 pub const MTOON_GPU_UNIFORM_BINDING: u32 = 0;
+pub const RENDER_OWNER_SAMPLE_OVERRIDE_BINDING: u32 = 17;
 pub const MTOON_GPU_UNIFORM_SIZE: usize = std::mem::size_of::<MtoonGpuUniform>();
 
 #[repr(C)]

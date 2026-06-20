@@ -19,11 +19,12 @@ use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
     MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, RenderOwnerId, RenderOwnerSampleSelectionPlan,
-    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
-    RendererFrontFace, RendererMaterialAlphaMode, RendererMaterialCullMode, ScreenProjectionBounds,
-    ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
-    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING, RenderOwnerId,
+    RenderOwnerSampleSelectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    RenderOwnerSurfaceRelation, RendererFrontFace, RendererMaterialAlphaMode,
+    RendererMaterialCullMode, ScreenProjectionBounds, ScreenProjectionSize,
+    ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate, ZeroToOneDepth,
+    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
     project_triangle_to_screen, renderer_material_pipeline_plan,
 };
 use vrm_core::{Feature, MaterialRef, MtoonAlphaMode, NodeRef, TextureRef, VrmAnimation};
@@ -699,6 +700,7 @@ impl AshOwnerSampleOverrideRecord {
 pub struct AshOwnerSampleOverrideBufferPlan {
     pub surface: RenderOwnerSurfaceKey,
     pub records: Vec<AshOwnerSampleOverrideRecord>,
+    pub binding: u32,
     pub usage: vk::BufferUsageFlags,
     pub descriptor_type: vk::DescriptorType,
     pub stage_flags: vk::ShaderStageFlags,
@@ -719,6 +721,19 @@ pub enum AshOwnerSampleOverridePlanError {
     PixelOutOfRange { x: u64, y: u64 },
 }
 
+pub const fn ash_owner_sample_override_binding() -> u32 {
+    RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
+}
+
+pub fn ash_owner_sample_override_descriptor_set_layout_binding()
+-> vk::DescriptorSetLayoutBinding<'static> {
+    vk::DescriptorSetLayoutBinding::default()
+        .binding(ash_owner_sample_override_binding())
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+}
+
 pub fn ash_owner_sample_override_buffer_plans(
     selection: &RenderOwnerSampleSelectionPlan,
 ) -> Result<Vec<AshOwnerSampleOverrideBufferPlan>, AshOwnerSampleOverridePlanError> {
@@ -732,6 +747,7 @@ pub fn ash_owner_sample_override_buffer_plans(
                     .overrides()
                     .map(AshOwnerSampleOverrideRecord::from_override)
                     .collect::<Result<Vec<_>, _>>()?,
+                binding: ash_owner_sample_override_binding(),
                 usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -2953,6 +2969,7 @@ mod tests {
         assert_eq!(buffers.len(), 1);
         assert_eq!(buffers[0].surface, surface);
         assert_eq!(buffers[0].record_count(), 1);
+        assert_eq!(buffers[0].binding, ash_owner_sample_override_binding());
         assert!(
             buffers[0]
                 .usage
@@ -2974,6 +2991,18 @@ mod tests {
         assert_eq!(
             buffers[0].bytes().len(),
             ASH_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
+        );
+        let layout_binding = ash_owner_sample_override_descriptor_set_layout_binding();
+        assert_eq!(layout_binding.binding, ash_owner_sample_override_binding());
+        assert_eq!(
+            layout_binding.descriptor_type,
+            vk::DescriptorType::STORAGE_BUFFER
+        );
+        assert_eq!(layout_binding.descriptor_count, 1);
+        assert!(
+            layout_binding
+                .stage_flags
+                .contains(vk::ShaderStageFlags::FRAGMENT)
         );
     }
 

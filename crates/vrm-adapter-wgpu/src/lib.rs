@@ -14,10 +14,10 @@ use std::time::Instant;
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_REFERENCE_WGSL, MtoonGpuMaterial,
     MtoonGpuTextureBindingPlan, MtoonGpuUniform, MtoonMaterializationOptions, MtoonRendererPass,
-    MtoonSamplerHint, MtoonTextureSlot, RenderOwnerSampleSelectionPlan,
-    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
-    WorldMatrixAccess, WorldTransformUpdate, apply_vrma_animation_frame_with_look_at,
-    mtoon_gpu_materials,
+    MtoonSamplerHint, MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
+    RenderOwnerSampleSelectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    RenderOwnerSurfaceRelation, WorldMatrixAccess, WorldTransformUpdate,
+    apply_vrma_animation_frame_with_look_at, mtoon_gpu_materials,
 };
 use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation, VrmDocument};
 use vrm_io::{
@@ -153,6 +153,7 @@ impl WgpuOwnerSampleOverrideRecord {
 pub struct WgpuOwnerSampleOverrideBufferPlan {
     pub surface: RenderOwnerSurfaceKey,
     pub records: Vec<WgpuOwnerSampleOverrideRecord>,
+    pub binding: u32,
     pub usage: wgpu::BufferUsages,
     pub visibility: wgpu::ShaderStages,
     pub binding_type: wgpu::BufferBindingType,
@@ -173,6 +174,23 @@ pub enum WgpuOwnerSampleOverridePlanError {
     PixelOutOfRange { x: u64, y: u64 },
 }
 
+pub const fn wgpu_owner_sample_override_binding() -> u32 {
+    RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
+}
+
+pub fn wgpu_owner_sample_override_bind_group_layout_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: wgpu_owner_sample_override_binding(),
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
 pub fn wgpu_owner_sample_override_buffer_plans(
     selection: &RenderOwnerSampleSelectionPlan,
 ) -> Result<Vec<WgpuOwnerSampleOverrideBufferPlan>, WgpuOwnerSampleOverridePlanError> {
@@ -186,6 +204,7 @@ pub fn wgpu_owner_sample_override_buffer_plans(
                     .overrides()
                     .map(WgpuOwnerSampleOverrideRecord::from_override)
                     .collect::<Result<Vec<_>, _>>()?,
+                binding: wgpu_owner_sample_override_binding(),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 binding_type: wgpu::BufferBindingType::Storage { read_only: true },
@@ -1314,6 +1333,7 @@ mod tests {
         assert_eq!(buffers.len(), 1);
         assert_eq!(buffers[0].surface, surface);
         assert_eq!(buffers[0].record_count(), 1);
+        assert_eq!(buffers[0].binding, wgpu_owner_sample_override_binding());
         assert!(buffers[0].usage.contains(wgpu::BufferUsages::STORAGE));
         assert!(buffers[0].visibility.contains(wgpu::ShaderStages::FRAGMENT));
         assert_eq!(
@@ -1327,6 +1347,21 @@ mod tests {
         assert_eq!(
             buffers[0].bytes().len(),
             WGPU_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
+        );
+        let layout_entry = wgpu_owner_sample_override_bind_group_layout_entry();
+        assert_eq!(layout_entry.binding, wgpu_owner_sample_override_binding());
+        assert!(
+            layout_entry
+                .visibility
+                .contains(wgpu::ShaderStages::FRAGMENT)
+        );
+        assert_eq!(
+            layout_entry.ty,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
         );
     }
 }

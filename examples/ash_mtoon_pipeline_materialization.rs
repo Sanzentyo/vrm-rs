@@ -10,9 +10,9 @@
 use vrm_adapter::{
     MTOON_GPU_UNIFORM_SIZE, MTOON_REFERENCE_WGSL, MtoonGpuMaterial, MtoonGpuUniform,
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureBindingPlan, MtoonTextureSlot, RendererMaterialAlphaMode, RendererMaterialCullMode,
-    RendererMaterialPipelinePlan, mtoon_gpu_combined_image_sampler_binding_number,
-    mtoon_renderer_material_plans,
+    MtoonTextureBindingPlan, MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
+    RendererMaterialAlphaMode, RendererMaterialCullMode, RendererMaterialPipelinePlan,
+    mtoon_gpu_combined_image_sampler_binding_number, mtoon_renderer_material_plans,
 };
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonMaterial, MtoonRenderQueue,
@@ -28,6 +28,7 @@ enum VkShaderStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum VkDescriptorType {
     UniformBuffer,
+    StorageBuffer,
     CombinedImageSampler,
 }
 
@@ -230,6 +231,12 @@ fn descriptor_set_layout(
         stage_flags: VkShaderStage::VertexFragment,
         slot: None,
     })
+    .chain(std::iter::once(VkDescriptorSetLayoutBinding {
+        binding: owner_sample_override_binding(),
+        descriptor_type: VkDescriptorType::StorageBuffer,
+        stage_flags: VkShaderStage::Fragment,
+        slot: None,
+    }))
     .chain(
         bindings
             .iter()
@@ -259,6 +266,10 @@ fn image_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<VkImageBinding> {
 
 fn texture_binding_number(index: usize) -> u32 {
     mtoon_gpu_combined_image_sampler_binding_number(index)
+}
+
+fn owner_sample_override_binding() -> u32 {
+    RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
 }
 
 fn texture_stage_flags(slot: MtoonTextureSlot) -> VkShaderStage {
@@ -417,16 +428,35 @@ mod tests {
             VkDescriptorType::UniformBuffer
         );
         assert_eq!(
-            base.descriptor_set_layout[1].slot,
+            base.descriptor_set_layout[1].binding,
+            owner_sample_override_binding()
+        );
+        assert_eq!(
+            base.descriptor_set_layout[1].descriptor_type,
+            VkDescriptorType::StorageBuffer
+        );
+        assert_eq!(
+            base.descriptor_set_layout[1].stage_flags,
+            VkShaderStage::Fragment
+        );
+        assert_eq!(
+            base.descriptor_set_layout[2].slot,
             Some(MtoonTextureSlot::Main)
         );
         assert_eq!(
-            base.descriptor_set_layout[6].slot,
+            base.descriptor_set_layout[7].slot,
             Some(MtoonTextureSlot::OutlineWidth)
         );
         assert_eq!(
-            base.descriptor_set_layout[6].stage_flags,
+            base.descriptor_set_layout[7].stage_flags,
             VkShaderStage::VertexFragment
+        );
+        assert_eq!(
+            base.descriptor_set_layout
+                .iter()
+                .filter(|entry| entry.binding == owner_sample_override_binding())
+                .count(),
+            1
         );
         assert_eq!(material.image_bindings[2].slot, MtoonTextureSlot::Normal);
         assert!(material.image_bindings[2].sampler.normal_map_decode);

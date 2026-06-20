@@ -8,9 +8,10 @@
 use vrm_adapter::{
     MTOON_GPU_UNIFORM_SIZE, MTOON_REFERENCE_WGSL, MtoonGpuMaterial, MtoonGpuUniform,
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureBindingPlan, MtoonTextureSlot, RendererMaterialAlphaMode, RendererMaterialCullMode,
-    RendererMaterialPipelinePlan, mtoon_gpu_sampler_binding_number,
-    mtoon_gpu_texture_binding_number, mtoon_renderer_material_plans,
+    MtoonTextureBindingPlan, MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
+    RendererMaterialAlphaMode, RendererMaterialCullMode, RendererMaterialPipelinePlan,
+    mtoon_gpu_sampler_binding_number, mtoon_gpu_texture_binding_number,
+    mtoon_renderer_material_plans,
 };
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonCullMode, MtoonMaterial,
@@ -26,6 +27,7 @@ enum WgpuShaderStages {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum WgpuBindingType {
     UniformBuffer,
+    StorageBuffer,
     Texture,
     Sampler,
 }
@@ -235,6 +237,13 @@ fn bind_group_layout(bindings: &[MtoonTextureBindingPlan]) -> Vec<WgpuBindGroupL
         texture_slot: None,
         sample_type: None,
     })
+    .chain(std::iter::once(WgpuBindGroupLayoutEntry {
+        binding: owner_sample_override_binding(),
+        visibility: WgpuShaderStages::Fragment,
+        binding_type: WgpuBindingType::StorageBuffer,
+        texture_slot: None,
+        sample_type: None,
+    }))
     .chain(bindings.iter().enumerate().flat_map(|(index, binding)| {
         let texture_binding = texture_binding_number(index);
         let sampler_binding = sampler_binding_number(index);
@@ -278,6 +287,10 @@ fn texture_binding_number(index: usize) -> u32 {
 
 fn sampler_binding_number(index: usize) -> u32 {
     mtoon_gpu_sampler_binding_number(index)
+}
+
+fn owner_sample_override_binding() -> u32 {
+    RENDER_OWNER_SAMPLE_OVERRIDE_BINDING
 }
 
 fn texture_visibility(slot: MtoonTextureSlot) -> WgpuShaderStages {
@@ -427,18 +440,28 @@ mod tests {
         let layout = &table.pipelines[0].bind_group_layout;
 
         assert_eq!(layout[0].binding_type, WgpuBindingType::UniformBuffer);
-        assert_eq!(layout[1].texture_slot, Some(MtoonTextureSlot::Main));
-        assert_eq!(layout[2].binding_type, WgpuBindingType::Sampler);
-        assert_eq!(layout[7].texture_slot, Some(MtoonTextureSlot::Normal));
+        assert_eq!(layout[1].binding, owner_sample_override_binding());
+        assert_eq!(layout[1].binding_type, WgpuBindingType::StorageBuffer);
+        assert_eq!(layout[1].visibility, WgpuShaderStages::Fragment);
+        assert_eq!(layout[2].texture_slot, Some(MtoonTextureSlot::Main));
+        assert_eq!(layout[3].binding_type, WgpuBindingType::Sampler);
+        assert_eq!(layout[8].texture_slot, Some(MtoonTextureSlot::Normal));
         assert_eq!(
-            layout[7].sample_type,
+            layout[8].sample_type,
             Some(WgpuTextureSampleType::NormalMap)
         );
         assert_eq!(
-            layout[13].texture_slot,
+            layout[14].texture_slot,
             Some(MtoonTextureSlot::OutlineWidth)
         );
-        assert_eq!(layout[13].visibility, WgpuShaderStages::VertexFragment);
+        assert_eq!(layout[14].visibility, WgpuShaderStages::VertexFragment);
+        assert_eq!(
+            layout
+                .iter()
+                .filter(|entry| entry.binding == owner_sample_override_binding())
+                .count(),
+            1
+        );
     }
 
     #[test]
