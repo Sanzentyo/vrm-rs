@@ -18,7 +18,7 @@ use vrm_adapter::{
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
     AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
-    ash_renderer_frame_from_plan, ash_texture_fallback_for_binding,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{GltfAlphaMode, GltfMaterialTextureFallback, RgbaMipLevel, generate_rgba_mip_chain};
@@ -1959,7 +1959,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .transpose()?;
     let frame_plan =
         frame_plan_from_options_with_viewport(&options.frame, options.width, options.height)?;
-    let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
+    let owner_sample_selection = correction_plan
+        .as_ref()
+        .map(|plan| plan.surface_selection_plan(frame_plan.render_surfaces.iter()));
+    let renderer_frame = ash_renderer_frame_from_plan_with_owner_sample_selection(
+        &frame_plan,
+        owner_sample_selection.as_ref(),
+    )
+    .map_err(|error| format!("failed to build ash owner/sample renderer frame: {error:?}"))?;
     let shaders = shader_sources_from_options(&options)?;
     let renderer = UnsafeAshDeviceRenderer::new()?;
     let resources = renderer.materialize_frame(

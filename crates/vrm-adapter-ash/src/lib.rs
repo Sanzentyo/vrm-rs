@@ -8,7 +8,7 @@
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use clap::{Parser, ValueEnum};
-use glam::Mat4;
+use glam::{Mat4, Vec3, Vec4};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -261,6 +261,9 @@ pub struct AshVrmVertex {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshVrmPrimitive {
     pub node: NodeRef,
+    pub mesh_index: usize,
+    pub primitive_index: usize,
+    pub material_name: Option<String>,
     pub material: Option<MaterialRef>,
     pub pass: AshMtoonPass,
     pub vertices: Vec<AshVrmVertex>,
@@ -650,6 +653,7 @@ pub struct AshVrmFramePlan {
     pub texture_uploads: Vec<AshTextureUpload>,
     pub mtoon_pipelines: Vec<AshMtoonPipelinePlan>,
     pub scene_uniform: AshSceneUniform,
+    pub scene_options: AshSceneOptions,
     pub diagnostic_owner_ids: Vec<AshDiagnosticOwnerId>,
     pub render_surfaces: Vec<RenderOwnerSurfaceKey>,
 }
@@ -1287,12 +1291,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
     let owner_sample_override_buffer_indices = owner_sample_override_buffers
         .iter()
         .enumerate()
-        .map(|(index, upload)| {
-            (
-                (upload.material, upload.pipeline_plan_index),
-                plan.primitives.len() * 2 + index,
-            )
-        })
+        .map(|(index, upload)| ((upload.material, upload.pipeline_plan_index), index))
         .collect::<HashMap<_, _>>();
     let descriptor_sets = plan
         .mtoon_pipelines
@@ -1366,8 +1365,20 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 })
         })
         .collect::<Vec<_>>();
-    let mut buffers = Vec::with_capacity(plan.primitives.len() * 2);
+    let mut pipelines = pipelines;
+    let mut buffers = owner_sample_override_buffers
+        .into_iter()
+        .map(|upload| AshBufferUpload {
+            role: AshBufferRole::OwnerSampleOverride,
+            usage: upload.usage,
+            stride: std::mem::size_of::<AshOwnerSampleOverrideRecord>() as u32,
+            count: upload.records.len() as u32,
+            bytes: bytemuck::cast_slice(&upload.records).to_vec(),
+        })
+        .collect::<Vec<_>>();
+    buffers.reserve(plan.primitives.len() * 4);
     let mut draw_calls = Vec::with_capacity(plan.primitives.len());
+    let mut next_resolve_pipeline_plan_index = plan.mtoon_pipelines.len();
     for (primitive_index, primitive) in plan.primitives.iter().enumerate() {
         let vertex_buffer_index = buffers.len();
         buffers.push(AshBufferUpload {
@@ -1408,18 +1419,77 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
             render_order,
             phase_order,
         });
+        if let (
+            Some(selection),
+            Some(material),
+            Some(pipeline_plan_index),
+            Some(descriptor_set_index),
+        ) = (
+            owner_sample_selection,
+            primitive.material,
+            pipeline_plan_index,
+            descriptor_set_index,
+        ) {
+            let material_name = primitive.material_name.as_deref().or_else(|| {
+                plan.mtoon_pipelines
+                    .get(pipeline_plan_index)
+                    .and_then(|pipeline| pipeline.name.as_deref())
+            });
+            let records =
+                ash_owner_sample_records_for_primitive(selection, primitive, material_name)?;
+            let resolve_vertices = ash_owner_sample_resolve_vertices_for_primitive(
+                primitive,
+                &records,
+                plan.scene_options,
+            );
+            if !resolve_vertices.is_empty() {
+                let resolve_pipeline_plan_index = next_resolve_pipeline_plan_index;
+                next_resolve_pipeline_plan_index += 1;
+                let Some(source_pipeline) = plan.mtoon_pipelines.get(pipeline_plan_index) else {
+                    continue;
+                };
+                pipelines.push(AshGraphicsPipelinePlan {
+                    material,
+                    pipeline_plan_index: resolve_pipeline_plan_index,
+                    descriptor_set_index,
+                    key: ash_owner_sample_resolve_pipeline_key(source_pipeline.key),
+                    vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
+                    vertex_attributes: ash_vrm_vertex_attributes(),
+                    color_format: vk::Format::R8G8B8A8_UNORM,
+                    depth_format: Some(ash_reference_depth_format()),
+                });
+                let resolve_vertex_buffer_index = buffers.len();
+                buffers.push(AshBufferUpload {
+                    role: AshBufferRole::Vertex,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                    stride: std::mem::size_of::<AshVrmVertex>() as u32,
+                    count: resolve_vertices.len() as u32,
+                    bytes: bytemuck::cast_slice(&resolve_vertices).to_vec(),
+                });
+                let resolve_indices =
+                    (0..u32::try_from(resolve_vertices.len()).unwrap_or(0)).collect::<Vec<_>>();
+                let resolve_index_buffer_index = buffers.len();
+                buffers.push(AshBufferUpload {
+                    role: AshBufferRole::Index,
+                    usage: vk::BufferUsageFlags::INDEX_BUFFER,
+                    stride: std::mem::size_of::<u32>() as u32,
+                    count: resolve_indices.len() as u32,
+                    bytes: bytemuck::cast_slice(&resolve_indices).to_vec(),
+                });
+                draw_calls.push(AshDrawCallPlan {
+                    primitive_index,
+                    material: primitive.material,
+                    pipeline_plan_index: Some(resolve_pipeline_plan_index),
+                    descriptor_set_index: Some(descriptor_set_index),
+                    vertex_buffer_index: resolve_vertex_buffer_index,
+                    index_buffer_index: resolve_index_buffer_index,
+                    index_count: resolve_indices.len() as u32,
+                    render_order: render_order.saturating_add(10_000),
+                    phase_order: phase_order.saturating_add(10_000),
+                });
+            }
+        }
     }
-    buffers.extend(
-        owner_sample_override_buffers
-            .into_iter()
-            .map(|upload| AshBufferUpload {
-                role: AshBufferRole::OwnerSampleOverride,
-                usage: upload.usage,
-                stride: std::mem::size_of::<AshOwnerSampleOverrideRecord>() as u32,
-                count: upload.records.len() as u32,
-                bytes: bytemuck::cast_slice(&upload.records).to_vec(),
-            }),
-    );
     draw_calls.sort_by_key(|draw| (draw.render_order, draw.primitive_index));
     Ok(AshRendererFrame {
         buffers,
@@ -1470,6 +1540,202 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
         descriptor_sets,
         draw_calls,
     })
+}
+
+fn ash_owner_sample_records_for_primitive(
+    selection: &RenderOwnerSampleSelectionPlan,
+    primitive: &AshVrmPrimitive,
+    material_name: Option<&str>,
+) -> Result<Vec<AshOwnerSampleOverrideRecord>, AshOwnerSampleOverridePlanError> {
+    let Some(material_name) = material_name else {
+        return Ok(Vec::new());
+    };
+    let draw = RenderOwnerSampleDrawKey::new(
+        u64::try_from(primitive.node.0).unwrap_or(u64::MAX),
+        u64::try_from(primitive.mesh_index).unwrap_or(u64::MAX),
+        u64::try_from(primitive.primitive_index).unwrap_or(u64::MAX),
+        ash_owner_sample_render_pass(primitive.pass),
+    );
+    let surfaces = (0..primitive.indices.len() / 3)
+        .filter_map(|triangle| {
+            Some(RenderOwnerSurfaceKey::new(
+                material_name,
+                u64::try_from(triangle).ok()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let strict_records = ash_owner_sample_override_buffer_plan_for_surfaces_and_draw(
+        selection,
+        surfaces.iter(),
+        &draw,
+    )?
+    .records;
+    if !strict_records.is_empty() {
+        return Ok(strict_records);
+    }
+    surfaces
+        .iter()
+        .flat_map(|surface| {
+            selection
+                .selection_for_surface(surface)
+                .into_iter()
+                .flat_map(|surface_selection| surface_selection.entries.iter())
+                .filter(|entry| ash_owner_sample_entry_matches_mesh_alias(entry, primitive))
+                .map(RenderOwnerSampleSurfaceOverride::from)
+        })
+        .map(AshOwnerSampleOverrideRecord::from_override)
+        .collect()
+}
+
+fn ash_owner_sample_render_pass(pass: AshMtoonPass) -> RenderOwnerSamplePass {
+    match pass {
+        AshMtoonPass::Base => RenderOwnerSamplePass::Base,
+        AshMtoonPass::Outline => RenderOwnerSamplePass::Outline,
+    }
+}
+
+fn ash_owner_sample_entry_matches_mesh_alias(
+    entry: &vrm_adapter::RenderOwnerSampleCorrectionManifestEntry,
+    primitive: &AshVrmPrimitive,
+) -> bool {
+    let Some(geometry) = &entry.sample_geometry else {
+        return false;
+    };
+    geometry.node == u64::try_from(primitive.node.0).unwrap_or(u64::MAX)
+        && geometry.primitive == u64::try_from(primitive.primitive_index).unwrap_or(u64::MAX)
+        && geometry.pass == ash_owner_sample_render_pass(primitive.pass)
+}
+
+fn ash_owner_sample_resolve_pipeline_key(source: AshPipelineKey) -> AshPipelineKey {
+    AshPipelineKey {
+        topology: vk::PrimitiveTopology::POINT_LIST,
+        cull_mode: vk::CullModeFlags::empty(),
+        depth_write_enable: false,
+        depth_compare_op: vk::CompareOp::ALWAYS,
+        render_order: source.render_order.saturating_add(10_000),
+        phase_order: source.phase_order.saturating_add(10_000),
+        ..source
+    }
+}
+
+fn ash_owner_sample_resolve_vertices_for_primitive(
+    primitive: &AshVrmPrimitive,
+    records: &[AshOwnerSampleOverrideRecord],
+    scene_options: AshSceneOptions,
+) -> Vec<AshVrmVertex> {
+    records
+        .iter()
+        .filter(|record| record.geometry_flags != 0)
+        .filter_map(|record| ash_owner_sample_resolve_vertex(primitive, record, scene_options))
+        .collect()
+}
+
+fn ash_owner_sample_resolve_vertex(
+    primitive: &AshVrmPrimitive,
+    record: &AshOwnerSampleOverrideRecord,
+    scene_options: AshSceneOptions,
+) -> Option<AshVrmVertex> {
+    let [ia, ib, ic] = [
+        usize::try_from(record.geometry_indices[0]).ok()?,
+        usize::try_from(record.geometry_indices[1]).ok()?,
+        usize::try_from(record.geometry_indices[2]).ok()?,
+    ];
+    let a = *primitive.vertices.get(ia)?;
+    let b = *primitive.vertices.get(ib)?;
+    let c = *primitive.vertices.get(ic)?;
+    let weights = [
+        record.barycentric_depth[0],
+        record.barycentric_depth[1],
+        record.barycentric_depth[2],
+    ];
+    let mut vertex = ash_interpolate_vertex(a, b, c, weights);
+    vertex.position = ash_owner_sample_pixel_world(record.pixel, scene_options)?;
+    vertex.tex_coord_0 = [record.geometry_uvs[0], record.geometry_uvs[1]];
+    Some(vertex)
+}
+
+fn ash_owner_sample_pixel_world(
+    pixel: [u32; 2],
+    scene_options: AshSceneOptions,
+) -> Option<[f32; 3]> {
+    let size = scene_options.sanitized_screen_projection_size();
+    let pixel_x = pixel[0] as f32;
+    let pixel_y = pixel[1] as f32;
+    if !(pixel_x + 0.5 < size.width && pixel_y + 0.5 < size.height) {
+        return None;
+    }
+    let ndc_x = (pixel_x + 0.5) / size.width * 2.0 - 1.0;
+    let ndc_y = (pixel_y + 0.5) / size.height * 2.0 - 1.0;
+    let clip = Vec4::new(ndc_x, ndc_y, 0.5, 1.0);
+    let world = (scene_options.projection() * scene_options.view()).inverse() * clip;
+    (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
+}
+
+fn ash_interpolate_vertex(
+    a: AshVrmVertex,
+    b: AshVrmVertex,
+    c: AshVrmVertex,
+    weights: [f32; 3],
+) -> AshVrmVertex {
+    AshVrmVertex {
+        position: interpolate_vec3(a.position, b.position, c.position, weights),
+        tex_coord_0: interpolate_vec2(a.tex_coord_0, b.tex_coord_0, c.tex_coord_0, weights),
+        color_0: interpolate_vec4(a.color_0, b.color_0, c.color_0, weights),
+        normal: normalize_or_fallback(
+            interpolate_vec3(a.normal, b.normal, c.normal, weights),
+            a.normal,
+        ),
+        tangent: normalize_tangent(interpolate_vec4(a.tangent, b.tangent, c.tangent, weights)),
+        normal_scale: interpolate_scalar(a.normal_scale, b.normal_scale, c.normal_scale, weights),
+        double_sided: a.double_sided,
+    }
+}
+
+fn interpolate_vec2(a: [f32; 2], b: [f32; 2], c: [f32; 2], weights: [f32; 3]) -> [f32; 2] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+    ]
+}
+
+fn interpolate_vec3(a: [f32; 3], b: [f32; 3], c: [f32; 3], weights: [f32; 3]) -> [f32; 3] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+    ]
+}
+
+fn interpolate_vec4(a: [f32; 4], b: [f32; 4], c: [f32; 4], weights: [f32; 3]) -> [f32; 4] {
+    [
+        interpolate_scalar(a[0], b[0], c[0], weights),
+        interpolate_scalar(a[1], b[1], c[1], weights),
+        interpolate_scalar(a[2], b[2], c[2], weights),
+        interpolate_scalar(a[3], b[3], c[3], weights),
+    ]
+}
+
+fn interpolate_scalar(a: f32, b: f32, c: f32, weights: [f32; 3]) -> f32 {
+    weights[0] * a + weights[1] * b + weights[2] * c
+}
+
+fn normalize_or_fallback(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+    let vector = Vec3::from_array(value);
+    if vector.length_squared() > f32::EPSILON {
+        vector.normalize().to_array()
+    } else {
+        fallback
+    }
+}
+
+fn normalize_tangent(value: [f32; 4]) -> [f32; 4] {
+    let tangent = Vec3::new(value[0], value[1], value[2]);
+    let normalized = if tangent.length_squared() > f32::EPSILON {
+        tangent.normalize()
+    } else {
+        Vec3::X
+    };
+    [normalized.x, normalized.y, normalized.z, value[3].signum()]
 }
 
 pub fn ash_vrm_vertex_attributes() -> Vec<AshVertexAttributePlan> {
@@ -1533,6 +1799,13 @@ struct AshPrimitiveBakeSettings {
     mtoon_time: f32,
     scene_options: AshSceneOptions,
     render_options: AshRenderOptions,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AshPrimitiveSourceIndex {
+    node: usize,
+    mesh: usize,
+    primitive: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1683,6 +1956,7 @@ impl AshVrmFramePlanner {
             texture_uploads,
             mtoon_pipelines,
             scene_uniform: AshSceneUniform::from_scene_options(scene_options),
+            scene_options,
             diagnostic_owner_ids: baked.diagnostic_owner_ids,
             render_surfaces: baked.render_surfaces,
         })
@@ -1715,8 +1989,13 @@ impl AshVrmFramePlanner {
             };
             let mesh = &self.loaded.meshes[mesh_index];
             for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+                let source_index = AshPrimitiveSourceIndex {
+                    node: node_index,
+                    mesh: mesh_index,
+                    primitive: primitive_index,
+                };
                 let base = self.bake_primitive(
-                    node_index,
+                    source_index,
                     node,
                     mesh,
                     primitive,
@@ -1747,7 +2026,7 @@ impl AshVrmFramePlanner {
                         .is_some()
                 {
                     let outline = self.bake_primitive(
-                        node_index,
+                        source_index,
                         node,
                         mesh,
                         primitive,
@@ -1793,7 +2072,7 @@ impl AshVrmFramePlanner {
 
     fn bake_primitive(
         &self,
-        node_index: usize,
+        source_index: AshPrimitiveSourceIndex,
         node: &GltfNodeRest,
         mesh: &vrm_io::GltfMeshData,
         primitive: &GltfPrimitiveData,
@@ -1802,13 +2081,13 @@ impl AshVrmFramePlanner {
         let morph_weights = active_morph_weights(
             &self.scene,
             &self.expression_effects,
-            node_index,
+            source_index.node,
             node,
             mesh,
         );
         let world_matrices = self.world_matrices();
         let orientation = ash_model_orientation();
-        let world = orientation * world_matrices[node_index];
+        let world = orientation * world_matrices[source_index.node];
         let skin_matrices = node.skin.and_then(|skin| {
             self.loaded
                 .skins
@@ -1889,7 +2168,13 @@ impl AshVrmFramePlanner {
             })
             .collect();
         Ok(AshVrmPrimitive {
-            node: NodeRef(node_index),
+            node: NodeRef(source_index.node),
+            mesh_index: source_index.mesh,
+            primitive_index: source_index.primitive,
+            material_name: self
+                .loaded
+                .material_display_name(primitive.material)
+                .map(str::to_owned),
             material: primitive.material.map(MaterialRef),
             pass: settings.pass,
             vertices,
@@ -3634,6 +3919,9 @@ mod tests {
         let primitive = |render_order, phase_order| AshPrimitiveRecord {
             primitive: AshVrmPrimitive {
                 node: NodeRef(0),
+                mesh_index: 0,
+                primitive_index: 0,
+                material_name: None,
                 material: Some(MaterialRef(0)),
                 pass: AshMtoonPass::Base,
                 vertices: vec![vertex; 3],
@@ -3678,6 +3966,9 @@ mod tests {
         let record = AshPrimitiveRecord {
             primitive: AshVrmPrimitive {
                 node: NodeRef(0),
+                mesh_index: 0,
+                primitive_index: 0,
+                material_name: None,
                 material: Some(MaterialRef(0)),
                 pass: AshMtoonPass::Base,
                 vertices: vec![vertex; 4],
@@ -3815,6 +4106,7 @@ mod tests {
         assert!(vertex_shader.contains("layout(location = 4) in vec4 in_tangent;"));
         assert!(vertex_shader.contains("layout(location = 5) in float in_normal_scale;"));
         assert!(vertex_shader.contains("layout(location = 6) in float in_double_sided;"));
+        assert!(vertex_shader.contains("gl_PointSize = 1.0;"));
         assert!(vertex_shader.contains("mtoon.flags.z == 1u"));
         assert!(vertex_shader.contains("gl_Position.z += 0.000001 * gl_Position.w"));
     }
@@ -3824,6 +4116,9 @@ mod tests {
         let plan = AshVrmFramePlan {
             primitives: vec![AshVrmPrimitive {
                 node: NodeRef(0),
+                mesh_index: 0,
+                primitive_index: 0,
+                material_name: None,
                 material: Some(MaterialRef(0)),
                 pass: AshMtoonPass::Base,
                 vertices: vec![AshVrmVertex {
@@ -3869,6 +4164,7 @@ mod tests {
                 emissive_color: [0.0, 0.0, 0.0],
             }],
             scene_uniform: AshSceneUniform::default(),
+            scene_options: AshSceneOptions::default(),
             diagnostic_owner_ids: Vec::new(),
             render_surfaces: Vec::new(),
         };
@@ -3957,7 +4253,7 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.descriptor_sets[0].bindings[14].buffer_upload_index,
-            Some(2)
+            Some(0)
         );
         assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
@@ -3968,20 +4264,20 @@ mod tests {
             Some(ash_reference_depth_format())
         );
         assert_eq!(renderer_frame.pipelines[0].vertex_attributes.len(), 7);
-        assert_eq!(renderer_frame.buffers[0].stride, 72);
+        assert_eq!(renderer_frame.buffers[1].stride, 72);
         assert_eq!(
-            renderer_frame.buffers[0].usage,
+            renderer_frame.buffers[1].usage,
             vk::BufferUsageFlags::VERTEX_BUFFER
         );
         assert_eq!(
-            renderer_frame.buffers[2].role,
+            renderer_frame.buffers[0].role,
             AshBufferRole::OwnerSampleOverride
         );
         assert_eq!(
-            renderer_frame.buffers[2].usage,
+            renderer_frame.buffers[0].usage,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
         );
-        assert_eq!(renderer_frame.buffers[2].count, 1);
+        assert_eq!(renderer_frame.buffers[0].count, 1);
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
 
@@ -4012,12 +4308,12 @@ mod tests {
                     descriptor_set_index: 0,
                 },
                 AshCommandPlan::BindVertexBuffer {
-                    buffer_index: 0,
+                    buffer_index: 1,
                     binding: 0,
                     offset: 0,
                 },
                 AshCommandPlan::BindIndexBuffer {
-                    buffer_index: 1,
+                    buffer_index: 2,
                     offset: 0,
                     index_type: vk::IndexType::UINT32,
                 },
@@ -4084,11 +4380,15 @@ mod tests {
                 emissive_color: [0.0, 0.0, 0.0],
             }],
             scene_uniform: AshSceneUniform::default(),
+            scene_options: AshSceneOptions::default(),
             diagnostic_owner_ids: Vec::new(),
             render_surfaces: vec![surface],
         };
         plan.primitives.push(AshVrmPrimitive {
             node: NodeRef(0),
+            mesh_index: 3,
+            primitive_index: 4,
+            material_name: None,
             material: Some(MaterialRef(0)),
             pass: AshMtoonPass::Base,
             vertices: Vec::new(),
@@ -4126,6 +4426,146 @@ mod tests {
     }
 
     #[test]
+    fn renderer_frame_adds_owner_sample_resolve_draw_from_geometry() {
+        let surface = RenderOwnerSurfaceKey::new("mat", 0);
+        let geometry = vrm_adapter::RenderOwnerSampleGeometry {
+            node: 2,
+            mesh: 99,
+            primitive: 4,
+            triangle: 0,
+            indices: [0, 1, 2],
+            barycentric: [0.2, 0.3, 0.5],
+            raw_uv: [0.42, 0.43],
+            base_uv: [0.42, 0.43],
+            depth: 0.97,
+            pass: RenderOwnerSamplePass::Base,
+        };
+        let selection = RenderOwnerSampleSelectionPlan {
+            surfaces: vec![vrm_adapter::RenderOwnerSampleSurfaceSelection {
+                surface: surface.clone(),
+                entries: vec![vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                    correction: vrm_adapter::RenderRgba8Correction::new(
+                        vrm_adapter::RenderPixel::new(12, 34),
+                        [64, 128, 255, 255],
+                    ),
+                    sample: vrm_adapter::RenderOwnerSampleKey::from_pair(
+                        surface.clone(),
+                        [0.25, 0.75],
+                    ),
+                    relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
+                    sample_geometry: Some(geometry),
+                }],
+            }],
+            unmatched_entries: Vec::new(),
+        };
+        let source_vertex = |position, color| AshVrmVertex {
+            position,
+            tex_coord_0: [0.0, 0.0],
+            color_0: color,
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            normal_scale: 1.0,
+            double_sided: 0.0,
+        };
+        let scene_options = AshSceneOptions {
+            aspect_ratio: 2.0,
+            screen_projection_size: ScreenProjectionSize {
+                width: 256.0,
+                height: 128.0,
+            },
+            camera_z: 3.0,
+            ..Default::default()
+        };
+        let plan = AshVrmFramePlan {
+            primitives: vec![AshVrmPrimitive {
+                node: NodeRef(2),
+                mesh_index: 3,
+                primitive_index: 4,
+                material_name: Some("mat".to_owned()),
+                material: Some(MaterialRef(0)),
+                pass: AshMtoonPass::Base,
+                vertices: vec![
+                    source_vertex([0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]),
+                    source_vertex([1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 1.0]),
+                    source_vertex([0.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]),
+                ],
+                indices: vec![0, 1, 2],
+            }],
+            materials: Vec::new(),
+            texture_uploads: Vec::new(),
+            mtoon_pipelines: vec![AshMtoonPipelinePlan {
+                material: MaterialRef(0),
+                name: Some("mat".to_owned()),
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+                uniform: MtoonGpuUniform::zeroed(),
+                uv_uniform: AshMaterialUvUniform::default(),
+                render_extra_uniform: AshMaterialExtraUniform::default(),
+                uniform_buffer_size: MTOON_GPU_UNIFORM_SIZE as u32,
+                alpha_cutoff: 0.5,
+                outline_width: 0.0,
+                base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                emissive_color: [0.0, 0.0, 0.0],
+            }],
+            scene_uniform: AshSceneUniform::from_scene_options(scene_options),
+            scene_options,
+            diagnostic_owner_ids: Vec::new(),
+            render_surfaces: vec![surface],
+        };
+
+        let renderer_frame =
+            ash_renderer_frame_from_plan_with_owner_sample_selection(&plan, Some(&selection))
+                .unwrap();
+
+        assert_eq!(renderer_frame.pipelines.len(), 2);
+        assert_eq!(
+            renderer_frame.pipelines[1].key.topology,
+            vk::PrimitiveTopology::POINT_LIST
+        );
+        assert_eq!(
+            renderer_frame.pipelines[1].key.depth_compare_op,
+            vk::CompareOp::ALWAYS
+        );
+        assert!(!renderer_frame.pipelines[1].key.depth_write_enable);
+        assert_eq!(renderer_frame.draw_calls.len(), 2);
+        assert_eq!(renderer_frame.draw_calls[1].index_count, 1);
+        let vertex_buffer =
+            &renderer_frame.buffers[renderer_frame.draw_calls[1].vertex_buffer_index];
+        let vertex = bytemuck::pod_read_unaligned::<AshVrmVertex>(
+            &vertex_buffer.bytes[..std::mem::size_of::<AshVrmVertex>()],
+        );
+        assert_eq!(vertex.tex_coord_0, [0.42, 0.43]);
+        assert_eq!(vertex.color_0, [0.2, 0.3, 0.5, 1.0]);
+        assert_eq!(
+            vertex.position,
+            ash_owner_sample_pixel_world([12, 34], scene_options).unwrap()
+        );
+        let clip = scene_options.projection()
+            * scene_options.view()
+            * Vec4::new(
+                vertex.position[0],
+                vertex.position[1],
+                vertex.position[2],
+                1.0,
+            );
+        let ndc = clip.truncate() / clip.w;
+        let size = scene_options.sanitized_screen_projection_size();
+        assert!(((ndc.x + 1.0) * 0.5 * size.width - 12.5).abs() < 0.001);
+        assert!(((ndc.y + 1.0) * 0.5 * size.height - 34.5).abs() < 0.001);
+    }
+
+    #[test]
     fn renderer_frame_routes_outline_primitives_to_outline_pipeline() {
         let vertex = AshVrmVertex {
             position: [0.0, 0.0, 0.0],
@@ -4138,6 +4578,9 @@ mod tests {
         };
         let primitive = |pass| AshVrmPrimitive {
             node: NodeRef(0),
+            mesh_index: 0,
+            primitive_index: 0,
+            material_name: None,
             material: Some(MaterialRef(0)),
             pass,
             vertices: vec![vertex],
@@ -4183,6 +4626,7 @@ mod tests {
                 pipeline(AshMtoonPass::Outline, 2001, 2001),
             ],
             scene_uniform: AshSceneUniform::default(),
+            scene_options: AshSceneOptions::default(),
             diagnostic_owner_ids: Vec::new(),
             render_surfaces: Vec::new(),
         };
@@ -4247,6 +4691,9 @@ mod tests {
         };
         let primitive = |material| AshVrmPrimitive {
             node: NodeRef(0),
+            mesh_index: 0,
+            primitive_index: 0,
+            material_name: None,
             material: Some(MaterialRef(material)),
             pass: AshMtoonPass::Base,
             vertices: vec![vertex],
@@ -4283,6 +4730,7 @@ mod tests {
             texture_uploads: Vec::new(),
             mtoon_pipelines: vec![pipeline(0, 19), pipeline(1, 0)],
             scene_uniform: AshSceneUniform::default(),
+            scene_options: AshSceneOptions::default(),
             diagnostic_owner_ids: Vec::new(),
             render_surfaces: Vec::new(),
         };
@@ -4363,6 +4811,7 @@ mod tests {
                 emissive_color: [0.0, 0.0, 0.0],
             }],
             scene_uniform: AshSceneUniform::default(),
+            scene_options: AshSceneOptions::default(),
             diagnostic_owner_ids: Vec::new(),
             render_surfaces: Vec::new(),
         };

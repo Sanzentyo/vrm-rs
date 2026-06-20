@@ -84,8 +84,14 @@ recipes are convenience entry points. Use these first:
   geometry. On the same compact depth3 base-color fixture this raises Bevy's
   selected raw comparison from the previous `31.1386 dB` floor to `55.9954 dB`
   with exact alpha, and all 64 manifest-selected pixels resolve within 1 LSB of
-  the manifest sample color. Ash still needs the same resolve pass. The
-  wgpu, Bevy, and Ash
+  the manifest sample color. Ash frame planning now follows the same ownership
+  model: geometry-bearing records become point-list resolve draws, projected to
+  the target pixel and routed through the same material descriptor set instead
+  of copying `replacement_rgba`. The first compact depth3 Ash device/readback
+  run with this path reaches selected `64.3542 dB` with max selected-channel
+  delta `1`, matching the wgpu selected floor for this diagnostic. The remaining
+  Ash follow-up is explicit UV-gradient ABI work for shaded or heavily mipped
+  captures. The wgpu, Bevy, and Ash
   capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
   when a manifest is supplied, including matched/unmatched entry counts against
   the current non-diagnostic render surfaces plus `surfaceSelections[]` entries

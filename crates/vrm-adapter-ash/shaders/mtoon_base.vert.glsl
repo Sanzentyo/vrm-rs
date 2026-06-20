@@ -48,6 +48,7 @@ void main() {
     out_world_position = in_position;
     out_normal_scale = in_normal_scale;
     out_double_sided = in_double_sided;
+    gl_PointSize = 1.0;
     gl_Position = scene.view_projection * vec4(in_position, 1.0);
     if (mtoon.flags.z == 1u) {
         gl_Position.z += 0.000001 * gl_Position.w;
