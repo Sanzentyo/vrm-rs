@@ -115,6 +115,7 @@ struct Surface {
     policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
     base_texture: Option<CpuRgba8Image>,
+    base_color: [f32; 4],
     base_color_alpha: f32,
     pbr_fallback: bool,
     indices: Vec<u32>,
@@ -187,6 +188,14 @@ struct HotspotSummary {
     expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f32>,
     actual_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
     expected_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f32>,
+    actual_frontmost_mean_cpu_base_color_rgb_distance: Option<f32>,
+    expected_frontmost_mean_cpu_base_color_rgb_distance: Option<f32>,
+    actual_frontmost_max_cpu_base_color_rgb_distance: Option<f32>,
+    expected_frontmost_max_cpu_base_color_rgb_distance: Option<f32>,
+    actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f32>,
+    expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f32>,
+    actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f32>,
+    expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f32>,
     frontmost_mean_base_texture_local_rgb_gradient: Option<f32>,
     frontmost_max_base_texture_local_rgb_gradient: Option<f32>,
     frontmost_base_texture_local_rgb_gradient_gte_32: usize,
@@ -300,6 +309,12 @@ struct Hotspot {
     nearest_sample_visible_base_texture_rgba: Option<[u8; 4]>,
     nearest_sample_visible_base_texture_expected_rgb_distance: Option<f32>,
     nearest_sample_visible_base_texture_actual_rgb_distance: Option<f32>,
+    frontmost_cpu_base_color_rgba: Option<[u8; 4]>,
+    frontmost_cpu_base_color_expected_rgb_distance: Option<f32>,
+    frontmost_cpu_base_color_actual_rgb_distance: Option<f32>,
+    nearest_sample_visible_cpu_base_color_rgba: Option<[u8; 4]>,
+    nearest_sample_visible_cpu_base_color_expected_rgb_distance: Option<f32>,
+    nearest_sample_visible_cpu_base_color_actual_rgb_distance: Option<f32>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -332,6 +347,7 @@ struct CandidateMatch {
     visible_by_policy: bool,
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    cpu_base_color_rgba: [u8; 4],
     base_texture_local_rgb_gradient: Option<f32>,
 }
 
@@ -370,6 +386,7 @@ struct HitCandidate {
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    cpu_base_color_rgba: [u8; 4],
     base_texture_local_rgb_gradient: Option<f32>,
     screen: [[f32; 2]; 3],
     front_facing: bool,
@@ -457,6 +474,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let nearest_sample_visible_base_texture_rgba = nearest_sample_visible_frontmost
                 .as_ref()
                 .and_then(|frontmost| frontmost.base_texture_rgba);
+            let frontmost_cpu_base_color_rgba = frontmost_visible
+                .as_ref()
+                .map(|frontmost| frontmost.cpu_base_color_rgba);
+            let nearest_sample_visible_cpu_base_color_rgba = nearest_sample_visible_frontmost
+                .as_ref()
+                .map(|frontmost| frontmost.cpu_base_color_rgba);
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -499,6 +522,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                         .map(|color| rgb_distance(color, delta.expected)),
                 nearest_sample_visible_base_texture_actual_rgb_distance:
                     nearest_sample_visible_base_texture_rgba
+                        .map(|color| rgb_distance(color, delta.actual)),
+                frontmost_cpu_base_color_rgba,
+                frontmost_cpu_base_color_expected_rgb_distance: frontmost_cpu_base_color_rgba
+                    .map(|color| rgb_distance(color, delta.expected)),
+                frontmost_cpu_base_color_actual_rgb_distance: frontmost_cpu_base_color_rgba
+                    .map(|color| rgb_distance(color, delta.actual)),
+                nearest_sample_visible_cpu_base_color_rgba,
+                nearest_sample_visible_cpu_base_color_expected_rgb_distance:
+                    nearest_sample_visible_cpu_base_color_rgba
+                        .map(|color| rgb_distance(color, delta.expected)),
+                nearest_sample_visible_cpu_base_color_actual_rgb_distance:
+                    nearest_sample_visible_cpu_base_color_rgba
                         .map(|color| rgb_distance(color, delta.actual)),
                 candidates,
             }
@@ -801,6 +836,38 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
         expected_missing_center_nearest_visible_max_base_texture_rgb_distance:
             max_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
                 hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
+            }),
+        actual_frontmost_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_frontmost_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_frontmost_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_frontmost_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance
+            }),
+        expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance
+            }),
+        actual_nearest_sample_visible_max_cpu_base_color_rgb_distance:
+            max_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance
+            }),
+        expected_nearest_sample_visible_max_cpu_base_color_rgb_distance:
+            max_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance
             }),
         frontmost_mean_base_texture_local_rgb_gradient: mean_frontmost_texture_gradient(hotspots),
         frontmost_max_base_texture_local_rgb_gradient: max_frontmost_texture_gradient(hotspots),
@@ -1273,6 +1340,7 @@ fn build_surfaces(
                 policy: base_policy,
                 base_uv_transform,
                 base_texture: base_texture.clone(),
+                base_color: shading.base_color,
                 base_color_alpha: shading.base_color[3],
                 pbr_fallback: shading.pbr_fallback,
                 edge_adjacency: edge_adjacency(&indices),
@@ -1324,6 +1392,7 @@ fn build_surfaces(
                 policy: outline_material_policy(base_policy),
                 base_uv_transform,
                 base_texture,
+                base_color: [0.0, 0.0, 0.0, 1.0],
                 base_color_alpha: 1.0,
                 pbr_fallback: false,
                 edge_adjacency: edge_adjacency(&indices),
@@ -1532,6 +1601,7 @@ fn candidate_match(
         visible_by_policy: candidate.visible_by_policy,
         base_uv: candidate.base_uv,
         base_texture_rgba: candidate.base_texture_rgba,
+        cpu_base_color_rgba: candidate.cpu_base_color_rgba,
         base_texture_local_rgb_gradient: candidate.base_texture_local_rgb_gradient,
     }
 }
@@ -1574,23 +1644,34 @@ fn surface_candidates(
             let base_texture_rgba_linear = surface
                 .base_texture
                 .as_ref()
-                .map(|texture| texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft));
+                .map(|texture| {
+                    texture.sample_rgba_repeat_linear(base_uv, Rgba8SamplingOrigin::TopLeft)
+                });
             let base_texture_rgba = base_texture_rgba_linear.map(|rgba| rgba.map(quantize_unorm8));
+            let texture_color = base_texture_rgba_linear.unwrap_or([1.0, 1.0, 1.0, 1.0]);
             let base_texture_local_rgb_gradient = surface
                 .base_texture
                 .as_ref()
                 .map(|texture| base_texture_local_rgb_gradient(texture, base_uv));
-            let vertex_alpha = if surface.pbr_fallback {
-                interpolate_vertex_color_alpha(
+            let vertex_color = if surface.pbr_fallback {
+                interpolate_vertex_color(
                     barycentric,
                     surface.vertices.get(ia as usize)?,
                     surface.vertices.get(ib as usize)?,
                     surface.vertices.get(ic as usize)?,
                 )
             } else {
+                [1.0, 1.0, 1.0, 1.0]
+            };
+            let cpu_base_color_rgba =
+                multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
+                    .map(quantize_unorm8);
+            let vertex_alpha = if surface.pbr_fallback {
+                vertex_color[3]
+            } else {
                 1.0
             };
-            let texture_alpha = base_texture_rgba_linear.map_or(1.0, |rgba| rgba[3]);
+            let texture_alpha = texture_color[3];
             let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
             let signed_area = signed_area(a.screen, b.screen, c.screen);
             let front_facing = signed_area < 0.0;
@@ -1629,6 +1710,7 @@ fn surface_candidates(
                 raw_uv,
                 base_uv,
                 base_texture_rgba,
+                cpu_base_color_rgba,
                 base_texture_local_rgb_gradient,
                 screen: [a.screen, b.screen, c.screen],
                 front_facing,
@@ -1895,13 +1977,27 @@ fn interpolate_scalar(barycentric: [f32; 3], a: f32, b: f32, c: f32) -> f32 {
     barycentric[0] * a + barycentric[1] * b + barycentric[2] * c
 }
 
-fn interpolate_vertex_color_alpha(
+fn interpolate_vertex_color(
     barycentric: [f32; 3],
     a: &GltfTransformedVertex,
     b: &GltfTransformedVertex,
     c: &GltfTransformedVertex,
-) -> f32 {
-    interpolate_scalar(barycentric, a.color_0[3], b.color_0[3], c.color_0[3])
+) -> [f32; 4] {
+    [
+        interpolate_scalar(barycentric, a.color_0[0], b.color_0[0], c.color_0[0]),
+        interpolate_scalar(barycentric, a.color_0[1], b.color_0[1], c.color_0[1]),
+        interpolate_scalar(barycentric, a.color_0[2], b.color_0[2], c.color_0[2]),
+        interpolate_scalar(barycentric, a.color_0[3], b.color_0[3], c.color_0[3]),
+    ]
+}
+
+fn multiply_rgba(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
+    [
+        left[0] * right[0],
+        left[1] * right[1],
+        left[2] * right[2],
+        left[3] * right[3],
+    ]
 }
 
 fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {

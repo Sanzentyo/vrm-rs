@@ -97,6 +97,14 @@ struct ReviewReport {
     expected_missing_center_nearest_visible_mean_base_texture_rgb_distance: Option<f64>,
     actual_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f64>,
     expected_missing_center_nearest_visible_max_base_texture_rgb_distance: Option<f64>,
+    actual_frontmost_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_frontmost_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_frontmost_max_cpu_base_color_rgb_distance: Option<f64>,
+    expected_frontmost_max_cpu_base_color_rgb_distance: Option<f64>,
+    actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f64>,
+    expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: Option<f64>,
     actual_frontmost_mean_uv_distance: Option<f64>,
     expected_frontmost_mean_uv_distance: Option<f64>,
     actual_frontmost_max_uv_distance: Option<f64>,
@@ -107,6 +115,7 @@ struct ReviewReport {
     frontmost_base_texture_local_rgb_gradient_gte_64: Option<u64>,
     frontmost_base_texture_local_rgb_gradient_gte_96: Option<u64>,
     texture_distance_advantage: TextureDistanceAdvantage,
+    cpu_base_color_distance_advantage: TextureDistanceAdvantage,
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
     top_actual_expected_surface_transitions: Vec<Value>,
@@ -136,6 +145,8 @@ struct HotspotLine {
     frontmost: Option<SurfaceLine>,
     actual_frontmost_base_texture_rgb_distance: Option<f64>,
     expected_frontmost_base_texture_rgb_distance: Option<f64>,
+    actual_frontmost_cpu_base_color_rgb_distance: Option<f64>,
+    expected_frontmost_cpu_base_color_rgb_distance: Option<f64>,
     frontmost_base_texture_local_rgb_gradient: Option<f64>,
 }
 
@@ -431,6 +442,38 @@ fn summarize_report(
             summary,
             "expected_missing_center_nearest_visible_max_base_texture_rgb_distance",
         ),
+        actual_frontmost_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_frontmost_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_frontmost_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_frontmost_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_frontmost_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_frontmost_max_cpu_base_color_rgb_distance",
+        ),
+        expected_frontmost_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_frontmost_max_cpu_base_color_rgb_distance",
+        ),
+        actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_nearest_sample_visible_max_cpu_base_color_rgb_distance",
+        ),
+        expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_nearest_sample_visible_max_cpu_base_color_rgb_distance",
+        ),
         actual_frontmost_mean_uv_distance: f64_field(summary, "actual_frontmost_mean_uv_distance"),
         expected_frontmost_mean_uv_distance: f64_field(
             summary,
@@ -461,7 +504,16 @@ fn summarize_report(
             summary,
             "frontmost_base_texture_local_rgb_gradient_gte_96",
         ),
-        texture_distance_advantage: texture_distance_advantage(hotspots),
+        texture_distance_advantage: distance_advantage(
+            hotspots,
+            "frontmost_base_texture_actual_rgb_distance",
+            "frontmost_base_texture_expected_rgb_distance",
+        ),
+        cpu_base_color_distance_advantage: distance_advantage(
+            hotspots,
+            "frontmost_cpu_base_color_actual_rgb_distance",
+            "frontmost_cpu_base_color_expected_rgb_distance",
+        ),
         top_actual_surface_transitions: top_array(
             summary,
             "actual_frontmost_surface_transitions",
@@ -488,12 +540,16 @@ fn summarize_report(
     })
 }
 
-fn texture_distance_advantage(hotspots: &[Value]) -> TextureDistanceAdvantage {
+fn distance_advantage(
+    hotspots: &[Value],
+    actual_key: &str,
+    expected_key: &str,
+) -> TextureDistanceAdvantage {
     let mut report = TextureDistanceAdvantage::default();
     let mut delta_sum = 0.0_f64;
     for hotspot in hotspots {
-        let actual = f64_field(hotspot, "frontmost_base_texture_actual_rgb_distance");
-        let expected = f64_field(hotspot, "frontmost_base_texture_expected_rgb_distance");
+        let actual = f64_field(hotspot, actual_key);
+        let expected = f64_field(hotspot, expected_key);
         let Some((actual, expected)) = actual.zip(expected) else {
             continue;
         };
@@ -533,6 +589,14 @@ fn top_hotspots(hotspots: &[Value], top: usize) -> Vec<HotspotLine> {
             expected_frontmost_base_texture_rgb_distance: f64_field(
                 hotspot,
                 "frontmost_base_texture_expected_rgb_distance",
+            ),
+            actual_frontmost_cpu_base_color_rgb_distance: f64_field(
+                hotspot,
+                "frontmost_cpu_base_color_actual_rgb_distance",
+            ),
+            expected_frontmost_cpu_base_color_rgb_distance: f64_field(
+                hotspot,
+                "frontmost_cpu_base_color_expected_rgb_distance",
             ),
             frontmost_base_texture_local_rgb_gradient: hotspot
                 .get("frontmost_visible")
@@ -610,9 +674,19 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_f64(report.expected_frontmost_mean_base_texture_rgb_distance)
     ));
     markdown.push_str(&format!(
+        "- CPU base-color mean RGB distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_frontmost_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_frontmost_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
         "- Nearest-sample base-texture mean RGB distance actual/expected: `{}` / `{}`\n",
         fmt_opt_f64(report.actual_nearest_sample_visible_mean_base_texture_rgb_distance),
         fmt_opt_f64(report.expected_nearest_sample_visible_mean_base_texture_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Nearest-sample CPU base-color mean RGB distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance)
     ));
     markdown.push_str(&format!(
         "- Missing-center nearest-sample mean RGB distance actual/expected: `{}` / `{}`\n",
@@ -641,12 +715,19 @@ fn markdown_report(report: &ReviewReport) -> String {
         report.texture_distance_advantage.tied,
         report.texture_distance_advantage.compared
     ));
+    markdown.push_str(&format!(
+        "- CPU base-color closer actual/expected/tie: `{}` / `{}` / `{}` of `{}`\n\n",
+        report.cpu_base_color_distance_advantage.actual_closer,
+        report.cpu_base_color_distance_advantage.expected_closer,
+        report.cpu_base_color_distance_advantage.tied,
+        report.cpu_base_color_distance_advantage.compared
+    ));
     markdown.push_str("## Top Hotspots\n\n");
-    markdown.push_str("| Pixel | Max Delta | Actual | Expected | Frontmost | Base Texture Distance A/E | Local Gradient |\n");
-    markdown.push_str("| --- | ---: | --- | --- | --- | ---: | ---: |\n");
+    markdown.push_str("| Pixel | Max Delta | Actual | Expected | Frontmost | Base Texture Distance A/E | CPU Base Distance A/E | Local Gradient |\n");
+    markdown.push_str("| --- | ---: | --- | --- | --- | ---: | ---: | ---: |\n");
     for hotspot in &report.top_hotspots {
         markdown.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} / {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} / {} | {} / {} | {} |\n",
             fmt_opt_u64(hotspot.x),
             fmt_opt_u64(hotspot.y),
             fmt_opt_u64(hotspot.max_channel_delta),
@@ -655,6 +736,8 @@ fn markdown_report(report: &ReviewReport) -> String {
             fmt_surface(hotspot.frontmost.as_ref()),
             fmt_opt_f64(hotspot.actual_frontmost_base_texture_rgb_distance),
             fmt_opt_f64(hotspot.expected_frontmost_base_texture_rgb_distance),
+            fmt_opt_f64(hotspot.actual_frontmost_cpu_base_color_rgb_distance),
+            fmt_opt_f64(hotspot.expected_frontmost_cpu_base_color_rgb_distance),
             fmt_opt_f64(hotspot.frontmost_base_texture_local_rgb_gradient)
         ));
     }
@@ -804,6 +887,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected_missing_center_nearest_visible_mean_base_texture_rgb_distance": null,
                 "actual_missing_center_nearest_visible_max_base_texture_rgb_distance": null,
                 "expected_missing_center_nearest_visible_max_base_texture_rgb_distance": null,
+                "actual_frontmost_mean_cpu_base_color_rgb_distance": 0.5,
+                "expected_frontmost_mean_cpu_base_color_rgb_distance": 1.5,
+                "actual_frontmost_max_cpu_base_color_rgb_distance": 0.75,
+                "expected_frontmost_max_cpu_base_color_rgb_distance": 1.75,
+                "actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance": 0.25,
+                "expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance": 1.25,
+                "actual_nearest_sample_visible_max_cpu_base_color_rgb_distance": 0.5,
+                "expected_nearest_sample_visible_max_cpu_base_color_rgb_distance": 1.5,
                 "actual_frontmost_mean_uv_distance": 0.1,
                 "expected_frontmost_mean_uv_distance": 0.2,
                 "actual_frontmost_max_uv_distance": 0.3,
@@ -829,6 +920,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected": [4, 5, 6, 255],
                 "frontmost_base_texture_actual_rgb_distance": 1.0,
                 "frontmost_base_texture_expected_rgb_distance": 2.0,
+                "frontmost_cpu_base_color_actual_rgb_distance": 0.5,
+                "frontmost_cpu_base_color_expected_rgb_distance": 1.5,
                 "frontmost_visible": {
                     "pass": "base",
                     "material_name": "mat",
@@ -846,12 +939,17 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     let report = summarize_report(Path::new("self-test.json"), &value, 4)?;
     assert_eq!(report.hotspot_count, 1);
     assert_eq!(report.texture_distance_advantage.actual_closer, 1);
+    assert_eq!(report.cpu_base_color_distance_advantage.actual_closer, 1);
     assert_eq!(report.nearest_sample_visible_frontmost_count, Some(1));
     assert_eq!(report.actual_expected_same_material_matches, Some(1));
     assert_eq!(report.actual_expected_same_triangle_matches, Some(0));
     assert_eq!(
         report.actual_nearest_sample_visible_mean_base_texture_rgb_distance,
         Some(1.5)
+    );
+    assert_eq!(
+        report.actual_frontmost_mean_cpu_base_color_rgb_distance,
+        Some(0.5)
     );
     assert!(markdown_report(&report).contains("Render Hotspot Summary"));
     let mut options = Options {
