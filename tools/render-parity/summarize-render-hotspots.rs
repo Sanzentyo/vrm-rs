@@ -34,6 +34,20 @@ struct Options {
     markdown_out: Option<PathBuf>,
     #[arg(long, default_value_t = 12)]
     top: usize,
+    #[arg(long)]
+    min_hotspot_count: Option<u64>,
+    #[arg(long)]
+    max_hotspot_count: Option<u64>,
+    #[arg(long)]
+    min_frontmost_visible_count: Option<u64>,
+    #[arg(long)]
+    max_frontmost_base_texture_local_rgb_gradient_gte_32: Option<u64>,
+    #[arg(long)]
+    max_frontmost_max_base_texture_local_rgb_gradient: Option<f64>,
+    #[arg(long)]
+    min_texture_distance_actual_closer: Option<u64>,
+    #[arg(long)]
+    min_texture_distance_expected_closer: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -134,6 +148,94 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(path) = &options.markdown_out {
         write_file(path, &markdown_report(&report))?;
+    }
+    validate_thresholds(&report, &options)?;
+    Ok(())
+}
+
+fn validate_thresholds(
+    report: &ReviewReport,
+    options: &Options,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_min_u64(
+        "hotspot_count",
+        Some(report.hotspot_count),
+        options.min_hotspot_count,
+    )?;
+    check_max_u64(
+        "hotspot_count",
+        Some(report.hotspot_count),
+        options.max_hotspot_count,
+    )?;
+    check_min_u64(
+        "frontmost_visible_count",
+        report.frontmost_visible_count,
+        options.min_frontmost_visible_count,
+    )?;
+    check_max_u64(
+        "frontmost_base_texture_local_rgb_gradient_gte_32",
+        report.frontmost_base_texture_local_rgb_gradient_gte_32,
+        options.max_frontmost_base_texture_local_rgb_gradient_gte_32,
+    )?;
+    check_max_f64(
+        "frontmost_max_base_texture_local_rgb_gradient",
+        report.frontmost_max_base_texture_local_rgb_gradient,
+        options.max_frontmost_max_base_texture_local_rgb_gradient,
+    )?;
+    check_min_u64(
+        "texture_distance_actual_closer",
+        Some(report.texture_distance_advantage.actual_closer),
+        options.min_texture_distance_actual_closer,
+    )?;
+    check_min_u64(
+        "texture_distance_expected_closer",
+        Some(report.texture_distance_advantage.expected_closer),
+        options.min_texture_distance_expected_closer,
+    )?;
+    Ok(())
+}
+
+fn check_min_u64(
+    metric: &'static str,
+    actual: Option<u64>,
+    min: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(min) = min else {
+        return Ok(());
+    };
+    let actual = actual.ok_or_else(|| format!("{metric} is missing; cannot apply min {min}"))?;
+    if actual < min {
+        return Err(format!("{metric} {actual} is below min {min}").into());
+    }
+    Ok(())
+}
+
+fn check_max_u64(
+    metric: &'static str,
+    actual: Option<u64>,
+    max: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(max) = max else {
+        return Ok(());
+    };
+    let actual = actual.ok_or_else(|| format!("{metric} is missing; cannot apply max {max}"))?;
+    if actual > max {
+        return Err(format!("{metric} {actual} exceeds max {max}").into());
+    }
+    Ok(())
+}
+
+fn check_max_f64(
+    metric: &'static str,
+    actual: Option<f64>,
+    max: Option<f64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(max) = max else {
+        return Ok(());
+    };
+    let actual = actual.ok_or_else(|| format!("{metric} is missing; cannot apply max {max}"))?;
+    if actual > max {
+        return Err(format!("{metric} {actual:.6} exceeds max {max:.6}").into());
     }
     Ok(())
 }
@@ -566,5 +668,26 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(report.hotspot_count, 1);
     assert_eq!(report.texture_distance_advantage.actual_closer, 1);
     assert!(markdown_report(&report).contains("Render Hotspot Summary"));
+    let mut options = Options {
+        self_test: false,
+        input: Some(PathBuf::from("self-test.json")),
+        json_out: None,
+        markdown_out: None,
+        top: 4,
+        min_hotspot_count: Some(1),
+        max_hotspot_count: Some(1),
+        min_frontmost_visible_count: Some(1),
+        max_frontmost_base_texture_local_rgb_gradient_gte_32: Some(0),
+        max_frontmost_max_base_texture_local_rgb_gradient: Some(12.0),
+        min_texture_distance_actual_closer: Some(1),
+        min_texture_distance_expected_closer: Some(0),
+    };
+    validate_thresholds(&report, &options)?;
+    options.max_frontmost_max_base_texture_local_rgb_gradient = Some(11.0);
+    let error = validate_thresholds(&report, &options)
+        .expect_err("gradient threshold should reject excessive local texture gradients");
+    assert!(error.to_string().contains(
+        "frontmost_max_base_texture_local_rgb_gradient 12.000000 exceeds max 11.000000"
+    ));
     Ok(())
 }
