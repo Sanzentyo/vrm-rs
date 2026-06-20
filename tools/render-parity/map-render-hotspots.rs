@@ -253,6 +253,13 @@ struct HotspotSummary {
     expected_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
     actual_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
     expected_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
+    subpixel_coverage_color_count: usize,
+    actual_subpixel_coverage_mean_cpu_base_color_rgb_distance: Option<f32>,
+    expected_subpixel_coverage_mean_cpu_base_color_rgb_distance: Option<f32>,
+    actual_subpixel_coverage_max_cpu_base_color_rgb_distance: Option<f32>,
+    expected_subpixel_coverage_max_cpu_base_color_rgb_distance: Option<f32>,
+    actual_subpixel_coverage_improved_count: usize,
+    expected_subpixel_coverage_improved_count: usize,
     source_order_depth_epsilon: f32,
     depth_near_later_visible_count: usize,
     actual_depth_near_later_improved_count: usize,
@@ -389,6 +396,9 @@ struct Hotspot {
     subpixel_visible_candidates: Vec<SubpixelCandidate>,
     best_subpixel_visible_actual: Option<SubpixelMatch>,
     best_subpixel_visible_expected: Option<SubpixelMatch>,
+    subpixel_coverage_cpu_base_color_rgba: Option<[u8; 4]>,
+    subpixel_coverage_cpu_base_color_actual_rgb_distance: Option<f32>,
+    subpixel_coverage_cpu_base_color_expected_rgb_distance: Option<f32>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -633,6 +643,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 frontmost_cpu_base_color_rgba
                     .map(|color| rgb_distance(color, delta.expected)),
             );
+            let subpixel_coverage_cpu_base_color_rgba =
+                subpixel_coverage_cpu_base_color(&subpixel_candidates);
             Hotspot {
                 x: delta.x,
                 y: delta.y,
@@ -708,6 +720,13 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 subpixel_visible_candidates: subpixel_candidates,
                 best_subpixel_visible_actual,
                 best_subpixel_visible_expected,
+                subpixel_coverage_cpu_base_color_rgba,
+                subpixel_coverage_cpu_base_color_actual_rgb_distance:
+                    subpixel_coverage_cpu_base_color_rgba
+                        .map(|color| rgb_distance(color, delta.actual)),
+                subpixel_coverage_cpu_base_color_expected_rgb_distance:
+                    subpixel_coverage_cpu_base_color_rgba
+                        .map(|color| rgb_distance(color, delta.expected)),
                 candidates,
             }
         })
@@ -1317,6 +1336,36 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
         expected_subpixel_sample_summaries: subpixel_sample_summaries(
             hotspots,
             |hotspot| hotspot.expected,
+            |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+        ),
+        subpixel_coverage_color_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.subpixel_coverage_cpu_base_color_rgba.is_some())
+            .count(),
+        actual_subpixel_coverage_mean_cpu_base_color_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance
+            }),
+        expected_subpixel_coverage_mean_cpu_base_color_rgb_distance:
+            mean_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance
+            }),
+        actual_subpixel_coverage_max_cpu_base_color_rgb_distance:
+            max_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance
+            }),
+        expected_subpixel_coverage_max_cpu_base_color_rgb_distance:
+            max_frontmost_rgb_distance(hotspots, |hotspot| {
+                hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance
+            }),
+        actual_subpixel_coverage_improved_count: strict_frontmost_improved_count(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_subpixel_coverage_improved_count: strict_frontmost_improved_count(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance,
             |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
         ),
         source_order_depth_epsilon,
@@ -2422,6 +2471,26 @@ fn best_subpixel_match(
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
         })
+}
+
+fn subpixel_coverage_cpu_base_color(candidates: &[SubpixelCandidate]) -> Option<[u8; 4]> {
+    let (sum, count) = candidates.iter().fold(([0u32; 4], 0u32), |(sum, count), candidate| {
+        let color = candidate.candidate.cpu_base_color_rgba;
+        (
+            [
+                sum[0] + u32::from(color[0]),
+                sum[1] + u32::from(color[1]),
+                sum[2] + u32::from(color[2]),
+                sum[3] + u32::from(color[3]),
+            ],
+            count + 1,
+        )
+    });
+    (count > 0).then(|| {
+        sum.map(|channel| {
+            u8::try_from((channel + count / 2) / count).expect("averaged u8 channel fits in u8")
+        })
+    })
 }
 
 fn candidate_match(

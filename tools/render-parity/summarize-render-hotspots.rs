@@ -152,6 +152,13 @@ struct ReviewReport {
     top_expected_best_subpixel_surface_transitions: Vec<Value>,
     top_actual_subpixel_sample_summaries: Vec<Value>,
     top_expected_subpixel_sample_summaries: Vec<Value>,
+    subpixel_coverage_color_count: Option<u64>,
+    actual_subpixel_coverage_mean_cpu_base_color_rgb_distance: Option<f64>,
+    expected_subpixel_coverage_mean_cpu_base_color_rgb_distance: Option<f64>,
+    actual_subpixel_coverage_max_cpu_base_color_rgb_distance: Option<f64>,
+    expected_subpixel_coverage_max_cpu_base_color_rgb_distance: Option<f64>,
+    actual_subpixel_coverage_improved_count: Option<u64>,
+    expected_subpixel_coverage_improved_count: Option<u64>,
     source_order_depth_epsilon: Option<f64>,
     depth_near_later_visible_count: Option<u64>,
     actual_depth_near_later_improved_count: Option<u64>,
@@ -706,6 +713,31 @@ fn summarize_report(
             "expected_subpixel_sample_summaries",
             top,
         ),
+        subpixel_coverage_color_count: u64_field(summary, "subpixel_coverage_color_count"),
+        actual_subpixel_coverage_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_subpixel_coverage_mean_cpu_base_color_rgb_distance",
+        ),
+        expected_subpixel_coverage_mean_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_subpixel_coverage_mean_cpu_base_color_rgb_distance",
+        ),
+        actual_subpixel_coverage_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "actual_subpixel_coverage_max_cpu_base_color_rgb_distance",
+        ),
+        expected_subpixel_coverage_max_cpu_base_color_rgb_distance: f64_field(
+            summary,
+            "expected_subpixel_coverage_max_cpu_base_color_rgb_distance",
+        ),
+        actual_subpixel_coverage_improved_count: u64_field(
+            summary,
+            "actual_subpixel_coverage_improved_count",
+        ),
+        expected_subpixel_coverage_improved_count: u64_field(
+            summary,
+            "expected_subpixel_coverage_improved_count",
+        ),
         source_order_depth_epsilon: f64_field(summary, "source_order_depth_epsilon"),
         depth_near_later_visible_count: u64_field(summary, "depth_near_later_visible_count"),
         actual_depth_near_later_improved_count: u64_field(
@@ -1073,6 +1105,26 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(
         &report.top_expected_subpixel_sample_summaries,
     ));
+    markdown.push_str("\nSubpixel coverage mean predictor:\n\n");
+    markdown.push_str(&format!(
+        "- Coverage colors: `{}`\n",
+        fmt_opt_u64(report.subpixel_coverage_color_count)
+    ));
+    markdown.push_str(&format!(
+        "- Mean CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_subpixel_coverage_mean_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_subpixel_coverage_mean_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Max CPU base-color distance actual/expected: `{}` / `{}`\n",
+        fmt_opt_f64(report.actual_subpixel_coverage_max_cpu_base_color_rgb_distance),
+        fmt_opt_f64(report.expected_subpixel_coverage_max_cpu_base_color_rgb_distance)
+    ));
+    markdown.push_str(&format!(
+        "- Improved actual/expected vs center frontmost: `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_subpixel_coverage_improved_count),
+        fmt_opt_u64(report.expected_subpixel_coverage_improved_count)
+    ));
     markdown.push_str("\n## Depth-Near Source Order\n\n");
     markdown.push_str(&format!(
         "- Depth epsilon: `{}`; later visible candidates: `{}`\n",
@@ -1336,6 +1388,13 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                     "mean_cpu_base_color_improvement": 0.5,
                     "mean_sample_distance_from_center": 0.25
                 }],
+                "subpixel_coverage_color_count": 1,
+                "actual_subpixel_coverage_mean_cpu_base_color_rgb_distance": 0.4,
+                "expected_subpixel_coverage_mean_cpu_base_color_rgb_distance": 0.9,
+                "actual_subpixel_coverage_max_cpu_base_color_rgb_distance": 0.4,
+                "expected_subpixel_coverage_max_cpu_base_color_rgb_distance": 0.9,
+                "actual_subpixel_coverage_improved_count": 1,
+                "expected_subpixel_coverage_improved_count": 1,
                 "source_order_depth_epsilon": 0.00001,
                 "depth_near_later_visible_count": 1,
                 "actual_depth_near_later_improved_count": 0,
@@ -1406,6 +1465,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         Some(1)
     );
     assert_eq!(report.top_expected_subpixel_sample_summaries.len(), 1);
+    assert_eq!(report.subpixel_coverage_color_count, Some(1));
+    assert_eq!(
+        report.expected_subpixel_coverage_mean_cpu_base_color_rgb_distance,
+        Some(0.9)
+    );
+    assert_eq!(report.actual_subpixel_coverage_improved_count, Some(1));
     assert_eq!(report.depth_near_later_visible_count, Some(1));
     assert_eq!(report.expected_depth_near_later_improved_count, Some(1));
     let markdown = markdown_report(&report);
@@ -1414,6 +1479,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Strict Frontmost Fill"));
     assert!(markdown.contains("Subpixel Frontmost Search"));
     assert!(markdown.contains("Expected fixed subpixel sample ranking"));
+    assert!(markdown.contains("Subpixel coverage mean predictor"));
     assert!(markdown.contains("Depth-Near Source Order"));
     let mut options = Options {
         self_test: false,
