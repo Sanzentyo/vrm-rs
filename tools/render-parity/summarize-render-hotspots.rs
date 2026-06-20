@@ -139,6 +139,8 @@ struct ReviewReport {
     expected_best_subpixel_mean_sample_distance_from_center: Option<f64>,
     top_actual_best_subpixel_surface_transitions: Vec<Value>,
     top_expected_best_subpixel_surface_transitions: Vec<Value>,
+    top_actual_subpixel_sample_summaries: Vec<Value>,
+    top_expected_subpixel_sample_summaries: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -630,6 +632,16 @@ fn summarize_report(
             "expected_best_subpixel_surface_transitions",
             top,
         ),
+        top_actual_subpixel_sample_summaries: top_array(
+            summary,
+            "actual_subpixel_sample_summaries",
+            top,
+        ),
+        top_expected_subpixel_sample_summaries: top_array(
+            summary,
+            "expected_subpixel_sample_summaries",
+            top,
+        ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
         top_nearest_sample_offsets: top_array(summary, "nearest_sample_visible_offsets", top),
         top_missing_center_nearest_offsets: top_array(
@@ -908,6 +920,12 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(
         &report.top_expected_best_subpixel_surface_transitions,
     ));
+    markdown.push_str("\nActual fixed subpixel sample ranking:\n\n");
+    markdown.push_str(&value_table(&report.top_actual_subpixel_sample_summaries));
+    markdown.push_str("\nExpected fixed subpixel sample ranking:\n\n");
+    markdown.push_str(&value_table(
+        &report.top_expected_subpixel_sample_summaries,
+    ));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -1108,6 +1126,28 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected_best_subpixel_mean_sample_distance_from_center": 0.25,
                 "actual_best_subpixel_surface_transitions": [{"count": 1}],
                 "expected_best_subpixel_surface_transitions": [{"count": 1}],
+                "actual_subpixel_sample_summaries": [{
+                    "sample": [0.5, 0.5],
+                    "visible_count": 1,
+                    "same_triangle_count": 1,
+                    "improved_count": 0,
+                    "improved_same_triangle_count": 0,
+                    "improved_different_triangle_count": 0,
+                    "mean_cpu_base_color_rgb_distance": 0.5,
+                    "mean_cpu_base_color_improvement": 0.0,
+                    "mean_sample_distance_from_center": 0.0
+                }],
+                "expected_subpixel_sample_summaries": [{
+                    "sample": [0.75, 0.5],
+                    "visible_count": 1,
+                    "same_triangle_count": 0,
+                    "improved_count": 1,
+                    "improved_same_triangle_count": 0,
+                    "improved_different_triangle_count": 1,
+                    "mean_cpu_base_color_rgb_distance": 1.0,
+                    "mean_cpu_base_color_improvement": 0.5,
+                    "mean_sample_distance_from_center": 0.25
+                }],
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -1158,10 +1198,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         report.expected_best_subpixel_improved_different_triangle_count,
         Some(1)
     );
+    assert_eq!(report.top_expected_subpixel_sample_summaries.len(), 1);
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Render Hotspot Summary"));
     assert!(markdown.contains("Texture Sampling Variants"));
     assert!(markdown.contains("Subpixel Frontmost Search"));
+    assert!(markdown.contains("Expected fixed subpixel sample ranking"));
     let mut options = Options {
         self_test: false,
         input: Some(PathBuf::from("self-test.json")),

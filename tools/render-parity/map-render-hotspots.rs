@@ -238,6 +238,8 @@ struct HotspotSummary {
     expected_best_subpixel_mean_sample_distance_from_center: Option<f32>,
     actual_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
     expected_best_subpixel_surface_transitions: Vec<SurfaceTransitionCount>,
+    actual_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
+    expected_subpixel_sample_summaries: Vec<SubpixelSampleSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -302,6 +304,19 @@ struct OffsetCount {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct SubpixelSampleSummary {
+    sample: [f32; 2],
+    visible_count: usize,
+    same_triangle_count: usize,
+    improved_count: usize,
+    improved_same_triangle_count: usize,
+    improved_different_triangle_count: usize,
+    mean_cpu_base_color_rgb_distance: f32,
+    mean_cpu_base_color_improvement: Option<f32>,
+    mean_sample_distance_from_center: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct Hotspot {
     x: usize,
     y: usize,
@@ -339,6 +354,7 @@ struct Hotspot {
     nearest_sample_visible_cpu_base_color_actual_rgb_distance: Option<f32>,
     frontmost_texture_sampling_variants: Vec<TextureSamplingDistance>,
     nearest_sample_visible_texture_sampling_variants: Vec<TextureSamplingDistance>,
+    subpixel_visible_candidates: Vec<SubpixelCandidate>,
     best_subpixel_visible_actual: Option<SubpixelMatch>,
     best_subpixel_visible_expected: Option<SubpixelMatch>,
     candidates: Vec<HitCandidate>,
@@ -630,6 +646,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                         .map(|color| rgb_distance(color, delta.actual)),
                 frontmost_texture_sampling_variants,
                 nearest_sample_visible_texture_sampling_variants,
+                subpixel_visible_candidates: subpixel_candidates,
                 best_subpixel_visible_actual,
                 best_subpixel_visible_expected,
                 candidates,
@@ -1168,6 +1185,16 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
                     .map(|matched| &matched.candidate)
             },
         ),
+        actual_subpixel_sample_summaries: subpixel_sample_summaries(
+            hotspots,
+            |hotspot| hotspot.actual,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_subpixel_sample_summaries: subpixel_sample_summaries(
+            hotspots,
+            |hotspot| hotspot.expected,
+            |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
+        ),
     }
 }
 
@@ -1521,6 +1548,118 @@ fn mean_subpixel_sample_distance(
             (sum + (dx * dx + dy * dy).sqrt(), count + 1)
         });
     (count > 0).then_some(sum / count as f32)
+}
+
+fn subpixel_sample_summaries(
+    hotspots: &[Hotspot],
+    target: impl Fn(&Hotspot) -> [u8; 4],
+    center_distance: impl Fn(&Hotspot) -> Option<f32>,
+) -> Vec<SubpixelSampleSummary> {
+    #[derive(Clone, Debug, Default)]
+    struct Aggregate {
+        sample: [f32; 2],
+        visible_count: usize,
+        same_triangle_count: usize,
+        improved_count: usize,
+        improved_same_triangle_count: usize,
+        improved_different_triangle_count: usize,
+        distance_sum: f32,
+        improvement_sum: f32,
+        improvement_count: usize,
+        sample_distance_sum: f32,
+    }
+
+    let mut aggregates = BTreeMap::<[i32; 2], Aggregate>::new();
+    for hotspot in hotspots {
+        let target = target(hotspot);
+        let center_distance = center_distance(hotspot);
+        for candidate in &hotspot.subpixel_visible_candidates {
+            let key = subpixel_sample_key(candidate.sample);
+            let aggregate = aggregates.entry(key).or_insert_with(|| Aggregate {
+                sample: candidate.sample,
+                ..Aggregate::default()
+            });
+            let rgb_distance = rgb_distance(candidate.candidate.cpu_base_color_rgba, target);
+            let same_triangle = same_surface_triangle(
+                hotspot.frontmost_visible.as_ref(),
+                Some(&candidate.candidate),
+            );
+            aggregate.visible_count += 1;
+            aggregate.distance_sum += rgb_distance;
+            aggregate.sample_distance_sum += sample_distance_from_center(candidate.sample);
+            if same_triangle {
+                aggregate.same_triangle_count += 1;
+            }
+            if let Some(improvement) = center_distance.map(|center| center - rgb_distance) {
+                aggregate.improvement_sum += improvement;
+                aggregate.improvement_count += 1;
+                if improvement > 0.0 {
+                    aggregate.improved_count += 1;
+                    if same_triangle {
+                        aggregate.improved_same_triangle_count += 1;
+                    } else {
+                        aggregate.improved_different_triangle_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut summaries = aggregates
+        .into_values()
+        .filter(|aggregate| aggregate.visible_count > 0)
+        .map(|aggregate| SubpixelSampleSummary {
+            sample: aggregate.sample,
+            visible_count: aggregate.visible_count,
+            same_triangle_count: aggregate.same_triangle_count,
+            improved_count: aggregate.improved_count,
+            improved_same_triangle_count: aggregate.improved_same_triangle_count,
+            improved_different_triangle_count: aggregate.improved_different_triangle_count,
+            mean_cpu_base_color_rgb_distance: aggregate.distance_sum
+                / aggregate.visible_count as f32,
+            mean_cpu_base_color_improvement: (aggregate.improvement_count > 0)
+                .then_some(aggregate.improvement_sum / aggregate.improvement_count as f32),
+            mean_sample_distance_from_center: aggregate.sample_distance_sum
+                / aggregate.visible_count as f32,
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        left.mean_cpu_base_color_rgb_distance
+            .partial_cmp(&right.mean_cpu_base_color_rgb_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.improved_count.cmp(&left.improved_count))
+            .then_with(|| {
+                left.mean_sample_distance_from_center
+                    .partial_cmp(&right.mean_sample_distance_from_center)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| sample_order(left.sample, right.sample))
+    });
+    summaries
+}
+
+fn subpixel_sample_key(sample: [f32; 2]) -> [i32; 2] {
+    [
+        (sample[0] * 1_000_000.0).round() as i32,
+        (sample[1] * 1_000_000.0).round() as i32,
+    ]
+}
+
+fn sample_distance_from_center(sample: [f32; 2]) -> f32 {
+    let dx = sample[0] - 0.5;
+    let dy = sample[1] - 0.5;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn sample_order(left: [f32; 2], right: [f32; 2]) -> std::cmp::Ordering {
+    left[1]
+        .partial_cmp(&right[1])
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| {
+            left[0]
+                .partial_cmp(&right[0])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
 }
 
 fn mean_frontmost_texture_gradient(hotspots: &[Hotspot]) -> Option<f32> {
@@ -1974,7 +2113,7 @@ fn subpixel_frontmost_visible_candidates(
         .collect()
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 struct SubpixelCandidate {
     sample: [f32; 2],
     candidate: CandidateMatch,
