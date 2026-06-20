@@ -1144,11 +1144,20 @@ That points away from a pure bounds-reporting artifact and toward Bevy emitting
 a neighboring owner ID at another triangle's raster location.
 
 Owner metadata now also carries `sourceTriangle`. Bevy's split owner-id path
-keeps `triangle = 0` for the generated one-triangle draw mesh and records the
-pre-split source ordinal separately; wgpu and three-vrm set `sourceTriangle`
-equal to their source `triangle`. This compact topology fixture has one source
-triangle per generated mesh, but the field is intended to catch one-slot
-primitive-local ordering slips in broader Seed-san diagnostics.
+uses the pre-split source ordinal for the comparison-facing `triangle` and
+`sourceTriangle` fields, while the generated one-triangle draw mesh ordinal is
+kept separately as `bevyLocalTriangle`. wgpu and three-vrm set
+`sourceTriangle` equal to their source `triangle`. This compact topology fixture
+has one source triangle per generated mesh, but the field is intended to catch
+one-slot primitive-local ordering slips in broader Seed-san diagnostics.
+
+The full Seed-san outline-off owner diagnostic is intentionally run with
+release-built Bevy through
+`just render-parity-seed-owner-id-outline-off-diagnostic`. Debug Bevy capture
+can exceed the practical local timeout on this one-triangle-per-draw path, while
+release Bevy with the normal 40 pre-roll frames produces a valid nonzero capture.
+Do not reduce the pre-roll to `1` for this recipe: that captures before the
+scene has rendered and creates an all-zero Bevy image.
 
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.

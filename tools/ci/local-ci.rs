@@ -71,6 +71,10 @@ struct Options {
     render_height: u32,
     #[arg(long, default_value_t = 3.0)]
     render_camera_z: f32,
+    #[arg(long, default_value_t = 40)]
+    render_bevy_pre_roll_frames: u32,
+    #[arg(long)]
+    render_bevy_release: bool,
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     render_screen_jitter_x: f32,
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
@@ -1303,8 +1307,11 @@ fn capture_wgpu(options: &Options, fixture: &RenderFixture) -> Result<(), String
 fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String> {
     let light_units = render_light_units(options);
     let mut command = Command::new("cargo");
+    command.arg("run");
+    if options.render_bevy_release {
+        command.arg("--release");
+    }
     command
-        .arg("run")
         .arg("--example")
         .arg("bevy_render_capture")
         .arg("--")
@@ -1318,6 +1325,8 @@ fn capture_bevy(options: &Options, fixture: &RenderFixture) -> Result<(), String
         .arg(options.render_width.to_string())
         .arg("--height")
         .arg(options.render_height.to_string())
+        .arg("--pre-roll-frames")
+        .arg(options.render_bevy_pre_roll_frames.to_string())
         .arg("--camera-z")
         .arg(options.render_camera_z.to_string())
         .arg(format!(

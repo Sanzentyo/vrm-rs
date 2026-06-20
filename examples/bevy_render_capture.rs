@@ -86,7 +86,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.insert_resource(options.clone())
         .insert_resource(LoadedResource(loaded))
         .insert_resource(CaptureSender(tx))
-        .insert_resource(SceneController::new(options.width, options.height, 40))
+        .insert_resource(SceneController::new(
+            options.width,
+            options.height,
+            options.pre_roll_frames,
+        ))
         .insert_resource(ClearColor(options.background.color()))
         .add_plugins(
             DefaultPlugins
@@ -132,6 +136,8 @@ struct CaptureOptions {
     width: u32,
     #[arg(long, default_value_t = 512)]
     height: u32,
+    #[arg(long, default_value_t = 40)]
+    pre_roll_frames: u32,
     #[arg(long, default_value_t = 1.0)]
     camera_y: f32,
     #[arg(long, default_value_t = 5.0)]
@@ -1143,8 +1149,9 @@ fn diagnostic_owner_ids(
                     "bevyPhaseOrderOffset": primitive.transparent_order_offset,
                     "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
                     "bevySortDistanceOverride": owner_id_sort_distance_override(primitive, draw_index, options),
-                    "triangle": owner.triangle,
+                    "triangle": owner.source_triangle,
                     "sourceTriangle": owner.source_triangle,
+                    "bevyLocalTriangle": owner.triangle,
                     "indices": owner.indices,
                     "screen": projection.map(|projection| projection.screen),
                     "screenBounds": projection.map(|projection| json!({
