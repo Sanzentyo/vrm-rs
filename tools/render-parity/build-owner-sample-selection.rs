@@ -15,9 +15,12 @@ vrm-adapter = { path = "../../crates/vrm-adapter" }
 //! Unlike apply-owner-sample-correction.rs, this tool never reads expected or
 //! actual color images and does not choose samples by RGB distance. It emits the
 //! same manifest shape because the renderers already consume that schema, but
-//! the selected geometry is driven only by the browser owner-id pass.
+//! the selected geometry is driven only by the browser owner-id pass. The
+//! default mode accepts only pixel-center owner matches; coverage/subpixel
+//! recovery is an explicit diagnostic because it explains nearby ownership but
+//! does not by itself prove that three-vrm shaded the pixel at that UV.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -42,15 +45,36 @@ struct Options {
     out: Option<PathBuf>,
     #[arg(long)]
     manifest_out: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = SelectionMode::CenterOwner)]
+    selection_mode: SelectionMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SelectionMode {
+    /// Match the actual rendered owner at the pixel center.
+    CenterOwner,
+    /// Diagnostic mode: recover the rendered owner from coverage/subpixel samples.
+    RecoveredOwner,
+}
+
+impl SelectionMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CenterOwner => "center-owner",
+            Self::RecoveredOwner => "recovered-owner",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
 struct SelectionReport {
     owner_hotspots: String,
     rust_hotspots: String,
+    selection_mode: &'static str,
     owner_hotspot_count: u64,
     joined_count: u64,
     rendered_owner_count: u64,
+    rendered_owner_center_candidate_count: u64,
     rendered_owner_coverage_recovered_count: u64,
     rendered_owner_subpixel_recovered_count: u64,
     rendered_owner_recovered_count: u64,
@@ -58,6 +82,7 @@ struct SelectionReport {
     selection_count: u64,
     missing_rust_count: u64,
     missing_rendered_owner_count: u64,
+    missing_rendered_owner_center_candidate_count: u64,
     missing_recovery_count: u64,
     missing_rust_sample_count: u64,
 }
@@ -67,6 +92,7 @@ struct SelectionManifest {
     generator: &'static str,
     owner_hotspots: String,
     rust_hotspots: String,
+    selection_mode: &'static str,
     corrections: Vec<SelectionManifestEntry>,
 }
 
@@ -109,6 +135,7 @@ struct ResolvedSample {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecoverySource {
+    Center,
     Coverage,
     Subpixel,
 }
@@ -148,7 +175,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .ok_or("missing --rust-hotspots")?;
     let owner = serde_json::from_str::<Value>(&fs::read_to_string(owner_path)?)?;
     let rust = serde_json::from_str::<Value>(&fs::read_to_string(rust_path)?)?;
-    let (report, manifest) = build_selection(owner_path, rust_path, &owner, &rust)?;
+    let (report, manifest) =
+        build_selection(owner_path, rust_path, &owner, &rust, options.selection_mode)?;
     let report_json = format!("{}\n", serde_json::to_string_pretty(&report)?);
     if let Some(path) = &options.out {
         write_file(path, &report_json)?;
@@ -166,6 +194,7 @@ fn build_selection(
     rust_path: &Path,
     owner: &Value,
     rust: &Value,
+    selection_mode: SelectionMode,
 ) -> Result<(SelectionReport, SelectionManifest), Box<dyn Error>> {
     let owner_hotspots = owner
         .pointer("/reference/renderer/diagnosticHotspots/top")
@@ -183,9 +212,11 @@ fn build_selection(
     let mut report = SelectionReport {
         owner_hotspots: display_path(owner_path),
         rust_hotspots: display_path(rust_path),
+        selection_mode: selection_mode.as_str(),
         owner_hotspot_count: owner_hotspots.len() as u64,
         joined_count: 0,
         rendered_owner_count: 0,
+        rendered_owner_center_candidate_count: 0,
         rendered_owner_coverage_recovered_count: 0,
         rendered_owner_subpixel_recovered_count: 0,
         rendered_owner_recovered_count: 0,
@@ -193,6 +224,7 @@ fn build_selection(
         selection_count: 0,
         missing_rust_count: 0,
         missing_rendered_owner_count: 0,
+        missing_rendered_owner_center_candidate_count: 0,
         missing_recovery_count: 0,
         missing_rust_sample_count: 0,
     };
@@ -215,11 +247,16 @@ fn build_selection(
             continue;
         }
 
-        let Some(recovery) = owner_recovery_sample(owner_hotspot) else {
+        if owner_hotspot.pointer("/renderedOwnerCandidate").is_none() {
+            report.missing_rendered_owner_center_candidate_count += 1;
+        }
+
+        let Some(recovery) = owner_sample_for_mode(owner_hotspot, selection_mode) else {
             report.missing_recovery_count += 1;
             continue;
         };
         match recovery.source {
+            RecoverySource::Center => report.rendered_owner_center_candidate_count += 1,
             RecoverySource::Coverage => report.rendered_owner_coverage_recovered_count += 1,
             RecoverySource::Subpixel => report.rendered_owner_subpixel_recovered_count += 1,
         }
@@ -254,9 +291,28 @@ fn build_selection(
         generator: "vrm-rs tools/render-parity/build-owner-sample-selection.rs",
         owner_hotspots: display_path(owner_path),
         rust_hotspots: display_path(rust_path),
+        selection_mode: selection_mode.as_str(),
         corrections,
     };
     Ok((report, manifest))
+}
+
+fn owner_sample_for_mode(
+    owner_hotspot: &Value,
+    selection_mode: SelectionMode,
+) -> Option<OwnerRecoverySample> {
+    match selection_mode {
+        SelectionMode::CenterOwner => owner_center_sample(owner_hotspot),
+        SelectionMode::RecoveredOwner => owner_recovery_sample(owner_hotspot),
+    }
+}
+
+fn owner_center_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
+    Some(OwnerRecoverySample {
+        source: RecoverySource::Center,
+        surface: surface_at(owner_hotspot, "/renderedOwnerCandidate")?,
+        sample: [0.5, 0.5],
+    })
 }
 
 fn owner_recovery_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
@@ -292,6 +348,14 @@ fn rust_candidate_for_owner_sample(
     source: RecoverySource,
 ) -> Option<(ResolvedSample, GeometrySource)> {
     let candidate_arrays: &[&str] = match source {
+        RecoverySource::Center => {
+            return rust_center_candidate_for_surface(
+                rust_hotspot,
+                sample_key.surface(),
+                CenterCandidatePolicy::StrictInside,
+            )
+            .map(|sample| (sample, GeometrySource::PixelCenter));
+        }
         RecoverySource::Coverage => &["coverage_visible_candidates", "subpixel_visible_candidates"],
         RecoverySource::Subpixel => &["subpixel_visible_candidates"],
     };
@@ -301,7 +365,11 @@ fn rust_candidate_for_owner_sample(
     if recovery.1 == GeometrySource::PixelCenter {
         return Some(recovery);
     }
-    if let Some(center) = rust_center_candidate_for_surface(rust_hotspot, sample_key.surface()) {
+    if let Some(center) = rust_center_candidate_for_surface(
+        rust_hotspot,
+        sample_key.surface(),
+        CenterCandidatePolicy::LooseInside,
+    ) {
         Some((center, GeometrySource::PixelCenter))
     } else {
         Some(recovery)
@@ -343,9 +411,16 @@ fn rust_candidate_in_array(
         })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CenterCandidatePolicy {
+    StrictInside,
+    LooseInside,
+}
+
 fn rust_center_candidate_for_surface(
     rust_hotspot: &Value,
     surface: &RenderOwnerSurfaceKey,
+    policy: CenterCandidatePolicy,
 ) -> Option<ResolvedSample> {
     rust_hotspot
         .get("candidates")
@@ -357,6 +432,7 @@ fn rust_center_candidate_for_surface(
                 .is_some_and(|candidate_surface| candidate_surface == surface)
                 && bool_field(candidate, "visible_by_policy").unwrap_or(false)
                 && i64_pair(candidate.get("sample_offset")).is_some_and(|offset| offset == [0, 0])
+                && center_candidate_matches_policy(candidate, policy)
         })
         .min_by(|left, right| {
             f64_field(left, "depth")
@@ -370,6 +446,16 @@ fn rust_center_candidate_for_surface(
                 geometry: sample_geometry_from_direct_candidate(candidate)?,
             })
         })
+}
+
+fn center_candidate_matches_policy(candidate: &Value, policy: CenterCandidatePolicy) -> bool {
+    let Some(min_barycentric) = f64_optional_field(candidate, "min_barycentric") else {
+        return false;
+    };
+    match policy {
+        CenterCandidatePolicy::StrictInside => min_barycentric >= 0.0,
+        CenterCandidatePolicy::LooseInside => min_barycentric >= -0.00001,
+    }
 }
 
 fn sample_geometry_from_direct_candidate(
@@ -427,6 +513,10 @@ fn f64_field(value: &Value, field: &str) -> f64 {
         .get(field)
         .and_then(Value::as_f64)
         .unwrap_or(f64::INFINITY)
+}
+
+fn f64_optional_field(value: &Value, field: &str) -> Option<f64> {
+    value.get(field).and_then(Value::as_f64)
 }
 
 fn u64_field(value: &Value, field: &str) -> u64 {
@@ -487,6 +577,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "renderedOwner": {
                     "owner": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7}
                 },
+                "renderedOwnerCandidate": {
+                    "materialName": "body",
+                    "triangle": 7
+                },
                 "renderedOwnerRecovery": {
                     "bestCoverage": {
                         "sampleCenter": [0.7, 0.5],
@@ -501,6 +595,24 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             "hotspots": [{
                 "x": 0,
                 "y": 0,
+                "candidates": [{
+                    "node": 0,
+                    "mesh": 1,
+                    "primitive": 2,
+                    "pass": "base",
+                    "material_name": "body",
+                    "triangle": 7,
+                    "indices": [3, 4, 5],
+                    "barycentric": [0.4, 0.4, 0.2],
+                    "min_barycentric": 0.2,
+                    "raw_uv": [0.45, 0.55],
+                    "base_uv": [0.5, 0.6],
+                    "depth": 0.40,
+                    "draw_index": 9,
+                    "visible_by_policy": true,
+                    "sample_offset": [0, 0],
+                    "cpu_base_color_rgba": [110, 111, 112, 255]
+                }],
                 "coverage_visible_candidates": [{
                     "sample": [0.7, 0.5],
                     "candidate": {
@@ -512,6 +624,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "triangle": 7,
                         "indices": [3, 4, 5],
                         "barycentric": [0.2, 0.3, 0.5],
+                        "min_barycentric": 0.2,
                         "raw_uv": [0.25, 0.75],
                         "base_uv": [0.3, 0.8],
                         "depth": 0.42,
@@ -526,6 +639,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "triangle": 7,
                         "indices": [3, 4, 5],
                         "barycentric": [0.4, 0.4, 0.2],
+                        "min_barycentric": 0.2,
                         "raw_uv": [0.45, 0.55],
                         "base_uv": [0.5, 0.6],
                         "depth": 0.40,
@@ -535,12 +649,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
-    let (report, manifest) =
-        build_selection(Path::new("owner.json"), Path::new("rust.json"), &owner, &rust)?;
+    let (report, manifest) = build_selection(
+        Path::new("owner.json"),
+        Path::new("rust.json"),
+        &owner,
+        &rust,
+        SelectionMode::CenterOwner,
+    )?;
     assert_eq!(report.joined_count, 1);
     assert_eq!(report.rendered_owner_count, 1);
+    assert_eq!(report.rendered_owner_center_candidate_count, 1);
     assert_eq!(report.rendered_owner_recovered_count, 1);
-    assert_eq!(report.rendered_owner_coverage_recovered_count, 1);
+    assert_eq!(report.rendered_owner_coverage_recovered_count, 0);
     assert_eq!(report.rendered_owner_center_shading_geometry_count, 1);
     assert_eq!(report.selection_count, 1);
     assert_eq!(manifest.corrections.len(), 1);
@@ -549,7 +669,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].rgba, [110, 111, 112, 255]);
     assert_eq!(manifest.corrections[0].surface.material_name, "body");
     assert_eq!(manifest.corrections[0].surface.triangle, 7);
-    assert_eq!(manifest.corrections[0].sample, [0.7, 0.5]);
+    assert_eq!(manifest.corrections[0].sample, [0.5, 0.5]);
     assert_eq!(manifest.corrections[0].sample_geometry.node, 0);
     assert_eq!(manifest.corrections[0].sample_geometry.mesh, 1);
     assert_eq!(manifest.corrections[0].sample_geometry.primitive, 2);
@@ -563,5 +683,15 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].sample_geometry.base_uv, [0.5, 0.6]);
     assert_eq!(manifest.corrections[0].sample_geometry.depth, 0.40);
     assert_eq!(manifest.corrections[0].sample_geometry.pass, "base");
+
+    let (recovered_report, recovered_manifest) = build_selection(
+        Path::new("owner.json"),
+        Path::new("rust.json"),
+        &owner,
+        &rust,
+        SelectionMode::RecoveredOwner,
+    )?;
+    assert_eq!(recovered_report.rendered_owner_coverage_recovered_count, 1);
+    assert_eq!(recovered_manifest.corrections[0].sample, [0.7, 0.5]);
     Ok(())
 }

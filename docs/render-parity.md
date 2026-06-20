@@ -2760,6 +2760,12 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 
 ## Next Renderer Work
 
+- Keep owner/sample resolve manifests tied to rendered owner identity at the
+  pixel center. `build-owner-sample-selection.rs` defaults to
+  `--selection-mode center-owner`; `--selection-mode recovered-owner` is a
+  diagnostic for coverage/subpixel investigation and should not be used as a
+  default parity fix unless the renderer's fill/source-order model is updated
+  to make that recovered owner actually win the pixel.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
