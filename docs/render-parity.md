@@ -1112,6 +1112,17 @@ inside the wgpu expected owner bounds only, and `22/23` of those are within
 `16/26` expected-only and `9/26` neither-inside pixels, so this is not just a
 center-vs-origin metadata convention mismatch.
 
+The same summary now reports raster pixel bounds per owner against projected
+metadata bounds. On the compact topology fixture, the wgpu reference has
+`0` owners whose center-sampled raster bounds exceed metadata bounds, while
+Bevy has `14` such owners and a worst center excess of `19.55310059px`
+(owner `90`). Bevy's owner-id diagnostic path also renders one triangle per
+draw with a uniform owner color and blend disabled, so the remaining tail is no
+longer attributable to vertex-color interpolation or owner-ID alpha blending.
+The generated owner controls still pass after this change, which keeps the next
+target on real-model local Bevy coverage/fill or material-primitive assignment
+in the source-derived topology guard.
+
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.
 

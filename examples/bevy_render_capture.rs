@@ -665,44 +665,72 @@ fn assign_owner_id_colors(primitives: &mut [BevyPrimitive]) {
     }
 }
 
-fn assign_owner_id_triangles(primitives: &mut [BevyPrimitive]) {
+fn assign_owner_id_triangles(primitives: &mut Vec<BevyPrimitive>) {
     let mut next_id = 1;
-    for primitive in primitives {
+    let mut owner_primitives = Vec::new();
+    for mut primitive in primitives.drain(..) {
         let original_indices = mesh_indices_u32(&primitive.mesh);
         primitive.owner_ids.clear();
         duplicate_mesh_vertices_in_index_order(&mut primitive.mesh, &original_indices)
             .expect("owner-id diagnostic mesh should be writable before render extraction");
         let vertex_count = primitive.mesh.count_vertices();
-        let mut colors = Vec::with_capacity(vertex_count);
-        let mut remaining = vertex_count;
-        let mut triangle_index = 0;
-        while remaining > 0 {
-            let color = owner_id_color(next_id);
+        let triangle_count = vertex_count.div_ceil(3);
+        for triangle_index in 0..triangle_count {
+            let Some(mesh) = owner_id_triangle_mesh(&primitive.mesh, triangle_index) else {
+                continue;
+            };
             let indices = original_indices
                 .get(triangle_index * 3..triangle_index * 3 + 3)
                 .and_then(|slice| <[u32; 3]>::try_from(slice).ok())
                 .unwrap_or([0, 0, 0]);
-            primitive.owner_ids.push(OwnerTriangle {
-                id: next_id,
-                triangle: triangle_index,
-                indices,
+            let mut material = primitive.material.clone();
+            material.set_owner_color(BVec4::from_array(owner_id_color(next_id)));
+            let phase_order = primitive
+                .owner_source
+                .phase_order
+                .unwrap_or(primitive.render_order);
+            let transparent_order_offset =
+                bevy_source_order_offset(&material, phase_order, triangle_index as i32);
+            owner_primitives.push(BevyPrimitive {
+                mesh,
+                material,
+                render_order: primitive.render_order,
+                transparent_order_offset,
+                phase_order_offset_applied: transparent_order_offset,
+                owner_source: primitive.owner_source,
+                owner_ids: vec![OwnerTriangle {
+                    id: next_id,
+                    triangle: 0,
+                    indices,
+                }],
             });
             next_id += 1;
-            for _ in 0..remaining.min(3) {
-                colors.push(color);
-            }
-            remaining = remaining.saturating_sub(3);
-            triangle_index += 1;
-        }
-        primitive
-            .mesh
-            .insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-        match &mut primitive.material {
-            BevyPrimitiveMaterial::Mtoon(material) => {
-                material.owner_color = BVec4::ZERO;
-            }
         }
     }
+    *primitives = owner_primitives;
+}
+
+fn owner_id_triangle_mesh(source: &Mesh, triangle: usize) -> Option<Mesh> {
+    let start = triangle.checked_mul(3)?;
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        mesh_positions(source)?.get(start..start + 3)?.to_vec(),
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        mesh_normals(source)?.get(start..start + 3)?.to_vec(),
+    );
+    if let Some(tangents) = mesh_tangents(source).and_then(|items| items.get(start..start + 3)) {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents.to_vec());
+    }
+    if let Some(uvs) = mesh_uv0(source).and_then(|items| items.get(start..start + 3)) {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs.to_vec());
+    }
+    Some(mesh)
 }
 
 fn configure_owner_id_phase_order_offsets(
@@ -1272,6 +1300,27 @@ fn mesh_positions(mesh: &Mesh) -> Option<&[[f32; 3]]> {
     }
 }
 
+fn mesh_normals(mesh: &Mesh) -> Option<&[[f32; 3]]> {
+    match mesh.attribute(Mesh::ATTRIBUTE_NORMAL)? {
+        VertexAttributeValues::Float32x3(normals) => Some(normals),
+        _ => None,
+    }
+}
+
+fn mesh_tangents(mesh: &Mesh) -> Option<&[[f32; 4]]> {
+    match mesh.attribute(Mesh::ATTRIBUTE_TANGENT)? {
+        VertexAttributeValues::Float32x4(tangents) => Some(tangents),
+        _ => None,
+    }
+}
+
+fn mesh_uv0(mesh: &Mesh) -> Option<&[[f32; 2]]> {
+    match mesh.attribute(Mesh::ATTRIBUTE_UV_0)? {
+        VertexAttributeValues::Float32x2(uvs) => Some(uvs),
+        _ => None,
+    }
+}
+
 fn node_name(loaded: &LoadedVrm, node: usize) -> Option<&str> {
     loaded
         .scene
@@ -1583,6 +1632,7 @@ struct RenderOwnerMetadata {
     diagnostic_owner_ids: Vec<serde_json::Value>,
 }
 
+#[derive(Clone)]
 enum BevyPrimitiveMaterial {
     Mtoon(BevyMtoonMaterial),
 }
@@ -1606,6 +1656,14 @@ impl BevyPrimitiveMaterial {
         match self {
             Self::Mtoon(material) => {
                 material.depth_write = depth_write;
+            }
+        }
+    }
+
+    fn set_owner_color(&mut self, owner_color: BVec4) {
+        match self {
+            Self::Mtoon(material) => {
+                material.owner_color = owner_color;
             }
         }
     }
@@ -1781,6 +1839,10 @@ impl BevyMtoonMaterial {
             AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply
         )
     }
+
+    fn is_owner_id_diagnostic(&self) -> bool {
+        self.material_flags2.w > 4.5 && self.material_flags2.w < 5.5
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -1788,6 +1850,7 @@ struct BevyMtoonKey {
     cull_mode: Option<Face>,
     depth_write: bool,
     front_face: CaptureFrontFace,
+    owner_id_no_blend: bool,
 }
 
 #[derive(Clone, Copy, Debug, ShaderType)]
@@ -1861,6 +1924,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonKey {
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
             front_face: material.front_face,
+            owner_id_no_blend: material.is_owner_id_diagnostic(),
         }
     }
 }
@@ -1905,6 +1969,13 @@ impl Material for BevyMtoonMaterial {
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
             depth_stencil.depth_compare = CompareFunction::GreaterEqual;
+        }
+        if key.bind_group_data.owner_id_no_blend
+            && let Some(fragment) = &mut descriptor.fragment
+        {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = None;
+            }
         }
         Ok(())
     }

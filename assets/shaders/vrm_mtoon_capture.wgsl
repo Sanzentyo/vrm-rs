@@ -277,9 +277,9 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
     }
     if material.material_flags2.w > 4.5 && material.material_flags2.w < 5.5 {
 #ifdef VERTEX_COLORS
-        return owner_id_output_color(input.color.rgb, opaque_alpha);
+        return owner_id_output_color(input.color.rgb, 1.0);
 #else
-        return owner_id_output_color(material.owner_color.rgb, opaque_alpha);
+        return owner_id_output_color(material.owner_color.rgb, 1.0);
 #endif
     }
     if material.material_flags2.w > 2.5 {

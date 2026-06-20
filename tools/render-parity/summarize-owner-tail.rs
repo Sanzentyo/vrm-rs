@@ -44,6 +44,8 @@ struct OwnerTailReport {
     height: Option<u64>,
     counts: OwnerTailCounts,
     unexplained_projection_gap_summary: Value,
+    expected_raster_bounds_summary: Value,
+    actual_raster_bounds_summary: Value,
     top_unexplained_material_transitions: Vec<Value>,
     top_unexplained_details: Vec<TailDetail>,
 }
@@ -212,6 +214,14 @@ fn summarize_report(
         },
         unexplained_projection_gap_summary: value
             .get("unexplained_projection_gap_summary")
+            .cloned()
+            .unwrap_or(Value::Null),
+        expected_raster_bounds_summary: value
+            .get("expected_raster_bounds_summary")
+            .cloned()
+            .unwrap_or(Value::Null),
+        actual_raster_bounds_summary: value
+            .get("actual_raster_bounds_summary")
             .cloned()
             .unwrap_or(Value::Null),
         top_unexplained_material_transitions: take_values(
@@ -641,6 +651,34 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         "max_actual_bevy_phase_order_offset_applied",
     );
 
+    output.push_str("\n## Raster Bounds vs Metadata\n\n");
+    output.push_str("| Image | Metric | Value |\n|---|---|---:|\n");
+    write_raster_bounds_summary(&mut output, "expected", &report.expected_raster_bounds_summary);
+    write_raster_bounds_summary(&mut output, "actual", &report.actual_raster_bounds_summary);
+
+    output.push_str("\n## Top Actual Raster Bounds Excess\n\n");
+    output.push_str("| Owner | Pixels | Center Excess | Origin Excess |\n|---:|---:|---:|---:|\n");
+    for gap in report
+        .actual_raster_bounds_summary
+        .get("top_center_bounds_excess")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(8)
+    {
+        output.push_str(&format!(
+            "| {} | {} | {:.6} | {:.6} |\n",
+            u64_field(gap, "owner").unwrap_or(0),
+            u64_field(gap, "pixels").unwrap_or(0),
+            gap.pointer("/center_excess/max")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            gap.pointer("/origin_excess/max")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        ));
+    }
+
     output.push_str("\n## Top Unexplained Material Transitions\n\n");
     output.push_str("| Count | Expected | Actual | Relation |\n|---:|---|---|---|\n");
     for transition in &report.top_unexplained_material_transitions {
@@ -741,6 +779,27 @@ fn write_projection_gap_value(output: &mut String, report: &OwnerTailReport, lab
         .and_then(Value::as_f64)
     {
         output.push_str(&format!("| `{label}` | {value:.8} |\n"));
+    }
+}
+
+fn write_raster_bounds_summary(output: &mut String, image: &str, summary: &Value) {
+    for key in [
+        "owners_with_pixels",
+        "owners_with_screen_bounds",
+        "owners_with_center_bounds_excess",
+        "owners_with_origin_bounds_excess",
+        "pixels_with_screen_bounds",
+        "pixels_in_center_bounds_excess_owners",
+        "pixels_in_origin_bounds_excess_owners",
+    ] {
+        if let Some(value) = summary.get(key).and_then(Value::as_u64) {
+            output.push_str(&format!("| `{image}` | `{key}` | {value} |\n"));
+        }
+    }
+    for key in ["max_center_bounds_excess", "max_origin_bounds_excess"] {
+        if let Some(value) = summary.get(key).and_then(Value::as_f64) {
+            output.push_str(&format!("| `{image}` | `{key}` | {value:.8} |\n"));
+        }
     }
 }
 

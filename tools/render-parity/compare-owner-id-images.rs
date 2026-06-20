@@ -101,6 +101,8 @@ struct OwnerCompareReport {
     top_expected_to_actual_details: Vec<OwnerTransitionDetail>,
     top_actual_to_expected_details: Vec<OwnerTransitionDetail>,
     unexplained_projection_gap_summary: OwnerProjectionGapSummary,
+    expected_raster_bounds_summary: OwnerRasterBoundsSummary,
+    actual_raster_bounds_summary: OwnerRasterBoundsSummary,
     top_unexplained_material_transitions: Vec<OwnerMaterialTransition>,
     top_unexplained_expected_to_actual_details: Vec<OwnerTransitionDetail>,
 }
@@ -366,6 +368,41 @@ struct OwnerTransitionDetail {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
+struct OwnerRasterBoundsSummary {
+    owners_with_pixels: u64,
+    owners_with_metadata: u64,
+    owners_with_screen_bounds: u64,
+    owners_with_center_bounds_excess: u64,
+    owners_with_origin_bounds_excess: u64,
+    pixels_with_screen_bounds: u64,
+    pixels_in_center_bounds_excess_owners: u64,
+    pixels_in_origin_bounds_excess_owners: u64,
+    max_center_bounds_excess: Option<f64>,
+    max_origin_bounds_excess: Option<f64>,
+    top_center_bounds_excess: Vec<OwnerRasterBoundsGap>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerRasterBoundsGap {
+    owner: u32,
+    pixels: u64,
+    metadata_bounds: OwnerScreenBounds,
+    raster_center_bounds: OwnerScreenBounds,
+    raster_origin_bounds: OwnerScreenBounds,
+    center_excess: OwnerBoundsExcess,
+    origin_excess: OwnerBoundsExcess,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OwnerBoundsExcess {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    max: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 struct OwnerProjectionGapSummary {
     count: u64,
     with_screen_bounds: u64,
@@ -546,6 +583,7 @@ struct PixelBoundsRelation {
 #[derive(Clone, Debug)]
 struct OwnerTransitionPixels {
     bounds: OwnerPixelBounds,
+    count: u64,
     sample_pixels: Vec<OwnerPixel>,
 }
 
@@ -882,6 +920,20 @@ fn compare_owner_images(
             top,
         ),
         unexplained_projection_gap_summary: unexplained_projection_gaps.into_summary(),
+        expected_raster_bounds_summary: owner_raster_bounds_summary(
+            &expected_ids,
+            expected.width,
+            expected.height,
+            expected_metadata,
+            top,
+        ),
+        actual_raster_bounds_summary: owner_raster_bounds_summary(
+            &actual_ids,
+            actual.width,
+            actual.height,
+            actual_metadata,
+            top,
+        ),
         top_unexplained_material_transitions: top_owner_material_transitions(
             unexplained_material_transitions,
             top,
@@ -1664,6 +1716,21 @@ fn screen_bounds_area(bounds: OwnerScreenBounds) -> f64 {
     ((bounds.max_x - bounds.min_x).max(0.0)) * ((bounds.max_y - bounds.min_y).max(0.0))
 }
 
+fn bounds_excess(raster: OwnerScreenBounds, metadata: OwnerScreenBounds) -> OwnerBoundsExcess {
+    let min_x = (metadata.min_x - raster.min_x).max(0.0);
+    let max_x = (raster.max_x - metadata.max_x).max(0.0);
+    let min_y = (metadata.min_y - raster.min_y).max(0.0);
+    let max_y = (raster.max_y - metadata.max_y).max(0.0);
+    let max = min_x.max(max_x).max(min_y).max(max_y);
+    OwnerBoundsExcess {
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        max,
+    }
+}
+
 fn pixel_bounds_relation(pixel: OwnerPixel, bounds: OwnerScreenBounds) -> PixelBoundsRelation {
     pixel_bounds_relation_at(pixel, bounds, 0.5)
 }
@@ -1837,17 +1904,43 @@ impl OwnerTransitionPixels {
                 max_x: pixel.x,
                 max_y: pixel.y,
             },
+            count: 1,
             sample_pixels: vec![pixel],
         }
     }
 
     fn add(&mut self, pixel: OwnerPixel) {
+        self.count += 1;
         self.bounds.min_x = self.bounds.min_x.min(pixel.x);
         self.bounds.min_y = self.bounds.min_y.min(pixel.y);
         self.bounds.max_x = self.bounds.max_x.max(pixel.x);
         self.bounds.max_y = self.bounds.max_y.max(pixel.y);
         if self.sample_pixels.len() < 8 {
             self.sample_pixels.push(pixel);
+        }
+    }
+
+    fn count(&self) -> u64 {
+        self.count
+    }
+}
+
+impl OwnerPixelBounds {
+    fn to_center_screen_bounds(self) -> OwnerScreenBounds {
+        OwnerScreenBounds {
+            min_x: self.min_x as f64 + 0.5,
+            min_y: self.min_y as f64 + 0.5,
+            max_x: self.max_x as f64 + 0.5,
+            max_y: self.max_y as f64 + 0.5,
+        }
+    }
+
+    fn to_origin_screen_bounds(self) -> OwnerScreenBounds {
+        OwnerScreenBounds {
+            min_x: self.min_x as f64,
+            min_y: self.min_y as f64,
+            max_x: self.max_x as f64,
+            max_y: self.max_y as f64,
         }
     }
 }
@@ -2188,6 +2281,102 @@ impl OwnerProjectionGapAccumulator {
         self.either_small_bounds_area_le_4px += u64::from(expected_small_4 || actual_small_4);
         self.both_small_bounds_area_le_4px += u64::from(expected_small_4 && actual_small_4);
     }
+}
+
+fn owner_raster_bounds_summary(
+    ids: &[u32],
+    width: usize,
+    height: usize,
+    metadata: &HashMap<u32, OwnerLabel>,
+    top: usize,
+) -> OwnerRasterBoundsSummary {
+    let row_width = width.max(1);
+    let mut raster_bounds = BTreeMap::<u32, OwnerTransitionPixels>::new();
+    for (index, &owner) in ids.iter().enumerate() {
+        if owner == 0 {
+            continue;
+        }
+        let pixel = OwnerPixel {
+            x: index % row_width,
+            y: index / row_width,
+        };
+        raster_bounds
+            .entry(owner)
+            .and_modify(|entry| entry.add(pixel))
+            .or_insert_with(|| OwnerTransitionPixels::new(pixel));
+    }
+
+    let mut summary = OwnerRasterBoundsSummary {
+        owners_with_pixels: raster_bounds.len() as u64,
+        ..OwnerRasterBoundsSummary::default()
+    };
+    let mut gaps = Vec::new();
+    for (owner, pixels) in raster_bounds {
+        let pixel_count = pixels.count();
+        if metadata.contains_key(&owner) {
+            summary.owners_with_metadata += 1;
+        }
+        let Some(metadata_bounds) = metadata.get(&owner).and_then(|label| label.screen_bounds)
+        else {
+            continue;
+        };
+        summary.owners_with_screen_bounds += 1;
+        summary.pixels_with_screen_bounds += pixel_count;
+        let raster_center_bounds = pixels.bounds.to_center_screen_bounds();
+        let raster_origin_bounds = pixels.bounds.to_origin_screen_bounds();
+        let center_excess = bounds_excess(raster_center_bounds, metadata_bounds);
+        let origin_excess = bounds_excess(raster_origin_bounds, metadata_bounds);
+        if center_excess.max > f64::EPSILON {
+            summary.owners_with_center_bounds_excess += 1;
+            summary.pixels_in_center_bounds_excess_owners += pixel_count;
+            summary.max_center_bounds_excess = Some(
+                summary
+                    .max_center_bounds_excess
+                    .unwrap_or(0.0)
+                    .max(center_excess.max),
+            );
+        }
+        if origin_excess.max > f64::EPSILON {
+            summary.owners_with_origin_bounds_excess += 1;
+            summary.pixels_in_origin_bounds_excess_owners += pixel_count;
+            summary.max_origin_bounds_excess = Some(
+                summary
+                    .max_origin_bounds_excess
+                    .unwrap_or(0.0)
+                    .max(origin_excess.max),
+            );
+        }
+        if center_excess.max > f64::EPSILON || origin_excess.max > f64::EPSILON {
+            gaps.push(OwnerRasterBoundsGap {
+                owner,
+                pixels: pixel_count,
+                metadata_bounds,
+                raster_center_bounds,
+                raster_origin_bounds,
+                center_excess,
+                origin_excess,
+            });
+        }
+    }
+    gaps.sort_by(|left, right| {
+        right
+            .center_excess
+            .max
+            .partial_cmp(&left.center_excess.max)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .origin_excess
+                    .max
+                    .partial_cmp(&left.origin_excess.max)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| right.pixels.cmp(&left.pixels))
+            .then_with(|| left.owner.cmp(&right.owner))
+    });
+    summary.top_center_bounds_excess = gaps.into_iter().take(top).collect();
+    debug_assert!(height == 0 || ids.len() <= width.saturating_mul(height));
+    summary
 }
 
 fn top_transition_details(
