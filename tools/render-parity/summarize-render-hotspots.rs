@@ -52,6 +52,12 @@ struct Options {
     min_texture_distance_actual_closer: Option<u64>,
     #[arg(long)]
     min_texture_distance_expected_closer: Option<u64>,
+    #[arg(long)]
+    max_actual_expected_different_pass_count: Option<u64>,
+    #[arg(long)]
+    max_actual_expected_different_material_count: Option<u64>,
+    #[arg(long)]
+    max_actual_expected_different_triangle_count: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +80,9 @@ struct ReviewReport {
     expected_frontmost_triangle_matches: Option<u64>,
     actual_frontmost_edge_neighbor_matches: Option<u64>,
     expected_frontmost_edge_neighbor_matches: Option<u64>,
+    actual_expected_same_pass_matches: Option<u64>,
+    actual_expected_same_material_matches: Option<u64>,
+    actual_expected_same_triangle_matches: Option<u64>,
     actual_frontmost_pass_matches: Option<u64>,
     expected_frontmost_pass_matches: Option<u64>,
     actual_frontmost_mean_base_texture_rgb_distance: Option<f64>,
@@ -100,6 +109,7 @@ struct ReviewReport {
     texture_distance_advantage: TextureDistanceAdvantage,
     top_actual_surface_transitions: Vec<Value>,
     top_expected_surface_transitions: Vec<Value>,
+    top_actual_expected_surface_transitions: Vec<Value>,
     top_frontmost_edges: Vec<Value>,
     top_nearest_sample_offsets: Vec<Value>,
     top_missing_center_nearest_offsets: Vec<Value>,
@@ -218,6 +228,41 @@ fn validate_thresholds(
         Some(report.texture_distance_advantage.expected_closer),
         options.min_texture_distance_expected_closer,
     )?;
+    check_max_difference(
+        "actual_expected_different_pass_count",
+        report.hotspot_count,
+        report.actual_expected_same_pass_matches,
+        options.max_actual_expected_different_pass_count,
+    )?;
+    check_max_difference(
+        "actual_expected_different_material_count",
+        report.hotspot_count,
+        report.actual_expected_same_material_matches,
+        options.max_actual_expected_different_material_count,
+    )?;
+    check_max_difference(
+        "actual_expected_different_triangle_count",
+        report.hotspot_count,
+        report.actual_expected_same_triangle_matches,
+        options.max_actual_expected_different_triangle_count,
+    )?;
+    Ok(())
+}
+
+fn check_max_difference(
+    metric: &'static str,
+    total: u64,
+    same: Option<u64>,
+    max: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(max) = max else {
+        return Ok(());
+    };
+    let same = same.ok_or_else(|| format!("{metric} is missing; cannot apply max {max}"))?;
+    let actual = total.saturating_sub(same);
+    if actual > max {
+        return Err(format!("{metric} {actual} exceeds max {max}").into());
+    }
     Ok(())
 }
 
@@ -324,6 +369,18 @@ fn summarize_report(
             summary,
             "expected_frontmost_edge_neighbor_matches",
         ),
+        actual_expected_same_pass_matches: u64_field(
+            summary,
+            "actual_expected_same_pass_matches",
+        ),
+        actual_expected_same_material_matches: u64_field(
+            summary,
+            "actual_expected_same_material_matches",
+        ),
+        actual_expected_same_triangle_matches: u64_field(
+            summary,
+            "actual_expected_same_triangle_matches",
+        ),
         actual_frontmost_pass_matches: u64_field(summary, "actual_frontmost_pass_matches"),
         expected_frontmost_pass_matches: u64_field(summary, "expected_frontmost_pass_matches"),
         actual_frontmost_mean_base_texture_rgb_distance: f64_field(
@@ -413,6 +470,11 @@ fn summarize_report(
         top_expected_surface_transitions: top_array(
             summary,
             "expected_frontmost_surface_transitions",
+            top,
+        ),
+        top_actual_expected_surface_transitions: top_array(
+            summary,
+            "actual_expected_surface_transitions",
             top,
         ),
         top_frontmost_edges: top_array(summary, "frontmost_nearest_edge_counts", top),
@@ -537,6 +599,12 @@ fn markdown_report(report: &ReviewReport) -> String {
         fmt_opt_u64(report.expected_frontmost_edge_neighbor_matches)
     ));
     markdown.push_str(&format!(
+        "- Actual vs expected same pass/material/triangle: `{}` / `{}` / `{}`\n",
+        fmt_opt_u64(report.actual_expected_same_pass_matches),
+        fmt_opt_u64(report.actual_expected_same_material_matches),
+        fmt_opt_u64(report.actual_expected_same_triangle_matches)
+    ));
+    markdown.push_str(&format!(
         "- Base-texture mean RGB distance actual/expected: `{}` / `{}`\n",
         fmt_opt_f64(report.actual_frontmost_mean_base_texture_rgb_distance),
         fmt_opt_f64(report.expected_frontmost_mean_base_texture_rgb_distance)
@@ -596,6 +664,8 @@ fn markdown_report(report: &ReviewReport) -> String {
     markdown.push_str(&value_table(&report.top_actual_surface_transitions));
     markdown.push_str("\nExpected vs frontmost:\n\n");
     markdown.push_str(&value_table(&report.top_expected_surface_transitions));
+    markdown.push_str("\nActual vs expected:\n\n");
+    markdown.push_str(&value_table(&report.top_actual_expected_surface_transitions));
     markdown.push_str("\n## Frontmost Edges\n\n");
     markdown.push_str(&value_table(&report.top_frontmost_edges));
     markdown.push_str("\nNearest-sample offsets:\n\n");
@@ -719,6 +789,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "expected_frontmost_triangle_matches": 0,
                 "actual_frontmost_edge_neighbor_matches": 1,
                 "expected_frontmost_edge_neighbor_matches": 1,
+                "actual_expected_same_pass_matches": 1,
+                "actual_expected_same_material_matches": 1,
+                "actual_expected_same_triangle_matches": 0,
                 "actual_frontmost_pass_matches": 1,
                 "expected_frontmost_pass_matches": 1,
                 "actual_frontmost_mean_base_texture_rgb_distance": 1.0,
@@ -742,6 +815,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "frontmost_base_texture_local_rgb_gradient_gte_96": 0,
                 "actual_frontmost_surface_transitions": [{"count": 1}],
                 "expected_frontmost_surface_transitions": [{"count": 1}],
+                "actual_expected_surface_transitions": [{"count": 1}],
                 "frontmost_nearest_edge_counts": [{"count": 1}],
                 "nearest_sample_visible_offsets": [{"sample_offset": [0, 0], "count": 1}],
                 "missing_center_nearest_visible_offsets": []
@@ -773,6 +847,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(report.hotspot_count, 1);
     assert_eq!(report.texture_distance_advantage.actual_closer, 1);
     assert_eq!(report.nearest_sample_visible_frontmost_count, Some(1));
+    assert_eq!(report.actual_expected_same_material_matches, Some(1));
+    assert_eq!(report.actual_expected_same_triangle_matches, Some(0));
     assert_eq!(
         report.actual_nearest_sample_visible_mean_base_texture_rgb_distance,
         Some(1.5)
@@ -793,6 +869,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         max_frontmost_max_base_texture_local_rgb_gradient: Some(12.0),
         min_texture_distance_actual_closer: Some(1),
         min_texture_distance_expected_closer: Some(0),
+        max_actual_expected_different_pass_count: Some(0),
+        max_actual_expected_different_material_count: Some(0),
+        max_actual_expected_different_triangle_count: Some(1),
     };
     validate_thresholds(&report, &options)?;
     options.max_frontmost_max_base_texture_local_rgb_gradient = Some(11.0);

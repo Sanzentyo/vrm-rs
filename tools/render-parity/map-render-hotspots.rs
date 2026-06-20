@@ -198,11 +198,15 @@ struct HotspotSummary {
     frontmost_edge_distance_lte_100px: usize,
     actual_frontmost_edge_neighbor_matches: usize,
     expected_frontmost_edge_neighbor_matches: usize,
+    actual_expected_same_pass_matches: usize,
+    actual_expected_same_material_matches: usize,
+    actual_expected_same_triangle_matches: usize,
     frontmost_nearest_edge_counts: Vec<EdgeBucketCount>,
     nearest_sample_visible_offsets: Vec<OffsetCount>,
     missing_center_nearest_visible_offsets: Vec<OffsetCount>,
     actual_visible_sample_offsets: Vec<OffsetCount>,
     expected_visible_sample_offsets: Vec<OffsetCount>,
+    actual_expected_surface_transitions: Vec<SurfaceTransitionCount>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -831,6 +835,33 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
                 )
             })
             .count(),
+        actual_expected_same_pass_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_pass(
+                    hotspot.nearest_visible_actual.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
+        actual_expected_same_material_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_material(
+                    hotspot.nearest_visible_actual.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
+        actual_expected_same_triangle_matches: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.nearest_visible_actual.as_ref(),
+                    hotspot.nearest_visible_expected.as_ref(),
+                )
+            })
+            .count(),
         frontmost_nearest_edge_counts: frontmost_nearest_edge_counts(hotspots),
         nearest_sample_visible_offsets: offset_counts(
             hotspots
@@ -855,6 +886,11 @@ fn summarize_hotspots(hotspots: &[Hotspot]) -> HotspotSummary {
             hotspots
                 .iter()
                 .filter_map(|hotspot| hotspot.nearest_visible_expected.as_ref()),
+        ),
+        actual_expected_surface_transitions: surface_pair_transition_counts(
+            hotspots,
+            |hotspot| hotspot.nearest_visible_actual.as_ref(),
+            |hotspot| hotspot.nearest_visible_expected.as_ref(),
         ),
     }
 }
@@ -897,9 +933,17 @@ fn surface_transition_counts<'a>(
     hotspots: &'a [Hotspot],
     to: impl Fn(&'a Hotspot) -> Option<&'a CandidateMatch>,
 ) -> Vec<SurfaceTransitionCount> {
+    surface_pair_transition_counts(hotspots, |hotspot| hotspot.frontmost_visible.as_ref(), to)
+}
+
+fn surface_pair_transition_counts<'a>(
+    hotspots: &'a [Hotspot],
+    from: impl Fn(&'a Hotspot) -> Option<&'a CandidateMatch>,
+    to: impl Fn(&'a Hotspot) -> Option<&'a CandidateMatch>,
+) -> Vec<SurfaceTransitionCount> {
     let mut counts = BTreeMap::<(SurfaceKey, SurfaceKey), usize>::new();
     for hotspot in hotspots {
-        let Some(from) = hotspot.frontmost_visible.as_ref() else {
+        let Some(from) = from(hotspot) else {
             continue;
         };
         let Some(to) = to(hotspot) else {
