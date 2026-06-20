@@ -191,6 +191,7 @@ enum OwnerIdPhaseOrderPolicy {
     OverlapArea,
     OverlapTriangle,
     DrawIndex,
+    DrawIndexNoDepth,
 }
 
 impl OwnerIdPhaseOrderPolicy {
@@ -201,6 +202,7 @@ impl OwnerIdPhaseOrderPolicy {
             Self::OverlapArea => "overlap-area",
             Self::OverlapTriangle => "overlap-triangle",
             Self::DrawIndex => "draw-index",
+            Self::DrawIndexNoDepth => "draw-index-no-depth",
         }
     }
 }
@@ -625,6 +627,7 @@ fn spawn_vrm_meshes(
             primitive.apply_phase_order_depth_bias();
         }
     }
+    configure_owner_id_depth_policy(&mut primitives, options);
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
     });
@@ -717,7 +720,9 @@ fn configure_owner_id_phase_order_offsets(
                 primitive.phase_order_offset_applied = primitive.transparent_order_offset;
             }
         }
-        OwnerIdPhaseOrderPolicy::Off | OwnerIdPhaseOrderPolicy::DrawIndex => {
+        OwnerIdPhaseOrderPolicy::Off
+        | OwnerIdPhaseOrderPolicy::DrawIndex
+        | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => {
             for primitive in primitives {
                 primitive.phase_order_offset_applied = 0.0;
             }
@@ -774,6 +779,18 @@ fn owner_id_phase_order_overlap_mask(
     owner_id_phase_order_overlap_mask_from_groups(&groups, policy)
 }
 
+fn configure_owner_id_depth_policy(primitives: &mut [BevyPrimitive], options: &CaptureOptions) {
+    if options.diagnostic_render == DiagnosticRender::OwnerId
+        && !options.disable_owner_id_phase_order
+        && options.owner_id_phase_order_policy == OwnerIdPhaseOrderPolicy::DrawIndexNoDepth
+    {
+        for primitive in primitives {
+            primitive.material.set_depth_write(false);
+            primitive.material.set_depth_bias(0.0);
+        }
+    }
+}
+
 fn owner_id_phase_order_overlap_mask_from_groups(
     groups: &[OwnerIdPhaseOrderProjectionGroup],
     policy: OwnerIdPhaseOrderPolicy,
@@ -821,7 +838,8 @@ fn owner_id_phase_order_projections_overlap(
     match policy {
         OwnerIdPhaseOrderPolicy::Full
         | OwnerIdPhaseOrderPolicy::Off
-        | OwnerIdPhaseOrderPolicy::DrawIndex => false,
+        | OwnerIdPhaseOrderPolicy::DrawIndex
+        | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => false,
         OwnerIdPhaseOrderPolicy::OverlapArea => {
             screen_bounds_overlap_area(left.bounds, right.bounds)
                 >= OWNER_ID_PHASE_ORDER_OVERLAP_AREA_THRESHOLD
@@ -1164,7 +1182,10 @@ fn owner_id_sort_distance_override(
 ) -> Option<f32> {
     (options.diagnostic_render == DiagnosticRender::OwnerId
         && !options.disable_owner_id_phase_order
-        && options.owner_id_phase_order_policy == OwnerIdPhaseOrderPolicy::DrawIndex
+        && matches!(
+            options.owner_id_phase_order_policy,
+            OwnerIdPhaseOrderPolicy::DrawIndex | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth
+        )
         && primitive.material.needs_source_order_offset())
     .then(|| owner_id_draw_index_sort_distance(primitive.render_order, draw_index))
 }
@@ -1577,6 +1598,14 @@ impl BevyPrimitiveMaterial {
         match self {
             Self::Mtoon(material) => {
                 material.depth_bias = depth_bias;
+            }
+        }
+    }
+
+    fn set_depth_write(&mut self, depth_write: bool) {
+        match self {
+            Self::Mtoon(material) => {
+                material.depth_write = depth_write;
             }
         }
     }

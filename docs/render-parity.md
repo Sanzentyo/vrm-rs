@@ -1077,6 +1077,7 @@ The Bevy capture also exposes an experimental overlap-localized policy:
 ```powershell
 --owner-id-phase-order-policy overlap-area
 --owner-id-phase-order-policy overlap-triangle
+--owner-id-phase-order-policy draw-index-no-depth
 ```
 
 This keeps owner-id phase offsets only when same-material, same-render-order
@@ -1094,6 +1095,14 @@ dense ownership `0 -> 5883` mismatches and split ownership `0 -> 1728` while
 UV-island ownership remains exact. That rejects overlap localization as the
 default fix and leaves the remaining tail focused on local Bevy coverage/fill
 behavior rather than broad source-order policy.
+
+`draw-index-no-depth` keeps the current draw-index sort key but disables
+owner-id depth writes. It is also rejected as a default: dense ownership
+regresses `0 -> 1287` Bevy-vs-wgpu mismatches and the compact topology tail
+worsens `26 -> 54`, while split ownership remains exact. This keeps ordinary
+owner-id depth writes enabled and narrows the next investigation to local
+coverage/fill or metadata recovery rather than making draw order fully
+dominant.
 
 For full render-parity sweeps, `tools/ci/local-ci.rs` forwards the same policy
 with `--render-owner-id-phase-order-policy`.

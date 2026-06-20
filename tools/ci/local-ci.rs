@@ -226,6 +226,7 @@ enum RenderOwnerIdPhaseOrderPolicy {
     OverlapArea,
     OverlapTriangle,
     DrawIndex,
+    DrawIndexNoDepth,
 }
 
 impl RenderOwnerIdPhaseOrderPolicy {
@@ -236,6 +237,7 @@ impl RenderOwnerIdPhaseOrderPolicy {
             Self::OverlapArea => "overlap-area",
             Self::OverlapTriangle => "overlap-triangle",
             Self::DrawIndex => "draw-index",
+            Self::DrawIndexNoDepth => "draw-index-no-depth",
         }
     }
 }
