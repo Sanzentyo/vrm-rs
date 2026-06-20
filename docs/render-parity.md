@@ -46,30 +46,33 @@ recipes are convenience entry points. Use these first:
   selection.
 - `wgpu_render_capture` and `bevy_render_capture` accept
   `--owner-sample-correction-manifest <path>` for renderer readback
-  experiments. The manifest is applied before RGBA JSON, PNG, and imqraw
-  artifacts are written, using the same `vrm-adapter` in-memory RGBA8
-  applicator as the raw correction tool. The manifest format is intentionally
-  strict and source-like: `corrections[]` entries must include `x`, `y`,
-  `rgba`, `surface { materialName, triangle }`, and `sample [x, y]`. Raw array
-  roots, non-schema field names such as `replacementRgba` or
-  `relationToExpected`, and entries without owner/sample source metadata are
-  invalid manifest shapes. The parser yields a
+  experiments. Supplying the manifest now feeds renderer-side owner/sample
+  storage-buffer records and draw-key filtering. It does not patch the final
+  readback image unless `--apply-owner-sample-readback-replacement` is also
+  supplied. That explicit flag is only for upper-bound diagnostics and uses the
+  same `vrm-adapter` in-memory RGBA8 applicator as the raw correction tool. The
+  manifest format is intentionally strict and source-like: `corrections[]`
+  entries must include `x`, `y`, `rgba`, `surface { materialName, triangle }`,
+  and `sample [x, y]`, with optional `sample_geometry` used to bind the decision
+  to a concrete `node/mesh/primitive/pass`. Raw array roots, non-schema field
+  names such as `replacementRgba` or `relationToExpected`, and entries without
+  owner/sample source metadata are invalid manifest shapes. The parser yields a
   `RenderOwnerSampleCorrectionPlan`, so renderer experiments can inspect the
   selected surface/sample, look up entries by render pixel, or match a
-  `RenderOwnerSurfaceKey` plus subpixel `RenderSamplePoint` before choosing
-  whether to apply the current readback correction or move the same decision
-  earlier into draw/sample selection. The wgpu, Bevy, and Ash capture artifacts
-  now also write `renderer.ownerSampleCorrectionPlan` metadata when a manifest
-  is supplied, including matched/unmatched entry counts against the current
-  non-diagnostic render surfaces plus `surfaceSelections[]` entries containing
-  the pixel, subpixel sample, replacement RGBA, and owner surface for each
-  renderer-consumable decision. This keeps the plan visible even for base-color
-  or shaded captures where `diagnosticOwnerIds` is intentionally empty.
+  `RenderOwnerSurfaceKey` plus concrete `RenderOwnerSampleDrawKey` before
+  choosing how to evaluate that sample in the backend. The wgpu, Bevy, and Ash
+  capture artifacts now also write `renderer.ownerSampleCorrectionPlan` metadata
+  when a manifest is supplied, including matched/unmatched entry counts against
+  the current non-diagnostic render surfaces plus `surfaceSelections[]` entries
+  containing the pixel, subpixel sample, replacement RGBA, and owner surface for
+  each renderer-consumable decision. This keeps the plan visible even for
+  base-color or shaded captures where `diagnosticOwnerIds` is intentionally
+  empty.
 - `vrm-adapter-ash --example unsafe_device_renderer` accepts the same
-  `--owner-sample-correction-manifest <path>` readback experiment flag. It
-  applies the shared `vrm-adapter` manifest parser/applicator before writing
-  Ash RGBA JSON or imqraw artifacts and recomputes readback checksum metadata
-  after correction.
+  `--owner-sample-correction-manifest <path>` experiment flag. Like the wgpu
+  and Bevy captures, it only mutates final readback bytes when
+  `--apply-owner-sample-readback-replacement` is also supplied, then recomputes
+  readback checksum metadata after that explicit diagnostic correction.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
   legacy `.psnr.json` report is retained as a diagnostic cross-check over

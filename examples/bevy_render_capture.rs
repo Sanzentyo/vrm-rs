@@ -58,12 +58,13 @@ use std::sync::{
 use std::time::Duration;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RenderOwnerId, RenderOwnerSurfaceKey, RendererFrontFace, ReverseZeroToOneDepth,
-    ScreenProjectionBounds, ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth,
-    project_triangle_to_screen,
+    RenderOwnerId, RenderOwnerSampleDrawKey, RenderOwnerSamplePass, RenderOwnerSurfaceKey,
+    RendererFrontFace, ReverseZeroToOneDepth, ScreenProjectionBounds, ScreenProjectionSize,
+    ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_adapter_bevy::{
-    bevy_owner_sample_override_buffer_plan_for_surfaces, empty_bevy_owner_sample_override_record,
+    bevy_owner_sample_override_buffer_plan_for_surfaces_and_draw,
+    empty_bevy_owner_sample_override_record,
 };
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
@@ -143,6 +144,8 @@ struct CaptureOptions {
     imqraw_out: Option<PathBuf>,
     #[arg(long)]
     owner_sample_correction_manifest: Option<PathBuf>,
+    #[arg(long)]
+    apply_owner_sample_readback_replacement: bool,
     #[arg(long, default_value_t = 512)]
     width: u32,
     #[arg(long, default_value_t = 512)]
@@ -1206,7 +1209,12 @@ fn bind_owner_sample_override_buffers(
 ) -> Result<(), Box<dyn Error>> {
     for primitive in primitives {
         let surfaces = owner_sample_surfaces_for_primitive(loaded, primitive);
-        let plan = bevy_owner_sample_override_buffer_plan_for_surfaces(selection, surfaces.iter())?;
+        let draw = owner_sample_draw_key(primitive.owner_source)?;
+        let plan = bevy_owner_sample_override_buffer_plan_for_surfaces_and_draw(
+            selection,
+            surfaces.iter(),
+            &draw,
+        )?;
         let handle = storage_buffers.add(ShaderStorageBuffer::new(
             plan.bytes(),
             RenderAssetUsages::default(),
@@ -1232,6 +1240,22 @@ fn owner_sample_surfaces_for_primitive(
             ))
         })
         .collect()
+}
+
+fn owner_sample_draw_key(source: OwnerSource) -> Result<RenderOwnerSampleDrawKey, Box<dyn Error>> {
+    Ok(RenderOwnerSampleDrawKey::new(
+        u64::try_from(source.node_index)?,
+        u64::try_from(source.mesh_index)?,
+        u64::try_from(source.primitive_index)?,
+        render_owner_sample_pass(source.pass),
+    ))
+}
+
+fn render_owner_sample_pass(pass: OwnerPass) -> RenderOwnerSamplePass {
+    match pass {
+        OwnerPass::Base => RenderOwnerSamplePass::Base,
+        OwnerPass::Outline => RenderOwnerSamplePass::Outline,
+    }
 }
 
 fn diagnostic_owner_ids(
@@ -2938,12 +2962,14 @@ fn write_capture(
     let owner_sample_correction_plan = if let Some(path) = &options.owner_sample_correction_manifest
     {
         let plan = render_capture_correction::load_owner_sample_correction_manifest(path)?;
-        render_capture_correction::apply_owner_sample_correction_plan(
-            &plan,
-            options.width,
-            options.height,
-            &mut rgba,
-        )?;
+        if options.apply_owner_sample_readback_replacement {
+            render_capture_correction::apply_owner_sample_correction_plan(
+                &plan,
+                options.width,
+                options.height,
+                &mut rgba,
+            )?;
+        }
         Some(
             render_capture_correction::owner_sample_correction_plan_metadata(
                 path,
@@ -3060,6 +3086,8 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("@binding(20)"));
         assert!(MTOON_SHADER_SOURCE.contains("var<storage, read> owner_sample_overrides"));
         assert!(MTOON_SHADER_SOURCE.contains("arrayLength(&owner_sample_overrides)"));
+        assert!(MTOON_SHADER_SOURCE.contains("geometry_ids: vec4<u32>"));
+        assert!(MTOON_SHADER_SOURCE.contains("geometry_uvs: vec4<f32>"));
         assert!(MTOON_SHADER_SOURCE.contains("apply_owner_sample_override(input.position"));
     }
 

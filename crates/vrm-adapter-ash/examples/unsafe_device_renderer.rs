@@ -52,9 +52,14 @@ struct Options {
     /// Write the submitted/read-back offscreen color attachment as an imqraw bundle.
     #[arg(long)]
     imqraw_out: Option<PathBuf>,
-    /// Apply a source-like owner/sample correction manifest before writing readback artifacts.
+    /// Load a source-like owner/sample correction manifest for renderer metadata.
     #[arg(long)]
     owner_sample_correction_manifest: Option<PathBuf>,
+    /// Apply owner/sample manifest RGBA replacements to the final readback image.
+    ///
+    /// This is an upper-bound diagnostic, not the default renderer behavior.
+    #[arg(long)]
+    apply_owner_sample_readback_replacement: bool,
     /// Optional precompiled SPIR-V vertex shader for the offscreen graphics pipelines.
     ///
     /// The shader must use entry point `main` and match the example vertex input
@@ -1980,10 +1985,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
         let mut summary = renderer.submit_and_readback(&resources)?;
-        if let Some((path, plan)) = options
-            .owner_sample_correction_manifest
-            .as_deref()
-            .zip(correction_plan.as_ref())
+        if options.apply_owner_sample_readback_replacement
+            && let Some((path, plan)) = options
+                .owner_sample_correction_manifest
+                .as_deref()
+                .zip(correction_plan.as_ref())
         {
             let applied = summary.apply_owner_sample_correction_plan(
                 plan,

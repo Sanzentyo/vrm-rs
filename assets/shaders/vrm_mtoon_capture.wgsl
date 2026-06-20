@@ -86,9 +86,13 @@ struct OwnerSampleOverrideRecord {
     sample: vec2<f32>,
     replacement_rgba: vec4<f32>,
     relation_to_expected: u32,
+    geometry_flags: u32,
+    sample_pass: u32,
     padding0: u32,
-    padding1: u32,
-    padding2: u32,
+    geometry_ids: vec4<u32>,
+    geometry_indices: vec4<u32>,
+    barycentric_depth: vec4<f32>,
+    geometry_uvs: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(20)

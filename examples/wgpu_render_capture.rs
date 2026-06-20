@@ -23,11 +23,13 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RenderOwnerId, RenderOwnerSampleCorrectionPlan, RenderOwnerSurfaceKey, RendererFrontFace,
-    ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
+    RenderOwnerId, RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey,
+    RenderOwnerSamplePass, RenderOwnerSurfaceKey, RendererFrontFace, ScreenProjectionSize,
+    ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_adapter_wgpu::{
     WgpuOwnerSampleOverrideRecord, wgpu_owner_sample_override_bind_group_layout_entry,
+    wgpu_owner_sample_override_buffer_plan_for_surfaces_and_draw,
 };
 use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -100,6 +102,8 @@ struct CaptureOptions {
     imqraw_out: Option<PathBuf>,
     #[arg(long)]
     owner_sample_correction_manifest: Option<PathBuf>,
+    #[arg(long)]
+    apply_owner_sample_readback_replacement: bool,
     #[arg(long, default_value_t = 512)]
     width: u32,
     #[arg(long, default_value_t = 512)]
@@ -507,7 +511,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         &options,
         correction_plan.as_ref(),
     ))?;
-    if let Some(plan) = &correction_plan {
+    if options.apply_owner_sample_readback_replacement
+        && let Some(plan) = &correction_plan
+    {
         render_capture_correction::apply_owner_sample_correction_plan(
             plan,
             options.width,
@@ -1365,7 +1371,13 @@ fn empty_owner_sample_override_record() -> WgpuOwnerSampleOverrideRecord {
         sample: [0.0, 0.0],
         replacement_rgba: [0.0, 0.0, 0.0, 0.0],
         relation_to_expected: 0,
-        _padding: [0; 3],
+        geometry_flags: 0,
+        sample_pass: 0,
+        _padding0: 0,
+        geometry_ids: [u32::MAX; 4],
+        geometry_indices: [u32::MAX; 4],
+        barycentric_depth: [0.0; 4],
+        geometry_uvs: [0.0; 4],
     }
 }
 
@@ -1385,24 +1397,41 @@ fn owner_sample_override_records_for_primitive(
             ))
         })
         .collect::<Vec<_>>();
-    owner_sample_override_records_for_surfaces(correction_plan, &surfaces)
+    let draw = owner_sample_draw_key(primitive.owner_source)?;
+    owner_sample_override_records_for_surfaces(correction_plan, &surfaces, &draw)
 }
 
 fn owner_sample_override_records_for_surfaces(
     correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
     surfaces: &[RenderOwnerSurfaceKey],
+    draw: &RenderOwnerSampleDrawKey,
 ) -> Result<Vec<WgpuOwnerSampleOverrideRecord>, std::io::Error> {
     let Some(correction_plan) = correction_plan else {
         return Ok(Vec::new());
     };
-    correction_plan
-        .surface_selection_plan(surfaces.iter())
-        .surfaces
-        .iter()
-        .flat_map(|selection| selection.overrides())
-        .map(WgpuOwnerSampleOverrideRecord::from_override)
-        .collect::<Result<Vec<_>, _>>()
+    let selection = correction_plan.surface_selection_plan(surfaces.iter());
+    wgpu_owner_sample_override_buffer_plan_for_surfaces_and_draw(&selection, surfaces.iter(), draw)
+        .map(|plan| plan.records)
         .map_err(|error| std::io::Error::other(format!("{error:?}")))
+}
+
+fn owner_sample_draw_key(source: OwnerSource) -> Result<RenderOwnerSampleDrawKey, std::io::Error> {
+    Ok(RenderOwnerSampleDrawKey::new(
+        u64::try_from(source.node_index)
+            .map_err(|_| std::io::Error::other("owner source node index overflows u64"))?,
+        u64::try_from(source.mesh_index)
+            .map_err(|_| std::io::Error::other("owner source mesh index overflows u64"))?,
+        u64::try_from(source.primitive_index)
+            .map_err(|_| std::io::Error::other("owner source primitive index overflows u64"))?,
+        render_owner_sample_pass(source.pass),
+    ))
+}
+
+fn render_owner_sample_pass(pass: OwnerPass) -> RenderOwnerSamplePass {
+    match pass {
+        OwnerPass::Base => RenderOwnerSamplePass::Base,
+        OwnerPass::Outline => RenderOwnerSamplePass::Outline,
+    }
 }
 
 fn texture_binding_view<'a>(
@@ -2151,6 +2180,7 @@ mod tests {
     fn owner_sample_override_records_filter_to_render_surfaces() {
         let surface = RenderOwnerSurfaceKey::new("body", 7);
         let unmatched = RenderOwnerSurfaceKey::new("body", 8);
+        let draw = RenderOwnerSampleDrawKey::new(0, 1, 2, RenderOwnerSamplePass::Base);
         let plan = RenderOwnerSampleCorrectionPlan::new(vec![
             vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
                 correction: vrm_adapter::RenderRgba8Correction::new(
@@ -2160,6 +2190,26 @@ mod tests {
                 sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.25, 0.75]),
                 relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
                 sample_geometry: None,
+            },
+            vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
+                correction: vrm_adapter::RenderRgba8Correction::new(
+                    vrm_adapter::RenderPixel::new(90, 91),
+                    [8, 9, 10, 255],
+                ),
+                sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.4, 0.6]),
+                relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
+                sample_geometry: Some(vrm_adapter::RenderOwnerSampleGeometry {
+                    node: 9,
+                    mesh: 1,
+                    primitive: 2,
+                    triangle: 7,
+                    indices: [0, 1, 2],
+                    barycentric: [0.2, 0.3, 0.5],
+                    raw_uv: [0.4, 0.6],
+                    base_uv: [0.4, 0.6],
+                    depth: 0.5,
+                    pass: RenderOwnerSamplePass::Base,
+                }),
             },
             vrm_adapter::RenderOwnerSampleCorrectionManifestEntry {
                 correction: vrm_adapter::RenderRgba8Correction::new(
@@ -2175,7 +2225,8 @@ mod tests {
         ])
         .unwrap();
 
-        let records = owner_sample_override_records_for_surfaces(Some(&plan), &[surface]).unwrap();
+        let records =
+            owner_sample_override_records_for_surfaces(Some(&plan), &[surface], &draw).unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].pixel, [12, 34]);
@@ -2204,6 +2255,8 @@ mod tests {
         )));
         assert!(SHADER.contains("var<storage, read> owner_sample_overrides"));
         assert!(SHADER.contains("arrayLength(&owner_sample_overrides)"));
+        assert!(SHADER.contains("geometry_ids: vec4<u32>"));
+        assert!(SHADER.contains("geometry_uvs: vec4<f32>"));
         assert!(SHADER.contains("apply_owner_sample_override(input.position"));
     }
 
@@ -2559,9 +2612,13 @@ struct OwnerSampleOverrideRecord {
     sample: vec2<f32>,
     replacement_rgba: vec4<f32>,
     relation_to_expected: u32,
+    geometry_flags: u32,
+    sample_pass: u32,
     padding0: u32,
-    padding1: u32,
-    padding2: u32,
+    geometry_ids: vec4<u32>,
+    geometry_indices: vec4<u32>,
+    barycentric_depth: vec4<f32>,
+    geometry_uvs: vec4<f32>,
 };
 
 @group(1) @binding(20)

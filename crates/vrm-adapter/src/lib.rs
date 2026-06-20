@@ -739,6 +739,14 @@ pub struct RenderOwnerSampleCorrectionManifestEntry {
     pub sample_geometry: Option<RenderOwnerSampleGeometry>,
 }
 
+impl RenderOwnerSampleCorrectionManifestEntry {
+    pub fn matches_draw(&self, draw: &RenderOwnerSampleDrawKey) -> bool {
+        self.sample_geometry
+            .as_ref()
+            .is_none_or(|geometry| draw.matches_geometry(geometry))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderOwnerSampleCorrectionPlan {
     entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
@@ -815,6 +823,16 @@ impl RenderOwnerSampleSelectionPlan {
             .into_iter()
             .flat_map(RenderOwnerSampleSurfaceSelection::overrides)
     }
+
+    pub fn overrides_for_surface_and_draw<'a>(
+        &'a self,
+        surface: &'a RenderOwnerSurfaceKey,
+        draw: &'a RenderOwnerSampleDrawKey,
+    ) -> impl Iterator<Item = RenderOwnerSampleSurfaceOverride> + 'a {
+        self.selection_for_surface(surface)
+            .into_iter()
+            .flat_map(move |selection| selection.overrides_for_draw(draw))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -827,6 +845,16 @@ impl RenderOwnerSampleSurfaceSelection {
     pub fn overrides(&self) -> impl Iterator<Item = RenderOwnerSampleSurfaceOverride> + '_ {
         self.entries
             .iter()
+            .map(RenderOwnerSampleSurfaceOverride::from)
+    }
+
+    pub fn overrides_for_draw<'a>(
+        &'a self,
+        draw: &'a RenderOwnerSampleDrawKey,
+    ) -> impl Iterator<Item = RenderOwnerSampleSurfaceOverride> + 'a {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.matches_draw(draw))
             .map(RenderOwnerSampleSurfaceOverride::from)
     }
 }
@@ -864,6 +892,32 @@ pub struct RenderOwnerSampleGeometry {
     pub base_uv: [f64; 2],
     pub depth: f64,
     pub pass: RenderOwnerSamplePass,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RenderOwnerSampleDrawKey {
+    pub node: u64,
+    pub mesh: u64,
+    pub primitive: u64,
+    pub pass: RenderOwnerSamplePass,
+}
+
+impl RenderOwnerSampleDrawKey {
+    pub fn new(node: u64, mesh: u64, primitive: u64, pass: RenderOwnerSamplePass) -> Self {
+        Self {
+            node,
+            mesh,
+            primitive,
+            pass,
+        }
+    }
+
+    pub fn matches_geometry(&self, geometry: &RenderOwnerSampleGeometry) -> bool {
+        self.node == geometry.node
+            && self.mesh == geometry.mesh
+            && self.primitive == geometry.primitive
+            && self.pass == geometry.pass
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -6104,6 +6158,20 @@ mod tests {
         assert_eq!(
             selection
                 .overrides_for_surface(&RenderOwnerSurfaceKey::new("body", 9))
+                .count(),
+            0
+        );
+        let draw = RenderOwnerSampleDrawKey::new(0, 1, 2, RenderOwnerSamplePass::Base);
+        assert_eq!(
+            selection
+                .overrides_for_surface_and_draw(&RenderOwnerSurfaceKey::new("body", 7), &draw)
+                .count(),
+            1
+        );
+        let other_draw = RenderOwnerSampleDrawKey::new(9, 1, 2, RenderOwnerSamplePass::Base);
+        assert_eq!(
+            selection
+                .overrides_for_surface_and_draw(&RenderOwnerSurfaceKey::new("body", 7), &other_draw)
                 .count(),
             0
         );

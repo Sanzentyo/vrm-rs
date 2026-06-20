@@ -15,9 +15,10 @@ use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_REFERENCE_WGSL, MtoonGpuMaterial,
     MtoonGpuTextureBindingPlan, MtoonGpuUniform, MtoonMaterializationOptions, MtoonRendererPass,
     MtoonSamplerHint, MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
-    RenderOwnerSampleSelectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
-    RenderOwnerSurfaceRelation, WorldMatrixAccess, WorldTransformUpdate,
-    apply_vrma_animation_frame_with_look_at, mtoon_gpu_materials,
+    RenderOwnerSampleDrawKey, RenderOwnerSamplePass, RenderOwnerSampleSelectionPlan,
+    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
+    WorldMatrixAccess, WorldTransformUpdate, apply_vrma_animation_frame_with_look_at,
+    mtoon_gpu_materials,
 };
 use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation, VrmDocument};
 use vrm_io::{
@@ -117,13 +118,20 @@ pub struct WgpuOwnerSampleOverrideRecord {
     pub sample: [f32; 2],
     pub replacement_rgba: [f32; 4],
     pub relation_to_expected: u32,
-    pub _padding: [u32; 3],
+    pub geometry_flags: u32,
+    pub sample_pass: u32,
+    pub _padding0: u32,
+    pub geometry_ids: [u32; 4],
+    pub geometry_indices: [u32; 4],
+    pub barycentric_depth: [f32; 4],
+    pub geometry_uvs: [f32; 4],
 }
 
 impl WgpuOwnerSampleOverrideRecord {
     pub fn from_override(
         value: RenderOwnerSampleSurfaceOverride,
     ) -> Result<Self, WgpuOwnerSampleOverridePlanError> {
+        let geometry = wgpu_owner_sample_geometry_record(value.sample_geometry.as_ref())?;
         Ok(Self {
             pixel: [
                 u32::try_from(value.pixel.x()).map_err(|_| {
@@ -144,9 +152,68 @@ impl WgpuOwnerSampleOverrideRecord {
                 .replacement_rgba
                 .map(|channel| f32::from(channel) / 255.0),
             relation_to_expected: owner_sample_relation_code(value.relation_to_expected),
-            _padding: [0; 3],
+            geometry_flags: geometry.flags,
+            sample_pass: geometry.pass,
+            _padding0: 0,
+            geometry_ids: geometry.ids,
+            geometry_indices: geometry.indices,
+            barycentric_depth: geometry.barycentric_depth,
+            geometry_uvs: geometry.uvs,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WgpuOwnerSampleGeometryRecord {
+    flags: u32,
+    pass: u32,
+    ids: [u32; 4],
+    indices: [u32; 4],
+    barycentric_depth: [f32; 4],
+    uvs: [f32; 4],
+}
+
+fn wgpu_owner_sample_geometry_record(
+    geometry: Option<&vrm_adapter::RenderOwnerSampleGeometry>,
+) -> Result<WgpuOwnerSampleGeometryRecord, WgpuOwnerSampleOverridePlanError> {
+    let Some(geometry) = geometry else {
+        return Ok(WgpuOwnerSampleGeometryRecord {
+            flags: 0,
+            pass: 0,
+            ids: [u32::MAX; 4],
+            indices: [u32::MAX; 4],
+            barycentric_depth: [0.0; 4],
+            uvs: [0.0; 4],
+        });
+    };
+    Ok(WgpuOwnerSampleGeometryRecord {
+        flags: 1,
+        pass: owner_sample_pass_code(&geometry.pass),
+        ids: [
+            u32_geometry_value("node", geometry.node)?,
+            u32_geometry_value("mesh", geometry.mesh)?,
+            u32_geometry_value("primitive", geometry.primitive)?,
+            u32_geometry_value("triangle", geometry.triangle)?,
+        ],
+        indices: [
+            u32_geometry_value("indices[0]", geometry.indices[0])?,
+            u32_geometry_value("indices[1]", geometry.indices[1])?,
+            u32_geometry_value("indices[2]", geometry.indices[2])?,
+            u32::MAX,
+        ],
+        barycentric_depth: [
+            geometry.barycentric[0] as f32,
+            geometry.barycentric[1] as f32,
+            geometry.barycentric[2] as f32,
+            geometry.depth as f32,
+        ],
+        uvs: [
+            geometry.raw_uv[0] as f32,
+            geometry.raw_uv[1] as f32,
+            geometry.base_uv[0] as f32,
+            geometry.base_uv[1] as f32,
+        ],
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -172,6 +239,7 @@ impl WgpuOwnerSampleOverrideBufferPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WgpuOwnerSampleOverridePlanError {
     PixelOutOfRange { x: u64, y: u64 },
+    GeometryIndexOutOfRange { field: &'static str, value: u64 },
 }
 
 pub const fn wgpu_owner_sample_override_binding() -> u32 {
@@ -211,6 +279,37 @@ pub fn wgpu_owner_sample_override_buffer_plans(
             })
         })
         .collect()
+}
+
+pub fn wgpu_owner_sample_override_buffer_plan_for_surfaces_and_draw<'a, I, S>(
+    selection: &RenderOwnerSampleSelectionPlan,
+    surfaces: I,
+    draw: &RenderOwnerSampleDrawKey,
+) -> Result<WgpuOwnerSampleOverrideBufferPlan, WgpuOwnerSampleOverridePlanError>
+where
+    I: IntoIterator<Item = S>,
+    S: std::borrow::Borrow<RenderOwnerSurfaceKey> + 'a,
+{
+    let surfaces = surfaces
+        .into_iter()
+        .map(|surface| surface.borrow().clone())
+        .collect::<Vec<_>>();
+    let records = surfaces
+        .iter()
+        .flat_map(|surface| selection.overrides_for_surface_and_draw(surface, draw))
+        .map(WgpuOwnerSampleOverrideRecord::from_override)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(WgpuOwnerSampleOverrideBufferPlan {
+        surface: surfaces
+            .first()
+            .cloned()
+            .unwrap_or_else(|| RenderOwnerSurfaceKey::new("", 0)),
+        records,
+        binding: wgpu_owner_sample_override_binding(),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        binding_type: wgpu::BufferBindingType::Storage { read_only: true },
+    })
 }
 
 pub fn wgpu_mtoon_resource_plans(
@@ -325,6 +424,22 @@ fn owner_sample_relation_code(relation: Option<RenderOwnerSurfaceRelation>) -> u
         Some(RenderOwnerSurfaceRelation::Missing) => 4,
         None => 0,
     }
+}
+
+fn owner_sample_pass_code(pass: &RenderOwnerSamplePass) -> u32 {
+    match pass {
+        RenderOwnerSamplePass::Base => 1,
+        RenderOwnerSamplePass::Outline => 2,
+        RenderOwnerSamplePass::Other(_) => 255,
+    }
+}
+
+fn u32_geometry_value(
+    field: &'static str,
+    value: u64,
+) -> Result<u32, WgpuOwnerSampleOverridePlanError> {
+    u32::try_from(value)
+        .map_err(|_| WgpuOwnerSampleOverridePlanError::GeometryIndexOutOfRange { field, value })
 }
 
 #[repr(C)]
@@ -1323,7 +1438,7 @@ mod tests {
                         [0.25, 0.75],
                     ),
                     relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
-                    sample_geometry: None,
+                    sample_geometry: Some(owner_sample_geometry()),
                 }],
             }],
             unmatched_entries: Vec::new(),
@@ -1346,6 +1461,18 @@ mod tests {
         assert_eq!(buffers[0].records[0].sample, [0.25, 0.75]);
         assert_eq!(buffers[0].records[0].replacement_rgba[2], 1.0);
         assert_eq!(buffers[0].records[0].relation_to_expected, 1);
+        assert_eq!(buffers[0].records[0].geometry_flags, 1);
+        assert_eq!(buffers[0].records[0].sample_pass, 1);
+        assert_eq!(buffers[0].records[0].geometry_ids, [2, 3, 4, 7]);
+        assert_eq!(
+            buffers[0].records[0].geometry_indices,
+            [10, 11, 12, u32::MAX]
+        );
+        assert_eq!(
+            buffers[0].records[0].barycentric_depth,
+            [0.2, 0.3, 0.5, 0.42]
+        );
+        assert_eq!(buffers[0].records[0].geometry_uvs, [0.1, 0.2, 0.7, 0.8]);
         assert_eq!(
             buffers[0].bytes().len(),
             WGPU_OWNER_SAMPLE_OVERRIDE_RECORD_SIZE
@@ -1365,5 +1492,36 @@ mod tests {
                 min_binding_size: None,
             }
         );
+        let matching_draw = RenderOwnerSampleDrawKey::new(2, 3, 4, RenderOwnerSamplePass::Base);
+        let draw_plan = wgpu_owner_sample_override_buffer_plan_for_surfaces_and_draw(
+            &plan,
+            [RenderOwnerSurfaceKey::new("body", 7)],
+            &matching_draw,
+        )
+        .unwrap();
+        assert_eq!(draw_plan.record_count(), 1);
+        let other_draw = RenderOwnerSampleDrawKey::new(9, 3, 4, RenderOwnerSamplePass::Base);
+        let filtered_plan = wgpu_owner_sample_override_buffer_plan_for_surfaces_and_draw(
+            &plan,
+            [RenderOwnerSurfaceKey::new("body", 7)],
+            &other_draw,
+        )
+        .unwrap();
+        assert_eq!(filtered_plan.record_count(), 0);
+    }
+
+    fn owner_sample_geometry() -> vrm_adapter::RenderOwnerSampleGeometry {
+        vrm_adapter::RenderOwnerSampleGeometry {
+            node: 2,
+            mesh: 3,
+            primitive: 4,
+            triangle: 7,
+            indices: [10, 11, 12],
+            barycentric: [0.2, 0.3, 0.5],
+            raw_uv: [0.1, 0.2],
+            base_uv: [0.7, 0.8],
+            depth: 0.42,
+            pass: RenderOwnerSamplePass::Base,
+        }
     }
 }
