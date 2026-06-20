@@ -475,6 +475,13 @@ fn markdown_report(report: &OwnerTailReport) -> String {
     );
     write_count(
         &mut output,
+        "same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero",
+        report
+            .counts
+            .same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero,
+    );
+    write_count(
+        &mut output,
         "unexplained_owner_tail_mismatched_shared_nonzero",
         report
             .counts
@@ -695,6 +702,12 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         report,
         "pixel_subpixel3_inside_neither_screen_triangle",
     );
+    write_projection_gap_count(&mut output, report, "subpixel3_expected_sample_hits");
+    write_projection_gap_count(&mut output, report, "subpixel3_actual_sample_hits");
+    write_projection_gap_count(&mut output, report, "subpixel3_both_sample_hits");
+    write_projection_gap_count(&mut output, report, "subpixel3_expected_only_sample_hits");
+    write_projection_gap_count(&mut output, report, "subpixel3_actual_only_sample_hits");
+    write_projection_gap_count(&mut output, report, "subpixel3_neither_sample_hits");
     write_projection_gap_value(
         &mut output,
         report,
@@ -1077,6 +1090,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         "mismatched_shared_nonzero": 2,
         "same_projected_triangle_mismatched_shared_nonzero": 0,
         "same_projected_or_touching_triangle_mismatched_shared_nonzero": 1,
+        "same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_mismatched_shared_nonzero": 1,
         "unexplained_owner_tail_after_touching_mismatched_shared_nonzero": 1,
         "actual_not_visible_by_cull_policy_mismatched_shared_nonzero": 1,
@@ -1115,6 +1129,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "pixel_subpixel3_inside_expected_only_screen_triangle": 0,
             "pixel_subpixel3_inside_actual_only_screen_triangle": 1,
             "pixel_subpixel3_inside_neither_screen_triangle": 0,
+            "subpixel3_expected_sample_hits": 6,
+            "subpixel3_actual_sample_hits": 12,
+            "subpixel3_both_sample_hits": 1,
+            "subpixel3_expected_only_sample_hits": 5,
+            "subpixel3_actual_only_sample_hits": 11,
+            "subpixel3_neither_sample_hits": 1,
             "pixel_near_expected_min_x_edge_05px": 0,
             "pixel_near_expected_max_x_edge_05px": 1,
             "pixel_near_expected_min_y_edge_05px": 1,
@@ -1222,6 +1242,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("huku_bake (Outline)"));
     assert!(markdown.contains("depth_delta=0.010000"));
     assert!(markdown.contains("actual_not_visible_by_cull_policy_mismatched_shared_nonzero"));
+    assert!(markdown
+        .contains("same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero"));
     assert!(
         markdown
             .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
@@ -1235,6 +1257,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("pixel_inside_both_screen_bounds"));
     assert!(markdown.contains("pixel_subpixel3_inside_both_screen_triangles"));
     assert!(markdown.contains("pixel_subpixel3_inside_actual_only_screen_triangle"));
+    assert!(markdown.contains("subpixel3_expected_sample_hits"));
+    assert!(markdown.contains("subpixel3_actual_only_sample_hits"));
     assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));
     assert!(markdown.contains("either_small_bounds_area_le_4px"));
     assert!(markdown.contains("actual_bevy_phase_order_offset_applied_nonzero"));

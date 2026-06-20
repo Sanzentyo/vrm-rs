@@ -574,6 +574,12 @@ render-parity-seed-owner-tail-topology-current-phase-summary out_dir=".external-
     cargo +nightly -Zscript tools/render-parity/compare-owner-id-images.rs --expected .external-fixtures/render-parity-seed-owner-tail-topology-extract/wgpu/seed-owner-tail-topology-extract_vrm.frame000.imqraw --actual "{{ out_dir }}/bevy/seed-owner-tail-topology-extract_vrm.frame000.imqraw" --out "{{ out_dir }}/reports/seed-owner-tail-topology-extract_vrm.bevy-vs-wgpu.owner-ids.json"
     cargo +nightly -Zscript tools/render-parity/summarize-owner-tail.rs --input "{{ out_dir }}/reports/seed-owner-tail-topology-extract_vrm.bevy-vs-wgpu.owner-ids.json" --json-out "{{ out_dir }}/reports/seed-owner-tail-topology-extract_vrm.bevy-vs-wgpu.owner-tail.summary.json" --markdown-out "{{ out_dir }}/reports/seed-owner-tail-topology-extract_vrm.bevy-vs-wgpu.owner-tail.summary.md"
 
+# Rerender the compact topology owner-ID phase matrix: default draw-index, reverse with phase offset, and reverse without phase offset.
+render-parity-seed-owner-tail-topology-phase-matrix:
+    just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-current-phase draw-index
+    just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-reverse-phase draw-index-reverse
+    just render-parity-seed-owner-tail-topology-current-phase-summary .external-fixtures/render-parity-seed-owner-tail-topology-extract-bevy-reverse-no-phase draw-index-reverse-no-phase
+
 # Generate and render a source-like MToon screen-coordinate outline fixture.
 render-parity-screen-outline-generated three_vrm_root=".external-fixtures/three-vrm":
     cargo +nightly -Zscript tools/render-parity/generate-screen-outline-fixture.rs

@@ -12,18 +12,26 @@
   distinguish browser-style subpixel fill ownership from broader material or
   metadata drift.
 - Re-ran the compact Bevy-vs-wgpu topology owner-tail summary with the new
-  subpixel buckets. The current `draw-index` policy still has `26` unexplained
-  tail pixels; all `26` are inside the expected screen triangle at pixel center,
-  but only `3` are inside the actual screen triangle on a 3x3 same-pixel
-  subpixel grid. Uniform owner-color output produces the same counts as vertex
-  color, ruling out owner-color transport again. A new diagnostic-only
-  `draw-index-reverse` Bevy owner-id phase policy was added and measured; it
-  worsens the compact tail to `52`, so the remaining blocker is not a simple
-  Transparent3d sort-direction inversion. A diagnostic
-  `--owner-id-strict-depth-compare` switch was also added to use strict
-  reverse-Z `greater` instead of `greater-equal`; it likewise worsens the
-  compact tail to `52`, rejecting the simple equal-depth-overwrite hypothesis
-  as a default fix.
+  subpixel buckets, then tightened those diagnostics after a pessimistic
+  subagent review. The existing `pixel_subpixel3_inside_*` fields are now
+  explicitly treated as per-pixel any-hit buckets, and the comparator also emits
+  0..9 sample-hit totals: current `draw-index` has tail `26`,
+  `subpixel3_expected_sample_hits = 173`, `subpixel3_actual_sample_hits = 6`,
+  and `subpixel3_both_sample_hits = 4`. The compact markdown now also prints
+  `same_projected_or_adjacent_triangle_near_depth_mismatched_shared_nonzero`,
+  which is `0` for the current topology tail. Uniform owner-color output still
+  matches vertex-color output, ruling out owner-color transport again.
+- Split the Bevy owner-id reverse-order diagnostic into explicit phase axes.
+  `draw-index-reverse` now preserves the normal phase-order depth offset, while
+  the new `draw-index-reverse-no-phase` keeps the old no-phase shape for direct
+  comparison, and `just render-parity-seed-owner-tail-topology-phase-matrix`
+  regenerates the three compact summaries together. On the topology artifact,
+  default `draw-index` remains `46` mismatches / `26` unexplained tail pixels;
+  both reverse variants worsen to `71` mismatches / `52` tail pixels. This
+  keeps simple reversed draw-index ordering rejected without conflating it with
+  phase-offset removal. A diagnostic `--owner-id-strict-depth-compare` switch
+  was also measured separately and likewise worsens the compact tail to `52`,
+  rejecting the simple equal-depth-overwrite hypothesis as a default fix.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent

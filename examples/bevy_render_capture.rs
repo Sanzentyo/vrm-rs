@@ -212,6 +212,7 @@ enum OwnerIdPhaseOrderPolicy {
     OverlapTriangle,
     DrawIndex,
     DrawIndexReverse,
+    DrawIndexReverseNoPhase,
     DrawIndexNoDepth,
 }
 
@@ -224,6 +225,7 @@ impl OwnerIdPhaseOrderPolicy {
             Self::OverlapTriangle => "overlap-triangle",
             Self::DrawIndex => "draw-index",
             Self::DrawIndexReverse => "draw-index-reverse",
+            Self::DrawIndexReverseNoPhase => "draw-index-reverse-no-phase",
             Self::DrawIndexNoDepth => "draw-index-no-depth",
         }
     }
@@ -796,14 +798,14 @@ fn configure_owner_id_phase_order_offsets(
         options.owner_id_phase_order_policy
     };
     match policy {
-        OwnerIdPhaseOrderPolicy::Full => {
+        OwnerIdPhaseOrderPolicy::Full | OwnerIdPhaseOrderPolicy::DrawIndexReverse => {
             for primitive in primitives {
                 primitive.phase_order_offset_applied = primitive.transparent_order_offset;
             }
         }
         OwnerIdPhaseOrderPolicy::Off
         | OwnerIdPhaseOrderPolicy::DrawIndex
-        | OwnerIdPhaseOrderPolicy::DrawIndexReverse
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase
         | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => {
             for primitive in primitives {
                 primitive.phase_order_offset_applied = 0.0;
@@ -812,13 +814,36 @@ fn configure_owner_id_phase_order_offsets(
         OwnerIdPhaseOrderPolicy::OverlapArea | OwnerIdPhaseOrderPolicy::OverlapTriangle => {
             let keep_offsets = owner_id_phase_order_overlap_mask(primitives, options, policy);
             for (primitive, keep_offset) in primitives.iter_mut().zip(keep_offsets) {
-                primitive.phase_order_offset_applied = if keep_offset {
-                    primitive.transparent_order_offset
-                } else {
-                    0.0
-                };
+                primitive.phase_order_offset_applied = owner_id_phase_order_offset_for_policy(
+                    policy,
+                    primitive.transparent_order_offset,
+                    keep_offset,
+                );
             }
         }
+    }
+}
+
+fn owner_id_phase_order_offset_for_policy(
+    policy: OwnerIdPhaseOrderPolicy,
+    transparent_order_offset: f32,
+    keep_overlap_offset: bool,
+) -> f32 {
+    match policy {
+        OwnerIdPhaseOrderPolicy::Full | OwnerIdPhaseOrderPolicy::DrawIndexReverse => {
+            transparent_order_offset
+        }
+        OwnerIdPhaseOrderPolicy::OverlapArea | OwnerIdPhaseOrderPolicy::OverlapTriangle => {
+            if keep_overlap_offset {
+                transparent_order_offset
+            } else {
+                0.0
+            }
+        }
+        OwnerIdPhaseOrderPolicy::Off
+        | OwnerIdPhaseOrderPolicy::DrawIndex
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase
+        | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => 0.0,
     }
 }
 
@@ -922,6 +947,7 @@ fn owner_id_phase_order_projections_overlap(
         | OwnerIdPhaseOrderPolicy::Off
         | OwnerIdPhaseOrderPolicy::DrawIndex
         | OwnerIdPhaseOrderPolicy::DrawIndexReverse
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase
         | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth => false,
         OwnerIdPhaseOrderPolicy::OverlapArea => {
             screen_bounds_overlap_area(left.bounds, right.bounds)
@@ -1278,11 +1304,13 @@ fn owner_id_sort_distance_override(
             options.owner_id_phase_order_policy,
             OwnerIdPhaseOrderPolicy::DrawIndex
                 | OwnerIdPhaseOrderPolicy::DrawIndexReverse
+                | OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase
                 | OwnerIdPhaseOrderPolicy::DrawIndexNoDepth
         )
         && primitive.material.needs_source_order_offset())
     .then(|| match options.owner_id_phase_order_policy {
-        OwnerIdPhaseOrderPolicy::DrawIndexReverse => {
+        OwnerIdPhaseOrderPolicy::DrawIndexReverse
+        | OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase => {
             owner_id_draw_index_reverse_sort_distance(primitive.render_order, draw_index)
         }
         _ => owner_id_draw_index_sort_distance(primitive.render_order, draw_index),
@@ -2993,6 +3021,42 @@ mod tests {
         assert_eq!(bevy_depth_compare(&options), CompareFunction::Greater);
         options.diagnostic_render = DiagnosticRender::Shaded;
         assert_eq!(bevy_depth_compare(&options), CompareFunction::GreaterEqual);
+    }
+
+    #[test]
+    fn owner_id_reverse_draw_index_preserves_phase_offset() {
+        assert_eq!(
+            owner_id_phase_order_offset_for_policy(
+                OwnerIdPhaseOrderPolicy::DrawIndex,
+                0.000019,
+                true,
+            ),
+            0.0
+        );
+        assert_eq!(
+            owner_id_phase_order_offset_for_policy(
+                OwnerIdPhaseOrderPolicy::DrawIndexReverse,
+                0.000019,
+                false,
+            ),
+            0.000019
+        );
+        assert_eq!(
+            owner_id_phase_order_offset_for_policy(
+                OwnerIdPhaseOrderPolicy::DrawIndexReverseNoPhase,
+                0.000019,
+                true,
+            ),
+            0.0
+        );
+        assert_eq!(
+            owner_id_phase_order_offset_for_policy(
+                OwnerIdPhaseOrderPolicy::OverlapTriangle,
+                0.000019,
+                false,
+            ),
+            0.0
+        );
     }
 
     #[test]

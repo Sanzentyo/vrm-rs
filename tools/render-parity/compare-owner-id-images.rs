@@ -512,6 +512,12 @@ struct OwnerProjectionGapSummary {
     pixel_subpixel3_inside_expected_only_screen_triangle: u64,
     pixel_subpixel3_inside_actual_only_screen_triangle: u64,
     pixel_subpixel3_inside_neither_screen_triangle: u64,
+    subpixel3_expected_sample_hits: u64,
+    subpixel3_actual_sample_hits: u64,
+    subpixel3_both_sample_hits: u64,
+    subpixel3_expected_only_sample_hits: u64,
+    subpixel3_actual_only_sample_hits: u64,
+    subpixel3_neither_sample_hits: u64,
     mean_expected_only_distance_to_actual_bounds: Option<f64>,
     max_expected_only_distance_to_actual_bounds: Option<f64>,
     mean_actual_only_distance_to_expected_bounds: Option<f64>,
@@ -604,6 +610,12 @@ struct OwnerProjectionGapAccumulator {
     pixel_subpixel3_inside_expected_only_screen_triangle: u64,
     pixel_subpixel3_inside_actual_only_screen_triangle: u64,
     pixel_subpixel3_inside_neither_screen_triangle: u64,
+    subpixel3_expected_sample_hits: u64,
+    subpixel3_actual_sample_hits: u64,
+    subpixel3_both_sample_hits: u64,
+    subpixel3_expected_only_sample_hits: u64,
+    subpixel3_actual_only_sample_hits: u64,
+    subpixel3_neither_sample_hits: u64,
     expected_only_distance_to_actual_bounds_sum: f64,
     expected_only_distance_to_actual_bounds_max: f64,
     actual_only_distance_to_expected_bounds_sum: f64,
@@ -1960,16 +1972,60 @@ fn pixel_inside_screen_triangle_at(
     point_inside_screen_triangle(point, triangle)
 }
 
+fn pixel_subpixel3_screen_triangle_hits(
+    pixel: OwnerPixel,
+    triangle: OwnerScreenTriangle,
+) -> u64 {
+    const OFFSETS: [f64; 3] = [0.25, 0.5, 0.75];
+    OFFSETS
+        .iter()
+        .flat_map(|sample_y| OFFSETS.iter().map(move |sample_x| (*sample_x, *sample_y)))
+        .filter(|(sample_x, sample_y)| {
+            pixel_inside_screen_triangle_at(pixel, triangle, *sample_x, *sample_y)
+        })
+        .count() as u64
+}
+
 fn pixel_subpixel3_inside_screen_triangle(
     pixel: OwnerPixel,
     triangle: OwnerScreenTriangle,
 ) -> bool {
+    pixel_subpixel3_screen_triangle_hits(pixel, triangle) > 0
+}
+
+fn pixel_subpixel3_screen_triangle_relation_hits(
+    pixel: OwnerPixel,
+    expected: OwnerScreenTriangle,
+    actual: OwnerScreenTriangle,
+) -> (u64, u64, u64, u64, u64, u64) {
     const OFFSETS: [f64; 3] = [0.25, 0.5, 0.75];
-    OFFSETS.iter().any(|sample_y| {
-        OFFSETS.iter().any(|sample_x| {
-            pixel_inside_screen_triangle_at(pixel, triangle, *sample_x, *sample_y)
-        })
-    })
+    OFFSETS
+        .iter()
+        .flat_map(|sample_y| OFFSETS.iter().map(move |sample_x| (*sample_x, *sample_y)))
+        .fold(
+            (0, 0, 0, 0, 0, 0),
+            |(
+                expected_hits,
+                actual_hits,
+                both_hits,
+                expected_only_hits,
+                actual_only_hits,
+                neither_hits,
+            ),
+             (sample_x, sample_y)| {
+                let expected_hit =
+                    pixel_inside_screen_triangle_at(pixel, expected, sample_x, sample_y);
+                let actual_hit = pixel_inside_screen_triangle_at(pixel, actual, sample_x, sample_y);
+                (
+                    expected_hits + u64::from(expected_hit),
+                    actual_hits + u64::from(actual_hit),
+                    both_hits + u64::from(expected_hit && actual_hit),
+                    expected_only_hits + u64::from(expected_hit && !actual_hit),
+                    actual_only_hits + u64::from(!expected_hit && actual_hit),
+                    neither_hits + u64::from(!expected_hit && !actual_hit),
+                )
+            },
+        )
 }
 
 fn point_inside_screen_triangle(point: [f64; 2], triangle: OwnerScreenTriangle) -> bool {
@@ -2328,6 +2384,12 @@ impl OwnerProjectionGapAccumulator {
                 .pixel_subpixel3_inside_actual_only_screen_triangle,
             pixel_subpixel3_inside_neither_screen_triangle: self
                 .pixel_subpixel3_inside_neither_screen_triangle,
+            subpixel3_expected_sample_hits: self.subpixel3_expected_sample_hits,
+            subpixel3_actual_sample_hits: self.subpixel3_actual_sample_hits,
+            subpixel3_both_sample_hits: self.subpixel3_both_sample_hits,
+            subpixel3_expected_only_sample_hits: self.subpixel3_expected_only_sample_hits,
+            subpixel3_actual_only_sample_hits: self.subpixel3_actual_only_sample_hits,
+            subpixel3_neither_sample_hits: self.subpixel3_neither_sample_hits,
             mean_expected_only_distance_to_actual_bounds: mean(
                 self.expected_only_distance_to_actual_bounds_sum,
                 self.pixel_inside_expected_only_screen_bounds,
@@ -2557,8 +2619,16 @@ impl OwnerProjectionGapAccumulator {
         self.pixel_origin_inside_neither_screen_triangle +=
             u64::from(!origin_expected && !origin_actual);
 
-        let subpixel3_expected = pixel_subpixel3_inside_screen_triangle(pixel, expected);
-        let subpixel3_actual = pixel_subpixel3_inside_screen_triangle(pixel, actual);
+        let (
+            subpixel3_expected_hits,
+            subpixel3_actual_hits,
+            subpixel3_both_hits,
+            subpixel3_expected_only_hits,
+            subpixel3_actual_only_hits,
+            subpixel3_neither_hits,
+        ) = pixel_subpixel3_screen_triangle_relation_hits(pixel, expected, actual);
+        let subpixel3_expected = subpixel3_expected_hits > 0;
+        let subpixel3_actual = subpixel3_actual_hits > 0;
         self.pixel_subpixel3_inside_expected_screen_triangle += u64::from(subpixel3_expected);
         self.pixel_subpixel3_inside_actual_screen_triangle += u64::from(subpixel3_actual);
         self.pixel_subpixel3_inside_both_screen_triangles +=
@@ -2569,6 +2639,13 @@ impl OwnerProjectionGapAccumulator {
             u64::from(!subpixel3_expected && subpixel3_actual);
         self.pixel_subpixel3_inside_neither_screen_triangle +=
             u64::from(!subpixel3_expected && !subpixel3_actual);
+
+        self.subpixel3_expected_sample_hits += subpixel3_expected_hits;
+        self.subpixel3_actual_sample_hits += subpixel3_actual_hits;
+        self.subpixel3_both_sample_hits += subpixel3_both_hits;
+        self.subpixel3_expected_only_sample_hits += subpixel3_expected_only_hits;
+        self.subpixel3_actual_only_sample_hits += subpixel3_actual_only_hits;
+        self.subpixel3_neither_sample_hits += subpixel3_neither_hits;
     }
 
     fn add_near_edge_sides(
@@ -3637,6 +3714,42 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .unexplained_projection_gap_summary
             .pixel_subpixel3_inside_neither_screen_triangle,
         0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_expected_sample_hits,
+        6
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_actual_sample_hits,
+        12
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_both_sample_hits,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_expected_only_sample_hits,
+        5
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_actual_only_sample_hits,
+        11
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .subpixel3_neither_sample_hits,
+        1
     );
     assert_eq!(
         report
