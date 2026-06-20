@@ -716,6 +716,56 @@ impl RenderOwnerId {
     pub const fn is_background(self) -> bool {
         self.0 == 0
     }
+
+    #[inline(always)]
+    pub fn channel_deltas_to(self, candidate: Self) -> [i16; 3] {
+        let decoded = self.to_rgb_u8();
+        let candidate = candidate.to_rgb_u8();
+        [
+            i16::from(candidate[0]) - i16::from(decoded[0]),
+            i16::from(candidate[1]) - i16::from(decoded[1]),
+            i16::from(candidate[2]) - i16::from(decoded[2]),
+        ]
+    }
+
+    #[inline(always)]
+    pub fn is_near_candidate(self, candidate: Self) -> bool {
+        if self == candidate || candidate.is_background() {
+            return false;
+        }
+        let [red_delta, green_delta, blue_delta] = self.channel_deltas_to(candidate);
+        (-2..=2).contains(&red_delta)
+            && (-1..=1).contains(&green_delta)
+            && (-1..=1).contains(&blue_delta)
+    }
+
+    pub fn near_candidates(self) -> Vec<Self> {
+        let mut candidates = Vec::new();
+        for db in -1_i32..=1 {
+            for dg in -1_i32..=1 {
+                for dr in -2_i32..=2 {
+                    if dr == 0 && dg == 0 && db == 0 {
+                        continue;
+                    }
+                    let delta = dr + dg * 256 + db * 65_536;
+                    let candidate = if delta < 0 {
+                        self.0.checked_sub(delta.unsigned_abs())
+                    } else {
+                        self.0.checked_add(delta as u32)
+                    };
+                    if let Some(candidate) = candidate
+                        .map(Self)
+                        .filter(|candidate| !candidate.is_background())
+                    {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
 }
 
 pub trait SceneGraph {
@@ -4951,6 +5001,27 @@ mod tests {
         assert_eq!(rgba[1], 2.0 / 255.0);
         assert_eq!(rgba[2], 1.0 / 255.0);
         assert_eq!(rgba[3], 1.0);
+    }
+
+    #[test]
+    fn render_owner_id_exposes_near_id_recovery_window() {
+        let decoded = RenderOwnerId::new(19900);
+        let recovered = RenderOwnerId::new(19901);
+
+        assert_eq!(decoded.channel_deltas_to(recovered), [1, 0, 0]);
+        assert_eq!(
+            RenderOwnerId::new(34459).channel_deltas_to(RenderOwnerId::new(34715)),
+            [0, 1, 0]
+        );
+        assert!(RenderOwnerId::new(3).is_near_candidate(RenderOwnerId::new(2)));
+        assert!(RenderOwnerId::new(4).is_near_candidate(RenderOwnerId::new(5)));
+        assert!(!RenderOwnerId::new(3).is_near_candidate(RenderOwnerId::new(3)));
+        assert!(!RenderOwnerId::new(3).is_near_candidate(RenderOwnerId::TRANSPARENT_BACKGROUND));
+        assert!(
+            RenderOwnerId::new(3)
+                .near_candidates()
+                .contains(&RenderOwnerId::new(2))
+        );
     }
 
     fn transform_matrix(transform: Transform) -> Mat4 {

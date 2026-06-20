@@ -1578,17 +1578,7 @@ fn optional_u64_delta(left: Option<u64>, right: Option<u64>) -> Option<i64> {
 }
 
 fn owner_id_channel_deltas(decoded_actual: u32, recovered_actual: u32) -> [i16; 3] {
-    let decoded = owner_id_rgb(decoded_actual);
-    let recovered = owner_id_rgb(recovered_actual);
-    [
-        i16::from(recovered[0]) - i16::from(decoded[0]),
-        i16::from(recovered[1]) - i16::from(decoded[1]),
-        i16::from(recovered[2]) - i16::from(decoded[2]),
-    ]
-}
-
-fn owner_id_rgb(id: u32) -> [u8; 3] {
-    RenderOwnerId::new(id).to_rgb_u8()
+    RenderOwnerId::new(decoded_actual).channel_deltas_to(RenderOwnerId::new(recovered_actual))
 }
 
 fn owner_id_channel_delta_class([red, green, blue]: [i16; 3]) -> String {
@@ -1635,38 +1625,15 @@ fn recover_near_actual_owner(
 }
 
 fn owner_id_is_near_candidate(decoded_actual: u32, candidate: u32) -> bool {
-    if decoded_actual == candidate || candidate == 0 {
-        return false;
-    }
-    let [red_delta, green_delta, blue_delta] = owner_id_channel_deltas(decoded_actual, candidate);
-    (-2..=2).contains(&red_delta)
-        && (-1..=1).contains(&green_delta)
-        && (-1..=1).contains(&blue_delta)
+    RenderOwnerId::new(decoded_actual).is_near_candidate(RenderOwnerId::new(candidate))
 }
 
 fn near_owner_id_candidates(id: u32) -> Vec<u32> {
-    let mut candidates = Vec::new();
-    for db in -1_i32..=1 {
-        for dg in -1_i32..=1 {
-            for dr in -2_i32..=2 {
-                if dr == 0 && dg == 0 && db == 0 {
-                    continue;
-                }
-                let delta = dr + dg * 256 + db * 65_536;
-                let candidate = if delta < 0 {
-                    id.checked_sub(delta.unsigned_abs())
-                } else {
-                    id.checked_add(delta as u32)
-                };
-                if let Some(candidate) = candidate.filter(|candidate| *candidate != 0) {
-                    candidates.push(candidate);
-                }
-            }
-        }
-    }
-    candidates.sort_unstable();
-    candidates.dedup();
-    candidates
+    RenderOwnerId::new(id)
+        .near_candidates()
+        .into_iter()
+        .map(RenderOwnerId::get)
+        .collect()
 }
 
 impl OwnerRenderPolicyKey {
