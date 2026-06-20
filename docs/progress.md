@@ -2,6 +2,15 @@
 
 ## 2026-06-20
 
+- Added 3x3 subpixel triangle-containment diagnostics to the owner-id projection-gap
+  comparator. `tools/render-parity/compare-owner-id-images.rs` now reports
+  `pixel_subpixel3_inside_*_screen_triangle` buckets alongside the existing
+  center/origin triangle checks, and `summarize-owner-tail.rs` prints them in
+  `Projection Gap Shape`. The self-tests include a pixel whose center and
+  origin miss one triangle while a same-pixel sub-sample hits it, which gives
+  the remaining Seed-san/compact topology owner-tail work a direct way to
+  distinguish browser-style subpixel fill ownership from broader material or
+  metadata drift.
 - Closed the generated transparent blend Bevy regression. `examples/bevy_render_capture.rs`
   now preserves the shared adapter render order for `BLEND` materials and applies
   the MToon transparent phase/source-order bias to ordinary transparent

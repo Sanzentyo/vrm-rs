@@ -506,6 +506,12 @@ struct OwnerProjectionGapSummary {
     pixel_origin_inside_expected_only_screen_triangle: u64,
     pixel_origin_inside_actual_only_screen_triangle: u64,
     pixel_origin_inside_neither_screen_triangle: u64,
+    pixel_subpixel3_inside_expected_screen_triangle: u64,
+    pixel_subpixel3_inside_actual_screen_triangle: u64,
+    pixel_subpixel3_inside_both_screen_triangles: u64,
+    pixel_subpixel3_inside_expected_only_screen_triangle: u64,
+    pixel_subpixel3_inside_actual_only_screen_triangle: u64,
+    pixel_subpixel3_inside_neither_screen_triangle: u64,
     mean_expected_only_distance_to_actual_bounds: Option<f64>,
     max_expected_only_distance_to_actual_bounds: Option<f64>,
     mean_actual_only_distance_to_expected_bounds: Option<f64>,
@@ -592,6 +598,12 @@ struct OwnerProjectionGapAccumulator {
     pixel_origin_inside_expected_only_screen_triangle: u64,
     pixel_origin_inside_actual_only_screen_triangle: u64,
     pixel_origin_inside_neither_screen_triangle: u64,
+    pixel_subpixel3_inside_expected_screen_triangle: u64,
+    pixel_subpixel3_inside_actual_screen_triangle: u64,
+    pixel_subpixel3_inside_both_screen_triangles: u64,
+    pixel_subpixel3_inside_expected_only_screen_triangle: u64,
+    pixel_subpixel3_inside_actual_only_screen_triangle: u64,
+    pixel_subpixel3_inside_neither_screen_triangle: u64,
     expected_only_distance_to_actual_bounds_sum: f64,
     expected_only_distance_to_actual_bounds_max: f64,
     actual_only_distance_to_expected_bounds_sum: f64,
@@ -1935,8 +1947,29 @@ fn pixel_inside_screen_triangle(
     triangle: OwnerScreenTriangle,
     sample_offset: f64,
 ) -> bool {
-    let point = [pixel.x as f64 + sample_offset, pixel.y as f64 + sample_offset];
+    pixel_inside_screen_triangle_at(pixel, triangle, sample_offset, sample_offset)
+}
+
+fn pixel_inside_screen_triangle_at(
+    pixel: OwnerPixel,
+    triangle: OwnerScreenTriangle,
+    sample_x: f64,
+    sample_y: f64,
+) -> bool {
+    let point = [pixel.x as f64 + sample_x, pixel.y as f64 + sample_y];
     point_inside_screen_triangle(point, triangle)
+}
+
+fn pixel_subpixel3_inside_screen_triangle(
+    pixel: OwnerPixel,
+    triangle: OwnerScreenTriangle,
+) -> bool {
+    const OFFSETS: [f64; 3] = [0.25, 0.5, 0.75];
+    OFFSETS.iter().any(|sample_y| {
+        OFFSETS.iter().any(|sample_x| {
+            pixel_inside_screen_triangle_at(pixel, triangle, *sample_x, *sample_y)
+        })
+    })
 }
 
 fn point_inside_screen_triangle(point: [f64; 2], triangle: OwnerScreenTriangle) -> bool {
@@ -2283,6 +2316,18 @@ impl OwnerProjectionGapAccumulator {
                 .pixel_origin_inside_actual_only_screen_triangle,
             pixel_origin_inside_neither_screen_triangle: self
                 .pixel_origin_inside_neither_screen_triangle,
+            pixel_subpixel3_inside_expected_screen_triangle: self
+                .pixel_subpixel3_inside_expected_screen_triangle,
+            pixel_subpixel3_inside_actual_screen_triangle: self
+                .pixel_subpixel3_inside_actual_screen_triangle,
+            pixel_subpixel3_inside_both_screen_triangles: self
+                .pixel_subpixel3_inside_both_screen_triangles,
+            pixel_subpixel3_inside_expected_only_screen_triangle: self
+                .pixel_subpixel3_inside_expected_only_screen_triangle,
+            pixel_subpixel3_inside_actual_only_screen_triangle: self
+                .pixel_subpixel3_inside_actual_only_screen_triangle,
+            pixel_subpixel3_inside_neither_screen_triangle: self
+                .pixel_subpixel3_inside_neither_screen_triangle,
             mean_expected_only_distance_to_actual_bounds: mean(
                 self.expected_only_distance_to_actual_bounds_sum,
                 self.pixel_inside_expected_only_screen_bounds,
@@ -2511,6 +2556,19 @@ impl OwnerProjectionGapAccumulator {
             u64::from(!origin_expected && origin_actual);
         self.pixel_origin_inside_neither_screen_triangle +=
             u64::from(!origin_expected && !origin_actual);
+
+        let subpixel3_expected = pixel_subpixel3_inside_screen_triangle(pixel, expected);
+        let subpixel3_actual = pixel_subpixel3_inside_screen_triangle(pixel, actual);
+        self.pixel_subpixel3_inside_expected_screen_triangle += u64::from(subpixel3_expected);
+        self.pixel_subpixel3_inside_actual_screen_triangle += u64::from(subpixel3_actual);
+        self.pixel_subpixel3_inside_both_screen_triangles +=
+            u64::from(subpixel3_expected && subpixel3_actual);
+        self.pixel_subpixel3_inside_expected_only_screen_triangle +=
+            u64::from(subpixel3_expected && !subpixel3_actual);
+        self.pixel_subpixel3_inside_actual_only_screen_triangle +=
+            u64::from(!subpixel3_expected && subpixel3_actual);
+        self.pixel_subpixel3_inside_neither_screen_triangle +=
+            u64::from(!subpixel3_expected && !subpixel3_actual);
     }
 
     fn add_near_edge_sides(
@@ -3067,6 +3125,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         triangle,
         0.5
     ));
+    let edge_subpixel_triangle = OwnerScreenTriangle {
+        points: [[1.75, 0.0], [3.0, 0.0], [1.75, 2.0]],
+    };
+    assert!(!pixel_inside_screen_triangle(
+        OwnerPixel { x: 1, y: 0 },
+        edge_subpixel_triangle,
+        0.5
+    ));
+    assert!(pixel_subpixel3_inside_screen_triangle(
+        OwnerPixel { x: 1, y: 0 },
+        edge_subpixel_triangle
+    ));
 
     let expected = RgbaImage {
         width: 4,
@@ -3106,6 +3176,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     max_x: 2.0,
                     max_y: 2.0,
                 }),
+                screen: Some(OwnerScreenTriangle {
+                    points: [[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]],
+                }),
                 webgl_depth: Some(0.5),
                 ..OwnerLabel::default()
             },
@@ -3120,6 +3193,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     min_y: 0.0,
                     max_x: 10.0,
                     max_y: 2.0,
+                }),
+                screen: Some(OwnerScreenTriangle {
+                    points: [[8.0, 0.0], [10.0, 0.0], [8.0, 2.0]],
                 }),
                 webgl_depth: Some(0.7),
                 material_side: Some(0),
@@ -3161,6 +3237,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     max_x: 3.0,
                     max_y: 2.0,
                 }),
+                screen: Some(edge_subpixel_triangle),
                 webgl_depth: Some(0.5005),
                 ..OwnerLabel::default()
             },
@@ -3186,6 +3263,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     min_y: 0.0,
                     max_x: 4.0,
                     max_y: 2.0,
+                }),
+                screen: Some(OwnerScreenTriangle {
+                    points: [[2.0, 0.0], [4.0, 0.0], [2.0, 2.0]],
                 }),
                 webgl_depth: Some(0.9),
                 ..OwnerLabel::default()
@@ -3444,6 +3524,118 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         report
             .unexplained_projection_gap_summary
             .pixel_origin_inside_neither_screen_bounds,
+        0
+    );
+    assert_eq!(
+        report.unexplained_projection_gap_summary.with_screen_triangles,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_expected_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_actual_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_both_screen_triangles,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_expected_only_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_actual_only_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_center_inside_neither_screen_triangle,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_expected_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_actual_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_both_screen_triangles,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_expected_only_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_actual_only_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_origin_inside_neither_screen_triangle,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_expected_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_actual_screen_triangle,
+        2
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_both_screen_triangles,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_expected_only_screen_triangle,
+        0
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_actual_only_screen_triangle,
+        1
+    );
+    assert_eq!(
+        report
+            .unexplained_projection_gap_summary
+            .pixel_subpixel3_inside_neither_screen_triangle,
         0
     );
     assert_eq!(

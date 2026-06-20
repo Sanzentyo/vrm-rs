@@ -665,6 +665,36 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         report,
         "pixel_origin_inside_neither_screen_triangle",
     );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_expected_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_actual_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_both_screen_triangles",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_expected_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_actual_only_screen_triangle",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_subpixel3_inside_neither_screen_triangle",
+    );
     write_projection_gap_value(
         &mut output,
         report,
@@ -1066,6 +1096,25 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "pixel_inside_expected_only_screen_bounds": 0,
             "pixel_inside_actual_only_screen_bounds": 1,
             "pixel_inside_neither_screen_bounds": 0,
+            "with_screen_triangles": 2,
+            "pixel_center_inside_expected_screen_triangle": 1,
+            "pixel_center_inside_actual_screen_triangle": 1,
+            "pixel_center_inside_both_screen_triangles": 0,
+            "pixel_center_inside_expected_only_screen_triangle": 1,
+            "pixel_center_inside_actual_only_screen_triangle": 1,
+            "pixel_center_inside_neither_screen_triangle": 0,
+            "pixel_origin_inside_expected_screen_triangle": 1,
+            "pixel_origin_inside_actual_screen_triangle": 1,
+            "pixel_origin_inside_both_screen_triangles": 0,
+            "pixel_origin_inside_expected_only_screen_triangle": 1,
+            "pixel_origin_inside_actual_only_screen_triangle": 1,
+            "pixel_origin_inside_neither_screen_triangle": 0,
+            "pixel_subpixel3_inside_expected_screen_triangle": 1,
+            "pixel_subpixel3_inside_actual_screen_triangle": 2,
+            "pixel_subpixel3_inside_both_screen_triangles": 1,
+            "pixel_subpixel3_inside_expected_only_screen_triangle": 0,
+            "pixel_subpixel3_inside_actual_only_screen_triangle": 1,
+            "pixel_subpixel3_inside_neither_screen_triangle": 0,
             "pixel_near_expected_min_x_edge_05px": 0,
             "pixel_near_expected_max_x_edge_05px": 1,
             "pixel_near_expected_min_y_edge_05px": 1,
@@ -1184,6 +1233,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     ));
     assert!(markdown.contains("pixel_near_either_edge_05px"));
     assert!(markdown.contains("pixel_inside_both_screen_bounds"));
+    assert!(markdown.contains("pixel_subpixel3_inside_both_screen_triangles"));
+    assert!(markdown.contains("pixel_subpixel3_inside_actual_only_screen_triangle"));
     assert!(markdown.contains("pixel_near_actual_min_y_edge_05px"));
     assert!(markdown.contains("either_small_bounds_area_le_4px"));
     assert!(markdown.contains("actual_bevy_phase_order_offset_applied_nonzero"));
