@@ -31,6 +31,7 @@ const hotspotDeltasPath = args.get('hotspot-deltas');
 const hotspotTop = Number.parseInt(args.get('hotspot-top') ?? '32', 10);
 const hotspotSampleCenterX = Number(args.get('hotspot-sample-center-x') ?? '0.5');
 const hotspotSampleCenterY = Number(args.get('hotspot-sample-center-y') ?? '0.5');
+const hotspotSubpixelSteps = Number.parseInt(args.get('hotspot-subpixel-steps') ?? '3', 10);
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
@@ -55,7 +56,7 @@ const expressionWeights = parseExpressionWeights(expressions);
 const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--hotspot-subpixel-steps 3] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -64,6 +65,10 @@ if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
 }
 if (!Number.isInteger(hotspotTop) || hotspotTop <= 0) {
   console.error(`invalid hotspot-top: ${hotspotTop}`);
+  process.exit(2);
+}
+if (!Number.isInteger(hotspotSubpixelSteps) || hotspotSubpixelSteps <= 0) {
+  console.error(`invalid hotspot-subpixel-steps: ${hotspotSubpixelSteps}`);
   process.exit(2);
 }
 if (![hotspotSampleCenterX, hotspotSampleCenterY].every(Number.isFinite)) {
@@ -152,6 +157,7 @@ const server = http.createServer((request, response) => {
       diagnosticRender,
       hotspotDeltas,
       hotspotSampleCenter: [hotspotSampleCenterX, hotspotSampleCenterY],
+      hotspotSubpixelSteps,
     }));
     return;
   }
@@ -347,6 +353,7 @@ function capturePage(options) {
 
   const hotspotDeltas = ${JSON.stringify(options.hotspotDeltas)};
   const hotspotSampleCenter = ${JSON.stringify(options.hotspotSampleCenter)};
+  const hotspotSubpixelSteps = ${JSON.stringify(options.hotspotSubpixelSteps)};
   const ownerIdRecords = [];
   const ownerIdByColor = new Map();
   const ownerIdByCandidate = new Map();
@@ -779,6 +786,9 @@ function capturePage(options) {
     const bump = (map, key) => {
       map[key] = (map[key] ?? 0) + 1;
     };
+    const sampleCenterKey = (sampleCenter) => sampleCenter
+      .map((value) => Number(value.toFixed(6)).toString())
+      .join(',');
     for (const hotspot of hotspots) {
       if (hotspot.renderedOwner?.id != null) summary.renderedOwnerCount += 1;
       if (hotspot.renderedOwnerCandidate) summary.renderedOwnerCandidateCount += 1;
@@ -791,7 +801,7 @@ function capturePage(options) {
         summary.renderedOwnerBestSubpixelCount += 1;
         if (bestSubpixel.frontmost) summary.renderedOwnerBestSubpixelFrontmostCount += 1;
         bump(summary.renderedOwnerBestSubpixelDepthRanks, String(bestSubpixel.depthRank));
-        bump(summary.renderedOwnerBestSubpixelCenters, bestSubpixel.sampleCenter.join(','));
+        bump(summary.renderedOwnerBestSubpixelCenters, sampleCenterKey(bestSubpixel.sampleCenter));
       }
       const bestNeighbor = hotspot.renderedOwnerRecovery?.bestNeighbor;
       if (bestNeighbor) {
@@ -922,8 +932,10 @@ function capturePage(options) {
     const ownerRecovery = (hotspot, renderedOwner) => {
       if (renderedOwner?.id == null || ownerIdRecords.length === 0) return null;
       const subpixelMatches = [];
-      for (const y of [0.25, 0.5, 0.75]) {
-        for (const x of [0.25, 0.5, 0.75]) {
+      for (let row = 0; row < hotspotSubpixelSteps; row += 1) {
+        const y = (row + 0.5) / hotspotSubpixelSteps;
+        for (let column = 0; column < hotspotSubpixelSteps; column += 1) {
+          const x = (column + 0.5) / hotspotSubpixelSteps;
           const match = ownerMatchAtPoint(hotspot, [hotspot.x + x, hotspot.y + y], renderedOwner);
           if (match) subpixelMatches.push(match);
         }
@@ -939,6 +951,7 @@ function capturePage(options) {
         }
       }
       return {
+        subpixelSteps: hotspotSubpixelSteps,
         subpixelMatches,
         bestSubpixel: subpixelMatches.slice().sort((left, right) => left.depthRank - right.depthRank || Math.abs(left.sampleCenter[0] - 0.5) + Math.abs(left.sampleCenter[1] - 0.5) - (Math.abs(right.sampleCenter[0] - 0.5) + Math.abs(right.sampleCenter[1] - 0.5)))[0] ?? null,
         neighborMatches,
@@ -1011,6 +1024,7 @@ function capturePage(options) {
       width: hotspots.width,
       height: hotspots.height,
       sampleCenter,
+      subpixelSteps: hotspotSubpixelSteps,
       projectedTriangleCount: projectedTriangles.length,
       summary: summarizeProjectedHotspots(top),
       top,

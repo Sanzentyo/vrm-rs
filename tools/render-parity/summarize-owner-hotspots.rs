@@ -39,6 +39,7 @@ struct OwnerHotspotReport {
     width: Option<u64>,
     height: Option<u64>,
     sample_center: Option<Vec<f64>>,
+    subpixel_steps: Option<u64>,
     projected_triangle_count: Option<u64>,
     summary: Value,
     rendered_owner_materials: BTreeMap<String, u64>,
@@ -155,6 +156,7 @@ fn summarize_report(
             .get("sampleCenter")
             .and_then(Value::as_array)
             .map(|values| values.iter().filter_map(Value::as_f64).collect()),
+        subpixel_steps: hotspots.get("subpixelSteps").and_then(Value::as_u64),
         projected_triangle_count: hotspots
             .get("projectedTriangleCount")
             .and_then(Value::as_u64),
@@ -229,6 +231,9 @@ fn markdown_report(report: &OwnerHotspotReport) -> String {
     output.push_str(&format!("- Input: `{}`\n", report.input));
     if let Some(count) = report.projected_triangle_count {
         output.push_str(&format!("- Projected triangles: `{count}`\n"));
+    }
+    if let Some(steps) = report.subpixel_steps {
+        output.push_str(&format!("- Subpixel recovery grid: `{steps}x{steps}`\n"));
     }
     output.push_str("\n## Summary\n\n");
     output.push_str("```json\n");
