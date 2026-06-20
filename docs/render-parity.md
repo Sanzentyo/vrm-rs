@@ -24,6 +24,11 @@ recipes are convenience entry points. Use these first:
   texture/base-color blocker diagnostics. It regenerates the compact depth3
   owner-hotspot extraction, browser/Rust owner join reports, and the broader
   Seed-san flat32 gradient owner/render join.
+- `just render-parity-current-blocker-owner-sample-correction`: apply browser
+  best owner/sample CPU colors to current raw outputs as an upper-bound
+  experiment. This does not change renderer artifacts; it writes JSON reports
+  showing how much a local sample/triangle ownership policy could improve the
+  existing raw images.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
   legacy `.psnr.json` report is retained as a diagnostic cross-check over
