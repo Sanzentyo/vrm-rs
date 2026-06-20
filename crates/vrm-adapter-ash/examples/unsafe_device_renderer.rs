@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
-use vrm_adapter::RenderOwnerSampleCorrectionPlan;
+use vrm_adapter::{RenderOwnerSampleCorrectionPlan, RenderOwnerSurfaceKey};
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
     AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
@@ -196,14 +196,12 @@ impl ReadbackFrame {
         self.rgba.len()
     }
 
-    fn apply_owner_sample_correction_manifest(
+    fn apply_owner_sample_correction_plan(
         &mut self,
-        path: &Path,
+        plan: &RenderOwnerSampleCorrectionPlan,
         width: u32,
         height: u32,
     ) -> Result<usize, Box<dyn Error>> {
-        let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(path)?)?;
-        let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&value)?;
         let applied = plan.apply_rgba8(u64::from(width), u64::from(height), &mut self.rgba)?;
         *self = Self::from_rgba(std::mem::take(&mut self.rgba));
         Ok(applied)
@@ -1449,6 +1447,8 @@ struct RgbaJsonArtifact<'a> {
     width: u32,
     height: u32,
     depth_format: Option<vk::Format>,
+    render_surfaces: &'a [RenderOwnerSurfaceKey],
+    owner_sample_correction_plan: Option<(&'a Path, &'a RenderOwnerSampleCorrectionPlan)>,
 }
 
 fn write_rgba_json(
@@ -1458,6 +1458,12 @@ fn write_rgba_json(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let owner_sample_correction_plan =
+        artifact_input
+            .owner_sample_correction_plan
+            .map(|(path, plan)| {
+                owner_sample_correction_plan_json(path, plan, artifact_input.render_surfaces)
+            });
     let artifact = json!({
         "generator": "vrm-rs crates/vrm-adapter-ash/examples/unsafe_device_renderer.rs",
         "fixture": artifact_input.options.frame.avatar.to_string_lossy(),
@@ -1473,6 +1479,7 @@ fn write_rgba_json(
             "drawCalls": artifact_input.frame.draw_calls.len(),
             "depthFormat": artifact_input.depth_format.map(ash_format_label),
             "diagnosticOwnerIds": ash_diagnostic_owner_ids_json(artifact_input.diagnostic_owner_ids),
+            "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "readback": {
             "checksum": format!("{:016x}", artifact_input.readback.checksum),
@@ -1486,6 +1493,29 @@ fn write_rgba_json(
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn owner_sample_correction_plan_json(
+    path: &Path,
+    plan: &RenderOwnerSampleCorrectionPlan,
+    surfaces: &[RenderOwnerSurfaceKey],
+) -> serde_json::Value {
+    let coverage = plan.surface_coverage(surfaces.iter());
+    json!({
+        "manifest": path.to_string_lossy(),
+        "entryCount": coverage.entry_count,
+        "surfaceCount": coverage.surface_count,
+        "matchedEntryCount": coverage.matched_entry_count,
+        "unmatchedEntryCount": coverage.unmatched_entry_count,
+        "matchedSurfaceCount": coverage.matched_surface_count,
+        "allEntriesResolved": coverage.all_entries_resolved(),
+        "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
+            json!({
+                "materialName": surface.material_name(),
+                "triangle": surface.triangle(),
+            })
+        }).collect::<Vec<_>>(),
+    })
 }
 
 fn ash_diagnostic_owner_ids_json(owners: &[AshDiagnosticOwnerId]) -> Vec<serde_json::Value> {
@@ -1660,6 +1690,8 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
             width,
             height,
             depth_format: None,
+            render_surfaces: &[],
+            owner_sample_correction_plan: None,
         },
     )?;
     write_imqraw_rgba8(&imqraw_path, width, height, &rgba)?;
@@ -1804,24 +1836,23 @@ mod tests {
 
     #[test]
     fn owner_sample_correction_manifest_updates_readback_metadata() {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "vrm-rs-ash-owner-sample-correction-{}.json",
-            std::process::id()
-        ));
-        fs::write(
-            &path,
-            r#"{"corrections":[{"x":1,"y":0,"rgba":[0,0,0,0],"surface":{"materialName":"body","triangle":7},"sample":[0.5,0.5]}]}"#,
-        )
-        .unwrap();
+        let value = serde_json::json!({
+            "corrections": [{
+                "x": 1,
+                "y": 0,
+                "rgba": [0, 0, 0, 0],
+                "surface": {"materialName": "body", "triangle": 7},
+                "sample": [0.5, 0.5],
+            }]
+        });
+        let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&value).unwrap();
         let mut readback = ReadbackFrame::from_rgba(vec![255, 0, 0, 255, 0, 0, 255, 255]);
         let original_checksum = readback.checksum;
 
         let applied = readback
-            .apply_owner_sample_correction_manifest(&path, 2, 1)
+            .apply_owner_sample_correction_plan(&plan, 2, 1)
             .unwrap();
 
-        let _ = fs::remove_file(&path);
         assert_eq!(applied, 1);
         assert_eq!(readback.rgba, vec![255, 0, 0, 255, 0, 0, 0, 0]);
         assert_ne!(readback.checksum, original_checksum);
@@ -1838,6 +1869,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("dry run: parsed ash unsafe device renderer options");
         return Ok(());
     }
+    let correction_plan = options
+        .owner_sample_correction_manifest
+        .as_deref()
+        .map(
+            |path| -> Result<RenderOwnerSampleCorrectionPlan, Box<dyn Error>> {
+                let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(path)?)?;
+                Ok(RenderOwnerSampleCorrectionPlan::from_manifest_value(
+                    &value,
+                )?)
+            },
+        )
+        .transpose()?;
     let frame_plan =
         frame_plan_from_options_with_viewport(&options.frame, options.width, options.height)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
@@ -1866,9 +1909,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     if options.submit_readback || options.out.is_some() || options.imqraw_out.is_some() {
         let mut summary = renderer.submit_and_readback(&resources)?;
-        if let Some(path) = &options.owner_sample_correction_manifest {
-            let applied = summary.apply_owner_sample_correction_manifest(
-                path,
+        if let Some((path, plan)) = options
+            .owner_sample_correction_manifest
+            .as_deref()
+            .zip(correction_plan.as_ref())
+        {
+            let applied = summary.apply_owner_sample_correction_plan(
+                plan,
                 options.width.max(1),
                 options.height.max(1),
             )?;
@@ -1896,6 +1943,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     width: options.width.max(1),
                     height: options.height.max(1),
                     depth_format: Some(resources.depth_format),
+                    render_surfaces: &frame_plan.render_surfaces,
+                    owner_sample_correction_plan: options
+                        .owner_sample_correction_manifest
+                        .as_deref()
+                        .zip(correction_plan.as_ref()),
                 },
             )?;
         }

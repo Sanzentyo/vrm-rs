@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RenderOwnerId, RendererFrontFace, ScreenProjectionSize, ScreenTriangleProjection,
-    ZeroToOneDepth, project_triangle_to_screen,
+    RenderOwnerId, RenderOwnerSampleCorrectionPlan, RenderOwnerSurfaceKey, RendererFrontFace,
+    ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
 };
 use vrm_io::{
     GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
@@ -490,19 +490,24 @@ struct TextureUpload<'a> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = CaptureOptions::parse();
+    let correction_plan = options
+        .owner_sample_correction_manifest
+        .as_deref()
+        .map(render_capture_correction::load_owner_sample_correction_manifest)
+        .transpose()?;
     let loaded = load_vrm_from_path(&options.fixture)?;
     let mesh = mesh_draw_data(&loaded, &options)?;
     let mut rgba = pollster::block_on(render_capture(&loaded, &mesh, &options))?;
-    if let Some(path) = &options.owner_sample_correction_manifest {
-        render_capture_correction::apply_owner_sample_correction_manifest(
-            path,
+    if let Some(plan) = &correction_plan {
+        render_capture_correction::apply_owner_sample_correction_plan(
+            plan,
             options.width,
             options.height,
             &mut rgba,
         )?;
     }
 
-    write_rgba_json(&options, &rgba, &loaded, &mesh)?;
+    write_rgba_json(&options, &rgba, &loaded, &mesh, correction_plan.as_ref())?;
     if let Some(path) = &options.png_out {
         write_png(path, options.width, options.height, &rgba)?;
     }
@@ -2082,12 +2087,25 @@ fn write_rgba_json(
     rgba: &[u8],
     loaded: &LoadedVrm,
     mesh: &MeshDrawData,
+    correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
     let effective_lighting = mtoon_lighting_uniform(options);
     let diagnostic_owner_ids = diagnostic_owner_ids(loaded, mesh, options);
+    let owner_sample_correction_plan = correction_plan.and_then(|plan| {
+        options
+            .owner_sample_correction_manifest
+            .as_deref()
+            .map(|path| {
+                render_capture_correction::owner_sample_correction_plan_metadata(
+                    path,
+                    plan,
+                    diagnostic_owner_surfaces(loaded, mesh),
+                )
+            })
+    });
     let artifact = json!({
         "generator": "vrm-rs examples/wgpu_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -2105,6 +2123,7 @@ fn write_rgba_json(
         "renderer": {
             "backend": "wgpu",
             "diagnosticOwnerIds": diagnostic_owner_ids,
+            "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "expressions": options.expressions,
         "camera": {
@@ -2141,6 +2160,25 @@ fn write_rgba_json(
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn diagnostic_owner_surfaces(
+    loaded: &LoadedVrm,
+    mesh: &MeshDrawData,
+) -> Vec<RenderOwnerSurfaceKey> {
+    mesh.primitives
+        .iter()
+        .flat_map(|primitive| {
+            let source = primitive.owner_source;
+            let material_name = material_name(loaded, source.material);
+            (0..primitive.indices.len() / 3).filter_map(move |triangle| {
+                Some(RenderOwnerSurfaceKey::new(
+                    material_name?,
+                    u64::try_from(triangle).ok()?,
+                ))
+            })
+        })
+        .collect()
 }
 
 fn diagnostic_owner_ids(

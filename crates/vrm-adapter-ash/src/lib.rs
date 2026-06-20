@@ -19,10 +19,10 @@ use vrm_adapter::{
     GltfMaterialAlphaMode, GltfMaterialPipelineOverride, HeadlessSceneState, HumanoidPoseRig,
     MTOON_GPU_UNIFORM_SIZE, MtoonGpuMaterial, MtoonGpuUniform, MtoonLightAccumulation,
     MtoonLightingConfig, MtoonMaterializationOptions, MtoonRendererPass, MtoonSamplerHint,
-    MtoonTextureSlot, RenderOwnerId, RendererFrontFace, RendererMaterialAlphaMode,
-    RendererMaterialCullMode, ScreenProjectionBounds, ScreenProjectionSize,
-    ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate, ZeroToOneDepth,
-    apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
+    MtoonTextureSlot, RenderOwnerId, RenderOwnerSurfaceKey, RendererFrontFace,
+    RendererMaterialAlphaMode, RendererMaterialCullMode, ScreenProjectionBounds,
+    ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
+    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
     project_triangle_to_screen, renderer_material_pipeline_plan,
 };
 use vrm_core::{Feature, MaterialRef, MtoonAlphaMode, NodeRef, TextureRef, VrmAnimation};
@@ -649,6 +649,7 @@ pub struct AshVrmFramePlan {
     pub mtoon_pipelines: Vec<AshMtoonPipelinePlan>,
     pub scene_uniform: AshSceneUniform,
     pub diagnostic_owner_ids: Vec<AshDiagnosticOwnerId>,
+    pub render_surfaces: Vec<RenderOwnerSurfaceKey>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1262,6 +1263,13 @@ struct AshPrimitiveRecord {
     draw_order: AshPrimitiveDrawOrder,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct AshBakedPrimitives {
+    primitives: Vec<AshVrmPrimitive>,
+    diagnostic_owner_ids: Vec<AshDiagnosticOwnerId>,
+    render_surfaces: Vec<RenderOwnerSurfaceKey>,
+}
+
 #[derive(Clone, Debug)]
 struct AshOwnerIdAssignmentContext {
     source: AshPrimitiveSource,
@@ -1367,15 +1375,15 @@ impl AshVrmFramePlanner {
             self.mtoon_pipeline_plans(time_seconds, scene_options, render_options);
         let texture_uploads = self.texture_uploads(&mtoon_pipelines);
         let texture_upload_indices = texture_ref_upload_indices(&texture_uploads);
-        let (primitives, diagnostic_owner_ids) =
-            self.bake_primitives(time_seconds, scene_options, render_options)?;
+        let baked = self.bake_primitives(time_seconds, scene_options, render_options)?;
         Ok(AshVrmFramePlan {
-            primitives,
+            primitives: baked.primitives,
             materials: self.material_records(&texture_upload_indices),
             texture_uploads,
             mtoon_pipelines,
             scene_uniform: AshSceneUniform::from_scene_options(scene_options),
-            diagnostic_owner_ids,
+            diagnostic_owner_ids: baked.diagnostic_owner_ids,
+            render_surfaces: baked.render_surfaces,
         })
     }
 
@@ -1398,7 +1406,7 @@ impl AshVrmFramePlanner {
         mtoon_time: f32,
         scene_options: AshSceneOptions,
         render_options: AshRenderOptions,
-    ) -> Result<(Vec<AshVrmPrimitive>, Vec<AshDiagnosticOwnerId>), Box<dyn Error>> {
+    ) -> Result<AshBakedPrimitives, Box<dyn Error>> {
         let mut primitives = Vec::new();
         for (node_index, node) in self.loaded.scene.nodes.iter().enumerate() {
             let Some(mesh_index) = node.mesh else {
@@ -1471,13 +1479,15 @@ impl AshVrmFramePlanner {
             } else {
                 Vec::new()
             };
-        Ok((
-            primitives
+        let render_surfaces = ash_render_surfaces(&primitives);
+        Ok(AshBakedPrimitives {
+            primitives: primitives
                 .into_iter()
                 .map(|record| record.primitive)
                 .collect(),
             diagnostic_owner_ids,
-        ))
+            render_surfaces,
+        })
     }
 
     fn bake_primitive(
@@ -2209,6 +2219,21 @@ fn assign_ash_owner_id_triangles(
         next_id = next;
     }
     owners
+}
+
+fn ash_render_surfaces(primitives: &[AshPrimitiveRecord]) -> Vec<RenderOwnerSurfaceKey> {
+    primitives
+        .iter()
+        .flat_map(|record| {
+            let material_name = record.source.material_name.clone();
+            (0..record.primitive.indices.len() / 3).filter_map(move |triangle| {
+                Some(RenderOwnerSurfaceKey::new(
+                    material_name.as_deref()?,
+                    u64::try_from(triangle).ok()?,
+                ))
+            })
+        })
+        .collect()
 }
 
 fn ash_owner_id_triangles(
@@ -3191,6 +3216,43 @@ mod tests {
     }
 
     #[test]
+    fn render_surfaces_are_exposed_without_owner_id_diagnostic() {
+        let vertex = AshVrmVertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coord_0: [0.0, 0.0],
+            color_0: [0.0, 0.0, 0.0, 1.0],
+            normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            normal_scale: 1.0,
+            double_sided: 0.0,
+        };
+        let record = AshPrimitiveRecord {
+            primitive: AshVrmPrimitive {
+                node: NodeRef(0),
+                material: Some(MaterialRef(0)),
+                pass: AshMtoonPass::Base,
+                vertices: vec![vertex; 4],
+                indices: vec![0, 1, 2, 1, 2, 3],
+            },
+            source: test_primitive_source(AshMtoonPass::Base),
+            draw_order: AshPrimitiveDrawOrder {
+                render_order: 2000,
+                phase_order: 0,
+            },
+        };
+
+        let surfaces = ash_render_surfaces(&[record]);
+
+        assert_eq!(
+            surfaces,
+            vec![
+                RenderOwnerSurfaceKey::new("test-material", 0),
+                RenderOwnerSurfaceKey::new("test-material", 1),
+            ]
+        );
+    }
+
+    #[test]
     fn render_options_carry_normal_map_diagnostics() {
         let options = AshVrmFramePlanOptions::parse_from([
             "ash-plan",
@@ -3359,6 +3421,7 @@ mod tests {
             }],
             scene_uniform: AshSceneUniform::default(),
             diagnostic_owner_ids: Vec::new(),
+            render_surfaces: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.buffers.len(), 2);
@@ -3559,6 +3622,7 @@ mod tests {
             ],
             scene_uniform: AshSceneUniform::default(),
             diagnostic_owner_ids: Vec::new(),
+            render_surfaces: Vec::new(),
         };
 
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
@@ -3658,6 +3722,7 @@ mod tests {
             mtoon_pipelines: vec![pipeline(0, 19), pipeline(1, 0)],
             scene_uniform: AshSceneUniform::default(),
             diagnostic_owner_ids: Vec::new(),
+            render_surfaces: Vec::new(),
         };
 
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
@@ -3737,6 +3802,7 @@ mod tests {
             }],
             scene_uniform: AshSceneUniform::default(),
             diagnostic_owner_ids: Vec::new(),
+            render_surfaces: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.textures.len(), 1);

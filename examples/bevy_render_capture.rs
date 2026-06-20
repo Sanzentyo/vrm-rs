@@ -57,8 +57,9 @@ use std::sync::{
 use std::time::Duration;
 use vrm_adapter::{
     ClipDepthMapping, MtoonLightAccumulation as AdapterMtoonLightAccumulation, MtoonLightingConfig,
-    RenderOwnerId, RendererFrontFace, ReverseZeroToOneDepth, ScreenProjectionBounds,
-    ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth, project_triangle_to_screen,
+    RenderOwnerId, RenderOwnerSurfaceKey, RendererFrontFace, ReverseZeroToOneDepth,
+    ScreenProjectionBounds, ScreenProjectionSize, ScreenTriangleProjection, ZeroToOneDepth,
+    project_triangle_to_screen,
 };
 use vrm_core::{OutlineWidthMode, TextureTransform2d};
 use vrm_io::{
@@ -671,8 +672,10 @@ fn spawn_vrm_meshes(
         }
     }
     configure_owner_id_depth_policy(&mut primitives, options);
+    let render_surfaces = render_owner_surfaces(loaded, &primitives);
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
+        render_surfaces,
     });
 
     for (draw_index, primitive) in primitives.into_iter().enumerate() {
@@ -1154,6 +1157,25 @@ fn mesh_indices_u32(mesh: &Mesh) -> Vec<u32> {
         Some(Indices::U32(indices)) => indices.clone(),
         None => (0..u32::try_from(mesh.count_vertices()).unwrap_or(0)).collect(),
     }
+}
+
+fn render_owner_surfaces(
+    loaded: &LoadedVrm,
+    primitives: &[BevyPrimitive],
+) -> Vec<RenderOwnerSurfaceKey> {
+    primitives
+        .iter()
+        .flat_map(|primitive| {
+            let source = primitive.owner_source;
+            let material_name = material_name(loaded, source.material);
+            (0..mesh_indices_u32(&primitive.mesh).len() / 3).filter_map(move |triangle| {
+                Some(RenderOwnerSurfaceKey::new(
+                    material_name?,
+                    u64::try_from(triangle).ok()?,
+                ))
+            })
+        })
+        .collect()
 }
 
 fn diagnostic_owner_ids(
@@ -1736,6 +1758,7 @@ struct OwnerTriangle {
 #[derive(Clone, Debug, Default, Resource)]
 struct RenderOwnerMetadata {
     diagnostic_owner_ids: Vec<serde_json::Value>,
+    render_surfaces: Vec<RenderOwnerSurfaceKey>,
 }
 
 #[derive(Clone)]
@@ -2837,15 +2860,6 @@ fn write_capture(
             .flat_map(|row| row[..row_bytes.min(row.len())].iter().copied())
             .collect()
     };
-    if let Some(path) = &options.owner_sample_correction_manifest {
-        render_capture_correction::apply_owner_sample_correction_manifest(
-            path,
-            options.width,
-            options.height,
-            &mut rgba,
-        )?;
-    }
-
     if let Some(parent) = options.out.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -2853,6 +2867,27 @@ fn write_capture(
     let diagnostic_owner_ids = owner_metadata
         .map(|metadata| metadata.diagnostic_owner_ids.clone())
         .unwrap_or_default();
+    let owner_sample_correction_plan = if let Some(path) = &options.owner_sample_correction_manifest
+    {
+        let plan = render_capture_correction::load_owner_sample_correction_manifest(path)?;
+        render_capture_correction::apply_owner_sample_correction_plan(
+            &plan,
+            options.width,
+            options.height,
+            &mut rgba,
+        )?;
+        Some(
+            render_capture_correction::owner_sample_correction_plan_metadata(
+                path,
+                &plan,
+                owner_metadata
+                    .map(|metadata| metadata.render_surfaces.clone())
+                    .unwrap_or_default(),
+            ),
+        )
+    } else {
+        None
+    };
     let artifact = json!({
         "generator": "vrm-rs examples/bevy_render_capture.rs",
         "fixture": options.fixture.to_string_lossy(),
@@ -2875,6 +2910,7 @@ fn write_capture(
         "renderer": {
             "backend": "bevy",
             "diagnosticOwnerIds": diagnostic_owner_ids,
+            "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "expressions": options.expressions,
         "camera": {

@@ -15,6 +15,7 @@
 use glam::{Mat4, Quat, Vec3};
 use indexmap::IndexMap;
 use std::{
+    borrow::Borrow,
     collections::{HashMap, HashSet},
     marker::PhantomData,
 };
@@ -742,6 +743,22 @@ pub struct RenderOwnerSampleCorrectionPlan {
     entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RenderOwnerSampleCorrectionPlanSurfaceCoverage {
+    pub entry_count: usize,
+    pub surface_count: usize,
+    pub matched_entry_count: usize,
+    pub unmatched_entry_count: usize,
+    pub matched_surface_count: usize,
+    pub unmatched_surfaces: Vec<RenderOwnerSurfaceKey>,
+}
+
+impl RenderOwnerSampleCorrectionPlanSurfaceCoverage {
+    pub fn all_entries_resolved(&self) -> bool {
+        self.unmatched_entry_count == 0
+    }
+}
+
 impl RenderOwnerSampleCorrectionPlan {
     pub fn new(
         entries: Vec<RenderOwnerSampleCorrectionManifestEntry>,
@@ -801,6 +818,49 @@ impl RenderOwnerSampleCorrectionPlan {
         self.entries
             .iter()
             .filter(move |entry| entry.sample.matches(surface, sample))
+    }
+
+    pub fn surface_coverage<I, S>(
+        &self,
+        surfaces: I,
+    ) -> RenderOwnerSampleCorrectionPlanSurfaceCoverage
+    where
+        I: IntoIterator<Item = S>,
+        S: Borrow<RenderOwnerSurfaceKey>,
+    {
+        let surfaces = surfaces
+            .into_iter()
+            .map(|surface| surface.borrow().clone())
+            .collect::<HashSet<_>>();
+        let correction_surfaces = self
+            .entries
+            .iter()
+            .map(|entry| entry.sample.surface().clone())
+            .collect::<HashSet<_>>();
+        let matched_entry_count = self
+            .entries
+            .iter()
+            .filter(|entry| surfaces.contains(entry.sample.surface()))
+            .count();
+        let mut unmatched_surfaces = correction_surfaces
+            .difference(&surfaces)
+            .cloned()
+            .collect::<Vec<_>>();
+        unmatched_surfaces.sort_by(|left, right| {
+            left.material_name()
+                .cmp(right.material_name())
+                .then_with(|| left.triangle().cmp(&right.triangle()))
+        });
+        RenderOwnerSampleCorrectionPlanSurfaceCoverage {
+            entry_count: self.entries.len(),
+            surface_count: correction_surfaces.len(),
+            matched_entry_count,
+            unmatched_entry_count: self.entries.len().saturating_sub(matched_entry_count),
+            matched_surface_count: correction_surfaces
+                .len()
+                .saturating_sub(unmatched_surfaces.len()),
+            unmatched_surfaces,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -5642,6 +5702,22 @@ mod tests {
                 .count(),
             0
         );
+        let coverage = plan.surface_coverage([surface.clone()]);
+        assert_eq!(coverage.entry_count, 1);
+        assert_eq!(coverage.surface_count, 1);
+        assert_eq!(coverage.matched_entry_count, 1);
+        assert_eq!(coverage.unmatched_entry_count, 0);
+        assert_eq!(coverage.matched_surface_count, 1);
+        assert!(coverage.unmatched_surfaces.is_empty());
+        assert!(coverage.all_entries_resolved());
+        let missing_coverage = plan.surface_coverage([RenderOwnerSurfaceKey::new("body", 8)]);
+        assert_eq!(missing_coverage.entry_count, 1);
+        assert_eq!(missing_coverage.surface_count, 1);
+        assert_eq!(missing_coverage.matched_entry_count, 0);
+        assert_eq!(missing_coverage.unmatched_entry_count, 1);
+        assert_eq!(missing_coverage.matched_surface_count, 0);
+        assert_eq!(missing_coverage.unmatched_surfaces, vec![surface]);
+        assert!(!missing_coverage.all_entries_resolved());
     }
 
     #[test]
