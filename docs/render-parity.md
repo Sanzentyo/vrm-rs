@@ -27,10 +27,18 @@ recipes are convenience entry points. Use these first:
   raw/RGBA verification without applying final readback replacement.
 - `just render-parity-current-blocker-owner-sample-selection`: build the
   standard render-resolve manifests from three-vrm rendered owner IDs and Rust
-  subpixel geometry only. This path does not read expected/actual color images,
-  so it is the default input for owner/fill-rule work. It regenerates the full
-  Seed-san `.s5` owner-hotspot projection before consuming it, avoiding stale
-  ignored JSON artifacts in the standard path.
+  pixel-center/coverage geometry only. This path does not read expected/actual
+  color images, so it is the default input for owner/fill-rule work. The
+  manifest builder defaults to `--selection-mode webgl-raster-owner`: exact
+  center owner first, then the browser-rendered owner's pixel-square coverage
+  point, with no fixed-grid subpixel or RGB-distance fallback. It regenerates
+  the full Seed-san `.s5` owner-hotspot projection before consuming it, avoiding
+  stale ignored JSON artifacts in the standard path.
+- `just render-parity-seed-base-color-flat32-center-owner-misses`: classify
+  the real Seed-san center-owner misses after manifest generation. Use this to
+  separate same-material triangle/fill/source-order misses from nearby-sample
+  and unresolved owner-candidate cases without feeding RGB distance back into
+  selection.
 - `just render-parity-current-blocker-owner-sample-correction`: apply browser
   best owner/sample CPU colors to current raw outputs as an upper-bound
   experiment. It first regenerates the depth3 owner/fill inputs and the full
@@ -2762,12 +2770,14 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 
 ## Next Renderer Work
 
-- Keep owner/sample resolve manifests tied to rendered owner identity at the
-  pixel center. `build-owner-sample-selection.rs` defaults to
-  `--selection-mode center-owner`; `--selection-mode recovered-owner` is a
-  diagnostic for coverage/subpixel investigation and should not be used as a
-  default parity fix unless the renderer's fill/source-order model is updated
-  to make that recovered owner actually win the pixel.
+- Keep owner/sample resolve manifests tied to rendered owner identity and
+  WebGL-style pixel coverage. `build-owner-sample-selection.rs` defaults to
+  `--selection-mode webgl-raster-owner`, which selects exact center owner
+  matches first and otherwise shades from the browser-rendered owner's
+  pixel-square coverage point. `--selection-mode center-owner` remains the
+  strict pixel-center diagnostic; `--selection-mode recovered-owner` remains a
+  broader coverage/subpixel investigation mode and should not become a default
+  unless it is backed by owner-id/fill-rule evidence rather than RGB distance.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or

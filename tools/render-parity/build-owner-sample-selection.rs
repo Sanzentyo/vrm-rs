@@ -16,9 +16,10 @@ vrm-adapter = { path = "../../crates/vrm-adapter" }
 //! actual color images and does not choose samples by RGB distance. It emits the
 //! same manifest shape because the renderers already consume that schema, but
 //! the selected geometry is driven only by the browser owner-id pass. The
-//! default mode accepts only pixel-center owner matches; coverage/subpixel
-//! recovery is an explicit diagnostic because it explains nearby ownership but
-//! does not by itself prove that three-vrm shaded the pixel at that UV.
+//! default mode follows the WebGL raster owner: if the browser owner-id pass
+//! shaded a pixel from a triangle that only covers part of that pixel, the
+//! selection uses that triangle's pixel coverage point instead of rejecting it
+//! or choosing a sample by RGB distance.
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
@@ -45,12 +46,14 @@ struct Options {
     out: Option<PathBuf>,
     #[arg(long)]
     manifest_out: Option<PathBuf>,
-    #[arg(long, value_enum, default_value_t = SelectionMode::CenterOwner)]
+    #[arg(long, value_enum, default_value_t = SelectionMode::WebglRasterOwner)]
     selection_mode: SelectionMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum SelectionMode {
+    /// Match the actual rendered owner using WebGL-style pixel coverage.
+    WebglRasterOwner,
     /// Match the actual rendered owner at the pixel center.
     CenterOwner,
     /// Diagnostic mode: recover the rendered owner from coverage/subpixel samples.
@@ -60,6 +63,7 @@ enum SelectionMode {
 impl SelectionMode {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::WebglRasterOwner => "webgl-raster-owner",
             Self::CenterOwner => "center-owner",
             Self::RecoveredOwner => "recovered-owner",
         }
@@ -136,7 +140,8 @@ struct ResolvedSample {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecoverySource {
     Center,
-    Coverage,
+    WebglCoverage,
+    DiagnosticCoverage,
     Subpixel,
 }
 
@@ -257,7 +262,9 @@ fn build_selection(
         };
         match recovery.source {
             RecoverySource::Center => report.rendered_owner_center_candidate_count += 1,
-            RecoverySource::Coverage => report.rendered_owner_coverage_recovered_count += 1,
+            RecoverySource::WebglCoverage | RecoverySource::DiagnosticCoverage => {
+                report.rendered_owner_coverage_recovered_count += 1
+            }
             RecoverySource::Subpixel => report.rendered_owner_subpixel_recovered_count += 1,
         }
         report.rendered_owner_recovered_count += 1;
@@ -302,9 +309,20 @@ fn owner_sample_for_mode(
     selection_mode: SelectionMode,
 ) -> Option<OwnerRecoverySample> {
     match selection_mode {
+        SelectionMode::WebglRasterOwner => owner_webgl_raster_sample(owner_hotspot),
         SelectionMode::CenterOwner => owner_center_sample(owner_hotspot),
         SelectionMode::RecoveredOwner => owner_recovery_sample(owner_hotspot),
     }
+}
+
+fn owner_webgl_raster_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
+    owner_center_sample(owner_hotspot).or_else(|| {
+        recovery_sample_at(
+            owner_hotspot,
+            RecoverySource::WebglCoverage,
+            "/renderedOwnerRecovery/bestCoverage",
+        )
+    })
 }
 
 fn owner_center_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
@@ -318,7 +336,7 @@ fn owner_center_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
 fn owner_recovery_sample(owner_hotspot: &Value) -> Option<OwnerRecoverySample> {
     recovery_sample_at(
         owner_hotspot,
-        RecoverySource::Coverage,
+        RecoverySource::DiagnosticCoverage,
         "/renderedOwnerRecovery/bestCoverage",
     )
     .or_else(|| {
@@ -356,12 +374,25 @@ fn rust_candidate_for_owner_sample(
             )
             .map(|sample| (sample, GeometrySource::PixelCenter));
         }
-        RecoverySource::Coverage => &["coverage_visible_candidates", "subpixel_visible_candidates"],
+        RecoverySource::WebglCoverage | RecoverySource::DiagnosticCoverage => {
+            &["coverage_visible_candidates", "subpixel_visible_candidates"]
+        }
         RecoverySource::Subpixel => &["subpixel_visible_candidates"],
     };
+    let prefer_center_candidate = source != RecoverySource::WebglCoverage;
     let recovery = candidate_arrays
         .iter()
-        .find_map(|array_name| rust_candidate_in_array(rust_hotspot, array_name, sample_key))?;
+        .find_map(|array_name| {
+            rust_candidate_in_array(
+                rust_hotspot,
+                array_name,
+                sample_key,
+                prefer_center_candidate,
+            )
+        })?;
+    if source == RecoverySource::WebglCoverage {
+        return Some(recovery);
+    }
     if recovery.1 == GeometrySource::PixelCenter {
         return Some(recovery);
     }
@@ -380,6 +411,7 @@ fn rust_candidate_in_array(
     rust_hotspot: &Value,
     array_name: &str,
     sample_key: &RenderOwnerSampleKey,
+    prefer_center_candidate: bool,
 ) -> Option<(ResolvedSample, GeometrySource)> {
     rust_hotspot
         .get(array_name)
@@ -394,13 +426,13 @@ fn rust_candidate_in_array(
             ) {
                 return None;
             }
-            let geometry_source = candidate
-                .get("center_candidate")
+            let center_candidate = prefer_center_candidate
+                .then(|| candidate.get("center_candidate"))
+                .flatten();
+            let geometry_source = center_candidate
                 .map(|_| GeometrySource::PixelCenter)
                 .unwrap_or(GeometrySource::RecoveryPoint);
-            let candidate = candidate
-                .get("center_candidate")
-                .or_else(|| candidate.get("candidate"))?;
+            let candidate = center_candidate.or_else(|| candidate.get("candidate"))?;
             Some((
                 ResolvedSample {
                     rgba: rgba_array(candidate.get("cpu_base_color_rgba")?).unwrap_or([0, 0, 0, 0]),
@@ -684,6 +716,22 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].sample_geometry.depth, 0.40);
     assert_eq!(manifest.corrections[0].sample_geometry.pass, "base");
 
+    let (default_report, default_manifest) = build_selection(
+        Path::new("owner.json"),
+        Path::new("rust.json"),
+        &owner,
+        &rust,
+        SelectionMode::WebglRasterOwner,
+    )?;
+    assert_eq!(default_report.selection_mode, "webgl-raster-owner");
+    assert_eq!(default_report.rendered_owner_center_candidate_count, 1);
+    assert_eq!(default_report.selection_count, 1);
+    assert_eq!(default_manifest.corrections[0].sample, [0.5, 0.5]);
+    assert_eq!(
+        default_manifest.corrections[0].sample_geometry.barycentric,
+        [0.4, 0.4, 0.2]
+    );
+
     let (recovered_report, recovered_manifest) = build_selection(
         Path::new("owner.json"),
         Path::new("rust.json"),
@@ -693,5 +741,88 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     )?;
     assert_eq!(recovered_report.rendered_owner_coverage_recovered_count, 1);
     assert_eq!(recovered_manifest.corrections[0].sample, [0.7, 0.5]);
+
+    let coverage_owner = serde_json::from_str::<Value>(
+        r#"{
+            "reference": {"renderer": {"diagnosticHotspots": {"top": [{
+                "x": 1,
+                "y": 2,
+                "renderedOwner": {
+                    "owner": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 9}
+                },
+                "renderedOwnerRecovery": {
+                    "bestCoverage": {
+                        "sampleCenter": [0.25, 0.75],
+                        "candidate": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 9}
+                    }
+                }
+            }]}}}
+        }"#,
+    )?;
+    let coverage_rust = serde_json::from_str::<Value>(
+        r#"{
+            "hotspots": [{
+                "x": 1,
+                "y": 2,
+                "candidates": [],
+                "coverage_visible_candidates": [{
+                    "sample": [0.25, 0.75],
+                    "candidate": {
+                        "node": 0,
+                        "mesh": 1,
+                        "primitive": 2,
+                        "pass": "base",
+                        "material_name": "body",
+                        "triangle": 9,
+                        "indices": [3, 4, 5],
+                        "barycentric": [0.1, 0.2, 0.7],
+                        "min_barycentric": 0.1,
+                        "raw_uv": [0.2, 0.3],
+                        "base_uv": [0.4, 0.5],
+                        "depth": 0.6,
+                        "draw_index": 9,
+                        "visible_by_policy": true,
+                        "sample_offset": [0, 0],
+                        "cpu_base_color_rgba": [10, 20, 30, 255]
+                    },
+                    "center_candidate": {
+                        "node": 0,
+                        "mesh": 1,
+                        "primitive": 2,
+                        "pass": "base",
+                        "material_name": "body",
+                        "triangle": 9,
+                        "indices": [3, 4, 5],
+                        "barycentric": [1.1, 0.2, -0.3],
+                        "min_barycentric": -0.3,
+                        "raw_uv": [0.8, 0.9],
+                        "base_uv": [0.8, 0.9],
+                        "depth": 0.7,
+                        "draw_index": 9,
+                        "visible_by_policy": true,
+                        "sample_offset": [0, 0],
+                        "cpu_base_color_rgba": [200, 210, 220, 255]
+                    }
+                }]
+            }]
+        }"#,
+    )?;
+    let (coverage_report, coverage_manifest) = build_selection(
+        Path::new("owner.json"),
+        Path::new("rust.json"),
+        &coverage_owner,
+        &coverage_rust,
+        SelectionMode::WebglRasterOwner,
+    )?;
+    assert_eq!(coverage_report.selection_count, 1);
+    assert_eq!(coverage_report.rendered_owner_coverage_recovered_count, 1);
+    assert_eq!(coverage_report.rendered_owner_center_shading_geometry_count, 0);
+    assert_eq!(coverage_manifest.corrections[0].sample, [0.25, 0.75]);
+    assert_eq!(coverage_manifest.corrections[0].rgba, [10, 20, 30, 255]);
+    assert_eq!(
+        coverage_manifest.corrections[0].sample_geometry.barycentric,
+        [0.1, 0.2, 0.7]
+    );
+    assert_eq!(coverage_manifest.corrections[0].sample_geometry.raw_uv, [0.2, 0.3]);
     Ok(())
 }

@@ -712,10 +712,11 @@ function capturePage(options) {
       for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
         const id = nextOwnerId;
         nextOwnerId += 1;
-        const diagnosticTriangle = Math.floor(sourceVertexIndices.length / 3);
+        const sourceTriangle = Math.floor((offset - group.start) / 3);
+        const diagnosticTriangle = Math.floor((sourceVertexIndices.length - groupVertexStart) / 3);
         const color = encodeOwnerId(id);
         const linear = ownerColorToLinearRgb(color);
-        const materialIndex = group.materialIndex ?? 0;
+          const materialIndex = group.materialIndex ?? 0;
         const material = materialAt(mesh, materialIndex);
         const indices = sourceIndex
           ? [sourceIndex.getX(offset), sourceIndex.getX(offset + 1), sourceIndex.getX(offset + 2)]
@@ -754,8 +755,10 @@ function capturePage(options) {
           ownerColorSource: 'vertex-color',
           renderOrder: mesh.renderOrder ?? 0,
           renderPhaseOrder: material?.type === 'ShaderMaterial' ? (mesh.renderOrder ?? 0) : null,
-          triangle: Math.floor(offset / 3),
-          sourceTriangle: Math.floor(offset / 3),
+          triangle: sourceTriangle,
+          sourceTriangle,
+          sourceGeometryTriangle: Math.floor(offset / 3),
+          diagnosticTriangle,
           indices,
           screen: projection?.screen ?? null,
           screenBounds: projection?.screenBounds ?? null,
@@ -935,8 +938,8 @@ function capturePage(options) {
           if (!a || !b || !c) continue;
           const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
           if (!visibleByThreeCullPolicy(mesh, material, signedArea)) continue;
-          const materialIndex = group.materialIndex ?? 0;
-          const triangle = Math.floor(offset / 3);
+        const materialIndex = group.materialIndex ?? 0;
+          const triangle = Math.floor((offset - group.start) / 3);
           const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
           projectedTriangles.push({
             meshName: mesh.name ?? '',
