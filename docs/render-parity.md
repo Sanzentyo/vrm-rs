@@ -2813,6 +2813,17 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   `21/64`, while the structurally selected coverage sample is expected-closer
   in `44/64`. That supports continuing with a fill/coverage ownership model
   rather than switching defaults by PSNR or broad texture sampler policy.
+- Use
+  `just render-parity-seed-base-color-flat32-render-resolve-expanded-selection`
+  to regenerate post-resolve owner/sample manifests and merge them with the
+  initial blocker manifests. The merge step is intentionally pixel-keyed and
+  source-like: it consumes only owner-id/fill-derived selection manifests, keeps
+  the initial manifest on duplicate pixels by default, and never reads expected
+  or actual image colors. The current Seed-san expanded manifests cover the
+  remaining post-resolve top-64 residual pixels for wgpu, Bevy, and Ash
+  (`64/64` each), with merged manifest sizes wgpu `101`, Bevy `93`, and Ash
+  `99`. Treat these merged manifests as the next A/B input for renderer-side
+  ownership modelling, not as a proof that texture/color accumulation is fixed.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
