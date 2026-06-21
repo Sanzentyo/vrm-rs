@@ -115,6 +115,10 @@ struct JoinedHotspotLine {
     browser_best_coverage_sample_cpu_base_color: Option<[u64; 4]>,
     browser_best_coverage_sample_actual_rgb_distance: Option<f64>,
     browser_best_coverage_sample_expected_rgb_distance: Option<f64>,
+    browser_best_pbr_terms: String,
+    browser_best_coverage_pbr_terms: String,
+    rust_frontmost_pbr_terms: String,
+    rust_expected_best_pbr_terms: String,
     browser_best_to_expected_relation: String,
     browser_best_coverage_to_expected_relation: String,
 }
@@ -490,6 +494,22 @@ fn join_reports(
                     browser_best_coverage_sample_actual_distance,
                 browser_best_coverage_sample_expected_rgb_distance:
                     browser_best_coverage_sample_expected_distance,
+                browser_best_pbr_terms: browser_pbr_terms_summary(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestSubpixel/candidate/browserPbrTerms",
+                ),
+                browser_best_coverage_pbr_terms: browser_pbr_terms_summary(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestCoverage/candidate/browserPbrTerms",
+                ),
+                rust_frontmost_pbr_terms: rust_pbr_terms_summary(
+                    rust_hotspot,
+                    "/frontmost_visible/pbr_terms",
+                ),
+                rust_expected_best_pbr_terms: rust_pbr_terms_summary(
+                    rust_hotspot,
+                    "/best_subpixel_visible_expected/candidate/pbr_terms",
+                ),
                 browser_best_to_expected_relation,
                 browser_best_coverage_to_expected_relation,
             });
@@ -654,6 +674,85 @@ fn u64_at(value: &Value, pointer: &str) -> Option<u64> {
     value.pointer(pointer).and_then(Value::as_u64)
 }
 
+fn browser_pbr_terms_summary(value: &Value, pointer: &str) -> String {
+    let Some(terms) = value.pointer(pointer) else {
+        return "n/a".to_owned();
+    };
+    if terms.is_null() {
+        return "n/a".to_owned();
+    }
+    format!(
+        "model={} nL/nV={}/{} normal={} uv={} tex={} geom={} shade3={} shade-wgpu={} tan3={} tan-wgpu={} m/r={}/{}",
+        string_path(terms, "model"),
+        fmt_opt_f64(value_f64_path(terms, "nDotL")),
+        fmt_opt_f64(value_f64_path(terms, "nDotV")),
+        string_path(terms, "normalSource"),
+        fmt_vec2(value_vec2_path(terms, "normalUv")),
+        fmt_rgba(value_rgba_path(terms, "normalTextureRgba")),
+        fmt_vec3(value_vec3_path(terms, "geometricNormal")),
+        fmt_vec3(value_vec3_path(terms, "shadingNormalThreeJs")),
+        fmt_vec3(value_vec3_path(terms, "shadingNormalWgpuCompat")),
+        fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalThreeJs")),
+        fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalWgpuCompat")),
+        fmt_opt_f64(value_f64_path(terms, "metalness")),
+        fmt_opt_f64(value_f64_path(terms, "roughness")),
+    )
+}
+
+fn rust_pbr_terms_summary(value: &Value, pointer: &str) -> String {
+    let Some(terms) = value.pointer(pointer) else {
+        return "n/a".to_owned();
+    };
+    if terms.is_null() {
+        return "n/a".to_owned();
+    }
+    format!(
+        "nL/nV={}/{} normal={} uv={} tex={} geom={} shade={} diff={} spec={} direct={} amb={} total={}",
+        fmt_opt_f64(value_f64_path(terms, "n_dot_l")),
+        fmt_opt_f64(value_f64_path(terms, "n_dot_v")),
+        string_path(terms, "normal_source"),
+        fmt_vec2(value_vec2_path(terms, "normal_uv")),
+        fmt_rgba(value_rgba_path(terms, "normal_texture_rgba")),
+        fmt_vec3(value_vec3_path(terms, "geometric_normal")),
+        fmt_vec3(value_vec3_path(terms, "shading_normal")),
+        fmt_vec3(value_vec3_path(terms, "diffuse_lobe_rgb")),
+        fmt_vec3(value_vec3_path(terms, "specular_lobe_rgb")),
+        fmt_vec3(value_vec3_path(terms, "direct_rgb")),
+        fmt_vec3(value_vec3_path(terms, "ambient_rgb")),
+        fmt_vec3(value_vec3_path(terms, "direct_plus_ambient_rgb")),
+    )
+}
+
+fn string_path(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("n/a")
+        .to_owned()
+}
+
+fn value_f64_path(value: &Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(Value::as_f64)
+}
+
+fn value_vec2_path(value: &Value, key: &str) -> Option<[f64; 2]> {
+    let values = value.get(key)?.as_array()?;
+    Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
+}
+
+fn value_vec3_path(value: &Value, key: &str) -> Option<[f64; 3]> {
+    let values = value.get(key)?.as_array()?;
+    Some([
+        values.first()?.as_f64()?,
+        values.get(1)?.as_f64()?,
+        values.get(2)?.as_f64()?,
+    ])
+}
+
+fn value_rgba_path(value: &Value, key: &str) -> Option<[u64; 4]> {
+    value.get(key).and_then(rgba_array)
+}
+
 fn markdown_report(report: &JoinReport) -> String {
     let mut output = String::new();
     output.push_str("# Joined Owner/Render Hotspots\n\n");
@@ -773,11 +872,11 @@ fn markdown_report(report: &JoinReport) -> String {
     if report.top_disagreements.is_empty() {
         output.push_str("_None_\n");
     } else {
-        output.push_str("| Pixel | Rendered | Browser best | Browser coverage | Rust frontmost | Rust expected-best | Relations | Samples | Browser colors |\n");
-        output.push_str("|---|---|---|---|---|---|---|---|---|\n");
+        output.push_str("| Pixel | Rendered | Browser best | Browser coverage | Rust frontmost | Rust expected-best | Relations | Samples | Browser colors | Browser/Rust PBR terms |\n");
+        output.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
         for item in &report.top_disagreements {
             output.push_str(&format!(
-                "| {},{} | {} | {} | {} area={} pts={} | {} | {} | subpixel={} coverage={} | subpixel={} coverage={} rust={} | subpixel_rgba={} subpixel_actual_dist={} subpixel_expected_dist={} coverage_rgba={} coverage_actual_dist={} coverage_expected_dist={} |\n",
+                "| {},{} | {} | {} | {} area={} pts={} | {} | {} | subpixel={} coverage={} | subpixel={} coverage={} rust={} | subpixel_rgba={} subpixel_actual_dist={} subpixel_expected_dist={} coverage_rgba={} coverage_actual_dist={} coverage_expected_dist={} | browser_subpixel=[{}] browser_coverage=[{}] rust_front=[{}] rust_expected=[{}] |\n",
                 item.x,
                 item.y,
                 surface_label(item.rendered_owner.as_ref()),
@@ -798,6 +897,10 @@ fn markdown_report(report: &JoinReport) -> String {
                 fmt_rgba(item.browser_best_coverage_sample_cpu_base_color),
                 fmt_opt_f64(item.browser_best_coverage_sample_actual_rgb_distance),
                 fmt_opt_f64(item.browser_best_coverage_sample_expected_rgb_distance),
+                item.browser_best_pbr_terms,
+                item.browser_best_coverage_pbr_terms,
+                item.rust_frontmost_pbr_terms,
+                item.rust_expected_best_pbr_terms,
             ));
         }
     }
@@ -824,6 +927,20 @@ fn fmt_pair(value: Option<[f64; 2]>) -> String {
     value.map_or_else(
         || "n/a".to_owned(),
         |value| format!("{:.3},{:.3}", value[0], value[1]),
+    )
+}
+
+fn fmt_vec2(value: Option<[f64; 2]>) -> String {
+    value.map_or_else(
+        || "n/a".to_owned(),
+        |value| format!("{:.6},{:.6}", value[0], value[1]),
+    )
+}
+
+fn fmt_vec3(value: Option<[f64; 3]>) -> String {
+    value.map_or_else(
+        || "n/a".to_owned(),
+        |value| format!("{:.3},{:.3},{:.3}", value[0], value[1], value[2]),
     )
 }
 
@@ -964,5 +1081,42 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser best sample Rust color count"));
     assert!(markdown.contains("Browser best coverage sample Rust color count"));
     assert!(markdown.contains("Browser Best Surface Relations"));
+    let pbr_fixture = serde_json::json!({
+        "browserPbrTerms": {
+            "model": "MeshStandardMaterial",
+            "nDotL": 0.7,
+            "nDotV": 0.9,
+            "normalSource": "normal_map_tangent_space",
+            "normalUv": [0.25, 0.75],
+            "normalTextureRgba": [127, 123, 255, 255],
+            "geometricNormal": [0.0, 0.0, 1.0],
+            "shadingNormalThreeJs": [0.1, -0.1, 0.99],
+            "shadingNormalWgpuCompat": [0.1, 0.1, 0.99],
+            "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
+            "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0],
+            "metalness": 0.0,
+            "roughness": 0.657
+        },
+        "rust": {
+            "pbr_terms": {
+                "n_dot_l": 0.7,
+                "n_dot_v": 0.9,
+                "normal_source": "normal_map_tangent_space",
+                "normal_uv": [0.25, 0.75],
+                "normal_texture_rgba": [127, 123, 255, 255],
+                "geometric_normal": [0.0, 0.0, 1.0],
+                "shading_normal": [0.1, 0.1, 0.99],
+                "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
+                "specular_lobe_rgb": [0.02, 0.02, 0.02],
+                "direct_rgb": [0.18, 0.17, 0.17],
+                "ambient_rgb": [0.01, 0.01, 0.01],
+                "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+            }
+        }
+    });
+    assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
+        .contains("shade-wgpu=0.100,0.100,0.990"));
+    assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
+        .contains("total=0.190,0.180,0.180"));
     Ok(())
 }

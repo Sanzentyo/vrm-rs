@@ -386,15 +386,42 @@ function capturePage(options) {
   const ownerIdByDiagnosticCandidate = new Map();
   let nextOwnerId = 1;
 
-  const screenVertex = (mesh, index, uvAttribute, viewProjection, target, clip) => {
+  const screenVertex = (mesh, index, attributes, viewProjection, target, clip) => {
     mesh.getVertexPosition(index, target);
     target.applyMatrix4(mesh.matrixWorld);
     clip.set(target.x, target.y, target.z, 1.0).applyMatrix4(viewProjection);
     if (Math.abs(clip.w) <= Number.EPSILON) return null;
+    const uvAttribute = attributes?.uv ?? null;
+    let normal = null;
+    if (attributes?.normal && attributes?.normalMatrix) {
+      const normalVector = new THREE.Vector3(
+        attributes.normal.getX(index),
+        attributes.normal.getY(index),
+        attributes.normal.getZ(index),
+      ).applyMatrix3(attributes.normalMatrix).normalize();
+      normal = normalVector.toArray();
+    }
+    let tangent = null;
+    if (attributes?.tangent && attributes?.normalMatrix) {
+      const tangentVector = new THREE.Vector3(
+        attributes.tangent.getX(index),
+        attributes.tangent.getY(index),
+        attributes.tangent.getZ(index),
+      ).applyMatrix3(attributes.normalMatrix).normalize();
+      tangent = [
+        tangentVector.x,
+        tangentVector.y,
+        tangentVector.z,
+        attributes.tangent.itemSize >= 4 ? attributes.tangent.getW(index) : 1.0,
+      ];
+    }
     const ndcX = clip.x / clip.w;
     const ndcY = clip.y / clip.w;
     const ndcZ = clip.z / clip.w;
     return {
+      worldPosition: target.toArray(),
+      worldNormal: normal,
+      worldTangent: tangent,
       screen: [
         (ndcX * 0.5 + 0.5) * ${options.width},
         (0.5 - ndcY * 0.5) * ${options.height},
@@ -440,6 +467,73 @@ function capturePage(options) {
       (perspectiveWeights[0] * a.uv[1] + perspectiveWeights[1] * b.uv[1] + perspectiveWeights[2] * c.uv[1]) / denominator,
     ];
   };
+
+  const perspectiveWeights = (weights, a, b, c) => {
+    const projected = [
+      weights[0] * a.reciprocalW,
+      weights[1] * b.reciprocalW,
+      weights[2] * c.reciprocalW,
+    ];
+    const denominator = projected[0] + projected[1] + projected[2];
+    if (Math.abs(denominator) <= Number.EPSILON) return weights;
+    return projected.map((value) => value / denominator);
+  };
+
+  const interpolateVec3 = (weights, a, b, c, field) => {
+    if (!a[field] || !b[field] || !c[field]) return null;
+    const w = perspectiveWeights(weights, a, b, c);
+    return [
+      w[0] * a[field][0] + w[1] * b[field][0] + w[2] * c[field][0],
+      w[0] * a[field][1] + w[1] * b[field][1] + w[2] * c[field][1],
+      w[0] * a[field][2] + w[1] * b[field][2] + w[2] * c[field][2],
+    ];
+  };
+
+  const interpolateTangent = (weights, a, b, c) => {
+    if (!a.worldTangent || !b.worldTangent || !c.worldTangent) return null;
+    const w = perspectiveWeights(weights, a, b, c);
+    const xyz = [
+      w[0] * a.worldTangent[0] + w[1] * b.worldTangent[0] + w[2] * c.worldTangent[0],
+      w[0] * a.worldTangent[1] + w[1] * b.worldTangent[1] + w[2] * c.worldTangent[1],
+      w[0] * a.worldTangent[2] + w[1] * b.worldTangent[2] + w[2] * c.worldTangent[2],
+    ];
+    return [...normalize3(xyz), w[0] * a.worldTangent[3] + w[1] * b.worldTangent[3] + w[2] * c.worldTangent[3] >= 0 ? 1.0 : -1.0];
+  };
+
+  const normalize3 = (value) => {
+    if (!value) return null;
+    const length = Math.hypot(value[0], value[1], value[2]);
+    if (length <= 1.0e-12) return [0, 0, 0];
+    return [value[0] / length, value[1] / length, value[2] / length];
+  };
+
+  const dot3 = (left, right) => left && right
+    ? left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+    : null;
+
+  const cross3 = (left, right) => [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ];
+
+  const subtract3 = (left, right) => [
+    left[0] - right[0],
+    left[1] - right[1],
+    left[2] - right[2],
+  ];
+
+  const scale3 = (value, scalar) => [
+    value[0] * scalar,
+    value[1] * scalar,
+    value[2] * scalar,
+  ];
+
+  const add3 = (left, right) => [
+    left[0] + right[0],
+    left[1] + right[1],
+    left[2] + right[2],
+  ];
 
   const transformTextureUv = (uv, texture) => {
     if (!texture?.isTexture || !texture.matrix?.elements) return uv;
@@ -553,6 +647,110 @@ function capturePage(options) {
       ),
       ty,
     )));
+  };
+
+  const materialNormalScale = (material) => {
+    const scale = material?.normalScale;
+    if (scale?.isVector2) return [scale.x, scale.y];
+    if (Array.isArray(scale) && scale.length >= 2) return [scale[0], scale[1]];
+    return [1.0, 1.0];
+  };
+
+  const sampledNormalTerms = (material, rawUv, geometricNormal, worldTangent) => {
+    if (!material?.normalMap?.isTexture) {
+      return {
+        normalSource: 'geometric_vertex_normal',
+        normalUv: null,
+        normalTextureRgba: null,
+        tangentSpaceNormalThreeJs: null,
+        tangentSpaceNormalWgpuCompat: null,
+        shadingNormalThreeJs: geometricNormal,
+        shadingNormalWgpuCompat: geometricNormal,
+      };
+    }
+    const normalUv = transformTextureUv(rawUv, material.normalMap);
+    const normalTextureRgba = sampleTextureRgba(material.normalMap, normalUv);
+    const normalScale = materialNormalScale(material);
+    const tangentSpaceNormalThreeJs = normalize3([
+      (normalTextureRgba[0] / 255 * 2 - 1) * normalScale[0],
+      (normalTextureRgba[1] / 255 * 2 - 1) * normalScale[1],
+      normalTextureRgba[2] / 255 * 2 - 1,
+    ]);
+    const tangentSpaceNormalWgpuCompat = normalize3([
+      (normalTextureRgba[0] / 255 * 2 - 1) * normalScale[0],
+      (1 - normalTextureRgba[1] / 255 * 2) * normalScale[1],
+      normalTextureRgba[2] / 255 * 2 - 1,
+    ]);
+    if (!geometricNormal || !worldTangent) {
+      return {
+        normalSource: 'normal_map_sampled_missing_tangent_or_normal',
+        normalUv,
+        normalTextureRgba,
+        normalScale,
+        tangentSpaceNormalThreeJs,
+        tangentSpaceNormalWgpuCompat,
+        shadingNormalThreeJs: geometricNormal,
+        shadingNormalWgpuCompat: geometricNormal,
+      };
+    }
+    const tangent = normalize3([worldTangent[0], worldTangent[1], worldTangent[2]]);
+    const normal = normalize3(geometricNormal);
+    const bitangent = normalize3(scale3(cross3(normal, tangent), worldTangent[3] ?? 1.0));
+    const applyTbn = (mapNormal) => normalize3(add3(
+      add3(scale3(tangent, mapNormal[0]), scale3(bitangent, mapNormal[1])),
+      scale3(normal, mapNormal[2]),
+    ));
+    return {
+      normalSource: 'normal_map_tangent_space',
+      normalUv,
+      normalTextureRgba,
+      normalScale,
+      tangentSpaceNormalThreeJs,
+      tangentSpaceNormalWgpuCompat,
+      shadingNormalThreeJs: applyTbn(tangentSpaceNormalThreeJs),
+      shadingNormalWgpuCompat: applyTbn(tangentSpaceNormalWgpuCompat),
+    };
+  };
+
+  const browserPbrTerms = (projected, weights, rawUv, camera, light) => {
+    const material = projected.material;
+    if (material?.type !== 'MeshStandardMaterial' && material?.type !== 'MeshPhysicalMaterial') return null;
+    const worldPosition = interpolateVec3(weights, projected.a, projected.b, projected.c, 'worldPosition');
+    const geometricNormal = normalize3(interpolateVec3(weights, projected.a, projected.b, projected.c, 'worldNormal'));
+    const worldTangent = interpolateTangent(weights, projected.a, projected.b, projected.c);
+    const normalTerms = sampledNormalTerms(material, rawUv, geometricNormal, worldTangent);
+    const lightDir = normalize3(light.position.toArray());
+    const viewDir = worldPosition ? normalize3(subtract3(camera.position.toArray(), worldPosition)) : null;
+    const halfDir = lightDir && viewDir ? normalize3(add3(lightDir, viewDir)) : null;
+    const shadingNormal = normalTerms.shadingNormalThreeJs ?? geometricNormal;
+    return {
+      model: material.type,
+      worldPosition,
+      geometricNormal,
+      worldTangent,
+      normalSource: normalTerms.normalSource,
+      normalUv: normalTerms.normalUv,
+      normalTextureRgba: normalTerms.normalTextureRgba,
+      normalScale: normalTerms.normalScale ?? null,
+      tangentSpaceNormalThreeJs: normalTerms.tangentSpaceNormalThreeJs,
+      tangentSpaceNormalWgpuCompat: normalTerms.tangentSpaceNormalWgpuCompat,
+      shadingNormalThreeJs: normalTerms.shadingNormalThreeJs,
+      shadingNormalWgpuCompat: normalTerms.shadingNormalWgpuCompat,
+      lightDir,
+      viewDir,
+      halfDir,
+      nDotL: dot3(shadingNormal, lightDir),
+      nDotV: dot3(shadingNormal, viewDir),
+      nDotH: dot3(shadingNormal, halfDir),
+      vDotH: dot3(viewDir, halfDir),
+      metalness: material.metalness ?? null,
+      roughness: material.roughness ?? null,
+      color: material.color?.isColor ? material.color.toArray() : null,
+      emissive: material.emissive?.isColor ? material.emissive.toArray() : null,
+      emissiveIntensity: material.emissiveIntensity ?? null,
+      lightColor: light.color?.isColor ? light.color.toArray() : null,
+      lightIntensity: light.intensity ?? null,
+    };
   };
 
   const projectedBaseColor = (material, mapUv, alpha) => {
@@ -681,6 +879,10 @@ function capturePage(options) {
 
   const materialAt = (mesh, materialIndex) => (
     Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
+  );
+
+  const sourceMaterialForProjection = (material) => (
+    material?.userData?.vrmRsSourceMaterial ?? material
   );
 
   const triangleSignedArea = (a, b, c) => (
@@ -930,6 +1132,7 @@ function capturePage(options) {
     projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: candidate.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance,
     projectedBrowserBaseColorRenderedPixelRgbDistance: candidate.projectedBrowserBaseColorRenderedPixelRgbDistance,
     materialState: candidate.materialState,
+    browserPbrTerms: candidate.browserPbrTerms,
   } : null;
 
   const summarizeProjectedHotspots = (hotspots) => {
@@ -990,7 +1193,7 @@ function capturePage(options) {
     return summary;
   };
 
-  const projectHotspots = (root, camera, hotspots, sampleCenter, renderedRgba = null) => {
+  const projectHotspots = (root, camera, light, hotspots, sampleCenter, renderedRgba = null) => {
     if (!hotspots) return null;
     root.updateMatrixWorld(true);
     camera.updateMatrixWorld(true);
@@ -1011,18 +1214,25 @@ function capturePage(options) {
         ? geometry.groups
         : [{ start: 0, count: index ? index.count : position.count, materialIndex: 0 }];
       for (const [groupOrder, group] of groups.entries()) {
-        const material = materialAt(mesh, group.materialIndex);
+        const renderMaterial = materialAt(mesh, group.materialIndex);
+        const material = sourceMaterialForProjection(renderMaterial);
         const uvAttribute = uvAttributeForMaterial(geometry, material);
+        const attributes = {
+          uv: uvAttribute,
+          normal: geometry.attributes.normal ?? null,
+          tangent: geometry.attributes.tangent ?? null,
+          normalMatrix: new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld),
+        };
         for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
           const ia = index ? index.getX(offset) : offset;
           const ib = index ? index.getX(offset + 1) : offset + 1;
           const ic = index ? index.getX(offset + 2) : offset + 2;
-          const a = screenVertex(mesh, ia, uvAttribute, viewProjection, vertex, clip);
-          const b = screenVertex(mesh, ib, uvAttribute, viewProjection, vertex, clip);
-          const c = screenVertex(mesh, ic, uvAttribute, viewProjection, vertex, clip);
+          const a = screenVertex(mesh, ia, attributes, viewProjection, vertex, clip);
+          const b = screenVertex(mesh, ib, attributes, viewProjection, vertex, clip);
+          const c = screenVertex(mesh, ic, attributes, viewProjection, vertex, clip);
           if (!a || !b || !c) continue;
           const signedArea = (b.screen[0] - a.screen[0]) * (c.screen[1] - a.screen[1]) - (b.screen[1] - a.screen[1]) * (c.screen[0] - a.screen[0]);
-          if (!visibleByThreeCullPolicy(mesh, material, signedArea)) continue;
+          if (!visibleByThreeCullPolicy(mesh, renderMaterial, signedArea)) continue;
         const materialIndex = group.materialIndex ?? 0;
           const triangle = Math.floor((offset - group.start) / 3);
           const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
@@ -1067,6 +1277,7 @@ function capturePage(options) {
           hotspot.expected?.[3] ?? 255,
         ];
         const baseColor = projectedBaseColor(projected.material, mapUv, hotspot.expected?.[3] ?? 255);
+        const pbrTerms = browserPbrTerms(projected, weights, rawUv, camera, light);
         candidates.push({
           drawIndex: projected.drawIndex,
           meshOrder: projected.meshOrder,
@@ -1079,6 +1290,7 @@ function capturePage(options) {
           materialName: projected.materialName,
           materialType: projected.materialType,
           materialState: compactMaterialState(projected.material),
+          browserPbrTerms: pbrTerms,
           triangle: projected.triangle,
           indices: projected.indices,
           ownerId: projected.ownerId,
@@ -1427,6 +1639,7 @@ function capturePage(options) {
               depthTest: material?.depthTest ?? true,
             });
             owner.name = (material?.name ?? 'material') + ':vrm-rs-owner-id-diagnostic';
+            owner.userData.vrmRsSourceMaterial = material ?? null;
             owner.blending = material?.blending ?? THREE.NormalBlending;
             owner.premultipliedAlpha = material?.premultipliedAlpha ?? false;
             if (material?.map?.isTexture) {
@@ -1460,6 +1673,7 @@ function capturePage(options) {
               depthTest: material?.depthTest ?? true,
             });
             uv.name = (material?.name ?? 'material') + ':vrm-rs-uv-diagnostic';
+            uv.userData.vrmRsSourceMaterial = material ?? null;
             uv.blending = material?.blending ?? THREE.NormalBlending;
             uv.premultipliedAlpha = material?.premultipliedAlpha ?? false;
             uv.onBeforeCompile = (shader) => {
@@ -1486,6 +1700,7 @@ function capturePage(options) {
             depthTest: material?.depthTest ?? true,
           });
           flat.name = (material?.name ?? 'material') + ':vrm-rs-flat-diagnostic';
+          flat.userData.vrmRsSourceMaterial = material ?? null;
           flat.blending = material?.blending ?? THREE.NormalBlending;
           flat.premultipliedAlpha = material?.premultipliedAlpha ?? false;
           return flat;
@@ -1509,7 +1724,7 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
-    const diagnosticHotspots = projectHotspots(vrm.scene, camera, hotspotDeltas, hotspotSampleCenter, rgba);
+    const diagnosticHotspots = projectHotspots(vrm.scene, camera, light, hotspotDeltas, hotspotSampleCenter, rgba);
     let imqraw = null;
     if (${options.imqraw}) {
       await initImqraw();

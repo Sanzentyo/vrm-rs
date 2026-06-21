@@ -2,6 +2,23 @@
 
 ## 2026-06-22
 
+- Added source-material PBR input diagnostics to the three-vrm browser hotspot
+  projection path. `three-vrm-browser-capture.mjs` now preserves each diagnostic
+  replacement material's original source material, emits per-candidate
+  `browserPbrTerms` for `MeshStandardMaterial` / `MeshPhysicalMaterial`, and
+  records world position, geometric normal, sampled normal-map UV/RGBA,
+  three.js tangent-space normal, wgpu-compatible green-channel normal, NdotL,
+  NdotV, roughness, and metalness. Tangent-less meshes still emit normal-map UV
+  and texel data as `normal_map_sampled_missing_tangent_or_normal`, which avoids
+  hiding useful texture evidence just because three.js will build a derivative
+  TBN in shader. `join-owner-render-hotspots.rs` now carries compact
+  Browser/Rust PBR term columns in the owner/render hotspot Markdown and JSON.
+  A refreshed local wgpu Seed-san owner projection confirms real
+  `backpack_nm` rows now show `MeshStandardMaterial` browser terms with normal
+  texels such as `126,124,255,255`, while the older Rust render-resolve hotspot
+  side still shows `interpolated_vertex_no_normal_map`; the next parity step is
+  to regenerate/route the latest Rust normal-map hotspot terms into the same
+  join before changing renderer math.
 - Added `docs/render-parity-current-image-comparison.md` as the current image
   comparison note for Seed-san render parity. It separates the primary
   render-resolve-expanded readback set from the latest full-frame three-vrm
