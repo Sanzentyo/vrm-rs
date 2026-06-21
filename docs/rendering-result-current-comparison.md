@@ -117,7 +117,7 @@ parity across wgpu, Bevy, and Ash. Ash PNGs can be regenerated from the existing
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Use |
 | --- | ---: | ---: | ---: | --- |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | Current source of truth. |
-| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 33.6244 | 35.8901 | Target-pixel coverage diagnostic; Bevy now uses the UV0/UV1 gradient path. |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 32.4826 | 35.8901 | Target-pixel coverage diagnostic; Bevy now uses the UV0/UV1 gradient path. |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | Regression guard, not a fix. |
 
 | three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |

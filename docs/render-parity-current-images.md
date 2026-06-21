@@ -75,7 +75,7 @@ source-derived selection frontier without explaining the renderer behavior.
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 0 / 0 / 0 |
-| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 33.6244 | 35.8901 | 0 / 0 / 0 |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 32.4826 | 35.8901 | 0 / 0 / 0 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | 0 / 0 / 0 |
 
 Focused wgpu material-pixel reports:
@@ -158,13 +158,16 @@ manifest reported `21` draw selections with nonzero entries for all four
 high-margin draw keys above.
 
 The current local expanded Seed-san artifacts report gradient PSNR wgpu
-`32.7302 dB`, Bevy `33.6244 dB`, and Ash `35.8901 dB` with exact alpha. The
-Bevy number now comes from the standard UV0/UV1 resolve-gradient path rather
-than the rejected vertex-color carrier experiment. This diagnostic remains
-useful for target-pixel coverage and routed-sample analysis, but it is not a
-full default behavior target: the refreshed expected-vs-actual material/color
-audit still reports selected mean E-A distance wgpu `45.89`, Ash `36.97`, and
-Bevy `93.25`.
+`32.7302 dB`, Bevy `32.4826 dB`, and Ash `35.8901 dB` with exact alpha. These
+numbers come from the full `render-resolve-expanded-readback` recipe after
+regenerating the source-derived manifests and texture audits, so they supersede
+isolated focused Bevy reruns. This diagnostic remains useful for target-pixel
+coverage and routed-sample analysis, but it is not a full default behavior
+target: the refreshed texture audit still reports selected mean E-A distance
+wgpu `45.8852`, Bevy `45.3511`, and Ash `36.9738`.
+
+The current generated summary is:
+[`Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md)
 
 The E-A direction splits by material/draw key. For example, wgpu
 `backpack_nm node145/mesh4/prim9/base` is expected-brighter

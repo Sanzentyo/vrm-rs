@@ -21,6 +21,9 @@
 Artifact:
 [`../.external-fixtures/render-parity-ash-current-base-uv-rerun`](../.external-fixtures/render-parity-ash-current-base-uv-rerun)
 
+HTML visual review:
+[`visual-review.html`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/visual-review.html)
+
 | Renderer | `rgb-visible` PSNR | Gradient PSNR | Changed RGB pixels | Max channel delta | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `wgpu` | 36.8913 | 32.6698 | 1107 | 251 | 0 |
@@ -116,7 +119,7 @@ Artifact:
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | 用途 |
 | --- | ---: | ---: | ---: | --- |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 現在の source of truth。 |
-| Expanded post-resolve diagnostic | 32.7302 | 33.6244 | 35.8901 | target-pixel coverage と routed-sample の診断。Bevy は UV0/UV1 gradient 経路で更新済み。 |
+| Expanded post-resolve diagnostic | 32.7302 | 32.4826 | 35.8901 | target-pixel coverage と routed-sample の診断。Bevy は UV0/UV1 gradient 経路で更新済み。 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | regression guard。修正方針にはしない。 |
 
 | three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |
@@ -130,6 +133,9 @@ Artifact:
 | wgpu second-frontier negative control | Bevy second-frontier negative control | Ash second-frontier negative control |
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="180"> |
+
+Expanded diagnostic summary:
+[`Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md)
 
 読み: expanded diagnostic は target coverage の確認には有効ですが、expected-vs-actual 診断では material / draw key ごとの方向差が残っています。`backpack_nm` などの glTF/PBR 側と、body / plastic / eye / bake などの MToon 側を分けて追うのが次の安全な進め方です。
 
