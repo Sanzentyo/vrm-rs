@@ -223,7 +223,26 @@ struct MaterialTrackMaterialSummary {
 struct TextureAuditProbeSummary {
     renderer: String,
     path: String,
+    selection_source_buckets: Vec<TextureSelectionSourceSummary>,
     recommended_probes: Vec<TextureProbeSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TextureSelectionSourceSummary {
+    selection_source: String,
+    count: u64,
+    mean_expected_actual_distance: Option<f64>,
+    manifest_actual_closer: u64,
+    manifest_expected_closer: u64,
+    manifest_tied: u64,
+    manifest_actual_within_1_5: u64,
+    manifest_expected_within_1_5: u64,
+    mean_manifest_actual_distance: Option<f64>,
+    mean_manifest_expected_distance: Option<f64>,
+    mean_actual_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    materials: String,
+    draw_keys: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -703,6 +722,31 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 "### {}\n\n- Input: `{}`\n\n",
                 audit.renderer, audit.path
             ));
+            if !audit.selection_source_buckets.is_empty() {
+                out.push_str("#### Selection Source Buckets\n\n");
+                out.push_str("| Source | Count | Mean E-A | Manifest A/E/T | Manifest <=1.5 A/E | Mean Manifest A/E | Mean A-M / E-M | Materials | Draw keys |\n");
+                out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n");
+                for bucket in &audit.selection_source_buckets {
+                    out.push_str(&format!(
+                        "| {} | {} | {} | {}/{}/{} | {} / {} | {} / {} | {} / {} | {} | {} |\n",
+                        bucket.selection_source,
+                        bucket.count,
+                        fmt_optional_f64(bucket.mean_expected_actual_distance),
+                        bucket.manifest_actual_closer,
+                        bucket.manifest_expected_closer,
+                        bucket.manifest_tied,
+                        bucket.manifest_actual_within_1_5,
+                        bucket.manifest_expected_within_1_5,
+                        fmt_optional_f64(bucket.mean_manifest_actual_distance),
+                        fmt_optional_f64(bucket.mean_manifest_expected_distance),
+                        fmt_optional_vec3(bucket.mean_actual_minus_manifest_rgb_delta),
+                        fmt_optional_vec3(bucket.mean_expected_minus_manifest_rgb_delta),
+                        bucket.materials,
+                        bucket.draw_keys,
+                    ));
+                }
+                out.push('\n');
+            }
             out.push_str("| Material | Draw key | Count | Classification | Action | Mean E-A | Manifest A/E | A-M RGB | E-M RGB | Near sample A/E/Both-far |\n");
             out.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
             for probe in &audit.recommended_probes {
@@ -1047,10 +1091,62 @@ fn texture_audit_probe_summary(
         .take(8)
         .map(texture_probe_summary)
         .collect::<Result<Vec<_>, _>>()?;
+    let selection_source_buckets = optional_path(&value, &["selection_source_buckets"])
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .take(8)
+        .map(texture_selection_source_summary)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(TextureAuditProbeSummary {
         renderer: renderer.to_owned(),
         path: path.display().to_string(),
+        selection_source_buckets,
         recommended_probes: probes,
+    })
+}
+
+fn texture_selection_source_summary(
+    value: &Value,
+) -> Result<TextureSelectionSourceSummary, Box<dyn Error>> {
+    let stats = get_path(value, &["stats"])?;
+    Ok(TextureSelectionSourceSummary {
+        selection_source: get_str_path(value, &["selection_source"])?,
+        count: get_u64_path(stats, &["count"])?,
+        mean_expected_actual_distance: optional_f64_path(
+            stats,
+            &["mean_expected_actual_rgb_distance"],
+        )?,
+        manifest_actual_closer: get_u64_path(stats, &["manifest_sample_actual_closer"])?,
+        manifest_expected_closer: get_u64_path(stats, &["manifest_sample_expected_closer"])?,
+        manifest_tied: get_u64_path(stats, &["manifest_sample_tied"])?,
+        manifest_actual_within_1_5: get_u64_path(
+            stats,
+            &["manifest_sample_actual_within_1_5"],
+        )?,
+        manifest_expected_within_1_5: get_u64_path(
+            stats,
+            &["manifest_sample_expected_within_1_5"],
+        )?,
+        mean_manifest_actual_distance: optional_f64_path(
+            stats,
+            &["mean_manifest_sample_actual_rgb_distance"],
+        )?,
+        mean_manifest_expected_distance: optional_f64_path(
+            stats,
+            &["mean_manifest_sample_expected_rgb_distance"],
+        )?,
+        mean_actual_minus_manifest_rgb_delta: optional_vec3_path(
+            stats,
+            &["mean_actual_minus_manifest_sample_rgb_delta"],
+        )?,
+        mean_expected_minus_manifest_rgb_delta: optional_vec3_path(
+            stats,
+            &["mean_expected_minus_manifest_sample_rgb_delta"],
+        )?,
+        materials: material_count_list(stats, &["material_counts"])?,
+        draw_keys: material_draw_bucket_list(stats, &["selection_material_draw_buckets"])?,
     })
 }
 
@@ -1602,6 +1698,45 @@ fn key_count_list(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>
             let key = get_str_path(entry, &["key"])?;
             let count = get_u64_path(entry, &["count"])?;
             Ok(format!("{key}:{count}"))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(labels.join(", "))
+}
+
+fn material_count_list(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>> {
+    let Some(entries) = optional_path(value, path) else {
+        return Ok(String::new());
+    };
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    let labels = entries
+        .iter()
+        .take(6)
+        .map(|entry| {
+            let material = get_str_path(entry, &["material_name"])?;
+            let count = get_u64_path(entry, &["count"])?;
+            Ok(format!("{material}:{count}"))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(labels.join(", "))
+}
+
+fn material_draw_bucket_list(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>> {
+    let Some(entries) = optional_path(value, path) else {
+        return Ok(String::new());
+    };
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    let labels = entries
+        .iter()
+        .take(4)
+        .map(|entry| {
+            let material = get_str_path(entry, &["material_name"])?;
+            let draw_key = get_str_path(entry, &["draw_key"])?;
+            let count = get_u64_path(entry, &["stats", "count"])?;
+            Ok(format!("{material} {draw_key}:{count}"))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(labels.join(", "))
@@ -2189,6 +2324,31 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     fs::write(
         &texture_audit_path,
         r#"{
+            "selection_source_buckets": [{
+                "selection_source": "webgl-coverage",
+                "stats": {
+                    "count": 6,
+                    "mean_expected_actual_rgb_distance": 51.75,
+                    "manifest_sample_actual_closer": 2,
+                    "manifest_sample_expected_closer": 4,
+                    "manifest_sample_tied": 0,
+                    "manifest_sample_actual_within_1_5": 0,
+                    "manifest_sample_expected_within_1_5": 1,
+                    "mean_manifest_sample_actual_rgb_distance": 107.9,
+                    "mean_manifest_sample_expected_rgb_distance": 75.6,
+                    "mean_actual_minus_manifest_sample_rgb_delta": [-19.0, -20.0, -21.0],
+                    "mean_expected_minus_manifest_sample_rgb_delta": [-5.0, -3.0, -2.0],
+                    "material_counts": [
+                        {"material_name": "arm_plastic", "count": 2},
+                        {"material_name": "backpack_nm", "count": 2}
+                    ],
+                    "selection_material_draw_buckets": [{
+                        "material_name": "arm_plastic",
+                        "draw_key": "node144/mesh3/prim1/base",
+                        "stats": {"count": 2}
+                    }]
+                }
+            }],
             "recommended_probes": [{
                 "material_name": "backpack_nm",
                 "draw_key": "node145/mesh4/prim9/base",
@@ -2322,6 +2482,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""material_draw_shading_inputs""#));
     assert!(summary_json.contains(r#""material_track_inputs""#));
     assert!(summary_json.contains(r#""texture_audits""#));
+    assert!(summary_json.contains(r#""selection_source_buckets""#));
+    assert!(summary_json.contains(r#""selection_source":"webgl-coverage""#));
     assert!(summary_json.contains(r#""recommended_probes""#));
     assert!(summary_json.contains(r#""focused_material_pixels""#));
     assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
@@ -2345,6 +2507,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("baseColorTexture:tex#12:backpack min=9985"));
     assert!(markdown.contains("shade=0.43,0.40,0.50 shift/toony/gi=-0.200/0.800/0.900"));
     assert!(markdown.contains("## Recommended Material Probes"));
+    assert!(markdown.contains("#### Selection Source Buckets"));
+    assert!(markdown.contains("| webgl-coverage | 6 | 51.7500 | 2/4/0 | 0 / 1 | 107.9000 / 75.6000 | -19.00,-20.00,-21.00 / -5.00,-3.00,-2.00 |"));
     assert!(markdown.contains("selected_sample_and_renderer_both_far"));
     assert!(markdown.contains("## Focused Material State Matrix"));
     assert!(markdown.contains(

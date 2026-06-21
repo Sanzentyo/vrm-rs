@@ -64,6 +64,12 @@
   of by PSNR: coverage-derived rows are already selecting the WebGL owner but
   still need material/color evaluation audit, while center rows remain the
   larger owner/fill/sample modelling bucket.
+- Carried the same `selection_source_buckets` into
+  `summarize-render-resolve-expanded.rs`, so the generated expanded summary now
+  shows center versus WebGL-coverage rows beside the recommended material probes
+  for wgpu, Bevy, and Ash. This makes the current render-parity comparison
+  Markdown self-contained for the next step: inspecting WebGL-coverage
+  material/color evaluation separately from center owner/fill modelling.
 - Added `base-color-texture-as-linear` as an explicit browser/wgpu/Bevy
   diagnostic mode, separate from the existing `base-color-raw-srgb` check.
   `base-color-raw-srgb` still means "bind raw UNORM but manually decode sRGB";
