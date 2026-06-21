@@ -388,3 +388,11 @@ just render-parity-seed-base-color-flat32-render-resolve-readback
 ```
 
 For final parity judgement, prefer the `.imqraw` reports over PNG-only inspection. PNGs are useful for human review, but the raw files are the source of truth for PSNR, alpha, and max-channel-delta values.
+
+For the current Seed-san material/color blocker, use the expanded texture audit reports under:
+
+```text
+.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.{wgpu,bevy,ash}-texture-sampling-audit.render-resolve-expanded.gradient.{json,md}
+```
+
+Those reports now include `LS gain A/M / E/M` and actual/expected-over-manifest RGB ratios for each recommended material probe, so visual review can be tied back to raw selected-sample response rather than PNG-only inspection or PSNR-driven sample selection.
