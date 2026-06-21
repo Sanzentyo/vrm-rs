@@ -636,6 +636,10 @@ render-parity-gltf-pbr-generated three_vrm_root=".external-fixtures/three-vrm":
 inspect-seed-pbr-material material="backpack_nm":
     cargo +nightly -Zscript tools/render-parity/inspect-pbr-material.rs --fixture .external-fixtures/official/Seed-san.vrm --material-name "{{ material }}" --json-out ".external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.{{ material }}.pbr-material.json" --markdown-out ".external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.{{ material }}.pbr-material.md"
 
+# Inspect the current Seed-san draw-key residual tracks as source material inputs.
+inspect-seed-material-tracks:
+    cargo +nightly -Zscript tools/render-parity/inspect-pbr-material.rs --fixture .external-fixtures/official/Seed-san.vrm --material-name backpack_nm --material-name eye --material-name arm_mat --json-out .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.material-track-inputs.json --markdown-out .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.material-track-inputs.md
+
 # Inspect local fixtures for MToon material features that should be covered by render parity.
 inspect-mtoon-fixtures root=".external-fixtures/official":
     cargo +nightly -Zscript tools/render-parity/inspect-mtoon-fixtures.rs -- --root "{{ root }}"

@@ -164,6 +164,17 @@ Expanded diagnostic summary:
 | `mtoon/arm_mat` | Bevy | 4 | 36.7731 | gain | 20.00,20.75,22.75 | 5.4526 | 4.1067 | gain 優勢だが局所 track。 |
 | `mtoon/arm_mat` | wgpu | 3 | 39.1200 | gain | 22.00,22.00,23.67 | 4.6623 | 4.1018 | gain 優勢だが一括 exposure ではない。 |
 
+Material input report:
+[`Seed-san.material-track-inputs.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.material-track-inputs.md)
+
+この report は `just inspect-seed-material-tracks` で生成します。現行 blocker の入力は次のように分かれます。
+
+| Track | Source material inputs | 次に見る shader path |
+| --- | --- | --- |
+| `gltf_pbr/backpack_nm` | material `14`、`gltf_pbr`、base texture `backpack`、normal texture `nm_backpack_normals`、roughness `0.657`、metallic `0`、occlusion/emissive なし。 | PBR fallback の normal/roughness/direct+ambient と edge-local owner sample。 |
+| `mtoon/eye` | MToon + `KHR_materials_unlit`、base/shade texture は `faceparts`、shade color `[0.4352691, 0.3970382, 0.500747442]`、shift `-0.2`、toony `0.8`、GI `0.9`、rim/matcap/emissive なし。 | MToon shade multiply と direct/indirect diffuse。 |
+| `mtoon/arm_mat` | MToon + `KHR_materials_unlit`、base/shade texture は `robo_arm`、shade color `[0.4352691, 0.3970382, 0.500747442]`、shift `-0.1`、toony `0.9`、GI `0.9`、parametric rim `0.07896994`、world outline `0.0015`。 | MToon shade/rim contribution と local fill/outline interaction。 |
+
 ## 詳細リンク
 
 - 詳細な現状メモ: [`render-parity-current-images.md`](render-parity-current-images.md)

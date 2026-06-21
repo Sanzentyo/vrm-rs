@@ -10,10 +10,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 ---
 
-//! Inspect glTF PBR material inputs for render-parity residuals.
+//! Inspect glTF/PBR and MToon material inputs for render-parity residuals.
 //!
 //! This intentionally does not render. It extracts source material/texture
-//! conditions so a later renderer change can be tied to a specific glTF/PBR
+//! conditions so a later renderer change can be tied to a specific material
 //! input rather than tuned against a PSNR number.
 
 use clap::Parser;
@@ -69,6 +69,7 @@ struct MaterialReport {
     emissive_strength: f32,
     normal_scale: Option<f32>,
     occlusion_strength: Option<f32>,
+    mtoon: Option<MtoonReport>,
     textures: Vec<TextureSlotReport>,
     extensions: Vec<String>,
 }
@@ -88,6 +89,25 @@ struct TextureSlotReport {
     transform: Option<TextureTransformReport>,
     image: Option<ImageReport>,
     sampler: Option<SamplerReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MtoonReport {
+    shade_color_factor: [f64; 3],
+    shading_shift_factor: f64,
+    shading_toony_factor: f64,
+    gi_equalization_factor: f64,
+    matcap_factor: [f64; 3],
+    parametric_rim_color_factor: [f64; 3],
+    rim_lighting_mix_factor: f64,
+    outline_width_mode: String,
+    outline_width_factor: f64,
+    outline_color_factor: [f64; 3],
+    outline_lighting_mix_factor: f64,
+    uv_animation_scroll_x_speed_factor: f64,
+    uv_animation_scroll_y_speed_factor: f64,
+    uv_animation_rotation_speed_factor: f64,
+    textures: Vec<TextureSlotReport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -249,7 +269,9 @@ fn material_report(
             .and_then(|raw| raw.pointer("/occlusionTexture/strength"))
             .and_then(Value::as_f64)
             .map(|value| value as f32),
-        textures: texture_slot_reports(raw, root, images),
+        mtoon: raw.and_then(|raw| raw.pointer("/extensions/VRMC_materials_mtoon"))
+            .map(|extension| mtoon_report(extension, root, images)),
+        textures: standard_texture_slot_reports(raw, root, images),
         extensions,
     })
 }
@@ -267,7 +289,7 @@ fn merge_extension_names<const N: usize>(
     extensions
 }
 
-fn texture_slot_reports(
+fn standard_texture_slot_reports(
     raw: Option<&Value>,
     root: &Value,
     images: &[gltf::image::Data],
@@ -286,6 +308,78 @@ fn texture_slot_reports(
     .map(|(slot, pointer)| {
         texture_slot_report(slot, raw.and_then(|raw| raw.pointer(pointer)), root, images)
     })
+    .collect()
+}
+
+fn mtoon_report(extension: &Value, root: &Value, images: &[gltf::image::Data]) -> MtoonReport {
+    MtoonReport {
+        shade_color_factor: vec3(extension.get("shadeColorFactor"), [1.0, 1.0, 1.0]),
+        shading_shift_factor: extension
+            .get("shadingShiftFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        shading_toony_factor: extension
+            .get("shadingToonyFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.9),
+        gi_equalization_factor: extension
+            .get("giEqualizationFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.9),
+        matcap_factor: vec3(extension.get("matcapFactor"), [0.0, 0.0, 0.0]),
+        parametric_rim_color_factor: vec3(
+            extension.get("parametricRimColorFactor"),
+            [0.0, 0.0, 0.0],
+        ),
+        rim_lighting_mix_factor: extension
+            .get("rimLightingMixFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0),
+        outline_width_mode: extension
+            .get("outlineWidthMode")
+            .and_then(Value::as_str)
+            .unwrap_or("none")
+            .to_owned(),
+        outline_width_factor: extension
+            .get("outlineWidthFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        outline_color_factor: vec3(extension.get("outlineColorFactor"), [0.0, 0.0, 0.0]),
+        outline_lighting_mix_factor: extension
+            .get("outlineLightingMixFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0),
+        uv_animation_scroll_x_speed_factor: extension
+            .get("uvAnimationScrollXSpeedFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        uv_animation_scroll_y_speed_factor: extension
+            .get("uvAnimationScrollYSpeedFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        uv_animation_rotation_speed_factor: extension
+            .get("uvAnimationRotationSpeedFactor")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        textures: mtoon_texture_slot_reports(extension, root, images),
+    }
+}
+
+fn mtoon_texture_slot_reports(
+    extension: &Value,
+    root: &Value,
+    images: &[gltf::image::Data],
+) -> Vec<TextureSlotReport> {
+    [
+        ("shadeMultiplyTexture", "/shadeMultiplyTexture"),
+        ("shadingShiftTexture", "/shadingShiftTexture"),
+        ("matcapTexture", "/matcapTexture"),
+        ("rimMultiplyTexture", "/rimMultiplyTexture"),
+        ("outlineWidthMultiplyTexture", "/outlineWidthMultiplyTexture"),
+        ("uvAnimationMaskTexture", "/uvAnimationMaskTexture"),
+    ]
+    .into_iter()
+    .map(|(slot, pointer)| texture_slot_report(slot, extension.pointer(pointer), root, images))
     .collect()
 }
 
@@ -436,6 +530,17 @@ fn vec2(value: Option<&Value>, default: [f64; 2]) -> [f64; 2] {
     ]
 }
 
+fn vec3(value: Option<&Value>, default: [f64; 3]) -> [f64; 3] {
+    let Some(array) = value.and_then(Value::as_array) else {
+        return default;
+    };
+    [
+        array.first().and_then(Value::as_f64).unwrap_or(default[0]),
+        array.get(1).and_then(Value::as_f64).unwrap_or(default[1]),
+        array.get(2).and_then(Value::as_f64).unwrap_or(default[2]),
+    ]
+}
+
 fn write_report(report: &Report, options: &Options) -> Result<(), Box<dyn Error>> {
     if let Some(path) = &options.json_out {
         write_file(path, &serde_json::to_string_pretty(report)?)?;
@@ -460,7 +565,7 @@ fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
 
 fn report_markdown(report: &Report) -> String {
     let mut out = String::new();
-    out.push_str("# PBR Material Inspection\n\n");
+    out.push_str("# Material Input Inspection\n\n");
     out.push_str(&format!("- Fixture: `{}`\n", report.fixture));
     out.push_str(&format!(
         "- Material filters: `{}`\n",
@@ -493,52 +598,79 @@ fn report_markdown(report: &Report) -> String {
             material.occlusion_strength,
             material.extensions.join("`, `")
         ));
-        out.push_str("| Slot | Texture | Image | Size | Sampler | Transform |\n");
-        out.push_str("| --- | ---: | --- | --- | --- | --- |\n");
-        for texture in &material.textures {
-            let image_name = texture
-                .image
-                .as_ref()
-                .and_then(|image| image.name.as_deref())
-                .unwrap_or("-");
-            let image_size = texture
-                .image
-                .as_ref()
-                .map(|image| format!("{}x{} {}", image.width, image.height, image.format))
-                .unwrap_or_else(|| "-".to_owned());
-            let sampler = texture
-                .sampler
-                .as_ref()
-                .map(|sampler| {
-                    format!(
-                        "idx={:?} mag={:?} min={:?} wrap={}/{}",
-                        sampler.index,
-                        sampler.mag_filter,
-                        sampler.min_filter,
-                        sampler.wrap_s,
-                        sampler.wrap_t
-                    )
-                })
-                .unwrap_or_else(|| "-".to_owned());
-            let transform = texture
-                .transform
-                .as_ref()
-                .map(|transform| {
-                    format!(
-                        "offset={:?} scale={:?} rot={:.4} texCoord={:?}",
-                        transform.offset, transform.scale, transform.rotation, transform.tex_coord
-                    )
-                })
-                .unwrap_or_else(|| "-".to_owned());
+        out.push_str("### Standard glTF slots\n\n");
+        append_texture_table(&mut out, &material.textures);
+        if let Some(mtoon) = &material.mtoon {
+            out.push_str("### VRMC_materials_mtoon\n\n");
             out.push_str(&format!(
-                "| `{}` | {:?} | `{}` | `{}` | `{}` | `{}` |\n",
-                texture.slot, texture.texture, image_name, image_size, sampler, transform
+                "- Shade color: `{:?}`\n- Shading shift/toony/GI: `{:.4}` / `{:.4}` / `{:.4}`\n- Matcap factor: `{:?}`\n- Parametric rim color / lighting mix: `{:?}` / `{:.4}`\n- Outline mode/width/color/lighting mix: `{}` / `{:.4}` / `{:?}` / `{:.4}`\n- UV animation scroll/rotation: `{:.4}`, `{:.4}`, `{:.4}`\n\n",
+                mtoon.shade_color_factor,
+                mtoon.shading_shift_factor,
+                mtoon.shading_toony_factor,
+                mtoon.gi_equalization_factor,
+                mtoon.matcap_factor,
+                mtoon.parametric_rim_color_factor,
+                mtoon.rim_lighting_mix_factor,
+                mtoon.outline_width_mode,
+                mtoon.outline_width_factor,
+                mtoon.outline_color_factor,
+                mtoon.outline_lighting_mix_factor,
+                mtoon.uv_animation_scroll_x_speed_factor,
+                mtoon.uv_animation_scroll_y_speed_factor,
+                mtoon.uv_animation_rotation_speed_factor,
             ));
+            append_texture_table(&mut out, &mtoon.textures);
         }
         out.push('\n');
     }
 
     out
+}
+
+fn append_texture_table(out: &mut String, textures: &[TextureSlotReport]) {
+    out.push_str("| Slot | Texture | Image | Size | Sampler | Transform |\n");
+    out.push_str("| --- | ---: | --- | --- | --- | --- |\n");
+    for texture in textures {
+        let image_name = texture
+            .image
+            .as_ref()
+            .and_then(|image| image.name.as_deref())
+            .unwrap_or("-");
+        let image_size = texture
+            .image
+            .as_ref()
+            .map(|image| format!("{}x{} {}", image.width, image.height, image.format))
+            .unwrap_or_else(|| "-".to_owned());
+        let sampler = texture
+            .sampler
+            .as_ref()
+            .map(|sampler| {
+                format!(
+                    "idx={:?} mag={:?} min={:?} wrap={}/{}",
+                    sampler.index,
+                    sampler.mag_filter,
+                    sampler.min_filter,
+                    sampler.wrap_s,
+                    sampler.wrap_t
+                )
+            })
+            .unwrap_or_else(|| "-".to_owned());
+        let transform = texture
+            .transform
+            .as_ref()
+            .map(|transform| {
+                format!(
+                    "offset={:?} scale={:?} rot={:.4} texCoord={:?}",
+                    transform.offset, transform.scale, transform.rotation, transform.tex_coord
+                )
+            })
+            .unwrap_or_else(|| "-".to_owned());
+        out.push_str(&format!(
+            "| `{}` | {:?} | `{}` | `{}` | `{}` | `{}` |\n",
+            texture.slot, texture.texture, image_name, image_size, sampler, transform
+        ));
+    }
+    out.push('\n');
 }
 
 fn self_test() -> Result<(), Box<dyn Error>> {
@@ -557,6 +689,26 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             "extensions": {
                 "KHR_materials_emissive_strength": { "emissiveStrength": 2.0 }
             }
+        }, {
+            "name": "eye_mtoon_test",
+            "extensions": {
+                "VRMC_materials_mtoon": {
+                    "shadeColorFactor": [0.2, 0.3, 0.4],
+                    "shadingShiftFactor": 0.1,
+                    "shadingToonyFactor": 0.7,
+                    "giEqualizationFactor": 0.5,
+                    "matcapFactor": [0.1, 0.0, 0.2],
+                    "parametricRimColorFactor": [0.3, 0.2, 0.1],
+                    "rimLightingMixFactor": 0.8,
+                    "outlineWidthMode": "worldCoordinates",
+                    "outlineWidthFactor": 0.02,
+                    "outlineColorFactor": [0.0, 0.1, 0.2],
+                    "outlineLightingMixFactor": 0.6,
+                    "uvAnimationScrollXSpeedFactor": 0.01,
+                    "uvAnimationScrollYSpeedFactor": 0.02,
+                    "uvAnimationRotationSpeedFactor": 0.03
+                }
+            }
         }],
         "meshes": []
     });
@@ -569,5 +721,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(material.primitive_count, 0);
     assert_eq!(material.emissive_strength, 2.0);
     assert!(matches!(material.branch, MaterialBranch::GltfPbr));
+    let mtoon_report = inspect_fixture(&out, &[String::from("eye")], false)?;
+    let mtoon = mtoon_report
+        .selected_materials
+        .first()
+        .and_then(|material| material.mtoon.as_ref())
+        .ok_or("self-test MToon report missing")?;
+    assert_eq!(mtoon.shade_color_factor, [0.2, 0.3, 0.4]);
+    assert_eq!(mtoon.outline_width_mode, "worldCoordinates");
     Ok(())
 }
