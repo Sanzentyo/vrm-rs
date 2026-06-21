@@ -538,7 +538,13 @@ function capturePage(options) {
       quantize(linearToSrgb(color.b * srgbToLinear(sampledMapRgba[2] / 255))),
       alpha,
     ];
-    return { sampledMapRgba, projectedBaseColorSrgb };
+    const projectedBaseColorTextureAsLinearSrgb = [
+      quantize(linearToSrgb(color.r * (sampledMapRgba[0] / 255))),
+      quantize(linearToSrgb(color.g * (sampledMapRgba[1] / 255))),
+      quantize(linearToSrgb(color.b * (sampledMapRgba[2] / 255))),
+      alpha,
+    ];
+    return { sampledMapRgba, projectedBaseColorSrgb, projectedBaseColorTextureAsLinearSrgb };
   };
 
   const rgbDistance = (left, right) => {
@@ -852,6 +858,17 @@ function capturePage(options) {
     };
   };
 
+  const renderedHotspotPixel = (hotspot, renderedRgba) => {
+    if (!renderedRgba || !Number.isInteger(hotspot?.x) || !Number.isInteger(hotspot?.y)) return null;
+    const index = (hotspot.y * ${options.width} + hotspot.x) * 4;
+    return [
+      renderedRgba[index] ?? 0,
+      renderedRgba[index + 1] ?? 0,
+      renderedRgba[index + 2] ?? 0,
+      renderedRgba[index + 3] ?? 0,
+    ];
+  };
+
   const ownerMatches = (owner, candidate) => (
     owner?.id != null && candidate?.ownerId != null && owner.id === candidate.ownerId
   );
@@ -869,7 +886,11 @@ function capturePage(options) {
     depth: candidate.depth,
     rawUv: candidate.rawUv,
     mapUv: candidate.mapUv,
+    sampledMapRgba: candidate.sampledMapRgba,
     projectedBaseColorSrgb: candidate.projectedBaseColorSrgb,
+    projectedBaseColorTextureAsLinearSrgb: candidate.projectedBaseColorTextureAsLinearSrgb,
+    projectedBaseColorRenderedPixelRgbDistance: candidate.projectedBaseColorRenderedPixelRgbDistance,
+    projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: candidate.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance,
   } : null;
 
   const summarizeProjectedHotspots = (hotspots) => {
@@ -984,7 +1005,7 @@ function capturePage(options) {
       }
     }
 
-    const candidatesForPoint = (hotspot, point) => {
+    const candidatesForPoint = (hotspot, point, renderedPixelRgba = null) => {
       const candidates = [];
       for (const projected of projectedTriangles) {
         const weights = barycentric(point, projected.a.screen, projected.b.screen, projected.c.screen);
@@ -1017,19 +1038,28 @@ function capturePage(options) {
           color,
           sampledMapRgba: baseColor.sampledMapRgba,
           projectedBaseColorSrgb: baseColor.projectedBaseColorSrgb,
+          projectedBaseColorTextureAsLinearSrgb: baseColor.projectedBaseColorTextureAsLinearSrgb,
           expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
           actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
           projectedBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
           projectedBaseColorActualRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.actual ?? [0, 0, 0, 255]),
+          projectedBaseColorRenderedPixelRgbDistance: renderedPixelRgba
+            ? rgbDistance(baseColor.projectedBaseColorSrgb, renderedPixelRgba)
+            : null,
+          projectedBaseColorTextureAsLinearExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorTextureAsLinearSrgb, hotspot.expected ?? [0, 0, 0, 255]),
+          projectedBaseColorTextureAsLinearActualRgbDistance: rgbDistance(baseColor.projectedBaseColorTextureAsLinearSrgb, hotspot.actual ?? [0, 0, 0, 255]),
+          projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: renderedPixelRgba
+            ? rgbDistance(baseColor.projectedBaseColorTextureAsLinearSrgb, renderedPixelRgba)
+            : null,
           screen: [projected.a.screen, projected.b.screen, projected.c.screen],
         });
       }
       return candidates;
     };
 
-    const ownerMatchAtPoint = (hotspot, point, renderedOwner) => {
+    const ownerMatchAtPoint = (hotspot, point, renderedOwner, renderedPixelRgba = null) => {
       if (renderedOwner?.id == null) return null;
-      const candidates = candidatesForPoint(hotspot, point);
+      const candidates = candidatesForPoint(hotspot, point, renderedPixelRgba);
       const candidatesByDepth = candidates
         .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
         .sort((left, right) => left.depth - right.depth);
@@ -1045,14 +1075,14 @@ function capturePage(options) {
       };
     };
 
-    const ownerRecovery = (hotspot, renderedOwner) => {
+    const ownerRecovery = (hotspot, renderedOwner, renderedPixelRgba = null) => {
       if (renderedOwner?.id == null || ownerIdRecords.length === 0) return null;
       const subpixelMatches = [];
       for (let row = 0; row < hotspotSubpixelSteps; row += 1) {
         const y = (row + 0.5) / hotspotSubpixelSteps;
         for (let column = 0; column < hotspotSubpixelSteps; column += 1) {
           const x = (column + 0.5) / hotspotSubpixelSteps;
-          const match = ownerMatchAtPoint(hotspot, [hotspot.x + x, hotspot.y + y], renderedOwner);
+          const match = ownerMatchAtPoint(hotspot, [hotspot.x + x, hotspot.y + y], renderedOwner, renderedPixelRgba);
           if (match) subpixelMatches.push(match);
         }
       }
@@ -1061,7 +1091,7 @@ function capturePage(options) {
         if (projected.ownerId !== renderedOwner.id) continue;
         const coverage = pixelTriangleIntersectionPoint(hotspot.x, hotspot.y, projected);
         if (!coverage) continue;
-        const match = ownerMatchAtPoint(hotspot, coverage.point, renderedOwner);
+        const match = ownerMatchAtPoint(hotspot, coverage.point, renderedOwner, renderedPixelRgba);
         if (match) {
           match.coverageBarycentric = coverage.barycentric;
           match.coveragePointCount = coverage.pointCount;
@@ -1072,7 +1102,7 @@ function capturePage(options) {
       const neighborMatches = [];
       for (const dy of [-1, 0, 1]) {
         for (const dx of [-1, 0, 1]) {
-          const match = ownerMatchAtPoint(hotspot, [hotspot.x + dx + 0.5, hotspot.y + dy + 0.5], renderedOwner);
+          const match = ownerMatchAtPoint(hotspot, [hotspot.x + dx + 0.5, hotspot.y + dy + 0.5], renderedOwner, renderedPixelRgba);
           if (match) {
             match.pixelOffset = [dx, dy];
             neighborMatches.push(match);
@@ -1092,7 +1122,8 @@ function capturePage(options) {
 
     const top = hotspots.top.map((hotspot) => {
       const point = [hotspot.x + sampleCenter[0], hotspot.y + sampleCenter[1]];
-      const candidates = candidatesForPoint(hotspot, point);
+      const renderedPixelRgba = renderedHotspotPixel(hotspot, renderedRgba);
+      const candidates = candidatesForPoint(hotspot, point, renderedPixelRgba);
       const candidatesByDepth = candidates
           .filter((candidate) => candidate.depth >= -1.0 && candidate.depth <= 1.0)
           .sort((left, right) => left.depth - right.depth);
@@ -1116,12 +1147,13 @@ function capturePage(options) {
         const renderedOwnerDepthRank = renderedOwnerCandidate
           ? candidatesByDepth.findIndex((candidate) => candidate.ownerId === renderedOwnerCandidate.ownerId) + 1
           : null;
-        const renderedOwnerRecovery = ownerRecovery(hotspot, renderedOwner);
+        const renderedOwnerRecovery = ownerRecovery(hotspot, renderedOwner, renderedPixelRgba);
         return {
           x: hotspot.x,
           y: hotspot.y,
           expected: hotspot.expected,
           actual: hotspot.actual,
+          renderedPixelRgba,
           renderedOwner,
           frontmost,
           nearestExpected,
