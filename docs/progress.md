@@ -2,6 +2,26 @@
 
 ## 2026-06-22
 
+- Added wgpu renderer material-draw metadata to `.rgba.json` artifacts and
+  joined it into focused material-pixel reports. `wgpu_render_capture` now emits
+  `renderer.materialDraws[]` keyed by the same `node/mesh/prim/pass` draw labels
+  used by owner/sample manifests, including material name/index, alpha/cull/depth
+  policy, representative vertex material terms, PBR parameters, owner-resolve
+  marker, and texture slots. `summarize-focused-material-pixels.rs` now reads
+  that metadata from the actual `.rgba.json` and attaches the matching renderer
+  material state to each focused pixel row; `summarize-render-resolve-expanded.rs`
+  preserves that compact material string in the final expanded summary. A
+  regenerated wgpu Seed-san expanded artifact shows `backpack_nm
+  node145/mesh4/prim9/base` as material `14`, opaque/back-face culled, roughness
+  `0.657`, normal texture `13`, base texture `10`, and owner-resolve marker
+  `1.0` for the focused `141,90` / `141,91` pixels that now match three-vrm
+  expected in the expanded path. Next parity instrumentation should add the same
+  `materialDraws` contract to Bevy and Ash artifacts so backend differences can
+  be compared from one summary.
+- Rechecked the real Seed-san shading-model residual join after the focused
+  material-draw update: the join Markdown and expanded summary JSON both retain
+  additive/gain `color_fit` fields, and the generated summary artifact no
+  longer falls back to serialized `color_fit: null` for those backend rows.
 - Added recommended material probes and focused pixel probes to the expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--texture-audit renderer=path` inputs and

@@ -264,6 +264,7 @@ struct FocusedMaterialPixelRowSummary {
     actual_expected_distance: Option<f64>,
     selected_actual_distance: Option<f64>,
     selected_expected_distance: Option<f64>,
+    renderer_material_draw: String,
     frontmost_material: String,
     nearest_expected_material: String,
 }
@@ -731,11 +732,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 "### {}\n\n- Input: `{}`\n- Actual: `{}`\n\n",
                 focus.renderer, focus.path, focus.actual_source
             ));
-            out.push_str("| Pixel | Interpretation | Selected | Source | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
-            out.push_str("| --- | --- | --- | --- | --- | ---: | --- | --- |\n");
+            out.push_str("| Pixel | Interpretation | Selected | Source | Renderer material | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
+            out.push_str("| --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n");
             for row in &focus.rows {
                 out.push_str(&format!(
-                    "| {} | {} | {}{} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
+                    "| {} | {} | {}{} | {} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
                     row.pixel,
                     row.interpretation,
                     row.selected_material,
@@ -743,6 +744,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                         .map(|triangle| format!("#{triangle}"))
                         .unwrap_or_default(),
                     row.selection_source,
+                    row.renderer_material_draw,
                     fmt_optional_rgba(row.actual_rgba),
                     fmt_optional_rgba(row.expected_rgba),
                     fmt_optional_rgba(row.selected_rgba),
@@ -1044,6 +1046,7 @@ fn focused_material_pixel_row_summary(
         actual_expected_distance: optional_f64_path(value, &["actual_expected_rgb_distance"])?,
         selected_actual_distance: optional_f64_path(value, &["selected_actual_rgb_distance"])?,
         selected_expected_distance: optional_f64_path(value, &["selected_expected_rgb_distance"])?,
+        renderer_material_draw: focused_renderer_material_draw_summary(value)?,
         frontmost_material: optional_string_path(
             value,
             &["frontmost", "surface", "material_name"],
@@ -1055,6 +1058,53 @@ fn focused_material_pixel_row_summary(
         )?
         .unwrap_or_else(|| "n/a".to_owned()),
     })
+}
+
+fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<dyn Error>> {
+    let Some(draw) = optional_path(value, &["renderer_material_draw"]) else {
+        return Ok("n/a".to_owned());
+    };
+    if draw.is_null() {
+        return Ok("n/a".to_owned());
+    }
+    let material = optional_string_path(draw, &["material_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let pbr = optional_bool_path(draw, &["pbr_fallback"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    let base = optional_u64_path(draw, &["base_texture"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    let shade = optional_u64_path(draw, &["shade_texture"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    let normal = optional_u64_path(draw, &["normal_texture"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    Ok(format!(
+        "{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+        material,
+        pbr,
+        fmt_optional_f64(optional_f64_path(draw, &["metallic"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["roughness"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["emissive_strength"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["occlusion_strength"])?),
+        base,
+        shade,
+        normal,
+        fmt_optional_vec4(optional_vec4_path(draw, &["base_color"])?),
+        fmt_optional_vec4(optional_vec4_path(draw, &["shade_color"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["shading_shift"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["shading_toony"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["gi_equalization"])?),
+        optional_string_path(draw, &["alpha_mode"])?.unwrap_or_else(|| "n/a".to_owned()),
+        optional_string_path(draw, &["cull_mode"])?.unwrap_or_else(|| "n/a".to_owned()),
+        optional_bool_path(draw, &["depth_write"])?
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_owned()),
+        optional_bool_path(draw, &["blend"])?
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_owned()),
+    ))
 }
 
 fn base_color_owner_join_summaries(
@@ -1551,6 +1601,19 @@ fn optional_u64_path(value: &Value, path: &[&str]) -> Result<Option<u64>, Box<dy
         .as_u64()
         .map(Some)
         .ok_or_else(|| format!("JSON path {} is not an unsigned integer", path.join(".")).into())
+}
+
+fn optional_bool_path(value: &Value, path: &[&str]) -> Result<Option<bool>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_bool()
+        .map(Some)
+        .ok_or_else(|| format!("JSON path {} is not a boolean", path.join(".")).into())
 }
 
 fn optional_f64_path(value: &Value, path: &[&str]) -> Result<Option<f64>, Box<dyn Error>> {
@@ -2101,7 +2164,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## Recommended Material Probes"));
     assert!(markdown.contains("selected_sample_and_renderer_both_far"));
     assert!(markdown.contains("## Focused Material Pixels"));
-    assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |"));
+    assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | n/a | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |"));
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

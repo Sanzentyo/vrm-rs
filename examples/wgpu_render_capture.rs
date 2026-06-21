@@ -2650,6 +2650,52 @@ mod tests {
         assert!(!SHADER.contains("apply_owner_sample_override"));
     }
 
+    #[test]
+    fn material_draw_metadata_helpers_expose_probe_keys_and_uniform_terms() {
+        let source = OwnerSource {
+            node_index: 145,
+            mesh_index: 4,
+            primitive_index: 9,
+            material: Some(14),
+            pass: OwnerPass::Base,
+            render_order: 2000,
+            phase_order: None,
+        };
+        assert_eq!(owner_source_key(source), "node145/mesh4/prim9/base");
+
+        let extra = MaterialExtraUniform {
+            flags: [0.0, 1.0, 1.0, 0.0],
+            pbr_params: [0.0, 0.657, 1.0, 1.0],
+            flags2: [0.5, 0.0, 0.0, 1.0],
+            owner_color: [0.06666667, 0.0, 0.0, 1.0],
+        };
+        let extra = material_extra_metadata(extra);
+        assert_eq!(
+            extra
+                .pointer("/flags/hasNormalTexture")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        let roughness = extra
+            .pointer("/pbr/roughness")
+            .and_then(serde_json::Value::as_f64)
+            .expect("roughness metadata is present");
+        assert!((roughness - 0.657).abs() <= 1.0e-6);
+
+        let mut slots = GltfMaterialTextureSlots::default();
+        slots.base = Some(10);
+        slots.normal = Some(13);
+        let slots = texture_slot_metadata(slots);
+        assert_eq!(
+            slots.pointer("/base").and_then(serde_json::Value::as_u64),
+            Some(10)
+        );
+        assert_eq!(
+            slots.pointer("/normal").and_then(serde_json::Value::as_u64),
+            Some(13)
+        );
+    }
+
     fn test_vertex(position: [f32; 3], color: [f32; 4]) -> Vertex {
         Vertex {
             position,
@@ -2771,6 +2817,7 @@ fn write_rgba_json(
         "renderer": {
             "backend": "wgpu",
             "diagnosticOwnerIds": diagnostic_owner_ids,
+            "materialDraws": material_draw_metadata(loaded, mesh),
             "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "expressions": options.expressions,
@@ -2808,6 +2855,133 @@ fn write_rgba_json(
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn material_draw_metadata(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_json::Value> {
+    mesh.primitives
+        .iter()
+        .map(|primitive| {
+            let source = primitive.owner_source;
+            json!({
+                "draw": {
+                    "node": source.node_index,
+                    "mesh": source.mesh_index,
+                    "primitive": source.primitive_index,
+                    "pass": source.pass.as_str(),
+                    "key": owner_source_key(source),
+                },
+                "material": {
+                    "index": source.material,
+                    "name": material_name(loaded, source.material).unwrap_or("unnamed"),
+                },
+                "policy": {
+                    "renderOrder": source.render_order,
+                    "phaseOrder": source.phase_order,
+                    "cullMode": primitive.policy.cull_mode.as_str(),
+                    "alphaMode": primitive.policy.alpha_mode.as_str(),
+                    "depthWrite": primitive.policy.depth_write,
+                    "blend": primitive.policy.blend,
+                    "alphaCutoff": primitive.policy.alpha_cutoff,
+                },
+                "vertexMaterial": representative_vertex_material(primitive),
+                "materialExtra": material_extra_metadata(primitive.material_extra),
+                "textureSlots": texture_slot_metadata(primitive.images),
+            })
+        })
+        .collect()
+}
+
+fn owner_source_key(source: OwnerSource) -> String {
+    format!(
+        "node{}/mesh{}/prim{}/{}",
+        source.node_index,
+        source.mesh_index,
+        source.primitive_index,
+        source.pass.as_str()
+    )
+}
+
+fn representative_vertex_material(primitive: &DrawPrimitive) -> serde_json::Value {
+    primitive.vertices.first().map_or_else(
+        || {
+            json!({
+                "baseColor": null,
+                "shadeColor": null,
+                "shading": null,
+                "emissive": null,
+                "matcapFactor": null,
+                "rimColor": null,
+                "rimParams": null,
+                "normalScale": null,
+                "doubleSided": null,
+            })
+        },
+        |vertex| {
+            json!({
+                "baseColor": vertex.color,
+                "shadeColor": vertex.shade_color,
+                "shading": {
+                    "shift": vertex.shading[0],
+                    "toony": vertex.shading[1],
+                    "giEqualization": vertex.shading[2],
+                    "shiftTextureScale": vertex.shading[3],
+                },
+                "emissive": vertex.emissive,
+                "matcapFactor": vertex.matcap_factor,
+                "rimColor": vertex.rim_color,
+                "rimParams": {
+                    "lightingMix": vertex.rim_params[0],
+                    "fresnelPower": vertex.rim_params[1],
+                    "lift": vertex.rim_params[2],
+                    "alphaCutoff": vertex.rim_params[3],
+                },
+                "normalScale": vertex.normal_scale,
+                "doubleSided": vertex.double_sided != 0.0,
+            })
+        },
+    )
+}
+
+fn material_extra_metadata(extra: MaterialExtraUniform) -> serde_json::Value {
+    json!({
+        "flags": {
+            "pbrFallback": extra.flags[0] != 0.0,
+            "hasNormalTexture": extra.flags[1] != 0.0,
+            "derivativeNormals": extra.flags[2] != 0.0,
+            "viewDerivativeNormals": extra.flags[3] != 0.0,
+        },
+        "pbr": {
+            "metallic": extra.pbr_params[0],
+            "roughness": extra.pbr_params[1],
+            "emissiveStrength": extra.pbr_params[2],
+            "occlusionStrength": extra.pbr_params[3],
+        },
+        "alpha": {
+            "cutoff": extra.flags2[0],
+            "modeCode": extra.flags2[1],
+            "diagnosticCode": extra.flags2[2],
+            "ownerResolveMarker": extra.flags2[3],
+        },
+        "ownerColor": extra.owner_color,
+    })
+}
+
+fn texture_slot_metadata(slots: GltfMaterialTextureSlots) -> serde_json::Value {
+    json!({
+        "base": texture_ref_metadata(slots.base),
+        "shade": texture_ref_metadata(slots.shade),
+        "shadingShift": texture_ref_metadata(slots.shading_shift),
+        "normal": texture_ref_metadata(slots.normal),
+        "matcap": texture_ref_metadata(slots.matcap),
+        "rim": texture_ref_metadata(slots.rim),
+        "emissive": texture_ref_metadata(slots.emissive),
+        "occlusion": texture_ref_metadata(slots.occlusion),
+        "uvAnimationMask": texture_ref_metadata(slots.uv_animation_mask),
+    })
+}
+
+fn texture_ref_metadata(texture: Option<usize>) -> serde_json::Value {
+    texture.map_or(serde_json::Value::Null, |texture| json!(texture))
 }
 
 fn diagnostic_owner_surfaces(
