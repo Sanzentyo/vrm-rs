@@ -169,6 +169,11 @@ wgpu `45.8852`, Bevy `45.3511`, and Ash `36.9738`.
 The current generated summary is:
 [`Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md)
 
+That generated summary now also embeds the shading-model residual join. Use its
+`Shading Model Backend Agreement` section as the quickest current split between
+`gltf_pbr` backpack color accumulation and MToon eye/body/plastic/bake residuals
+before drilling into the larger `target/texture-draw-audit` reports.
+
 The E-A direction splits by material/draw key. For example, wgpu
 `backpack_nm node145/mesh4/prim9/base` is expected-brighter
 (`+18.47,+21.00,+22.33`), while `body_nm node145/mesh4/prim1/base` is

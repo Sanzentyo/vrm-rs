@@ -37,6 +37,8 @@ struct Options {
     #[arg(long, default_value = "rgbSharedNonblackGradientInterior1px")]
     metric_key: String,
     #[arg(long)]
+    shading_model_join: Option<PathBuf>,
+    #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
     markdown_out: Option<PathBuf>,
@@ -49,6 +51,7 @@ struct ExpandedSummary {
     suffix: String,
     metric_key: String,
     renderers: Vec<RendererSummary>,
+    shading_model_join: Option<ShadingModelJoinSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,6 +87,53 @@ struct MaterialSummary {
     best_sampling_expected_within_8: u64,
     same_expected_material: u64,
     same_expected_triangle: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelJoinSummary {
+    path: String,
+    models: Vec<ShadingModelSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelSummary {
+    model: String,
+    shared_pixel_count: u64,
+    backends: Vec<ShadingModelBackendSummary>,
+    sample_following: Vec<ShadingModelSampleFollowingSummary>,
+    backend_pairs: Vec<ShadingModelBackendPairSummary>,
+    top_direction_signature: Option<String>,
+    top_direction_count: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelBackendSummary {
+    backend: String,
+    row_count: u64,
+    selected_count: u64,
+    mean_expected_actual_distance: f64,
+    mean_expected_minus_actual_rgb_delta: [f64; 3],
+    materials: String,
+    draw_keys: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelSampleFollowingSummary {
+    backend: String,
+    shared_rows: u64,
+    sample_exact_rows: u64,
+    sample_exact_ratio: f64,
+    mean_actual_selection_distance: f64,
+    mean_expected_selection_distance: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelBackendPairSummary {
+    left: String,
+    right: String,
+    shared_pixels: u64,
+    mean_actual_distance: f64,
+    mean_expected_actual_gap_delta: f64,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -159,6 +209,11 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
         suffix: options.suffix.clone(),
         metric_key: options.metric_key.clone(),
         renderers,
+        shading_model_join: options
+            .shading_model_join
+            .as_deref()
+            .map(shading_model_join_summary)
+            .transpose()?,
     })
 }
 
@@ -264,7 +319,190 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
         }
         out.push('\n');
     }
+    if let Some(join) = &summary.shading_model_join {
+        out.push_str("## Shading Model Backend Agreement\n\n");
+        out.push_str(&format!("- Join: `{}`\n\n", join.path));
+        for model in &join.models {
+            out.push_str(&format!("### `{}`\n\n", model.model));
+            out.push_str(&format!(
+                "- Shared top-residual pixels: `{}`\n",
+                model.shared_pixel_count
+            ));
+            if let (Some(signature), Some(count)) =
+                (&model.top_direction_signature, model.top_direction_count)
+            {
+                out.push_str(&format!(
+                    "- Top direction bucket: `{}` (`{}` pixels)\n",
+                    signature, count
+                ));
+            }
+            out.push('\n');
+            out.push_str(
+                "| Backend | Rows | Selected | Mean E-A | Mean E-A RGB | Materials | Draw keys |\n",
+            );
+            out.push_str("| --- | ---: | ---: | ---: | --- | --- | --- |\n");
+            for backend in &model.backends {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {:.4} | {:.2},{:.2},{:.2} | {} | {} |\n",
+                    backend.backend,
+                    backend.row_count,
+                    backend.selected_count,
+                    backend.mean_expected_actual_distance,
+                    backend.mean_expected_minus_actual_rgb_delta[0],
+                    backend.mean_expected_minus_actual_rgb_delta[1],
+                    backend.mean_expected_minus_actual_rgb_delta[2],
+                    backend.materials,
+                    backend.draw_keys
+                ));
+            }
+            out.push('\n');
+            out.push_str(
+                "| Backend | Shared rows | Sample exact | Exact ratio | Mean A-S | Mean E-S |\n",
+            );
+            out.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
+            for sample in &model.sample_following {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {:.4} | {:.4} | {:.4} |\n",
+                    sample.backend,
+                    sample.shared_rows,
+                    sample.sample_exact_rows,
+                    sample.sample_exact_ratio,
+                    sample.mean_actual_selection_distance,
+                    sample.mean_expected_selection_distance
+                ));
+            }
+            out.push('\n');
+            out.push_str(
+                "| Pair | Shared pixels | Mean actual RGB distance | Mean E-A gap delta |\n",
+            );
+            out.push_str("| --- | ---: | ---: | ---: |\n");
+            for pair in &model.backend_pairs {
+                out.push_str(&format!(
+                    "| {} / {} | {} | {:.4} | {:.4} |\n",
+                    pair.left,
+                    pair.right,
+                    pair.shared_pixels,
+                    pair.mean_actual_distance,
+                    pair.mean_expected_actual_gap_delta
+                ));
+            }
+            out.push('\n');
+        }
+    }
     out
+}
+
+fn shading_model_join_summary(path: &Path) -> Result<ShadingModelJoinSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    let models = get_path(&value, &["models"])?
+        .as_array()
+        .ok_or("models is not an array")?
+        .iter()
+        .map(shading_model_summary)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ShadingModelJoinSummary {
+        path: path.display().to_string(),
+        models,
+    })
+}
+
+fn shading_model_summary(value: &Value) -> Result<ShadingModelSummary, Box<dyn Error>> {
+    let top_direction = get_path(value, &["shared_direction_buckets"])
+        .ok()
+        .and_then(Value::as_array)
+        .and_then(|array| array.first());
+    Ok(ShadingModelSummary {
+        model: get_str_path(value, &["model"])?,
+        shared_pixel_count: get_u64_path(value, &["shared_pixel_count"])?,
+        backends: get_path(value, &["backends"])?
+            .as_array()
+            .ok_or("backends is not an array")?
+            .iter()
+            .map(shading_model_backend_summary)
+            .collect::<Result<Vec<_>, _>>()?,
+        sample_following: get_path(value, &["shared_backend_summaries"])?
+            .as_array()
+            .ok_or("shared_backend_summaries is not an array")?
+            .iter()
+            .map(shading_model_sample_following_summary)
+            .collect::<Result<Vec<_>, _>>()?,
+        backend_pairs: get_path(value, &["backend_pairs"])?
+            .as_array()
+            .ok_or("backend_pairs is not an array")?
+            .iter()
+            .map(shading_model_backend_pair_summary)
+            .collect::<Result<Vec<_>, _>>()?,
+        top_direction_signature: top_direction
+            .and_then(|bucket| bucket.get("signature"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        top_direction_count: top_direction
+            .and_then(|bucket| bucket.get("count"))
+            .and_then(Value::as_u64),
+    })
+}
+
+fn shading_model_backend_summary(
+    value: &Value,
+) -> Result<ShadingModelBackendSummary, Box<dyn Error>> {
+    Ok(ShadingModelBackendSummary {
+        backend: get_str_path(value, &["backend"])?,
+        row_count: get_u64_path(value, &["row_count"])?,
+        selected_count: get_u64_path(value, &["selected_count"])?,
+        mean_expected_actual_distance: get_f64_path(value, &["mean_expected_actual_rgb_distance"])?,
+        mean_expected_minus_actual_rgb_delta: get_vec3_path(
+            value,
+            &["mean_expected_minus_actual_rgb_delta"],
+        )?,
+        materials: key_count_list(value, &["materials"])?,
+        draw_keys: key_count_list(value, &["draw_keys"])?,
+    })
+}
+
+fn shading_model_sample_following_summary(
+    value: &Value,
+) -> Result<ShadingModelSampleFollowingSummary, Box<dyn Error>> {
+    Ok(ShadingModelSampleFollowingSummary {
+        backend: get_str_path(value, &["backend"])?,
+        shared_rows: get_u64_path(value, &["shared_rows"])?,
+        sample_exact_rows: get_u64_path(value, &["sample_exact_rows"])?,
+        sample_exact_ratio: get_f64_path(value, &["sample_exact_ratio"])?,
+        mean_actual_selection_distance: get_f64_path(
+            value,
+            &["mean_actual_selection_rgb_distance"],
+        )?,
+        mean_expected_selection_distance: get_f64_path(
+            value,
+            &["mean_expected_selection_rgb_distance"],
+        )?,
+    })
+}
+
+fn shading_model_backend_pair_summary(
+    value: &Value,
+) -> Result<ShadingModelBackendPairSummary, Box<dyn Error>> {
+    Ok(ShadingModelBackendPairSummary {
+        left: get_str_path(value, &["left"])?,
+        right: get_str_path(value, &["right"])?,
+        shared_pixels: get_u64_path(value, &["shared_pixels"])?,
+        mean_actual_distance: get_f64_path(value, &["mean_actual_rgb_distance"])?,
+        mean_expected_actual_gap_delta: get_f64_path(value, &["mean_expected_actual_gap_delta"])?,
+    })
+}
+
+fn key_count_list(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>> {
+    let entries = get_path(value, path)?
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    let labels = entries
+        .iter()
+        .map(|entry| {
+            let key = get_str_path(entry, &["key"])?;
+            let count = get_u64_path(entry, &["count"])?;
+            Ok(format!("{key}:{count}"))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(labels.join(", "))
 }
 
 fn read_json(path: &Path) -> Result<Value, Box<dyn Error>> {
@@ -390,6 +628,44 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }
         }"#,
     )?;
+    let join_path = root.join("Seed-san.shading-model-residual-join.json");
+    fs::write(
+        &join_path,
+        r#"{
+            "models": [{
+                "model": "gltf_pbr",
+                "shared_pixel_count": 2,
+                "backends": [{
+                    "backend": "wgpu",
+                    "row_count": 2,
+                    "selected_count": 1,
+                    "mean_expected_actual_rgb_distance": 4.5,
+                    "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
+                    "materials": [{"key": "backpack_nm", "count": 2}],
+                    "draw_keys": [{"key": "node145/mesh4/prim9/base", "count": 2}]
+                }],
+                "shared_backend_summaries": [{
+                    "backend": "wgpu",
+                    "shared_rows": 2,
+                    "sample_exact_rows": 0,
+                    "sample_exact_ratio": 0.0,
+                    "mean_actual_selection_rgb_distance": 8.0,
+                    "mean_expected_selection_rgb_distance": 12.0
+                }],
+                "backend_pairs": [{
+                    "left": "ash",
+                    "right": "wgpu",
+                    "shared_pixels": 2,
+                    "mean_actual_rgb_distance": 0.5,
+                    "mean_expected_actual_gap_delta": 0.25
+                }],
+                "shared_direction_buckets": [{
+                    "signature": "ash:expected_brighter, wgpu:expected_brighter",
+                    "count": 2
+                }]
+            }]
+        }"#,
+    )?;
     let options = Options {
         self_test: false,
         reports_dir: Some(root.clone()),
@@ -397,6 +673,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         suffix: "render-resolve-expanded.gradient".to_string(),
         renderer: vec!["wgpu".to_string()],
         metric_key: "rgbSharedNonblackGradientInterior1px".to_string(),
+        shading_model_join: Some(join_path),
         json_out: None,
         markdown_out: None,
     };
@@ -407,7 +684,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary.renderers[0].top_selected_materials[0].material,
         "mat"
     );
-    assert!(render_markdown(&summary).contains("| wgpu | 42.5000 |"));
+    let markdown = render_markdown(&summary);
+    assert!(markdown.contains("| wgpu | 42.5000 |"));
+    assert!(markdown.contains("## Shading Model Backend Agreement"));
+    assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));
     fs::remove_dir_all(root)?;
     Ok(())
 }
