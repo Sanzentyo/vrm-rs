@@ -12,7 +12,7 @@
 | --- | --- |
 | Alpha / 透明 | 主要な現状セットでは wgpu / Bevy / Ash とも alpha mismatch は 0。 |
 | wgpu と Ash | かなり近く、backend transport 単体より material / texture sampling / ownership の残差が濃い。 |
-| Bevy | alpha は一致。ただし Seed-san focused diagnostic では selected sample / fill behavior を wgpu/Ash と分けて見る必要がある。 |
+| Bevy | alpha は一致。Seed-san focused diagnostic でも wgpu/Ash とかなり近い残差帯に入り、renderer 固有の sample-copy 問題より material / fill / light accumulation を分けて見る段階。 |
 | glTF/PBR | generated guard は良好。実モデル Seed-san の `backpack_nm` はまだ重点確認対象。 |
 | MToon | body / arm / plastic / eye / bake surface の局所差分が残っている。 |
 
@@ -137,7 +137,32 @@ Artifact:
 Expanded diagnostic summary:
 [`Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md)
 
-読み: expanded diagnostic は target coverage の確認には有効ですが、expected-vs-actual 診断では material / draw key ごとの方向差が残っています。`backpack_nm` などの glTF/PBR 側と、body / plastic / eye / bake などの MToon 側を分けて追うのが次の安全な進め方です。
+読み: expanded diagnostic は target coverage の確認には有効ですが、expected-vs-actual 診断では material / draw key ごとの方向差が残っています。`backpack_nm` などの glTF/PBR 側と、body / plastic / eye / bake などの MToon 側を分けて追うのが次の安全な進め方です。これは「数値を見て opt-in knob を増やす」話ではなく、three-vrm と Rust 側の material evaluation がどの surface でどう違うかを固定 probe で切り分けるための読みです。
+
+### 現行 join / summary の確認
+
+実データの shading-model residual join は、Markdown と summary JSON の両方で additive / gain fit を保持しています。以前は summary parser の取り込み漏れで色 fit が空扱いになることがありましたが、現行 artifact では `color_fit` と `material_draw_color_fits` が JSON に入っています。
+
+| Source | Path | 現状 |
+| --- | --- | --- |
+| Join Markdown | [`../target/texture-draw-audit/Seed-san.shading-model-residual-join.md`](../target/texture-draw-audit/Seed-san.shading-model-residual-join.md) | `Backend Color Fit` と `Material / Draw Color Fit` を含む。 |
+| Join JSON | [`../target/texture-draw-audit/Seed-san.shading-model-residual-join.json`](../target/texture-draw-audit/Seed-san.shading-model-residual-join.json) | backend ごとの `color_fit` と draw-key ごとの `material_draw_color_fits` を含む。 |
+| Expanded summary Markdown | [`../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md) | join の色 fit 表を埋め込み済み。 |
+| Expanded summary JSON | [`../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.json`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.json) | `preferred_fit` / `additive_rgb_delta` / `gain_fit_mean_distance` を保持。 |
+
+現行の実データでは `gltf_pbr` の top residual は `backpack_nm node145/mesh4/prim9/base` に集中し、三 renderer とも draw-key 単位で additive fit が優勢です。MToon は `eye node2/mesh2/prim1/base` が additive、`arm_mat node144/mesh3/prim0/base` は Bevy / wgpu で gain が僅差優勢です。
+
+| Track | Renderer | Rows | Mean E-A | Preferred | Additive RGB | Additive error | Gain error | 読み |
+| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| `gltf_pbr/backpack_nm` | Ash | 16 | 32.6468 | additive | 17.06,19.12,20.19 | 5.4811 | 6.6892 | backpack/PBR fill の共通残差。 |
+| `gltf_pbr/backpack_nm` | Bevy | 13 | 34.9706 | additive | 18.23,20.46,21.69 | 3.9750 | 6.6061 | wgpu と近く、Bevy 固有ではない。 |
+| `gltf_pbr/backpack_nm` | wgpu | 12 | 35.6736 | additive | 18.50,20.83,22.25 | 3.7809 | 6.5428 | Ash/Bevy と同じ方向。 |
+| `mtoon/eye` | Ash | 7 | 56.5272 | additive | 29.71,32.71,35.14 | 14.6302 | 22.4524 | eye surface の局所 fill 差。 |
+| `mtoon/eye` | Bevy | 6 | 62.1792 | additive | 32.17,36.67,38.50 | 9.6965 | 22.6339 | wgpu と同じ方向。 |
+| `mtoon/eye` | wgpu | 6 | 62.1882 | additive | 32.33,36.17,38.83 | 9.8403 | 22.7999 | eye は additive track。 |
+| `mtoon/arm_mat` | Ash | 6 | 32.0326 | additive | 16.83,18.00,20.33 | 7.5106 | 8.1720 | Ash は additive が僅差。 |
+| `mtoon/arm_mat` | Bevy | 4 | 36.7731 | gain | 20.00,20.75,22.75 | 5.4526 | 4.1067 | gain 優勢だが局所 track。 |
+| `mtoon/arm_mat` | wgpu | 3 | 39.1200 | gain | 22.00,22.00,23.67 | 4.6623 | 4.1018 | gain 優勢だが一括 exposure ではない。 |
 
 ## 詳細リンク
 
