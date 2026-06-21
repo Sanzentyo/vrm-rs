@@ -264,6 +264,7 @@ struct FocusedMaterialPixelRowSummary {
     actual_expected_distance: Option<f64>,
     selected_actual_distance: Option<f64>,
     selected_expected_distance: Option<f64>,
+    browser_material: String,
     renderer_material_draw: String,
     frontmost_material: String,
     nearest_expected_material: String,
@@ -732,11 +733,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 "### {}\n\n- Input: `{}`\n- Actual: `{}`\n\n",
                 focus.renderer, focus.path, focus.actual_source
             ));
-            out.push_str("| Pixel | Interpretation | Selected | Source | Renderer material | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
-            out.push_str("| --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n");
+            out.push_str("| Pixel | Interpretation | Selected | Source | Browser material | Renderer material | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
+            out.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n");
             for row in &focus.rows {
                 out.push_str(&format!(
-                    "| {} | {} | {}{} | {} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
+                    "| {} | {} | {}{} | {} | {} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
                     row.pixel,
                     row.interpretation,
                     row.selected_material,
@@ -744,6 +745,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                         .map(|triangle| format!("#{triangle}"))
                         .unwrap_or_default(),
                     row.selection_source,
+                    row.browser_material,
                     row.renderer_material_draw,
                     fmt_optional_rgba(row.actual_rgba),
                     fmt_optional_rgba(row.expected_rgba),
@@ -1046,6 +1048,7 @@ fn focused_material_pixel_row_summary(
         actual_expected_distance: optional_f64_path(value, &["actual_expected_rgb_distance"])?,
         selected_actual_distance: optional_f64_path(value, &["selected_actual_rgb_distance"])?,
         selected_expected_distance: optional_f64_path(value, &["selected_expected_rgb_distance"])?,
+        browser_material: focused_browser_material_summary(value)?,
         renderer_material_draw: focused_renderer_material_draw_summary(value)?,
         frontmost_material: optional_string_path(
             value,
@@ -1058,6 +1061,46 @@ fn focused_material_pixel_row_summary(
         )?
         .unwrap_or_else(|| "n/a".to_owned()),
     })
+}
+
+fn focused_browser_material_summary(value: &Value) -> Result<String, Box<dyn Error>> {
+    let Some(material) = optional_path(value, &["browser_material"]) else {
+        return Ok("n/a".to_owned());
+    };
+    if material.is_null() {
+        return Ok("n/a".to_owned());
+    }
+    let name =
+        optional_string_path(material, &["material_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let material_type =
+        optional_string_path(material, &["material_type"])?.unwrap_or_else(|| "n/a".to_owned());
+    let mesh = optional_string_path(material, &["mesh_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let pass = optional_string_path(material, &["pass"])?.unwrap_or_else(|| "n/a".to_owned());
+    let map = optional_string_path(material, &["map_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let color_space = optional_string_path(material, &["map_color_space"])?
+        .unwrap_or_else(|| "n/a".to_owned());
+    let flip_y = optional_bool_path(material, &["map_flip_y"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    let min_filter = optional_u64_path(material, &["map_min_filter"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    let mag_filter = optional_u64_path(material, &["map_mag_filter"])?
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned());
+    Ok(format!(
+        "{} {} mesh={} pass={} map={} cs={} flipY={} filter={}/{} color={}",
+        name,
+        material_type,
+        mesh,
+        pass,
+        map,
+        color_space,
+        flip_y,
+        min_filter,
+        mag_filter,
+        fmt_optional_vec3(optional_vec3_path(material, &["color"])?),
+    ))
 }
 
 fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<dyn Error>> {
@@ -2082,6 +2125,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "actual_expected_rgb_distance": 224.0,
                 "selected_actual_rgb_distance": 224.0,
                 "selected_expected_rgb_distance": 0.0,
+                "browser_material": {
+                    "material_name": "backpack_nm",
+                    "material_type": "MeshStandardMaterial",
+                    "mesh_name": "wear_10",
+                    "pass": "base",
+                    "color": [1.0, 1.0, 1.0],
+                    "map_name": "backpack",
+                    "map_color_space": "srgb",
+                    "map_flip_y": false,
+                    "map_min_filter": 1007,
+                    "map_mag_filter": 1006
+                },
                 "frontmost": {"surface": {"material_name": "backpack_nm", "triangle": 42}},
                 "nearest_expected": {"surface": {"material_name": "arm_plastic", "triangle": 7}}
             }]
@@ -2151,6 +2206,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""texture_audits""#));
     assert!(summary_json.contains(r#""recommended_probes""#));
     assert!(summary_json.contains(r#""focused_material_pixels""#));
+    assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
@@ -2173,7 +2229,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## Recommended Material Probes"));
     assert!(markdown.contains("selected_sample_and_renderer_both_far"));
     assert!(markdown.contains("## Focused Material Pixels"));
-    assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | n/a | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |"));
+    assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
+    assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
+    assert!(
+        markdown.contains("| n/a | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |")
+    );
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

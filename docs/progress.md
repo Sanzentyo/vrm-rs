@@ -2,6 +2,25 @@
 
 ## 2026-06-22
 
+- Aligned the concrete PBR fallback direct-light BRDF used by wgpu, Bevy, and
+  Ash with three.js `MeshStandardMaterial` more closely by replacing the
+  Schlick-GGX geometry approximation with Smith-correlated GGX visibility and
+  three.js-style F90. `just render-parity-gltf-pbr-generated` still passes, and
+  the generated `pbr-backpack-like` swatch is now exact for wgpu, Bevy, and Ash
+  (`Infinity`, max delta `0`). This strengthens shaded glTF/PBR parity without
+  treating the Seed-san base-color diagnostic as a lighting problem.
+- Extended `summarize-focused-material-pixels.rs` with optional
+  `--reference-rgba-json` support. The tool now joins three-vrm
+  `reference.renderer.diagnosticMaterials[]` by selected material name and
+  prints browser material state beside Rust `renderer.materialDraws[]` in both
+  focused and expanded summaries. The refreshed Seed-san expanded summary shows
+  `backpack_nm` selected pixels using browser `MeshStandardMaterial`,
+  `map=backpack`, `cs=srgb`, `filter=1007/1006`, identity texture matrix, and
+  color `1,1,1`, while the Rust resolve draw uses `backpack_nm` with base
+  texture slot `10` and normal texture slot `13`. This rules out a simple
+  browser/Rust material-name, map color-space, filter, or base-color-factor
+  mismatch for those focused rows; the remaining base-color blocker stays in
+  local owner/surface/sample choice or more specific texture evaluation.
 - Added wgpu renderer material-draw metadata to `.rgba.json` artifacts and
   joined it into focused material-pixel reports. `wgpu_render_capture` now emits
   `renderer.materialDraws[]` keyed by the same `node/mesh/prim/pass` draw labels

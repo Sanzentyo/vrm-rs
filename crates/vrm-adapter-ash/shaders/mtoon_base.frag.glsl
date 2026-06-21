@@ -129,13 +129,13 @@ vec3 pbr_direct(
     float alpha2 = alpha * alpha;
     float denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
     float distribution = alpha2 / max(pi * denom * denom, 0.0001);
-    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
-    float geometry_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
-    float geometry_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
-    float geometry = geometry_l * geometry_v;
+    float geometry_v = n_dot_l * sqrt(alpha2 + (1.0 - alpha2) * n_dot_v * n_dot_v);
+    float geometry_l = n_dot_v * sqrt(alpha2 + (1.0 - alpha2) * n_dot_l * n_dot_l);
+    float visibility = 0.5 / max(geometry_v + geometry_l, 0.0001);
     vec3 f0 = mix(vec3(0.04), diffuse, metallic);
-    vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
-    vec3 specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.0001);
+    float f90 = mix(clamp(dot(f0, vec3(50.0 * 0.33)), 0.0, 1.0), 1.0, metallic);
+    vec3 fresnel = f0 + (vec3(f90) - f0) * pow(1.0 - v_dot_h, 5.0);
+    vec3 specular = distribution * visibility * fresnel;
     vec3 diffuse_lobe = diffuse * (1.0 - metallic) / pi;
     return (diffuse_lobe + specular) * pi * n_dot_l;
 }

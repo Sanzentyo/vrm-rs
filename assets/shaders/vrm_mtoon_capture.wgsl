@@ -219,13 +219,13 @@ fn pbr_direct(
     let alpha2 = alpha * alpha;
     let denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
     let distribution = alpha2 / max(pi * denom * denom, 0.0001);
-    let k = (rough + 1.0) * (rough + 1.0) / 8.0;
-    let geometry_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
-    let geometry_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
-    let geometry = geometry_l * geometry_v;
+    let geometry_v = n_dot_l * sqrt(alpha2 + (1.0 - alpha2) * n_dot_v * n_dot_v);
+    let geometry_l = n_dot_v * sqrt(alpha2 + (1.0 - alpha2) * n_dot_l * n_dot_l);
+    let visibility = 0.5 / max(geometry_v + geometry_l, 0.0001);
     let f0 = mix(vec3<f32>(0.04), diffuse, metallic);
-    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
-    let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.0001);
+    let f90 = mix(clamp(dot(f0, vec3<f32>(50.0 * 0.33)), 0.0, 1.0), 1.0, metallic);
+    let fresnel = f0 + (vec3<f32>(f90) - f0) * pow(1.0 - v_dot_h, 5.0);
+    let specular = distribution * visibility * fresnel;
     let diffuse_lobe = diffuse * (1.0 - metallic) / pi;
     return (diffuse_lobe + specular) * pi * n_dot_l;
 }

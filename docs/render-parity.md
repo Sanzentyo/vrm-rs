@@ -3061,6 +3061,17 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   Seed-san artifacts, Bevy `backpack_nm` sample rows are often in the first
   category, while wgpu/Ash still include the second category on the same
   draw-key families.
+- Focused material-pixel summaries now accept `--reference-rgba-json` and join
+  three-vrm browser `diagnosticMaterials` beside Rust renderer `materialDraws`.
+  In the refreshed expanded Seed-san summary, the representative
+  `backpack_nm` rows show browser `MeshStandardMaterial`, `map=backpack`,
+  `cs=srgb`, `filter=1007/1006`, identity matrix, and color `1,1,1`; the Rust
+  resolve draw is the same selected `backpack_nm` surface with base texture slot
+  `10` and normal texture slot `13`. Treat this as evidence against a simple
+  material-name/map/colorSpace/filter/base-factor mismatch. The remaining
+  base-color residual should be investigated as local owner/surface/sample
+  choice or a narrower texture-evaluation condition, not another global
+  color-space switch.
 - The texture audit also reports selected-sample reproduction thresholds:
   `<=1.5`, `<=8`, actual-near/expected-far, actual-far/expected-near, and
   both-far. In the current expanded Seed-san artifacts, Bevy has many

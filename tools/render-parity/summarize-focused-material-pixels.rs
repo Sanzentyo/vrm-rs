@@ -39,6 +39,8 @@ struct Options {
     pixel: Vec<String>,
     #[arg(long)]
     actual_rgba_json: Option<PathBuf>,
+    #[arg(long)]
+    reference_rgba_json: Option<PathBuf>,
     #[arg(long, default_value = "hotspot")]
     actual_label: String,
     #[arg(long)]
@@ -52,6 +54,7 @@ struct FocusReport {
     hotspots: String,
     manifest: String,
     actual_source: String,
+    reference_source: Option<String>,
     requested_pixels: Vec<String>,
     rows: Vec<FocusRow>,
 }
@@ -78,6 +81,7 @@ struct FocusRow {
     selected_draw_key: Option<String>,
     selected_actual_rgb_distance: Option<f64>,
     selected_expected_rgb_distance: Option<f64>,
+    browser_material: Option<BrowserMaterialSummary>,
     renderer_material_draw: Option<RendererMaterialDrawSummary>,
     frontmost: Option<CandidateSummary>,
     nearest_expected: Option<CandidateSummary>,
@@ -89,6 +93,21 @@ struct FocusRow {
     nearest_actual_actual_rgb_distance: Option<f64>,
     nearest_actual_expected_rgb_distance: Option<f64>,
     interpretation: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BrowserMaterialSummary {
+    material_name: String,
+    material_type: Option<String>,
+    mesh_name: Option<String>,
+    pass: Option<String>,
+    color: Option<[f64; 3]>,
+    map_name: Option<String>,
+    map_color_space: Option<String>,
+    map_flip_y: Option<bool>,
+    map_min_filter: Option<u64>,
+    map_mag_filter: Option<u64>,
+    map_matrix: Option<[f64; 9]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,6 +176,7 @@ struct RgbaJsonImage {
 struct RgbaJsonArtifact {
     image: RgbaJsonImage,
     material_draws_by_key: HashMap<String, RendererMaterialDrawSummary>,
+    browser_materials_by_name: HashMap<String, BrowserMaterialSummary>,
 }
 
 impl RgbaJsonImage {
@@ -195,6 +215,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .as_ref()
         .map(|path| read_rgba_json_artifact(path))
         .transpose()?;
+    let reference_artifact = options
+        .reference_rgba_json
+        .as_ref()
+        .map(|path| read_rgba_json_artifact(path))
+        .transpose()?;
     let pixels = parse_pixels(&options.pixel)?;
     let actual_source = options
         .actual_rgba_json
@@ -206,6 +231,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         manifest_path,
         actual_source,
         actual_artifact.as_ref(),
+        options.reference_rgba_json.as_deref(),
+        reference_artifact.as_ref(),
         &hotspots,
         &manifest,
         &pixels,
@@ -227,6 +254,8 @@ fn summarize(
     manifest_path: &Path,
     actual_source: String,
     actual_artifact: Option<&RgbaJsonArtifact>,
+    reference_path: Option<&Path>,
+    reference_artifact: Option<&RgbaJsonArtifact>,
     hotspots: &Value,
     manifest: &Value,
     pixels: &[Pixel],
@@ -238,13 +267,20 @@ fn summarize(
         .map(|pixel| {
             let hotspot = hotspot_by_pixel.get(pixel).copied();
             let selection = manifest_by_pixel.get(pixel).copied();
-            focus_row(*pixel, hotspot, selection, actual_artifact)
+            focus_row(
+                *pixel,
+                hotspot,
+                selection,
+                actual_artifact,
+                reference_artifact,
+            )
         })
         .collect();
     Ok(FocusReport {
         hotspots: display_path(hotspots_path),
         manifest: display_path(manifest_path),
         actual_source,
+        reference_source: reference_path.map(display_path),
         requested_pixels: pixels
             .iter()
             .map(|pixel| format!("{},{}", pixel.x, pixel.y))
@@ -258,6 +294,7 @@ fn focus_row(
     hotspot: Option<&Value>,
     selection: Option<&Value>,
     actual_artifact: Option<&RgbaJsonArtifact>,
+    reference_artifact: Option<&RgbaJsonArtifact>,
 ) -> FocusRow {
     let expected = hotspot.and_then(|value| rgba_at(value, "/expected"));
     let actual = actual_artifact
@@ -305,6 +342,17 @@ fn focus_row(
         selected_draw_key: selected_draw_key.clone(),
         selected_actual_rgb_distance,
         selected_expected_rgb_distance,
+        browser_material: selection
+            .and_then(|value| manifest_surface(value, "/surface"))
+            .as_ref()
+            .and_then(|surface| {
+                reference_artifact.and_then(|artifact| {
+                    artifact
+                        .browser_materials_by_name
+                        .get(&surface.material_name)
+                        .cloned()
+                })
+            }),
         renderer_material_draw: selected_draw_key.as_ref().and_then(|key| {
             actual_artifact.and_then(|artifact| artifact.material_draws_by_key.get(key).cloned())
         }),
@@ -546,15 +594,18 @@ fn markdown(report: &FocusReport) -> String {
     output.push_str(&format!("- Hotspots: `{}`\n", report.hotspots));
     output.push_str(&format!("- Manifest: `{}`\n", report.manifest));
     output.push_str(&format!("- Actual source: `{}`\n", report.actual_source));
+    if let Some(reference) = &report.reference_source {
+        output.push_str(&format!("- Reference source: `{reference}`\n"));
+    }
     output.push_str(&format!(
         "- Requested pixels: `{}`\n\n",
         report.requested_pixels.join("`, `")
     ));
-    output.push_str("| Pixel | Expected | Actual | Actual-expected | Delta / RGB | Source | Selected draw | Selected surface | Renderer material | Selected RGBA | Selected A/E | Frontmost | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
-    output.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | --- |\n");
+    output.push_str("| Pixel | Expected | Actual | Actual-expected | Delta / RGB | Source | Selected draw | Selected surface | Browser material | Renderer material | Selected RGBA | Selected A/E | Frontmost | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | --- |\n");
     for row in &report.rows {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {} | {} / {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {} | {} | {} / {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             fmt_opt_rgba(row.expected),
@@ -565,6 +616,7 @@ fn markdown(report: &FocusReport) -> String {
             row.selection_source.as_deref().unwrap_or("n/a"),
             row.selected_draw_key.as_deref().unwrap_or("n/a"),
             fmt_surface(row.selected_surface.as_ref()),
+            fmt_browser_material(row.browser_material.as_ref()),
             fmt_renderer_material_draw(row.renderer_material_draw.as_ref()),
             fmt_opt_rgba(row.selected_rgba),
             fmt_opt(row.selected_actual_rgb_distance),
@@ -615,6 +667,30 @@ fn fmt_renderer_material_draw(value: Option<&RendererMaterialDrawSummary>) -> St
                 draw.blend
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "n/a".to_owned())
+            )
+        })
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_browser_material(value: Option<&BrowserMaterialSummary>) -> String {
+    value
+        .map(|material| {
+            format!(
+                "{} {} mesh={} pass={} color={} map={} cs={} flipY={} filter={}/{} matrix={}",
+                material.material_name,
+                material.material_type.as_deref().unwrap_or("n/a"),
+                material.mesh_name.as_deref().unwrap_or("n/a"),
+                material.pass.as_deref().unwrap_or("n/a"),
+                fmt_opt_vec3(material.color),
+                material.map_name.as_deref().unwrap_or("n/a"),
+                material.map_color_space.as_deref().unwrap_or("n/a"),
+                material
+                    .map_flip_y
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "n/a".to_owned()),
+                fmt_opt_u64(material.map_min_filter),
+                fmt_opt_u64(material.map_mag_filter),
+                fmt_opt_vec9(material.map_matrix),
             )
         })
         .unwrap_or_else(|| "n/a".to_owned())
@@ -674,9 +750,27 @@ fn fmt_opt_vec2(value: Option<[f64; 2]>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn fmt_opt_vec3(value: Option<[f64; 3]>) -> String {
+    value
+        .map(|value| format!("{:.3},{:.3},{:.3}", value[0], value[1], value[2]))
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn fmt_opt_vec4(value: Option<[f64; 4]>) -> String {
     value
         .map(|value| format!("{:.3},{:.3},{:.3},{:.3}", value[0], value[1], value[2], value[3]))
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_opt_vec9(value: Option<[f64; 9]>) -> String {
+    value
+        .map(|value| {
+            value
+                .iter()
+                .map(|entry| format!("{entry:.3}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
@@ -722,7 +816,37 @@ fn read_rgba_json_artifact(path: &Path) -> Result<RgbaJsonArtifact, Box<dyn Erro
     Ok(RgbaJsonArtifact {
         image,
         material_draws_by_key: material_draws_by_key(&value),
+        browser_materials_by_name: browser_materials_by_name(&value),
     })
+}
+
+fn browser_materials_by_name(value: &Value) -> HashMap<String, BrowserMaterialSummary> {
+    value
+        .pointer("/reference/renderer/diagnosticMaterials")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|material| {
+            let name = string_at(material, "/materialName")?;
+            Some((name, browser_material_summary(material)))
+        })
+        .collect()
+}
+
+fn browser_material_summary(value: &Value) -> BrowserMaterialSummary {
+    BrowserMaterialSummary {
+        material_name: string_at(value, "/materialName").unwrap_or_else(|| "n/a".to_owned()),
+        material_type: string_at(value, "/materialType"),
+        mesh_name: string_at(value, "/meshName"),
+        pass: string_at(value, "/pass"),
+        color: vec3_at(value, "/color"),
+        map_name: string_at(value, "/map/name"),
+        map_color_space: string_at(value, "/map/colorSpace"),
+        map_flip_y: bool_at(value, "/map/flipY"),
+        map_min_filter: u64_at(value, "/map/minFilter"),
+        map_mag_filter: u64_at(value, "/map/magFilter"),
+        map_matrix: vec9_at(value, "/map/matrix"),
+    }
 }
 
 fn material_draws_by_key(value: &Value) -> HashMap<String, RendererMaterialDrawSummary> {
@@ -786,6 +910,30 @@ fn vec4_at(value: &Value, pointer: &str) -> Option<[f64; 4]> {
         values.get(1)?.as_f64()?,
         values.get(2)?.as_f64()?,
         values.get(3)?.as_f64()?,
+    ])
+}
+
+fn vec3_at(value: &Value, pointer: &str) -> Option<[f64; 3]> {
+    let values = value.pointer(pointer)?.as_array()?;
+    Some([
+        values.first()?.as_f64()?,
+        values.get(1)?.as_f64()?,
+        values.get(2)?.as_f64()?,
+    ])
+}
+
+fn vec9_at(value: &Value, pointer: &str) -> Option<[f64; 9]> {
+    let values = value.pointer(pointer)?.as_array()?;
+    Some([
+        values.first()?.as_f64()?,
+        values.get(1)?.as_f64()?,
+        values.get(2)?.as_f64()?,
+        values.get(3)?.as_f64()?,
+        values.get(4)?.as_f64()?,
+        values.get(5)?.as_f64()?,
+        values.get(6)?.as_f64()?,
+        values.get(7)?.as_f64()?,
+        values.get(8)?.as_f64()?,
     ])
 }
 
@@ -859,6 +1007,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         Path::new("manifest.json"),
         "hotspot actual".to_owned(),
         None,
+        None,
+        None,
         &hotspots,
         &manifest,
         &pixels,
@@ -910,12 +1060,41 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         )]
         .into_iter()
         .collect(),
+        browser_materials_by_name: HashMap::new(),
+    };
+    let reference_override = RgbaJsonArtifact {
+        image: RgbaJsonImage {
+            width: 16,
+            height: 32,
+            rgba: vec![0; 16 * 32 * 4],
+        },
+        material_draws_by_key: HashMap::new(),
+        browser_materials_by_name: [(
+            "front".to_owned(),
+            BrowserMaterialSummary {
+                material_name: "front".to_owned(),
+                material_type: Some("MeshStandardMaterial".to_owned()),
+                mesh_name: Some("wear_10".to_owned()),
+                pass: Some("base".to_owned()),
+                color: Some([1.0, 1.0, 1.0]),
+                map_name: Some("backpack".to_owned()),
+                map_color_space: Some("srgb".to_owned()),
+                map_flip_y: Some(false),
+                map_min_filter: Some(1007),
+                map_mag_filter: Some(1006),
+                map_matrix: Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]),
+            },
+        )]
+        .into_iter()
+        .collect(),
     };
     let override_report = summarize(
         Path::new("hotspots.json"),
         Path::new("manifest.json"),
         "override".to_owned(),
         Some(&actual_override),
+        Some(Path::new("reference.rgba.json")),
+        Some(&reference_override),
         &hotspots,
         &manifest,
         &pixels,
@@ -932,7 +1111,15 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .and_then(|draw| draw.normal_texture),
         Some(13)
     );
+    assert_eq!(
+        override_report.rows[0]
+            .browser_material
+            .as_ref()
+            .and_then(|material| material.map_color_space.as_deref()),
+        Some("srgb")
+    );
     assert!(markdown(&override_report).contains("front@owner-sample-resolve pbr:true"));
+    assert!(markdown(&override_report).contains("front MeshStandardMaterial"));
 
     let draws = material_draws_by_key(&serde_json::json!({
         "renderer": {
