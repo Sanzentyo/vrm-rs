@@ -3028,6 +3028,15 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   next color work split by shading model: glTF/PBR fallback for `backpack_nm`,
   and local fill/triangle ownership for the MToon `body_nm`/plastic rows that
   already have expected-near sampling candidates.
+- `audit-texture-sampling-parity.rs` now also groups manifest-selected samples
+  by exact draw key from `sample_geometry` (`node/mesh/primitive/pass`). The
+  expanded Seed-san audits put the major buckets on `backpack_nm`
+  `node145/mesh4/prim9/base`, `huku_bake` `node145/mesh4/prim3/base`,
+  `body_nm` `node145/mesh4/prim1/base`, `arm_mat`
+  `node144/mesh3/prim0/base`, and `arm_plastic`
+  `node144/mesh3/prim1/base`. Use these draw labels when instrumenting shader
+  material evaluation or owner/sample resolve writes; material-only grouping is
+  no longer precise enough for the next pass.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
