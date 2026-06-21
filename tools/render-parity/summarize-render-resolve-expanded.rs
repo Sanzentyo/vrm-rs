@@ -285,6 +285,11 @@ struct PbrResponseDiagnosticSummary {
     count: u64,
     pbr_ambient: f64,
     direct_light_scale: Option<f64>,
+    mean_metallic: Option<f64>,
+    mean_occlusion_strength: Option<f64>,
+    estimated_ambient_response_rgb_gain: Option<[f64; 3]>,
+    estimated_actual_non_ambient_over_manifest_rgb_gain: Option<[f64; 3]>,
+    estimated_expected_non_ambient_over_manifest_rgb_gain: Option<[f64; 3]>,
     missing_response_rgb_gain: [f64; 3],
     missing_response_over_pbr_ambient_rgb: [f64; 3],
     ambient_plus_missing_response_rgb_gain: [f64; 3],
@@ -432,18 +437,20 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
         });
     }
     let texture_audits = texture_audit_probe_summaries(&options.texture_audit)?;
-    let pbr_response_diagnostics = pbr_response_diagnostics(&renderers, &texture_audits);
+    let shading_model_join = options
+        .shading_model_join
+        .as_deref()
+        .map(shading_model_join_summary)
+        .transpose()?;
+    let pbr_response_diagnostics =
+        pbr_response_diagnostics(&renderers, &texture_audits, shading_model_join.as_ref());
     Ok(ExpandedSummary {
         reports_dir: reports_dir.display().to_string(),
         fixture_stem: options.fixture_stem.clone(),
         suffix: options.suffix.clone(),
         metric_key: options.metric_key.clone(),
         renderers,
-        shading_model_join: options
-            .shading_model_join
-            .as_deref()
-            .map(shading_model_join_summary)
-            .transpose()?,
+        shading_model_join,
         material_track_inputs: options
             .material_track_inputs
             .as_deref()
@@ -506,6 +513,7 @@ fn renderer_lighting_summary(
 fn pbr_response_diagnostics(
     renderers: &[RendererSummary],
     texture_audits: &[TextureAuditProbeSummary],
+    shading_model_join: Option<&ShadingModelJoinSummary>,
 ) -> Vec<PbrResponseDiagnosticSummary> {
     texture_audits
         .iter()
@@ -523,7 +531,14 @@ fn pbr_response_diagnostics(
                 .recommended_probes
                 .iter()
                 .filter_map(move |probe| {
+                    let shading_input =
+                        find_pbr_shading_input(shading_model_join, &audit.renderer, probe)?;
                     let missing = probe.least_squares_expected_minus_actual_over_manifest_rgb_gain?;
+                    let ambient_response = pbr_ambient_response_gain(
+                        pbr_ambient,
+                        shading_input.mean_metallic,
+                        shading_input.mean_occlusion_strength,
+                    );
                     Some(PbrResponseDiagnosticSummary {
                         renderer: audit.renderer.clone(),
                         material_name: probe.material_name.clone(),
@@ -531,6 +546,19 @@ fn pbr_response_diagnostics(
                         count: probe.count,
                         pbr_ambient,
                         direct_light_scale: lighting.direct_light_scale,
+                        mean_metallic: shading_input.mean_metallic,
+                        mean_occlusion_strength: shading_input.mean_occlusion_strength,
+                        estimated_ambient_response_rgb_gain: ambient_response,
+                        estimated_actual_non_ambient_over_manifest_rgb_gain:
+                            subtract_optional_vec3_scalar(
+                                probe.least_squares_actual_over_manifest_rgb_gain,
+                                ambient_response,
+                            ),
+                        estimated_expected_non_ambient_over_manifest_rgb_gain:
+                            subtract_optional_vec3_scalar(
+                                probe.least_squares_expected_over_manifest_rgb_gain,
+                                ambient_response,
+                            ),
                         missing_response_rgb_gain: missing,
                         missing_response_over_pbr_ambient_rgb: scale_vec3(missing, 1.0 / pbr_ambient),
                         ambient_plus_missing_response_rgb_gain: add_scalar_vec3(missing, pbr_ambient),
@@ -538,6 +566,36 @@ fn pbr_response_diagnostics(
                 })
         })
         .collect()
+}
+
+fn find_pbr_shading_input<'a>(
+    join: Option<&'a ShadingModelJoinSummary>,
+    renderer: &str,
+    probe: &TextureProbeSummary,
+) -> Option<&'a ShadingModelMaterialDrawShadingInputSummary> {
+    join?
+        .models
+        .iter()
+        .filter(|model| model.model == "gltf_pbr")
+        .flat_map(|model| &model.backends)
+        .filter(|backend| backend.backend == renderer)
+        .flat_map(|backend| &backend.material_draw_shading_inputs)
+        .find(|input| {
+            input.material_name == probe.material_name
+                && input.draw_key == probe.draw_key
+                && input.models.contains("gltf_pbr")
+        })
+}
+
+fn pbr_ambient_response_gain(
+    pbr_ambient: f64,
+    metallic: Option<f64>,
+    occlusion_strength: Option<f64>,
+) -> Option<[f64; 3]> {
+    let metallic = metallic?;
+    let occlusion_strength = occlusion_strength?;
+    let response = pbr_ambient * (1.0 - metallic) * occlusion_strength;
+    Some([response, response, response])
 }
 
 fn material_summaries(audit: &Value, limit: usize) -> Result<Vec<MaterialSummary>, Box<dyn Error>> {
@@ -640,21 +698,25 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
     }
     if !summary.pbr_response_diagnostics.is_empty() {
         out.push_str("\n## PBR Response Diagnostics\n\n");
-        out.push_str("Diagnostic only: missing response is measured in rendered/output RGB gain over the selected manifest sample, so it is not a shader knob by itself.\n\n");
-        out.push_str("| Renderer | Material | Draw key | Count | PBR ambient | Direct scale | Missing gain (E-A)/M | Missing / ambient | Ambient + missing |\n");
-        out.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        out.push_str("Diagnostic only: response terms are measured in rendered/output RGB gain over the selected manifest sample, so they are not shader knobs by themselves. Rows are limited to `gltf_pbr` material/draw inputs from the shading-model join.\n\n");
+        out.push_str("| Renderer | Material | Draw key | Count | PBR ambient | Direct scale | M/O | Ambient gain | Actual non-ambient A/M | Expected non-ambient E/M | Missing gain (E-A)/M | Missing / ambient |\n");
+        out.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
         for diagnostic in &summary.pbr_response_diagnostics {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {:.4} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {:.4} | {} | {} / {} | {} | {} | {} | {} | {} |\n",
                 diagnostic.renderer,
                 diagnostic.material_name,
                 diagnostic.draw_key,
                 diagnostic.count,
                 diagnostic.pbr_ambient,
                 fmt_optional_f64(diagnostic.direct_light_scale),
+                fmt_optional_f64(diagnostic.mean_metallic),
+                fmt_optional_f64(diagnostic.mean_occlusion_strength),
+                fmt_optional_vec3(diagnostic.estimated_ambient_response_rgb_gain),
+                fmt_optional_vec3(diagnostic.estimated_actual_non_ambient_over_manifest_rgb_gain),
+                fmt_optional_vec3(diagnostic.estimated_expected_non_ambient_over_manifest_rgb_gain),
                 fmt_vec3(diagnostic.missing_response_rgb_gain),
                 fmt_vec3(diagnostic.missing_response_over_pbr_ambient_rgb),
-                fmt_vec3(diagnostic.ambient_plus_missing_response_rgb_gain),
             ));
         }
     }
@@ -2314,10 +2376,43 @@ fn add_scalar_vec3(value: [f64; 3], scalar: f64) -> [f64; 3] {
     [value[0] + scalar, value[1] + scalar, value[2] + scalar]
 }
 
+fn subtract_optional_vec3_scalar(
+    value: Option<[f64; 3]>,
+    scalar: Option<[f64; 3]>,
+) -> Option<[f64; 3]> {
+    let value = value?;
+    let scalar = scalar?;
+    Some([
+        value[0] - scalar[0],
+        value[1] - scalar[1],
+        value[2] - scalar[2],
+    ])
+}
+
 fn fmt_optional_rgba(value: Option<[u64; 4]>) -> String {
     value
         .map(|value| format!("{},{},{},{}", value[0], value[1], value[2], value[3]))
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn assert_vec3_near(
+    actual: Option<[f64; 3]>,
+    expected: [f64; 3],
+    tolerance: f64,
+) -> Result<(), Box<dyn Error>> {
+    let actual = actual.ok_or("expected vec3 value")?;
+    if actual
+        .iter()
+        .zip(expected)
+        .any(|(actual, expected)| (actual - expected).abs() > tolerance)
+    {
+        return Err(format!(
+            "vec3 mismatch: actual {:.12},{:.12},{:.12}, expected {:.12},{:.12},{:.12}",
+            actual[0], actual[1], actual[2], expected[0], expected[1], expected[2]
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn self_test() -> Result<(), Box<dyn Error>> {
@@ -2735,12 +2830,24 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .pbr_response_diagnostics
         .first()
         .ok_or("self-test PBR response diagnostic was not generated")?;
+    assert_eq!(summary.pbr_response_diagnostics.len(), 1);
     assert_eq!(pbr_response.renderer, "wgpu");
     assert_eq!(pbr_response.material_name, "backpack_nm");
     assert_eq!(
         pbr_response.missing_response_rgb_gain,
         [0.37, 0.46, 0.49]
     );
+    assert_eq!(pbr_response.mean_metallic, Some(0.0));
+    assert_eq!(pbr_response.mean_occlusion_strength, Some(1.0));
+    assert_eq!(
+        pbr_response.estimated_ambient_response_rgb_gain,
+        Some([0.03183098882436752; 3])
+    );
+    assert_vec3_near(
+        pbr_response.estimated_actual_non_ambient_over_manifest_rgb_gain,
+        [1.7081690111756325, 1.8681690111756325, 1.9081690111756324],
+        1e-12,
+    )?;
     assert!((pbr_response.pbr_ambient - 0.03183098882436752).abs() < 1e-12);
     assert!((pbr_response.missing_response_over_pbr_ambient_rgb[0] - 11.624).abs() < 0.01);
     let summary_json = serde_json::to_string(&summary)?;
@@ -2774,7 +2881,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## Renderer Lighting Metadata"));
     assert!(markdown.contains("| wgpu | 1.0000 | 0.0318 | 0.0000 | 0.0318 | 1.0000 | three-vrm |"));
     assert!(markdown.contains("## PBR Response Diagnostics"));
-    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.37,0.46,0.49 | 11.62,14.45,15.39 | 0.40,0.49,0.52 |"));
+    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.0000 / 1.0000 | 0.03,0.03,0.03 | 1.71,1.87,1.91 | 2.08,2.33,2.40 | 0.37,0.46,0.49 | 11.62,14.45,15.39 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
