@@ -121,6 +121,8 @@ struct BucketStats {
     mean_expected_over_manifest_sample_rgb_ratio: Option<[f64; 3]>,
     least_squares_actual_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
     least_squares_expected_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
+    mean_expected_minus_actual_over_manifest_sample_rgb_ratio: Option<[f64; 3]>,
+    least_squares_expected_minus_actual_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
@@ -218,6 +220,8 @@ struct MaterialBucket {
     mean_expected_over_manifest_sample_rgb_ratio: Option<[f64; 3]>,
     least_squares_actual_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
     least_squares_expected_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
+    mean_expected_minus_actual_over_manifest_sample_rgb_ratio: Option<[f64; 3]>,
+    least_squares_expected_minus_actual_over_manifest_sample_rgb_gain: Option<[f64; 3]>,
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
@@ -268,6 +272,7 @@ struct ProbeRecommendation {
     mean_expected_minus_manifest_rgb_delta: Option<[f64; 3]>,
     least_squares_actual_over_manifest_rgb_gain: Option<[f64; 3]>,
     least_squares_expected_over_manifest_rgb_gain: Option<[f64; 3]>,
+    least_squares_expected_minus_actual_over_manifest_rgb_gain: Option<[f64; 3]>,
     manifest_sample_actual_within_1_5: u64,
     manifest_sample_expected_within_1_5: u64,
     manifest_sample_actual_near_expected_far: u64,
@@ -407,6 +412,7 @@ struct Accumulator {
     expected_minus_manifest_sample_delta_count: u64,
     actual_over_manifest_sample_response: ResponseAccumulator,
     expected_over_manifest_sample_response: ResponseAccumulator,
+    expected_minus_actual_over_manifest_sample_response: ResponseAccumulator,
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
@@ -451,16 +457,38 @@ struct ResponseAccumulator {
 
 impl ResponseAccumulator {
     fn add(&mut self, manifest: [u8; 4], target: [u8; 4]) {
+        self.add_target_rgb(
+            manifest,
+            [
+                f64::from(target[0]),
+                f64::from(target[1]),
+                f64::from(target[2]),
+            ],
+        );
+    }
+
+    fn add_signed_delta(&mut self, manifest: [u8; 4], left: [u8; 4], right: [u8; 4]) {
+        self.add_target_rgb(
+            manifest,
+            [
+                f64::from(left[0]) - f64::from(right[0]),
+                f64::from(left[1]) - f64::from(right[1]),
+                f64::from(left[2]) - f64::from(right[2]),
+            ],
+        );
+    }
+
+    fn add_target_rgb(&mut self, manifest: [u8; 4], target: [f64; 3]) {
         if manifest[..3].iter().all(|channel| *channel > 0) {
             for channel in 0..3 {
-                self.ratio_sum[channel] += f64::from(target[channel]) / f64::from(manifest[channel]);
+                self.ratio_sum[channel] += target[channel] / f64::from(manifest[channel]);
             }
             self.ratio_count += 1;
         }
         for channel in 0..3 {
             let manifest = f64::from(manifest[channel]);
             if manifest > 0.0 {
-                self.gain_numerator[channel] += manifest * f64::from(target[channel]);
+                self.gain_numerator[channel] += manifest * target[channel];
                 self.gain_denominator[channel] += manifest * manifest;
             }
         }
@@ -545,6 +573,7 @@ struct MaterialAccumulator {
     expected_minus_manifest_sample_delta_count: u64,
     actual_over_manifest_sample_response: ResponseAccumulator,
     expected_over_manifest_sample_response: ResponseAccumulator,
+    expected_minus_actual_over_manifest_sample_response: ResponseAccumulator,
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
@@ -909,6 +938,12 @@ impl Accumulator {
             least_squares_expected_over_manifest_sample_rgb_gain: self
                 .expected_over_manifest_sample_response
                 .least_squares_gain(),
+            mean_expected_minus_actual_over_manifest_sample_rgb_ratio: self
+                .expected_minus_actual_over_manifest_sample_response
+                .mean_ratio(),
+            least_squares_expected_minus_actual_over_manifest_sample_rgb_gain: self
+                .expected_minus_actual_over_manifest_sample_response
+                .least_squares_gain(),
             manifest_sample_actual_closer: self.manifest_sample_actual_closer,
             manifest_sample_expected_closer: self.manifest_sample_expected_closer,
             manifest_sample_tied: self.manifest_sample_tied,
@@ -1056,6 +1091,13 @@ impl Accumulator {
             self.expected_minus_manifest_sample_delta_count += 1;
             self.expected_over_manifest_sample_response
                 .add(manifest_rgba, expected);
+        }
+        if let Some((expected, actual)) = expected.zip(actual) {
+            self.expected_minus_actual_over_manifest_sample_response.add_signed_delta(
+                manifest_rgba,
+                expected,
+                actual,
+            );
         }
         match actual_distance
             .zip(expected_distance)
@@ -1361,6 +1403,12 @@ impl MaterialAccumulator {
             least_squares_expected_over_manifest_sample_rgb_gain: self
                 .expected_over_manifest_sample_response
                 .least_squares_gain(),
+            mean_expected_minus_actual_over_manifest_sample_rgb_ratio: self
+                .expected_minus_actual_over_manifest_sample_response
+                .mean_ratio(),
+            least_squares_expected_minus_actual_over_manifest_sample_rgb_gain: self
+                .expected_minus_actual_over_manifest_sample_response
+                .least_squares_gain(),
             manifest_sample_actual_closer: self.manifest_sample_actual_closer,
             manifest_sample_expected_closer: self.manifest_sample_expected_closer,
             manifest_sample_tied: self.manifest_sample_tied,
@@ -1503,6 +1551,13 @@ impl MaterialAccumulator {
             self.expected_minus_manifest_sample_delta_count += 1;
             self.expected_over_manifest_sample_response
                 .add(manifest_rgba, expected);
+        }
+        if let Some((expected, actual)) = expected.zip(actual) {
+            self.expected_minus_actual_over_manifest_sample_response.add_signed_delta(
+                manifest_rgba,
+                expected,
+                actual,
+            );
         }
         match actual_distance
             .zip(expected_distance)
@@ -2376,6 +2431,9 @@ fn recommended_probes(
                 least_squares_expected_over_manifest_rgb_gain: bucket
                     .stats
                     .least_squares_expected_over_manifest_sample_rgb_gain,
+                least_squares_expected_minus_actual_over_manifest_rgb_gain: bucket
+                    .stats
+                    .least_squares_expected_minus_actual_over_manifest_sample_rgb_gain,
                 manifest_sample_actual_within_1_5: bucket
                     .stats
                     .manifest_sample_actual_within_1_5,
@@ -2544,11 +2602,11 @@ fn push_probe_recommendations_markdown(output: &mut String, probes: &[ProbeRecom
         return;
     }
     output.push_str("## Recommended Material Probes\n\n");
-    output.push_str("| Material | Draw key | Count | Class | Action | Mean E-A | Mean manifest A/E | Mean A-M / E-M | LS gain A/M / E/M | <=1.5 A/E | near/far A/E/both |\n");
-    output.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| Material | Draw key | Count | Class | Action | Mean E-A | Mean manifest A/E | Mean A-M / E-M | LS gain A/M / E/M | Missing LS gain (E-A)/M | <=1.5 A/E | near/far A/E/both |\n");
+    output.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for probe in probes.iter().take(12) {
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} / {} | {}/{} | {}/{}/{} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} / {} | {} | {}/{} | {}/{}/{} |\n",
             probe.material_name,
             probe.draw_key,
             probe.count,
@@ -2561,6 +2619,7 @@ fn push_probe_recommendations_markdown(output: &mut String, probes: &[ProbeRecom
             fmt_opt_rgb_delta(probe.mean_expected_minus_manifest_rgb_delta),
             fmt_opt_rgb_delta(probe.least_squares_actual_over_manifest_rgb_gain),
             fmt_opt_rgb_delta(probe.least_squares_expected_over_manifest_rgb_gain),
+            fmt_opt_rgb_delta(probe.least_squares_expected_minus_actual_over_manifest_rgb_gain),
             probe.manifest_sample_actual_within_1_5,
             probe.manifest_sample_expected_within_1_5,
             probe.manifest_sample_actual_near_expected_far,
@@ -2862,12 +2921,12 @@ fn push_material_draw_bucket_markdown(
     materials: &[SelectionMaterialDrawBucket],
 ) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Draw key | Count | Mean E-A | E-A <=4/8/16 | Mean E-A delta | Models | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | LS gain A/M / E/M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
-    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Draw key | Count | Mean E-A | E-A <=4/8/16 | Mean E-A delta | Models | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | LS gain A/M / E/M | Missing LS gain (E-A)/M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
+    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(12) {
         let stats = &material.stats;
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {}/{}/{} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} / {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
+            "| {} | {} | {} | {} | {}/{}/{} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} / {} | {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
             material.material_name,
             material.draw_key,
             stats.count,
@@ -2891,6 +2950,9 @@ fn push_material_draw_bucket_markdown(
             fmt_opt_rgb_delta(stats.mean_expected_minus_manifest_sample_rgb_delta),
             fmt_opt_rgb_delta(stats.least_squares_actual_over_manifest_sample_rgb_gain),
             fmt_opt_rgb_delta(stats.least_squares_expected_over_manifest_sample_rgb_gain),
+            fmt_opt_rgb_delta(
+                stats.least_squares_expected_minus_actual_over_manifest_sample_rgb_gain
+            ),
             stats.actual_cpu_closer,
             stats.expected_cpu_closer,
             stats.cpu_tied,
@@ -3227,6 +3289,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .least_squares_expected_over_manifest_sample_rgb_gain,
         [10.0 / 12.0, 1.0, 1.0],
     );
+    assert_close_vec3(
+        report
+            .selected
+            .mean_expected_minus_actual_over_manifest_sample_rgb_ratio,
+        [-90.0 / 12.0, -9.0, -9.0],
+    );
+    assert_close_vec3(
+        report
+            .selected
+            .least_squares_expected_minus_actual_over_manifest_sample_rgb_gain,
+        [-90.0 / 12.0, -9.0, -9.0],
+    );
     assert_eq!(
         report.selected.selection_material_buckets[0].mean_actual_minus_texture_rgb_delta,
         Some([88.0, 90.0, 90.0])
@@ -3262,6 +3336,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
     assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("LS gain A/M / E/M"));
+    assert!(markdown.contains("Missing LS gain (E-A)/M"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));
     let baseline = serde_json::json!({
         "corrections": [
