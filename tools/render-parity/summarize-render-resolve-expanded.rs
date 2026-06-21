@@ -38,6 +38,8 @@ struct Options {
     metric_key: String,
     #[arg(long)]
     shading_model_join: Option<PathBuf>,
+    #[arg(long)]
+    material_track_inputs: Option<PathBuf>,
     #[arg(long, value_name = "RENDERER=PATH")]
     base_color_owner_join: Vec<String>,
     #[arg(long)]
@@ -54,6 +56,7 @@ struct ExpandedSummary {
     metric_key: String,
     renderers: Vec<RendererSummary>,
     shading_model_join: Option<ShadingModelJoinSummary>,
+    material_track_inputs: Option<MaterialTrackInputSummary>,
     base_color_owner_joins: Vec<BaseColorOwnerJoinSummary>,
 }
 
@@ -127,8 +130,10 @@ struct ShadingModelBackendSummary {
 struct ShadingModelColorFitSummary {
     preferred_fit: String,
     additive_rgb_delta: Option<[f64; 3]>,
+    #[serde(rename = "additive_fit_mean_rgb_distance")]
     additive_fit_mean_distance: Option<f64>,
     least_squares_gain_rgb: Option<[f64; 3]>,
+    #[serde(rename = "gain_fit_mean_rgb_distance")]
     gain_fit_mean_distance: Option<f64>,
     mean_expected_over_actual_rgb_ratio: Option<[f64; 3]>,
 }
@@ -177,6 +182,35 @@ struct ShadingModelBackendPairSummary {
     shared_pixels: u64,
     mean_actual_distance: f64,
     mean_expected_actual_gap_delta: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialTrackInputSummary {
+    path: String,
+    fixture: String,
+    selected_count: u64,
+    materials: Vec<MaterialTrackMaterialSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialTrackMaterialSummary {
+    index: u64,
+    name: String,
+    branch: String,
+    primitive_count: u64,
+    base_color_factor: [f64; 4],
+    metallic_factor: f64,
+    roughness_factor: f64,
+    alpha_mode: String,
+    double_sided: bool,
+    unlit: bool,
+    emissive_factor: [f64; 3],
+    emissive_strength: f64,
+    normal_scale: Option<f64>,
+    base_texture: String,
+    shade_texture: String,
+    normal_texture: String,
+    mtoon_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -298,6 +332,11 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
             .shading_model_join
             .as_deref()
             .map(shading_model_join_summary)
+            .transpose()?,
+        material_track_inputs: options
+            .material_track_inputs
+            .as_deref()
+            .map(material_track_input_summary)
             .transpose()?,
         base_color_owner_joins: base_color_owner_join_summaries(&options.base_color_owner_join)?,
     })
@@ -567,6 +606,37 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             out.push('\n');
         }
     }
+    if let Some(inputs) = &summary.material_track_inputs {
+        out.push_str("## Material Track Inputs\n\n");
+        out.push_str(&format!(
+            "- Input: `{}`\n- Fixture: `{}`\n- Selected materials: `{}`\n\n",
+            inputs.path, inputs.fixture, inputs.selected_count
+        ));
+        out.push_str("| Material | Branch | Prims | Base | M/R | Alpha | Double-sided | Unlit | Emissive | Base tex | Shade tex | Normal tex | MToon |\n");
+        out.push_str("| --- | --- | ---: | ---: | ---: | --- | --- | --- | ---: | --- | --- | --- | --- |\n");
+        for material in &inputs.materials {
+            out.push_str(&format!(
+                "| {}#{} | {} | {} | {} | {:.3}/{:.3} | {} | {} | {} | {} x{:.3} | {} | {} | {} | {} |\n",
+                material.name,
+                material.index,
+                material.branch,
+                material.primitive_count,
+                fmt_vec4(material.base_color_factor),
+                material.metallic_factor,
+                material.roughness_factor,
+                material.alpha_mode,
+                material.double_sided,
+                material.unlit,
+                fmt_vec3(material.emissive_factor),
+                material.emissive_strength,
+                material.base_texture,
+                material.shade_texture,
+                material.normal_texture,
+                material.mtoon_summary.as_deref().unwrap_or("n/a"),
+            ));
+        }
+        out.push('\n');
+    }
     if !summary.base_color_owner_joins.is_empty() {
         out.push_str("## Browser Projected Base-Color Joins\n\n");
         for join in &summary.base_color_owner_joins {
@@ -639,6 +709,102 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
         }
     }
     out
+}
+
+fn material_track_input_summary(
+    path: &Path,
+) -> Result<MaterialTrackInputSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    let materials = get_path(&value, &["selected_materials"])?
+        .as_array()
+        .ok_or("selected_materials is not an array")?
+        .iter()
+        .map(material_track_material_summary)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(MaterialTrackInputSummary {
+        path: path.display().to_string(),
+        fixture: get_str_path(&value, &["fixture"])?,
+        selected_count: get_u64_path(&value, &["selected_count"])?,
+        materials,
+    })
+}
+
+fn material_track_material_summary(
+    value: &Value,
+) -> Result<MaterialTrackMaterialSummary, Box<dyn Error>> {
+    Ok(MaterialTrackMaterialSummary {
+        index: get_u64_path(value, &["index"])?,
+        name: optional_string_path(value, &["name"])?.unwrap_or_else(|| "unnamed".to_owned()),
+        branch: get_str_path(value, &["branch"])?,
+        primitive_count: get_u64_path(value, &["primitive_count"])?,
+        base_color_factor: get_vec4_path(value, &["base_color_factor"])?,
+        metallic_factor: get_f64_path(value, &["metallic_factor"])?,
+        roughness_factor: get_f64_path(value, &["roughness_factor"])?,
+        alpha_mode: get_str_path(value, &["alpha_mode"])?,
+        double_sided: get_bool_path(value, &["double_sided"])?,
+        unlit: get_bool_path(value, &["unlit"])?,
+        emissive_factor: get_vec3_path(value, &["emissive_factor"])?,
+        emissive_strength: get_f64_path(value, &["emissive_strength"])?,
+        normal_scale: optional_f64_path(value, &["normal_scale"])?,
+        base_texture: texture_slot_summary(value, &["textures"], "baseColorTexture")?,
+        shade_texture: texture_slot_summary(value, &["mtoon", "textures"], "shadeMultiplyTexture")?,
+        normal_texture: texture_slot_summary(value, &["textures"], "normalTexture")?,
+        mtoon_summary: optional_mtoon_summary(value)?,
+    })
+}
+
+fn optional_mtoon_summary(value: &Value) -> Result<Option<String>, Box<dyn Error>> {
+    let Some(mtoon) = optional_path(value, &["mtoon"]) else {
+        return Ok(None);
+    };
+    if mtoon.is_null() {
+        return Ok(None);
+    }
+    let shade = get_vec3_path(mtoon, &["shade_color_factor"])?;
+    let rim = get_vec3_path(mtoon, &["parametric_rim_color_factor"])?;
+    Ok(Some(format!(
+        "shade={} shift/toony/gi={:.3}/{:.3}/{:.3} rim={} mix={:.3} outline={}:{:.4}",
+        fmt_vec3(shade),
+        get_f64_path(mtoon, &["shading_shift_factor"])?,
+        get_f64_path(mtoon, &["shading_toony_factor"])?,
+        get_f64_path(mtoon, &["gi_equalization_factor"])?,
+        fmt_vec3(rim),
+        get_f64_path(mtoon, &["rim_lighting_mix_factor"])?,
+        get_str_path(mtoon, &["outline_width_mode"])?,
+        get_f64_path(mtoon, &["outline_width_factor"])?,
+    )))
+}
+
+fn texture_slot_summary(
+    value: &Value,
+    slots_path: &[&str],
+    slot_name: &str,
+) -> Result<String, Box<dyn Error>> {
+    let Some(slots) = optional_path(value, slots_path) else {
+        return Ok("n/a".to_owned());
+    };
+    let slots = slots
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", slots_path.join(".")))?;
+    let Some(slot) = slots
+        .iter()
+        .find(|slot| slot.get("slot").and_then(Value::as_str) == Some(slot_name))
+    else {
+        return Ok("n/a".to_owned());
+    };
+    if slot.get("texture").is_none_or(Value::is_null) {
+        return Ok("none".to_owned());
+    }
+    let texture = get_u64_path(slot, &["texture"])?;
+    let image = optional_string_path(slot, &["image", "name"])?
+        .or_else(|| optional_u64_path(slot, &["image", "index"]).ok().flatten().map(|index| {
+            format!("image#{index}")
+        }))
+        .unwrap_or_else(|| "image?".to_owned());
+    let sampler = optional_u64_path(slot, &["sampler", "min_filter"])?
+        .map(|min| format!(" min={min}"))
+        .unwrap_or_default();
+    Ok(format!("{slot_name}:tex#{texture}:{image}{sampler}"))
 }
 
 fn base_color_owner_join_summaries(
@@ -913,6 +1079,9 @@ fn optional_color_fit(
     let Some(value) = backend.get("color_fit") else {
         return Ok(None);
     };
+    if value.is_null() {
+        return Ok(None);
+    }
     Ok(Some(ShadingModelColorFitSummary {
         preferred_fit: get_str_path(value, &["preferred_fit"])?,
         additive_rgb_delta: optional_vec3_path(value, &["additive_rgb_delta"])?,
@@ -1067,6 +1236,61 @@ fn get_vec3_path(value: &Value, path: &[&str]) -> Result<[f64; 3], Box<dyn Error
             .as_f64()
             .ok_or_else(|| format!("JSON path {}[2] is not a number", path.join(".")))?,
     ])
+}
+
+fn get_vec4_path(value: &Value, path: &[&str]) -> Result<[f64; 4], Box<dyn Error>> {
+    let array = get_path(value, path)?
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    if array.len() != 4 {
+        return Err(format!("JSON path {} does not have length 4", path.join(".")).into());
+    }
+    Ok([
+        array[0]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[0] is not a number", path.join(".")))?,
+        array[1]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[1] is not a number", path.join(".")))?,
+        array[2]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[2] is not a number", path.join(".")))?,
+        array[3]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[3] is not a number", path.join(".")))?,
+    ])
+}
+
+fn get_bool_path(value: &Value, path: &[&str]) -> Result<bool, Box<dyn Error>> {
+    get_path(value, path)?
+        .as_bool()
+        .ok_or_else(|| format!("JSON path {} is not a boolean", path.join(".")).into())
+}
+
+fn optional_string_path(value: &Value, path: &[&str]) -> Result<Option<String>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_str()
+        .map(|value| Some(value.to_owned()))
+        .ok_or_else(|| format!("JSON path {} is not a string", path.join(".")).into())
+}
+
+fn optional_u64_path(value: &Value, path: &[&str]) -> Result<Option<u64>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_u64()
+        .map(Some)
+        .ok_or_else(|| format!("JSON path {} is not an unsigned integer", path.join(".")).into())
 }
 
 fn optional_f64_path(value: &Value, path: &[&str]) -> Result<Option<f64>, Box<dyn Error>> {
@@ -1232,19 +1456,25 @@ fn fmt_optional_f64(value: Option<f64>) -> String {
 
 fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
     value
-        .map(|value| format!("{:.2},{:.2},{:.2}", value[0], value[1], value[2]))
+        .map(fmt_vec3)
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
 fn fmt_optional_vec4(value: Option<[f64; 4]>) -> String {
     value
-        .map(|value| {
-            format!(
-                "{:.2},{:.2},{:.2},{:.2}",
-                value[0], value[1], value[2], value[3]
-            )
-        })
+        .map(fmt_vec4)
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_vec3(value: [f64; 3]) -> String {
+    format!("{:.2},{:.2},{:.2}", value[0], value[1], value[2])
+}
+
+fn fmt_vec4(value: [f64; 4]) -> String {
+    format!(
+        "{:.2},{:.2},{:.2},{:.2}",
+        value[0], value[1], value[2], value[3]
+    )
 }
 
 fn fmt_optional_rgba(value: Option<[u64; 4]>) -> String {
@@ -1410,6 +1640,78 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
+    let material_track_inputs_path = root.join("Seed-san.material-track-inputs.json");
+    fs::write(
+        &material_track_inputs_path,
+        r#"{
+            "fixture": ".external-fixtures/official/Seed-san.vrm",
+            "material_name_filters": ["backpack_nm", "eye", "arm_mat"],
+            "material_count": 17,
+            "selected_count": 2,
+            "selected_materials": [{
+                "index": 14,
+                "name": "backpack_nm",
+                "branch": "gltf_pbr",
+                "primitive_count": 1,
+                "base_color_factor": [1.0, 1.0, 1.0, 1.0],
+                "metallic_factor": 0.0,
+                "roughness_factor": 0.657,
+                "alpha_mode": "Opaque",
+                "double_sided": false,
+                "unlit": false,
+                "emissive_factor": [0.0, 0.0, 0.0],
+                "emissive_strength": 1.0,
+                "normal_scale": 1.0,
+                "textures": [{
+                    "slot": "baseColorTexture",
+                    "texture": 12,
+                    "image": {"index": 12, "name": "backpack"},
+                    "sampler": {"min_filter": 9985}
+                }, {
+                    "slot": "normalTexture",
+                    "texture": 13,
+                    "image": {"index": 13, "name": "nm_backpack_normals"},
+                    "sampler": {"min_filter": 9985}
+                }]
+            }, {
+                "index": 3,
+                "name": "eye",
+                "branch": "mtoon",
+                "primitive_count": 1,
+                "base_color_factor": [1.0, 1.0, 1.0, 1.0],
+                "metallic_factor": 1.0,
+                "roughness_factor": 1.0,
+                "alpha_mode": "Opaque",
+                "double_sided": false,
+                "unlit": true,
+                "emissive_factor": [0.0, 0.0, 0.0],
+                "emissive_strength": 1.0,
+                "normal_scale": null,
+                "textures": [{
+                    "slot": "baseColorTexture",
+                    "texture": 7,
+                    "image": {"index": 7, "name": "faceparts"},
+                    "sampler": {"min_filter": 9985}
+                }],
+                "mtoon": {
+                    "shade_color_factor": [0.435, 0.397, 0.501],
+                    "shading_shift_factor": -0.2,
+                    "shading_toony_factor": 0.8,
+                    "gi_equalization_factor": 0.9,
+                    "parametric_rim_color_factor": [0.0, 0.0, 0.0],
+                    "rim_lighting_mix_factor": 1.0,
+                    "outline_width_mode": "none",
+                    "outline_width_factor": 0.5,
+                    "textures": [{
+                        "slot": "shadeMultiplyTexture",
+                        "texture": 7,
+                        "image": {"index": 7, "name": "faceparts"},
+                        "sampler": {"min_filter": 9985}
+                    }]
+                }
+            }]
+        }"#,
+    )?;
     let options = Options {
         self_test: false,
         reports_dir: Some(root.clone()),
@@ -1418,6 +1720,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         renderer: vec!["wgpu".to_string()],
         metric_key: "rgbSharedNonblackGradientInterior1px".to_string(),
         shading_model_join: Some(join_path),
+        material_track_inputs: Some(material_track_inputs_path),
         base_color_owner_join: vec![format!(
             "wgpu={}",
             base_color_owner_join_path.display()
@@ -1462,7 +1765,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(shading_input.mean_base_color, Some([1.0, 0.5, 0.25, 1.0]));
     let summary_json = serde_json::to_string(&summary)?;
     assert!(summary_json.contains(r#""preferred_fit":"additive""#));
+    assert!(summary_json.contains(r#""additive_fit_mean_rgb_distance":1.0"#));
+    assert!(summary_json.contains(r#""gain_fit_mean_rgb_distance":2.0"#));
+    assert!(!summary_json.contains(r#""additive_fit_mean_distance""#));
+    assert!(!summary_json.contains(r#""gain_fit_mean_distance""#));
     assert!(summary_json.contains(r#""material_draw_shading_inputs""#));
+    assert!(summary_json.contains(r#""material_track_inputs""#));
+    assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
     assert!(!summary_json.contains(r#""color_fit":null"#));
@@ -1477,6 +1786,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | 4.5000 | 1.00,2.00,3.00 | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 |"));
     assert!(markdown.contains("#### Material / Draw Shading Inputs"));
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | gltf_pbr:2 | 1.00,0.50,0.25,1.00 |"));
+    assert!(markdown.contains("## Material Track Inputs"));
+    assert!(markdown.contains("backpack_nm#14"));
+    assert!(markdown.contains("baseColorTexture:tex#12:backpack min=9985"));
+    assert!(markdown.contains("shade=0.43,0.40,0.50 shift/toony/gi=-0.200/0.800/0.900"));
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

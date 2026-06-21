@@ -2,6 +2,22 @@
 
 ## 2026-06-22
 
+- Joined the material-track input inspector into the expanded render-resolve
+  summary. `summarize-render-resolve-expanded.rs` now accepts
+  `--material-track-inputs`, emits a `material_track_inputs` JSON block, and
+  prints a `Material Track Inputs` Markdown table beside the backend metrics,
+  shading-model color fits, and browser projected base-color joins. The Justfile
+  summary recipe now refreshes `inspect-seed-material-tracks` before generating
+  the expanded summary, so the current review artifact shows `backpack_nm#14`
+  as a narrow glTF/PBR track with `backpack` base texture and
+  `nm_backpack_normals`, while `eye` / `arm_mat` expose their MToon shade
+  texture, shade factor, shift/toony/GI, rim, and outline inputs in the same
+  report. This keeps the next renderer change tied to real material inputs
+  instead of fitting additive/gain residuals by eye. The summary parser also
+  keeps the join source field names `additive_fit_mean_rgb_distance` and
+  `gain_fit_mean_rgb_distance` in output JSON, treats explicit `color_fit: null`
+  as absent input, and self-tests that populated real join fits cannot regress
+  back to serialized `color_fit: null`.
 - Made the three-vrm browser `owner-id` diagnostic alpha-aware without
   corrupting owner RGB IDs. The diagnostic material now binds the source base
   map and replaces Three's `map_fragment` so only sampled map alpha affects
