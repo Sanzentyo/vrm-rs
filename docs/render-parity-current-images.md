@@ -1,0 +1,133 @@
+# Current Rendering Image Comparison
+
+Updated: 2026-06-21
+
+This page is a compact visual board for the render-parity artifacts that exist in this workspace right now. The images and raw comparison files live under `.external-fixtures/` and are intentionally not committed. Use [render-parity-image-comparison.md](render-parity-image-comparison.md) for the broader historical index.
+
+Reference images are rendered with `three-vrm`. Compared images are Rust renderers: `wgpu`, Bevy, and Ash. Numeric values below are read from the current `.imqraw` comparison reports.
+
+## Current Artifact Sets
+
+| Purpose | Directory | Main comparison |
+| --- | --- | --- |
+| Opaque real sample sweep | [`.external-fixtures/render-parity-samples-ash-gated-check`](../.external-fixtures/render-parity-samples-ash-gated-check) | `rgb-visible` |
+| Transparent real sample sweep | [`.external-fixtures/render-parity-real-transparent-ash-gated`](../.external-fixtures/render-parity-real-transparent-ash-gated) | `rgb-all` |
+| Generated glTF/PBR fallback | [`.external-fixtures/render-parity-gltf-pbr-generated`](../.external-fixtures/render-parity-gltf-pbr-generated) | `rgb-interior1px` |
+| Generated transparent blend | [`.external-fixtures/render-parity-transparent-generated-ash-gated`](../.external-fixtures/render-parity-transparent-generated-ash-gated) | `rgb-visible` |
+| Current Seed-san base-color diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback) | `rgb-shared-nonblack-gradient-interior1px` |
+| Rejected second-frontier diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback) | negative-control only |
+
+## Quick Metrics
+
+### Opaque Real Samples
+
+| Fixture | wgpu | Bevy | Ash | Alpha mismatches |
+| --- | ---: | ---: | ---: | ---: |
+| `Seed-san.vrm` | 34.6538 | 34.1163 | 34.6391 | wgpu 0 / Bevy 0 / Ash 0 |
+| `VRM1_Constraint_Twist_Sample.vrm` | 36.2518 | 36.2349 | 36.2509 | wgpu 0 / Bevy 0 / Ash 0 |
+| `VRMC_materials_mtoon_UV_Animation_Test.vrm` | 35.6342 | 35.6202 | 35.6342 | wgpu 0 / Bevy 0 / Ash 0 |
+| `VRMC_vrm_expressions_isBinary_Overridden.vrm` | 55.6968 | 55.2106 | 55.6968 | wgpu 0 / Bevy 0 / Ash 9 |
+| `VRMC_vrm_expressions_isBinary_Overrides.vrm` | 55.7181 | 55.2306 | 55.7181 | wgpu 0 / Bevy 0 / Ash 9 |
+| `AliciaSolid_vrm-0.51.vrm` | 35.6238 | 35.6088 | 35.6238 | wgpu 0 / Bevy 0 / Ash 0 |
+
+### Focused Generated Guards
+
+| Fixture | Metric | wgpu | Bevy | Ash | Max channel delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | 6 |
+| `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | 1 |
+
+### Current Seed-san Base-Color Diagnostic
+
+This is the current root visual blocker. Alpha matches exactly. The second-frontier run is kept only as a negative control because it changes the source-derived selection frontier without explaining the renderer behavior.
+
+| Set | wgpu | Bevy | Ash | Max selected channel delta |
+| --- | ---: | ---: | ---: | ---: |
+| Current readback | 30.6336 | 28.2142 | 35.8902 | wgpu 178 / Bevy 179 / Ash 59 |
+| Second-frontier diagnostic | 30.9642 | 28.6200 | 35.8901 | wgpu 149 / Bevy 176 / Ash 59 |
+
+## Seed-san Current Diagnostic Images
+
+The `three-vrm` reference image for this diagnostic comes from the base-color outline-off capture, while the Rust images below are the current render-resolve readbacks. Ash currently has raw `.rgba.json` / `.imqraw` artifacts in this directory, but no PNG image in the local artifact set.
+
+| three-vrm reference | wgpu readback | Bevy readback |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="220"> |
+
+### Negative Control: Second Frontier
+
+These images are useful for review, but they are not a desired default behavior. They show why repeated owner-frontier expansion should stay diagnostic until the source behavior is explained.
+
+| wgpu second-frontier | Bevy second-frontier |
+| --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="220"> |
+
+## Real Sample Visual Sweep
+
+### Seed-san
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/Seed-san.frame000.png" width="180"> |
+
+| wgpu diff | Bevy diff | Ash diff |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.wgpu-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.bevy-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.ash-vs-three-vrm.diff.png" width="180"> |
+
+### Constraint Sample
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/VRM1_Constraint_Twist_Sample.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/VRM1_Constraint_Twist_Sample.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/VRM1_Constraint_Twist_Sample.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/VRM1_Constraint_Twist_Sample.frame000.png" width="180"> |
+
+| wgpu diff | Bevy diff | Ash diff |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/VRM1_Constraint_Twist_Sample.wgpu-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/VRM1_Constraint_Twist_Sample.bevy-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/VRM1_Constraint_Twist_Sample.ash-vs-three-vrm.diff.png" width="180"> |
+
+### UV Animation
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="180"> |
+
+### VRM0 AliciaSolid
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/AliciaSolid_vrm-0_51.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/AliciaSolid_vrm-0_51.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/AliciaSolid_vrm-0_51.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/AliciaSolid_vrm-0_51.frame000.png" width="180"> |
+
+## Transparent And PBR Guards
+
+### Generated Transparent Blend
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/three-vrm/transparent-blend_vrm.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/wgpu/transparent-blend_vrm.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/bevy/transparent-blend_vrm.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/ash/transparent-blend_vrm.frame000.png" width="180"> |
+
+| wgpu diff | Bevy diff | Ash diff |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/diff/transparent-blend_vrm.wgpu-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/diff/transparent-blend_vrm.bevy-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-transparent-generated-ash-gated/diff/transparent-blend_vrm.ash-vs-three-vrm.diff.png" width="180"> |
+
+### Generated glTF/PBR Fallback
+
+| three-vrm | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-gltf-pbr-generated/three-vrm/gltf-pbr_vrm.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/wgpu/gltf-pbr_vrm.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/bevy/gltf-pbr_vrm.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/ash/gltf-pbr_vrm.frame000.png" width="220"> |
+
+| wgpu diff | Bevy diff | Ash diff |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.wgpu-vs-three-vrm.diff.png" width="220"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.bevy-vs-three-vrm.diff.png" width="220"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.ash-vs-three-vrm.diff.png" width="220"> |
+
+## How To Refresh
+
+Regenerate the main boards with:
+
+```powershell
+just render-parity-samples-ash-gated
+just render-parity-real-transparent-ash-gated
+just render-parity-gltf-pbr-generated
+just render-parity-transparent-generated-ash-gated
+just render-parity-seed-base-color-flat32-render-resolve-readback
+```
+
+For final parity judgement, prefer the `.imqraw` reports over PNG-only inspection. PNGs are useful for human review, but the raw files are the source of truth for PSNR, alpha, and max-channel-delta values.
