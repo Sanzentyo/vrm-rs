@@ -16,7 +16,10 @@
   `color_fit` / `material_draw_color_fits`, `summarize-render-resolve-expanded`
   parses those exact fields, its self-test asserts the summary JSON does not
   contain `color_fit: null`, and the regenerated real summary artifact keeps
-  additive/gain fit values in JSON as well as Markdown.
+  additive/gain fit values in JSON as well as Markdown. The parser now also
+  accepts already-normalized summary names such as `additive_fit_mean_distance`
+  / `gain_fit_mean_distance`, so reusing a summary-shaped color-fit block does
+  not silently drop fit values.
 - Added material-probe recommendations to
   `tools/render-parity/audit-texture-sampling-parity.rs`. The audit now emits a
   `recommended_probes` JSON array and a Markdown table derived only from

@@ -583,9 +583,17 @@ fn optional_color_fit(
     Ok(Some(ShadingModelColorFitSummary {
         preferred_fit: get_str_path(value, &["preferred_fit"])?,
         additive_rgb_delta: optional_vec3_path(value, &["additive_rgb_delta"])?,
-        additive_fit_mean_distance: optional_f64_path(value, &["additive_fit_mean_rgb_distance"])?,
+        additive_fit_mean_distance: optional_f64_path_alias(
+            value,
+            &["additive_fit_mean_rgb_distance"],
+            &["additive_fit_mean_distance"],
+        )?,
         least_squares_gain_rgb: optional_vec3_path(value, &["least_squares_gain_rgb"])?,
-        gain_fit_mean_distance: optional_f64_path(value, &["gain_fit_mean_rgb_distance"])?,
+        gain_fit_mean_distance: optional_f64_path_alias(
+            value,
+            &["gain_fit_mean_rgb_distance"],
+            &["gain_fit_mean_distance"],
+        )?,
         mean_expected_over_actual_rgb_ratio: optional_vec3_path(
             value,
             &["mean_expected_over_actual_rgb_ratio"],
@@ -712,6 +720,17 @@ fn optional_f64_path(value: &Value, path: &[&str]) -> Result<Option<f64>, Box<dy
         .as_f64()
         .map(Some)
         .ok_or_else(|| format!("JSON path {} is not a number", path.join(".")).into())
+}
+
+fn optional_f64_path_alias(
+    value: &Value,
+    primary_path: &[&str],
+    alias_path: &[&str],
+) -> Result<Option<f64>, Box<dyn Error>> {
+    optional_f64_path(value, primary_path).and_then(|primary| match primary {
+        Some(value) => Ok(Some(value)),
+        None => optional_f64_path(value, alias_path),
+    })
 }
 
 fn optional_vec3_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 3]>, Box<dyn Error>> {
@@ -851,9 +870,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "color_fit": {
                             "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
                             "least_squares_gain_rgb": [1.05, 1.10, 1.15],
-                            "gain_fit_mean_rgb_distance": 2.0,
+                            "gain_fit_mean_distance": 2.0,
                             "additive_rgb_delta": [1.0, 2.0, 3.0],
-                            "additive_fit_mean_rgb_distance": 1.0,
+                            "additive_fit_mean_distance": 1.0,
                             "preferred_fit": "additive"
                         }
                     }],
