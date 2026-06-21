@@ -285,11 +285,16 @@ struct PbrResponseDiagnosticSummary {
     count: u64,
     pbr_ambient: f64,
     direct_light_scale: Option<f64>,
+    mean_roughness: Option<f64>,
     mean_metallic: Option<f64>,
     mean_occlusion_strength: Option<f64>,
+    mean_normal_scale: Option<f64>,
     estimated_ambient_response_rgb_gain: Option<[f64; 3]>,
     estimated_actual_non_ambient_over_manifest_rgb_gain: Option<[f64; 3]>,
     estimated_expected_non_ambient_over_manifest_rgb_gain: Option<[f64; 3]>,
+    estimated_expected_over_actual_non_ambient_rgb_ratio: Option<[f64; 3]>,
+    estimated_missing_over_actual_non_ambient_rgb_ratio: Option<[f64; 3]>,
+    estimated_direct_scale_needed_rgb: Option<[f64; 3]>,
     missing_response_rgb_gain: [f64; 3],
     missing_response_over_pbr_ambient_rgb: [f64; 3],
     ambient_plus_missing_response_rgb_gain: [f64; 3],
@@ -539,6 +544,16 @@ fn pbr_response_diagnostics(
                         shading_input.mean_metallic,
                         shading_input.mean_occlusion_strength,
                     );
+                    let actual_non_ambient = subtract_optional_vec3_scalar(
+                        probe.least_squares_actual_over_manifest_rgb_gain,
+                        ambient_response,
+                    );
+                    let expected_non_ambient = subtract_optional_vec3_scalar(
+                        probe.least_squares_expected_over_manifest_rgb_gain,
+                        ambient_response,
+                    );
+                    let expected_over_actual_non_ambient =
+                        divide_optional_vec3(expected_non_ambient, actual_non_ambient);
                     Some(PbrResponseDiagnosticSummary {
                         renderer: audit.renderer.clone(),
                         material_name: probe.material_name.clone(),
@@ -546,19 +561,23 @@ fn pbr_response_diagnostics(
                         count: probe.count,
                         pbr_ambient,
                         direct_light_scale: lighting.direct_light_scale,
+                        mean_roughness: shading_input.mean_roughness,
                         mean_metallic: shading_input.mean_metallic,
                         mean_occlusion_strength: shading_input.mean_occlusion_strength,
+                        mean_normal_scale: shading_input.mean_normal_scale,
                         estimated_ambient_response_rgb_gain: ambient_response,
-                        estimated_actual_non_ambient_over_manifest_rgb_gain:
-                            subtract_optional_vec3_scalar(
-                                probe.least_squares_actual_over_manifest_rgb_gain,
-                                ambient_response,
-                            ),
-                        estimated_expected_non_ambient_over_manifest_rgb_gain:
-                            subtract_optional_vec3_scalar(
-                                probe.least_squares_expected_over_manifest_rgb_gain,
-                                ambient_response,
-                            ),
+                        estimated_actual_non_ambient_over_manifest_rgb_gain: actual_non_ambient,
+                        estimated_expected_non_ambient_over_manifest_rgb_gain: expected_non_ambient,
+                        estimated_expected_over_actual_non_ambient_rgb_ratio:
+                            expected_over_actual_non_ambient,
+                        estimated_missing_over_actual_non_ambient_rgb_ratio: divide_optional_vec3(
+                            Some(missing),
+                            actual_non_ambient,
+                        ),
+                        estimated_direct_scale_needed_rgb: scale_optional_vec3(
+                            expected_over_actual_non_ambient,
+                            lighting.direct_light_scale,
+                        ),
                         missing_response_rgb_gain: missing,
                         missing_response_over_pbr_ambient_rgb: scale_vec3(missing, 1.0 / pbr_ambient),
                         ambient_plus_missing_response_rgb_gain: add_scalar_vec3(missing, pbr_ambient),
@@ -699,22 +718,27 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
     if !summary.pbr_response_diagnostics.is_empty() {
         out.push_str("\n## PBR Response Diagnostics\n\n");
         out.push_str("Diagnostic only: response terms are measured in rendered/output RGB gain over the selected manifest sample, so they are not shader knobs by themselves. Rows are limited to `gltf_pbr` material/draw inputs from the shading-model join.\n\n");
-        out.push_str("| Renderer | Material | Draw key | Count | PBR ambient | Direct scale | M/O | Ambient gain | Actual non-ambient A/M | Expected non-ambient E/M | Missing gain (E-A)/M | Missing / ambient |\n");
-        out.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        out.push_str("| Renderer | Material | Draw key | Count | PBR ambient | Direct scale | R/M/O/N | Ambient gain | Actual non-ambient A/M | Expected non-ambient E/M | E/A non-ambient | Missing / actual non-ambient | Direct scale needed | Missing gain (E-A)/M | Missing / ambient |\n");
+        out.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
         for diagnostic in &summary.pbr_response_diagnostics {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {:.4} | {} | {} / {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {:.4} | {} | {} / {} / {} / {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 diagnostic.renderer,
                 diagnostic.material_name,
                 diagnostic.draw_key,
                 diagnostic.count,
                 diagnostic.pbr_ambient,
                 fmt_optional_f64(diagnostic.direct_light_scale),
+                fmt_optional_f64(diagnostic.mean_roughness),
                 fmt_optional_f64(diagnostic.mean_metallic),
                 fmt_optional_f64(diagnostic.mean_occlusion_strength),
+                fmt_optional_f64(diagnostic.mean_normal_scale),
                 fmt_optional_vec3(diagnostic.estimated_ambient_response_rgb_gain),
                 fmt_optional_vec3(diagnostic.estimated_actual_non_ambient_over_manifest_rgb_gain),
                 fmt_optional_vec3(diagnostic.estimated_expected_non_ambient_over_manifest_rgb_gain),
+                fmt_optional_vec3(diagnostic.estimated_expected_over_actual_non_ambient_rgb_ratio),
+                fmt_optional_vec3(diagnostic.estimated_missing_over_actual_non_ambient_rgb_ratio),
+                fmt_optional_vec3(diagnostic.estimated_direct_scale_needed_rgb),
                 fmt_vec3(diagnostic.missing_response_rgb_gain),
                 fmt_vec3(diagnostic.missing_response_over_pbr_ambient_rgb),
             ));
@@ -2389,6 +2413,27 @@ fn subtract_optional_vec3_scalar(
     ])
 }
 
+fn divide_optional_vec3(numerator: Option<[f64; 3]>, denominator: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    let numerator = numerator?;
+    let denominator = denominator?;
+    denominator
+        .iter()
+        .all(|value| value.abs() > f64::EPSILON)
+        .then(|| {
+            [
+                numerator[0] / denominator[0],
+                numerator[1] / denominator[1],
+                numerator[2] / denominator[2],
+            ]
+        })
+}
+
+fn scale_optional_vec3(value: Option<[f64; 3]>, scalar: Option<f64>) -> Option<[f64; 3]> {
+    let value = value?;
+    let scalar = scalar?;
+    Some([value[0] * scalar, value[1] * scalar, value[2] * scalar])
+}
+
 fn fmt_optional_rgba(value: Option<[u64; 4]>) -> String {
     value
         .map(|value| format!("{},{},{},{}", value[0], value[1], value[2], value[3]))
@@ -2837,8 +2882,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         pbr_response.missing_response_rgb_gain,
         [0.37, 0.46, 0.49]
     );
+    assert_eq!(pbr_response.mean_roughness, Some(0.65));
     assert_eq!(pbr_response.mean_metallic, Some(0.0));
     assert_eq!(pbr_response.mean_occlusion_strength, Some(1.0));
+    assert_eq!(pbr_response.mean_normal_scale, Some(1.0));
     assert_eq!(
         pbr_response.estimated_ambient_response_rgb_gain,
         Some([0.03183098882436752; 3])
@@ -2846,6 +2893,21 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_vec3_near(
         pbr_response.estimated_actual_non_ambient_over_manifest_rgb_gain,
         [1.7081690111756325, 1.8681690111756325, 1.9081690111756324],
+        1e-12,
+    )?;
+    assert_vec3_near(
+        pbr_response.estimated_expected_over_actual_non_ambient_rgb_ratio,
+        [1.2166062008972982, 1.246230398452872, 1.2567906706012935],
+        1e-12,
+    )?;
+    assert_vec3_near(
+        pbr_response.estimated_missing_over_actual_non_ambient_rgb_ratio,
+        [0.21660620089729819, 0.246230398452872, 0.2567906706012934],
+        1e-12,
+    )?;
+    assert_vec3_near(
+        pbr_response.estimated_direct_scale_needed_rgb,
+        [1.2166062008972982, 1.246230398452872, 1.2567906706012935],
         1e-12,
     )?;
     assert!((pbr_response.pbr_ambient - 0.03183098882436752).abs() < 1e-12);
@@ -2881,7 +2943,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## Renderer Lighting Metadata"));
     assert!(markdown.contains("| wgpu | 1.0000 | 0.0318 | 0.0000 | 0.0318 | 1.0000 | three-vrm |"));
     assert!(markdown.contains("## PBR Response Diagnostics"));
-    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.0000 / 1.0000 | 0.03,0.03,0.03 | 1.71,1.87,1.91 | 2.08,2.33,2.40 | 0.37,0.46,0.49 | 11.62,14.45,15.39 |"));
+    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.6500 / 0.0000 / 1.0000 / 1.0000 | 0.03,0.03,0.03 | 1.71,1.87,1.91 | 2.08,2.33,2.40 | 1.22,1.25,1.26 | 0.22,0.25,0.26 | 1.22,1.25,1.26 | 0.37,0.46,0.49 | 11.62,14.45,15.39 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
