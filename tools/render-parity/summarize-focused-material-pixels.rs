@@ -16,7 +16,7 @@ serde_json = "1.0.150"
 //! report for human review.
 
 use clap::Parser;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
@@ -38,6 +38,10 @@ struct Options {
     #[arg(long, value_name = "X,Y")]
     pixel: Vec<String>,
     #[arg(long)]
+    actual_rgba_json: Option<PathBuf>,
+    #[arg(long, default_value = "hotspot")]
+    actual_label: String,
+    #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
     markdown_out: Option<PathBuf>,
@@ -47,6 +51,7 @@ struct Options {
 struct FocusReport {
     hotspots: String,
     manifest: String,
+    actual_source: String,
     requested_pixels: Vec<String>,
     rows: Vec<FocusRow>,
 }
@@ -59,6 +64,7 @@ struct FocusRow {
     manifest_found: bool,
     expected: Option<[u8; 4]>,
     actual: Option<[u8; 4]>,
+    actual_expected_rgb_distance: Option<f64>,
     max_channel_delta: Option<u64>,
     rgb_distance: Option<f64>,
     selection_source: Option<String>,
@@ -114,6 +120,28 @@ struct Pixel {
     y: u64,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct RgbaJsonImage {
+    width: usize,
+    height: usize,
+    rgba: Vec<u8>,
+}
+
+impl RgbaJsonImage {
+    fn pixel(&self, pixel: Pixel) -> Option<[u8; 4]> {
+        if usize::try_from(pixel.x).ok()? >= self.width || usize::try_from(pixel.y).ok()? >= self.height {
+            return None;
+        }
+        let index = (usize::try_from(pixel.y).ok()? * self.width + usize::try_from(pixel.x).ok()?) * 4;
+        Some([
+            *self.rgba.get(index)?,
+            *self.rgba.get(index + 1)?,
+            *self.rgba.get(index + 2)?,
+            *self.rgba.get(index + 3)?,
+        ])
+    }
+}
+
 fn main() {
     if let Err(error) = run(Options::parse()) {
         eprintln!("{error}");
@@ -130,8 +158,26 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let manifest_path = options.manifest.as_ref().ok_or("missing --manifest")?;
     let hotspots = serde_json::from_str::<Value>(&fs::read_to_string(hotspots_path)?)?;
     let manifest = serde_json::from_str::<Value>(&fs::read_to_string(manifest_path)?)?;
+    let actual_image = options
+        .actual_rgba_json
+        .as_ref()
+        .map(|path| read_rgba_json(path))
+        .transpose()?;
     let pixels = parse_pixels(&options.pixel)?;
-    let report = summarize(hotspots_path, manifest_path, &hotspots, &manifest, &pixels)?;
+    let actual_source = options
+        .actual_rgba_json
+        .as_ref()
+        .map(|path| format!("{} ({})", display_path(path), options.actual_label))
+        .unwrap_or_else(|| "hotspot actual".to_owned());
+    let report = summarize(
+        hotspots_path,
+        manifest_path,
+        actual_source,
+        actual_image.as_ref(),
+        &hotspots,
+        &manifest,
+        &pixels,
+    )?;
     let json = format!("{}\n", serde_json::to_string_pretty(&report)?);
     if let Some(path) = &options.json_out {
         write_file(path, &json)?;
@@ -147,6 +193,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 fn summarize(
     hotspots_path: &Path,
     manifest_path: &Path,
+    actual_source: String,
+    actual_image: Option<&RgbaJsonImage>,
     hotspots: &Value,
     manifest: &Value,
     pixels: &[Pixel],
@@ -158,12 +206,13 @@ fn summarize(
         .map(|pixel| {
             let hotspot = hotspot_by_pixel.get(pixel).copied();
             let selection = manifest_by_pixel.get(pixel).copied();
-            focus_row(*pixel, hotspot, selection)
+            focus_row(*pixel, hotspot, selection, actual_image)
         })
         .collect();
     Ok(FocusReport {
         hotspots: display_path(hotspots_path),
         manifest: display_path(manifest_path),
+        actual_source,
         requested_pixels: pixels
             .iter()
             .map(|pixel| format!("{},{}", pixel.x, pixel.y))
@@ -172,9 +221,16 @@ fn summarize(
     })
 }
 
-fn focus_row(pixel: Pixel, hotspot: Option<&Value>, selection: Option<&Value>) -> FocusRow {
+fn focus_row(
+    pixel: Pixel,
+    hotspot: Option<&Value>,
+    selection: Option<&Value>,
+    actual_image: Option<&RgbaJsonImage>,
+) -> FocusRow {
     let expected = hotspot.and_then(|value| rgba_at(value, "/expected"));
-    let actual = hotspot.and_then(|value| rgba_at(value, "/actual"));
+    let actual = actual_image
+        .and_then(|image| image.pixel(pixel))
+        .or_else(|| hotspot.and_then(|value| rgba_at(value, "/actual")));
     let selected_rgba = selection.and_then(|value| rgba_at(value, "/rgba"));
     let frontmost = hotspot.and_then(|value| candidate_at(value, "/frontmost_visible"));
     let nearest_expected = hotspot.and_then(|value| candidate_at(value, "/nearest_visible_expected"));
@@ -185,6 +241,9 @@ fn focus_row(pixel: Pixel, hotspot: Option<&Value>, selection: Option<&Value>) -
     let selected_expected_rgb_distance = selected_rgba
         .zip(expected)
         .map(|(selected, expected)| rgb_distance(selected, expected));
+    let actual_expected_rgb_distance = actual
+        .zip(expected)
+        .map(|(actual, expected)| rgb_distance(actual, expected));
     let frontmost_rgba = frontmost.as_ref().and_then(|candidate| candidate.cpu_base_color_rgba);
     let nearest_expected_rgba = nearest_expected
         .as_ref()
@@ -199,6 +258,7 @@ fn focus_row(pixel: Pixel, hotspot: Option<&Value>, selection: Option<&Value>) -
         manifest_found: selection.is_some(),
         expected,
         actual,
+        actual_expected_rgb_distance,
         max_channel_delta: hotspot.and_then(max_channel_delta),
         rgb_distance: hotspot.and_then(rgb_distance_field),
         selection_source: selection.and_then(selection_source),
@@ -233,6 +293,7 @@ fn focus_row(pixel: Pixel, hotspot: Option<&Value>, selection: Option<&Value>) -
             .zip(expected)
             .map(|(candidate, expected)| rgb_distance(candidate, expected)),
         interpretation: interpretation(
+            actual_expected_rgb_distance,
             selected_actual_rgb_distance,
             selected_expected_rgb_distance,
             frontmost_rgba.zip(actual).map(|(candidate, actual)| rgb_distance(candidate, actual)),
@@ -244,11 +305,18 @@ fn focus_row(pixel: Pixel, hotspot: Option<&Value>, selection: Option<&Value>) -
 }
 
 fn interpretation(
+    actual_expected: Option<f64>,
     selected_actual: Option<f64>,
     selected_expected: Option<f64>,
     frontmost_actual: Option<f64>,
     frontmost_expected: Option<f64>,
 ) -> String {
+    if actual_expected.is_some_and(|distance| distance == 0.0) {
+        return "actual matches three-vrm expected".to_owned();
+    }
+    if actual_expected.is_some_and(|distance| distance <= 1.5) {
+        return "actual is within focused sample tolerance".to_owned();
+    }
     match (
         closer(selected_actual, selected_expected),
         closer(frontmost_actual, frontmost_expected),
@@ -429,19 +497,21 @@ fn markdown(report: &FocusReport) -> String {
     output.push_str("# Focused Material Pixel Summary\n\n");
     output.push_str(&format!("- Hotspots: `{}`\n", report.hotspots));
     output.push_str(&format!("- Manifest: `{}`\n", report.manifest));
+    output.push_str(&format!("- Actual source: `{}`\n", report.actual_source));
     output.push_str(&format!(
         "- Requested pixels: `{}`\n\n",
         report.requested_pixels.join("`, `")
     ));
-    output.push_str("| Pixel | Expected | Actual | Delta / RGB | Source | Selected surface | Selected RGBA | Selected A/E | Frontmost | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
-    output.push_str("| --- | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | --- |\n");
+    output.push_str("| Pixel | Expected | Actual | Actual-expected | Delta / RGB | Source | Selected surface | Selected RGBA | Selected A/E | Frontmost | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | --- |\n");
     for row in &report.rows {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} / {} | {} | {} | {} | {} / {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} / {} | {} | {} | {} | {} / {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             fmt_opt_rgba(row.expected),
             fmt_opt_rgba(row.actual),
+            fmt_opt(row.actual_expected_rgb_distance),
             fmt_opt_u64(row.max_channel_delta),
             fmt_opt(row.rgb_distance),
             row.selection_source.as_deref().unwrap_or("n/a"),
@@ -536,6 +606,26 @@ fn write_file(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn read_rgba_json(path: &Path) -> Result<RgbaJsonImage, Box<dyn Error>> {
+    let image = serde_json::from_str::<RgbaJsonImage>(&fs::read_to_string(path)?)?;
+    let expected_len = image
+        .width
+        .checked_mul(image.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("RGBA JSON dimensions overflow")?;
+    if image.rgba.len() != expected_len {
+        return Err(format!(
+            "{}: rgba length {} does not match dimensions {}x{}",
+            path.display(),
+            image.rgba.len(),
+            image.width,
+            image.height
+        )
+        .into());
+    }
+    Ok(image)
+}
+
 fn display_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
@@ -601,6 +691,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     let report = summarize(
         Path::new("hotspots.json"),
         Path::new("manifest.json"),
+        "hotspot actual".to_owned(),
+        None,
         &hotspots,
         &manifest,
         &pixels,
@@ -619,5 +711,20 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     assert!(report.rows[0].selected_actual_rgb_distance.unwrap() < 3.0);
     assert!(markdown(&report).contains("Focused Material Pixel Summary"));
+    let actual_override = RgbaJsonImage {
+        width: 16,
+        height: 32,
+        rgba: vec![0; 16 * 32 * 4],
+    };
+    let override_report = summarize(
+        Path::new("hotspots.json"),
+        Path::new("manifest.json"),
+        "override".to_owned(),
+        Some(&actual_override),
+        &hotspots,
+        &manifest,
+        &pixels,
+    )?;
+    assert_eq!(override_report.rows[0].actual, Some([0, 0, 0, 0]));
     Ok(())
 }

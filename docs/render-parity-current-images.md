@@ -16,6 +16,7 @@ Reference images are rendered with `three-vrm`. Compared images are Rust rendere
 | Generated glTF/PBR fallback | [`.external-fixtures/render-parity-gltf-pbr-generated`](../.external-fixtures/render-parity-gltf-pbr-generated) | `rgb-interior1px` |
 | Generated transparent blend | [`.external-fixtures/render-parity-transparent-generated-ash-gated`](../.external-fixtures/render-parity-transparent-generated-ash-gated) | `rgb-visible` |
 | Current Seed-san base-color diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback) | `rgb-shared-nonblack-gradient-interior1px` |
+| Expanded post-resolve diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback) | focused owner/sample check |
 | Rejected second-frontier diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback) | negative-control only |
 | Owner/base-color hotspot join | [`.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md) | source/owner diagnosis |
 
@@ -59,12 +60,25 @@ readback format mismatches.
 
 ### Current Seed-san Base-Color Diagnostic
 
-This is the current root visual blocker. Alpha matches exactly. The second-frontier run is kept only as a negative control because it changes the source-derived selection frontier without explaining the renderer behavior.
+This is the current root visual blocker. Alpha matches exactly. The current
+readback still diverges at representative material pixels, while the expanded
+post-resolve diagnostic proves that those same pixels can be written back to the
+three-vrm expected values when the correct source sample is forced. The
+second-frontier run is kept only as a negative control because it changes the
+source-derived selection frontier without explaining the renderer behavior.
 
-| Set | wgpu | Bevy | Ash | Max selected channel delta |
+| Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: |
-| Current readback | 30.6336 | 28.2142 | 35.8902 | wgpu 178 / Bevy 179 / Ash 59 |
-| Second-frontier diagnostic | 30.9642 | 28.6200 | 35.8901 | wgpu 149 / Bevy 176 / Ash 59 |
+| Current readback | 30.6336 | 28.2142 | 35.8902 | 0 / 0 / 0 |
+| Expanded post-resolve diagnostic | 32.7302 | 29.2224 | 35.8901 | 0 / 0 / 0 |
+| Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | 0 / 0 / 0 |
+
+Focused wgpu material-pixel reports:
+
+- Current readback:
+  [`Seed-san.wgpu-focused-material-pixels.gradient.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.wgpu-focused-material-pixels.gradient.md)
+- Expanded post-resolve:
+  [`Seed-san.wgpu-focused-material-pixels.render-resolve-expanded.gradient.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.wgpu-focused-material-pixels.render-resolve-expanded.gradient.md)
 
 ## Current Base-UV Images
 
@@ -97,6 +111,18 @@ The `three-vrm` reference image for this diagnostic comes from the base-color ou
 | three-vrm reference | wgpu readback | Bevy readback |
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="220"> |
+
+### Expanded Post-Resolve Diagnostic Images
+
+This is not the desired default behavior. It is a diagnostic comparison that
+uses the post-resolve source manifest to verify whether the renderer can express
+the expected colors once the source ownership decision is supplied. The focused
+report above shows 0.0000 actual-vs-expected RGB distance for the five selected
+wgpu pixels.
+
+| three-vrm reference | wgpu expanded readback | Bevy expanded readback |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="220"> |
 
 ### Current Hotspot Reading
 
