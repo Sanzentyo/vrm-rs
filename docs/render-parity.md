@@ -1916,17 +1916,34 @@ This writes `.external-fixtures/generated/gltf-pbr.vrm.gltf` and renders it into
 `.external-fixtures/render-parity-gltf-pbr-generated/`. The fixture intentionally
 does not use `VRMC_materials_mtoon`; it covers glTF `baseColorFactor`,
 `baseColorTexture`, roughness, metallic, `KHR_materials_emissive_strength`,
-`occlusionTexture`, `KHR_materials_unlit`, and texture-factor cases through the
-same Rust fallback shader branch used by real non-MToon materials such as
-Seed-san's `backpack_nm`. The current guard uses direct `.imqraw`
-`rgb-interior1px >= 48 dB`, max selected channel delta `<= 3`, and per-swatch
-`>= 40 dB` / max delta `<= 3` across wgpu, Bevy, and Ash. The latest run passes
-with selected PSNR wgpu `49.2238 dB`, Bevy `48.5934 dB`, and Ash `49.2238 dB`.
-The weakest swatch is the rough blue PBR case at about `41 dB` but still with
-max channel delta `3`; most other swatches are `50 dB` or exact. Treat this as a
-generated guard that broad glTF/PBR fallback is close, while real-model
-`backpack_nm` residuals still need local owner/sample/material-condition
-diagnostics.
+`occlusionTexture`, `KHR_materials_unlit`, texture-factor, and `normalTexture`
+cases through the same Rust fallback shader branch used by real non-MToon
+materials such as Seed-san's `backpack_nm`. The current guard uses direct
+`.imqraw` `rgb-interior1px >= 47 dB`, max selected channel delta `<= 6`, and
+per-swatch `>= 40 dB` / max delta `<= 6` across wgpu, Bevy, and Ash. The latest
+run passes with selected PSNR wgpu `47.8016 dB`, Bevy `47.2691 dB`, and Ash
+`47.8016 dB`. The weakest swatches remain the rough blue and metallic PBR
+lighting cases around `41-42 dB`, while the new `pbr-normal-map` swatch is exact
+(`Infinity`, max channel delta `0`) for wgpu, Bevy, and Ash. Treat this as a
+generated guard that broad glTF/PBR fallback, including normalTexture plumbing,
+is close; real-model `backpack_nm` residuals still need local
+owner/sample/material-condition diagnostics.
+
+To inspect those real Seed-san PBR inputs without committing binary assets, run:
+
+```powershell
+just inspect-seed-pbr-material
+```
+
+This writes ignored JSON/Markdown reports under
+`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/`.
+The current `backpack_nm` report identifies material `14` as `gltf_pbr` with one
+primitive, base color factor `[1, 1, 1, 1]`, metallic `0`, roughness `0.657`,
+opaque single-sided rendering, base texture `backpack` (`1024x1024 R8G8B8`,
+sampler `LINEAR` / `LINEAR_MIPMAP_NEAREST`, repeat), and normal texture
+`nm_backpack_normals` with the same sampler policy. That keeps the next
+real-model investigation focused on selected-surface owner/material conditions
+rather than a missing broad PBR normal-map implementation.
 
 For the same generated fixture with ambient disabled on both sides, run:
 

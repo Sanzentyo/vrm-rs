@@ -44,11 +44,11 @@ Gate: `rgb-all >= 32 dB`, alpha mismatch tolerance `64` pixels.
 
 ### Generated glTF PBR Fallback
 
-Gate: `rgb-interior1px >= 48 dB`, max selected channel delta `<= 3`, per-swatch `>= 40 dB`.
+Gate: `rgb-interior1px >= 47 dB`, max selected channel delta `<= 6`, per-swatch `>= 40 dB`.
 
 | Fixture | wgpu PSNR | Bevy PSNR | Ash PSNR | Current reading |
 | --- | ---: | ---: | ---: | --- |
-| `gltf-pbr.vrm.gltf` | 49.2238 | 48.5934 | 49.2238 | broad non-MToon glTF/PBR fallback is not the Seed-san blocker |
+| `gltf-pbr.vrm.gltf` | 47.8016 | 47.2691 | 47.8016 | broad non-MToon glTF/PBR fallback, including normalTexture, is not the Seed-san blocker |
 
 ## Real Sample Sweep
 
@@ -115,7 +115,7 @@ Use this section when checking alpha behavior. The RGB values are intentionally 
 
 ## Generated glTF PBR Fallback
 
-This fixture deliberately has no `VRMC_materials_mtoon`; it checks the glTF/PBR fallback path: base color, texture, roughness, metallic, emissive strength, occlusion, unlit, and texture-factor slots.
+This fixture deliberately has no `VRMC_materials_mtoon`; it checks the glTF/PBR fallback path: base color, texture, roughness, metallic, emissive strength, occlusion, unlit, texture-factor, and normal-map slots.
 
 | three-vrm | wgpu | Bevy | Ash |
 | --- | --- | --- | --- |

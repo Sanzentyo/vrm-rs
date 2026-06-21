@@ -16,7 +16,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-const MATERIAL_COUNT: usize = 8;
+const MATERIAL_COUNT: usize = 9;
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -89,6 +89,12 @@ fn fixture_json() -> String {
                 "minFilter": 9728,
                 "wrapS": 33071,
                 "wrapT": 33071
+            },
+            {
+                "magFilter": 9729,
+                "minFilter": 9985,
+                "wrapS": 10497,
+                "wrapT": 10497
             }
         ],
         "images": image_views
@@ -101,7 +107,11 @@ fn fixture_json() -> String {
             .collect::<Vec<_>>(),
         "textures": (0..image_views.len())
             .map(|index| json!({
-                "sampler": if index == 0 { 0 } else { 1 },
+                "sampler": match index {
+                    0 => 0,
+                    2 => 2,
+                    _ => 1,
+                },
                 "source": index
             }))
             .collect::<Vec<_>>(),
@@ -294,6 +304,14 @@ fn pbr_materials() -> Vec<Value> {
             emissive: [0.02, 0.01, 0.0],
             ..PbrMaterialSpec::default()
         },
+        PbrMaterialSpec {
+            name: "pbr-normal-map",
+            base_texture: Some(0),
+            normal_texture: Some(2),
+            roughness: 0.657,
+            double_sided: false,
+            ..PbrMaterialSpec::default()
+        },
     ]
     .into_iter()
     .map(pbr_material)
@@ -305,12 +323,14 @@ struct PbrMaterialSpec {
     name: &'static str,
     base_color: [f32; 4],
     base_texture: Option<usize>,
+    normal_texture: Option<usize>,
     metallic: f32,
     roughness: f32,
     emissive: [f32; 3],
     emissive_strength: Option<f32>,
     occlusion_texture: Option<usize>,
     unlit: bool,
+    double_sided: bool,
 }
 
 impl Default for PbrMaterialSpec {
@@ -319,12 +339,14 @@ impl Default for PbrMaterialSpec {
             name: "pbr",
             base_color: [1.0, 1.0, 1.0, 1.0],
             base_texture: None,
+            normal_texture: None,
             metallic: 0.0,
             roughness: 1.0,
             emissive: [0.0, 0.0, 0.0],
             emissive_strength: None,
             occlusion_texture: None,
             unlit: false,
+            double_sided: true,
         }
     }
 }
@@ -333,7 +355,7 @@ fn pbr_material(spec: PbrMaterialSpec) -> Value {
     let mut material = json!({
         "name": spec.name,
         "alphaMode": "OPAQUE",
-        "doubleSided": true,
+        "doubleSided": spec.double_sided,
         "pbrMetallicRoughness": {
             "baseColorFactor": spec.base_color,
             "metallicFactor": spec.metallic,
@@ -343,6 +365,9 @@ fn pbr_material(spec: PbrMaterialSpec) -> Value {
     });
     if let Some(texture) = spec.base_texture {
         material["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": texture });
+    }
+    if let Some(texture) = spec.normal_texture {
+        material["normalTexture"] = json!({ "index": texture, "scale": 1.0 });
     }
     if let Some(texture) = spec.occlusion_texture {
         material["occlusionTexture"] = json!({ "index": texture, "strength": 0.65 });
@@ -370,6 +395,7 @@ fn mesh_buffer() -> Vec<u8> {
         (0.28, 0.66, 0.83, 1.22),
         (-0.82, -0.44, 1.41, 1.75),
         (-0.27, 0.11, 1.41, 1.75),
+        (0.28, 0.66, 1.41, 1.75),
     ];
     let normal_vectors = [
         [0.0f32, 0.0, 1.0],
@@ -378,6 +404,7 @@ fn mesh_buffer() -> Vec<u8> {
         [0.70710677, 0.0, 0.70710677],
         [0.0, 0.4082483, 0.9128709],
         [0.0, -0.4082483, 0.9128709],
+        [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
     ];
@@ -413,7 +440,7 @@ fn mesh_buffer() -> Vec<u8> {
 }
 
 fn texture_pngs() -> Vec<Vec<u8>> {
-    vec![gradient_png(), occlusion_png()]
+    vec![gradient_png(), occlusion_png(), normal_png()]
 }
 
 fn gradient_png() -> Vec<u8> {
@@ -440,6 +467,29 @@ fn occlusion_png() -> Vec<u8> {
             (0..4).flat_map(move |x| {
                 let value = if (x + y) % 2 == 0 { 96 } else { 224 };
                 [value, value, value, 255]
+            })
+        })
+        .collect::<Vec<_>>();
+    png_rgba(4, 4, &rgba)
+}
+
+fn normal_png() -> Vec<u8> {
+    let rgba = (0..4)
+        .flat_map(|y| {
+            (0..4).flat_map(move |x| {
+                let red = match x {
+                    0 => 84,
+                    1 => 112,
+                    2 => 144,
+                    _ => 172,
+                };
+                let green = match y {
+                    0 => 172,
+                    1 => 144,
+                    2 => 112,
+                    _ => 84,
+                };
+                [red, green, 255, 255]
             })
         })
         .collect::<Vec<_>>();

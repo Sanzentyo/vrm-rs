@@ -638,6 +638,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/generate-uv-boundary-fixture.rs",
     "tools/render-parity/generate-uv-island-ownership-fixture.rs",
     "tools/render-parity/inspect-imqraw-deltas.rs",
+    "tools/render-parity/inspect-pbr-material.rs",
     "tools/render-parity/inspect-mtoon-fixtures.rs",
     "tools/render-parity/join-owner-render-hotspots.rs",
     "tools/render-parity/map-render-hotspots.rs",
