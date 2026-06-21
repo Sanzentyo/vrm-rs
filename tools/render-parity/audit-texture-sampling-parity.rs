@@ -113,6 +113,8 @@ struct MaterialBucket {
     edge_distance_lte_050px: u64,
     same_material_as_expected: u64,
     same_triangle_as_expected: u64,
+    best_sampling_modes_for_actual: Vec<ModeCount>,
+    best_sampling_modes_for_expected: Vec<ModeCount>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -175,7 +177,7 @@ struct ModeAccumulator {
     distance_sum: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct MaterialAccumulator {
     count: u64,
     actual_cpu_closer: u64,
@@ -188,6 +190,8 @@ struct MaterialAccumulator {
     edge_distance_lte_050px: u64,
     same_material_as_expected: u64,
     same_triangle_as_expected: u64,
+    actual_modes: BTreeMap<String, ModeAccumulator>,
+    expected_modes: BTreeMap<String, ModeAccumulator>,
 }
 
 impl Accumulator {
@@ -254,6 +258,7 @@ impl Accumulator {
                 .entry(surface.material_name)
                 .or_default()
                 .add(
+                    hotspot,
                     actual_cpu,
                     expected_cpu,
                     edge,
@@ -325,6 +330,7 @@ impl Accumulator {
 impl MaterialAccumulator {
     fn add(
         &mut self,
+        hotspot: &Value,
         actual_cpu: Option<f64>,
         expected_cpu: Option<f64>,
         edge: Option<f64>,
@@ -349,6 +355,38 @@ impl MaterialAccumulator {
         self.edge_distance_lte_050px += u64::from(edge.is_some_and(|edge| edge <= 0.50));
         self.same_material_as_expected += u64::from(same_material_as_expected);
         self.same_triangle_as_expected += u64::from(same_triangle_as_expected);
+        if let Some(best) = best_sampling_mode(
+            hotspot,
+            "/frontmost_texture_sampling_variants",
+            "actual_rgb_distance",
+        ) {
+            self.actual_modes
+                .entry(best.mode)
+                .and_modify(|entry| {
+                    entry.count += 1;
+                    entry.distance_sum += best.distance;
+                })
+                .or_insert(ModeAccumulator {
+                    count: 1,
+                    distance_sum: best.distance,
+                });
+        }
+        if let Some(best) = best_sampling_mode(
+            hotspot,
+            "/frontmost_texture_sampling_variants",
+            "expected_rgb_distance",
+        ) {
+            self.expected_modes
+                .entry(best.mode)
+                .and_modify(|entry| {
+                    entry.count += 1;
+                    entry.distance_sum += best.distance;
+                })
+                .or_insert(ModeAccumulator {
+                    count: 1,
+                    distance_sum: best.distance,
+                });
+        }
     }
 
     fn finish(self, material_name: String) -> MaterialBucket {
@@ -369,6 +407,8 @@ impl MaterialAccumulator {
             edge_distance_lte_050px: self.edge_distance_lte_050px,
             same_material_as_expected: self.same_material_as_expected,
             same_triangle_as_expected: self.same_triangle_as_expected,
+            best_sampling_modes_for_actual: mode_counts(self.actual_modes),
+            best_sampling_modes_for_expected: mode_counts(self.expected_modes),
         }
     }
 }
@@ -774,11 +814,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         "- Top materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | Edge <=0.50px | Same expected mat/tri |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in bucket.material_buckets.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {} | {}/{} |\n",
+            "| {} | {} | {}/{}/{} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             material.actual_cpu_closer,
@@ -789,6 +829,8 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
             material.edge_distance_lte_050px,
             material.same_material_as_expected,
             material.same_triangle_as_expected,
+            fmt_modes(&material.best_sampling_modes_for_actual),
+            fmt_modes(&material.best_sampling_modes_for_expected),
         ));
     }
     output.push('\n');

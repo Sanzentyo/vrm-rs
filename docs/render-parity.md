@@ -2859,9 +2859,13 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   (`19/0`, mean `69.7837 / 103.6785`), and Ash selected `backpack_nm` is
   similarly actual-closer (`23/0`, mean `72.4624 / 104.2864`). Conversely,
   selected `huku_bake`, `body_nm`, and `arm_plastic` contain expected-closer
-  buckets even after owner coverage is complete. Use these material buckets to
-  target exact base-color/material evaluation per named surface instead of
-  changing a global texture origin, mip, or repeated frontier policy.
+  buckets even after owner coverage is complete. The per-material best sampling
+  mode split also rejects a single global origin switch: `backpack_nm`
+  expected-best often prefers bottom-left variants, but `body_nm`,
+  `huku_bake`, and `arm_plastic` retain expected-closer rows whose best modes
+  are still mostly top-left variants. Use these material buckets to target exact
+  base-color/material evaluation per named surface instead of changing a global
+  texture origin, mip, or repeated frontier policy.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
