@@ -112,6 +112,13 @@ struct BucketStats {
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_actual_within_8: u64,
+    manifest_sample_expected_within_8: u64,
+    manifest_sample_actual_near_expected_far: u64,
+    manifest_sample_actual_far_expected_near: u64,
+    manifest_sample_both_far: u64,
     mean_best_sampling_actual_rgb_distance: Option<f64>,
     mean_best_sampling_expected_rgb_distance: Option<f64>,
     best_sampling_actual_within_4: u64,
@@ -186,6 +193,13 @@ struct MaterialBucket {
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_actual_within_8: u64,
+    manifest_sample_expected_within_8: u64,
+    manifest_sample_actual_near_expected_far: u64,
+    manifest_sample_actual_far_expected_near: u64,
+    manifest_sample_both_far: u64,
     mean_best_sampling_actual_rgb_distance: Option<f64>,
     mean_best_sampling_expected_rgb_distance: Option<f64>,
     best_sampling_actual_within_4: u64,
@@ -308,6 +322,13 @@ struct Accumulator {
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_actual_within_8: u64,
+    manifest_sample_expected_within_8: u64,
+    manifest_sample_actual_near_expected_far: u64,
+    manifest_sample_actual_far_expected_near: u64,
+    manifest_sample_both_far: u64,
     best_sampling_actual_distance_sum: f64,
     best_sampling_actual_distance_count: u64,
     best_sampling_expected_distance_sum: f64,
@@ -386,6 +407,13 @@ struct MaterialAccumulator {
     manifest_sample_actual_closer: u64,
     manifest_sample_expected_closer: u64,
     manifest_sample_tied: u64,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_actual_within_8: u64,
+    manifest_sample_expected_within_8: u64,
+    manifest_sample_actual_near_expected_far: u64,
+    manifest_sample_actual_far_expected_near: u64,
+    manifest_sample_both_far: u64,
     best_sampling_actual_distance_sum: f64,
     best_sampling_actual_distance_count: u64,
     best_sampling_expected_distance_sum: f64,
@@ -700,6 +728,15 @@ impl Accumulator {
             manifest_sample_actual_closer: self.manifest_sample_actual_closer,
             manifest_sample_expected_closer: self.manifest_sample_expected_closer,
             manifest_sample_tied: self.manifest_sample_tied,
+            manifest_sample_actual_within_1_5: self.manifest_sample_actual_within_1_5,
+            manifest_sample_expected_within_1_5: self.manifest_sample_expected_within_1_5,
+            manifest_sample_actual_within_8: self.manifest_sample_actual_within_8,
+            manifest_sample_expected_within_8: self.manifest_sample_expected_within_8,
+            manifest_sample_actual_near_expected_far: self
+                .manifest_sample_actual_near_expected_far,
+            manifest_sample_actual_far_expected_near: self
+                .manifest_sample_actual_far_expected_near,
+            manifest_sample_both_far: self.manifest_sample_both_far,
             mean_best_sampling_actual_rgb_distance: mean(
                 self.best_sampling_actual_distance_sum,
                 self.best_sampling_actual_distance_count,
@@ -799,10 +836,23 @@ impl Accumulator {
         if let Some(distance) = actual_distance {
             self.manifest_sample_actual_distance_sum += distance;
             self.manifest_sample_actual_distance_count += 1;
+            self.manifest_sample_actual_within_1_5 += u64::from(distance <= 1.5);
+            self.manifest_sample_actual_within_8 += u64::from(distance <= 8.0);
         }
         if let Some(distance) = expected_distance {
             self.manifest_sample_expected_distance_sum += distance;
             self.manifest_sample_expected_distance_count += 1;
+            self.manifest_sample_expected_within_1_5 += u64::from(distance <= 1.5);
+            self.manifest_sample_expected_within_8 += u64::from(distance <= 8.0);
+        }
+        if let Some((actual_distance, expected_distance)) = actual_distance.zip(expected_distance)
+        {
+            self.manifest_sample_actual_near_expected_far +=
+                u64::from(actual_distance <= 1.5 && expected_distance > 32.0);
+            self.manifest_sample_actual_far_expected_near +=
+                u64::from(actual_distance > 32.0 && expected_distance <= 1.5);
+            self.manifest_sample_both_far +=
+                u64::from(actual_distance > 32.0 && expected_distance > 32.0);
         }
         if let Some(actual) = actual {
             add_rgb_delta(
@@ -1084,6 +1134,15 @@ impl MaterialAccumulator {
             manifest_sample_actual_closer: self.manifest_sample_actual_closer,
             manifest_sample_expected_closer: self.manifest_sample_expected_closer,
             manifest_sample_tied: self.manifest_sample_tied,
+            manifest_sample_actual_within_1_5: self.manifest_sample_actual_within_1_5,
+            manifest_sample_expected_within_1_5: self.manifest_sample_expected_within_1_5,
+            manifest_sample_actual_within_8: self.manifest_sample_actual_within_8,
+            manifest_sample_expected_within_8: self.manifest_sample_expected_within_8,
+            manifest_sample_actual_near_expected_far: self
+                .manifest_sample_actual_near_expected_far,
+            manifest_sample_actual_far_expected_near: self
+                .manifest_sample_actual_far_expected_near,
+            manifest_sample_both_far: self.manifest_sample_both_far,
             mean_best_sampling_actual_rgb_distance: mean(
                 self.best_sampling_actual_distance_sum,
                 self.best_sampling_actual_distance_count,
@@ -1179,10 +1238,23 @@ impl MaterialAccumulator {
         if let Some(distance) = actual_distance {
             self.manifest_sample_actual_distance_sum += distance;
             self.manifest_sample_actual_distance_count += 1;
+            self.manifest_sample_actual_within_1_5 += u64::from(distance <= 1.5);
+            self.manifest_sample_actual_within_8 += u64::from(distance <= 8.0);
         }
         if let Some(distance) = expected_distance {
             self.manifest_sample_expected_distance_sum += distance;
             self.manifest_sample_expected_distance_count += 1;
+            self.manifest_sample_expected_within_1_5 += u64::from(distance <= 1.5);
+            self.manifest_sample_expected_within_8 += u64::from(distance <= 8.0);
+        }
+        if let Some((actual_distance, expected_distance)) = actual_distance.zip(expected_distance)
+        {
+            self.manifest_sample_actual_near_expected_far +=
+                u64::from(actual_distance <= 1.5 && expected_distance > 32.0);
+            self.manifest_sample_actual_far_expected_near +=
+                u64::from(actual_distance > 32.0 && expected_distance <= 1.5);
+            self.manifest_sample_both_far +=
+                u64::from(actual_distance > 32.0 && expected_distance > 32.0);
         }
         if let Some(actual) = actual {
             add_rgb_delta(
@@ -1973,10 +2045,17 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         fmt_opt_rgb_delta(bucket.mean_expected_minus_texture_as_linear_srgb_rgb_delta)
     ));
     output.push_str(&format!(
-        "- Manifest sample closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; mean A-M / E-M `{}` / `{}`\n",
+        "- Manifest sample closer actual/expected/tie: `{}` / `{}` / `{}`; within1.5 A/E `{}` / `{}`; within8 A/E `{}` / `{}`; near/far A/E `{}` / `{}`; both far `{}`; mean A/E `{}` / `{}`; mean A-M / E-M `{}` / `{}`\n",
         bucket.manifest_sample_actual_closer,
         bucket.manifest_sample_expected_closer,
         bucket.manifest_sample_tied,
+        bucket.manifest_sample_actual_within_1_5,
+        bucket.manifest_sample_expected_within_1_5,
+        bucket.manifest_sample_actual_within_8,
+        bucket.manifest_sample_expected_within_8,
+        bucket.manifest_sample_actual_near_expected_far,
+        bucket.manifest_sample_actual_far_expected_near,
+        bucket.manifest_sample_both_far,
         fmt_opt(bucket.mean_manifest_sample_actual_rgb_distance),
         fmt_opt(bucket.mean_manifest_sample_expected_rgb_distance),
         fmt_opt_rgb_delta(bucket.mean_actual_minus_manifest_sample_rgb_delta),
@@ -2020,11 +2099,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture-as-linear A/E/T | Mean Linear A/E | Mean A-L / E-L | Manifest A/E/T | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture-as-linear A/E/T | Mean Linear A/E | Mean A-L / E-L | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             fmt_shading_models(&material.shading_model_counts),
@@ -2056,6 +2135,11 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             material.manifest_sample_actual_closer,
             material.manifest_sample_expected_closer,
             material.manifest_sample_tied,
+            material.manifest_sample_actual_within_1_5,
+            material.manifest_sample_expected_within_1_5,
+            material.manifest_sample_actual_near_expected_far,
+            material.manifest_sample_actual_far_expected_near,
+            material.manifest_sample_both_far,
             fmt_opt(material.mean_manifest_sample_actual_rgb_distance),
             fmt_opt(material.mean_manifest_sample_expected_rgb_distance),
             fmt_opt_rgb_delta(material.mean_actual_minus_manifest_sample_rgb_delta),
@@ -2081,12 +2165,12 @@ fn push_material_draw_bucket_markdown(
     materials: &[SelectionMaterialDrawBucket],
 ) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Draw key | Count | Models | Manifest A/E/T | Mean Manifest A/E | Mean A-M / E-M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
-    output.push_str("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Draw key | Count | Models | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
+    output.push_str("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(12) {
         let stats = &material.stats;
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
+            "| {} | {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
             material.material_name,
             material.draw_key,
             stats.count,
@@ -2094,6 +2178,11 @@ fn push_material_draw_bucket_markdown(
             stats.manifest_sample_actual_closer,
             stats.manifest_sample_expected_closer,
             stats.manifest_sample_tied,
+            stats.manifest_sample_actual_within_1_5,
+            stats.manifest_sample_expected_within_1_5,
+            stats.manifest_sample_actual_near_expected_far,
+            stats.manifest_sample_actual_far_expected_near,
+            stats.manifest_sample_both_far,
             fmt_opt(stats.mean_manifest_sample_actual_rgb_distance),
             fmt_opt(stats.mean_manifest_sample_expected_rgb_distance),
             fmt_opt_rgb_delta(stats.mean_actual_minus_manifest_sample_rgb_delta),
@@ -2321,6 +2410,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
     assert_eq!(report.selected.frontmost_base_texture_expected_closer, 0);
     assert_eq!(report.selected.manifest_sample_expected_closer, 1);
+    assert_eq!(report.selected.manifest_sample_actual_within_1_5, 0);
+    assert_eq!(report.selected.manifest_sample_expected_within_1_5, 0);
+    assert_eq!(report.selected.manifest_sample_actual_within_8, 0);
+    assert_eq!(report.selected.manifest_sample_expected_within_8, 1);
+    assert_eq!(report.selected.manifest_sample_actual_near_expected_far, 0);
+    assert_eq!(report.selected.manifest_sample_actual_far_expected_near, 0);
+    assert_eq!(report.selected.manifest_sample_both_far, 0);
     assert_close(
         report.selected.mean_manifest_sample_actual_rgb_distance,
         rgb_distance([12, 10, 10, 255], [100, 100, 100, 255]),

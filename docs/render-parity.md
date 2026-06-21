@@ -3046,6 +3046,14 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   Seed-san artifacts, Bevy `backpack_nm` sample rows are often in the first
   category, while wgpu/Ash still include the second category on the same
   draw-key families.
+- The texture audit also reports selected-sample reproduction thresholds:
+  `<=1.5`, `<=8`, actual-near/expected-far, actual-far/expected-near, and
+  both-far. In the current expanded Seed-san artifacts, Bevy has many
+  actual-near/expected-far rows (`41` selected samples within `1.5` of actual
+  and `39` actual-near/expected-far), while wgpu/Ash have no actual-near
+  selected samples and many both-far rows (`37` / `44`). This separates Bevy's
+  chosen-sample-vs-three-vrm material/fill/color work from wgpu/Ash backend
+  sample reproduction work.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
