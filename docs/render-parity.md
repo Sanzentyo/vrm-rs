@@ -2839,6 +2839,13 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   this as evidence for a broader owner/fill/source-order model first, then
   address backend material sampling only where selected-pixel buckets isolate
   it.
+- Use `just render-parity-seed-base-color-flat32-gradient-owner-base-color-join`
+  when comparing current images by eye. The join now carries browser-side
+  base-color projection draw order (`drawIndex`, mesh order, group order, source
+  offset) and reports same-stream frontmost-to-nearest-rendered base-color draw
+  order. The current Seed-san split is same `24`, nearest-after `23`,
+  nearest-before `17`, so the next renderer change should not assume a simple
+  later-draw override rule.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are

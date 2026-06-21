@@ -891,6 +891,11 @@ function capturePage(options) {
   );
 
   const compactOwnerCandidate = (candidate) => candidate ? {
+    drawIndex: candidate.drawIndex,
+    meshOrder: candidate.meshOrder,
+    groupOrder: candidate.groupOrder,
+    groupStart: candidate.groupStart,
+    sourceOffset: candidate.sourceOffset,
     meshName: candidate.meshName,
     meshUuid: candidate.meshUuid,
     materialIndex: candidate.materialIndex,
@@ -981,14 +986,15 @@ function capturePage(options) {
     const vertex = new THREE.Vector3();
     const clip = new THREE.Vector4();
     const projectedTriangles = [];
-    for (const mesh of meshes) {
+    let drawIndex = 0;
+    for (const [meshOrder, mesh] of meshes.entries()) {
       const geometry = mesh.geometry;
       const position = geometry.attributes.position;
       const index = geometry.index;
       const groups = geometry.groups.length > 0
         ? geometry.groups
         : [{ start: 0, count: index ? index.count : position.count, materialIndex: 0 }];
-      for (const group of groups) {
+      for (const [groupOrder, group] of groups.entries()) {
         const material = materialAt(mesh, group.materialIndex);
         const uvAttribute = uvAttributeForMaterial(geometry, material);
         for (let offset = group.start; offset + 2 < group.start + group.count; offset += 3) {
@@ -1005,6 +1011,11 @@ function capturePage(options) {
           const triangle = Math.floor((offset - group.start) / 3);
           const owner = ownerIdForCandidate(mesh, materialIndex, triangle);
           projectedTriangles.push({
+            drawIndex,
+            meshOrder,
+            groupOrder,
+            groupStart: group.start,
+            sourceOffset: offset,
             meshName: mesh.name ?? '',
             meshUuid: mesh.uuid,
             materialIndex,
@@ -1019,6 +1030,7 @@ function capturePage(options) {
             b,
             c,
           });
+          drawIndex += 1;
         }
       }
     }
@@ -1040,6 +1052,11 @@ function capturePage(options) {
         ];
         const baseColor = projectedBaseColor(projected.material, mapUv, hotspot.expected?.[3] ?? 255);
         candidates.push({
+          drawIndex: projected.drawIndex,
+          meshOrder: projected.meshOrder,
+          groupOrder: projected.groupOrder,
+          groupStart: projected.groupStart,
+          sourceOffset: projected.sourceOffset,
           meshName: projected.meshName,
           meshUuid: projected.meshUuid,
           materialIndex: projected.materialIndex,

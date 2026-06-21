@@ -56,6 +56,7 @@ struct JoinReport {
     owner_to_nearest_rendered_texture_as_linear_materials: BTreeMap<String, u64>,
     frontmost_to_nearest_rendered_base_color_materials: BTreeMap<String, u64>,
     frontmost_to_nearest_rendered_texture_as_linear_materials: BTreeMap<String, u64>,
+    frontmost_to_nearest_rendered_base_color_draw_order: BTreeMap<String, u64>,
     owner_material_buckets: Vec<MaterialBucket>,
     top_owner_surface_color_deltas: Vec<JoinedHotspot>,
 }
@@ -96,6 +97,9 @@ struct JoinedHotspot {
     base_frontmost: Option<SurfaceSummary>,
     nearest_rendered_base_color: Option<SurfaceSummary>,
     nearest_rendered_texture_as_linear: Option<SurfaceSummary>,
+    base_frontmost_draw_index: Option<u64>,
+    nearest_rendered_base_color_draw_index: Option<u64>,
+    frontmost_to_nearest_rendered_base_color_draw_delta: Option<i64>,
     base_frontmost_projected_color: Option<[u64; 4]>,
     base_frontmost_texture_as_linear_color: Option<[u64; 4]>,
     base_color_rendered_rgb_distance: Option<f64>,
@@ -171,6 +175,7 @@ fn join_reports(
         owner_to_nearest_rendered_texture_as_linear_materials: BTreeMap::new(),
         frontmost_to_nearest_rendered_base_color_materials: BTreeMap::new(),
         frontmost_to_nearest_rendered_texture_as_linear_materials: BTreeMap::new(),
+        frontmost_to_nearest_rendered_base_color_draw_order: BTreeMap::new(),
         owner_material_buckets: Vec::new(),
         top_owner_surface_color_deltas: Vec::new(),
     };
@@ -197,6 +202,8 @@ fn join_reports(
         let frontmost = surface_at(base_hotspot, "/frontmost");
         let nearest_base = surface_at(base_hotspot, "/nearestRenderedBaseColor");
         let nearest_linear = surface_at(base_hotspot, "/nearestRenderedTextureAsLinearBaseColor");
+        let frontmost_draw_index = u64_at(base_hotspot, "/frontmost/drawIndex");
+        let nearest_base_draw_index = u64_at(base_hotspot, "/nearestRenderedBaseColor/drawIndex");
 
         bump_pair(
             &mut report.owner_to_base_frontmost_materials,
@@ -222,6 +229,11 @@ fn join_reports(
             &mut report.frontmost_to_nearest_rendered_texture_as_linear_materials,
             frontmost.as_ref(),
             nearest_linear.as_ref(),
+        );
+        bump_draw_relation(
+            &mut report.frontmost_to_nearest_rendered_base_color_draw_order,
+            frontmost_draw_index,
+            nearest_base_draw_index,
         );
 
         let material_match = owner_surface
@@ -284,6 +296,12 @@ fn join_reports(
             base_frontmost: frontmost.as_ref().map(SurfaceSummary::from),
             nearest_rendered_base_color: nearest_base.as_ref().map(SurfaceSummary::from),
             nearest_rendered_texture_as_linear: nearest_linear.as_ref().map(SurfaceSummary::from),
+            base_frontmost_draw_index: frontmost_draw_index,
+            nearest_rendered_base_color_draw_index: nearest_base_draw_index,
+            frontmost_to_nearest_rendered_base_color_draw_delta: draw_delta(
+                frontmost_draw_index,
+                nearest_base_draw_index,
+            ),
             base_frontmost_projected_color: rgba_at(base_hotspot, "/frontmost/projectedBaseColorSrgb"),
             base_frontmost_texture_as_linear_color: rgba_at(
                 base_hotspot,
@@ -384,6 +402,10 @@ fn f64_at(value: &Value, pointer: &str) -> Option<f64> {
     value.pointer(pointer)?.as_f64()
 }
 
+fn u64_at(value: &Value, pointer: &str) -> Option<u64> {
+    value.pointer(pointer)?.as_u64()
+}
+
 fn bump_pair(map: &mut BTreeMap<String, u64>, left: Option<&Surface>, right: Option<&Surface>) {
     let key = format!(
         "{} -> {}",
@@ -394,6 +416,23 @@ fn bump_pair(map: &mut BTreeMap<String, u64>, left: Option<&Surface>, right: Opt
             .unwrap_or("none")
     );
     *map.entry(key).or_default() += 1;
+}
+
+fn bump_draw_relation(map: &mut BTreeMap<String, u64>, left: Option<u64>, right: Option<u64>) {
+    *map.entry(draw_relation(left, right)).or_default() += 1;
+}
+
+fn draw_relation(left: Option<u64>, right: Option<u64>) -> String {
+    match draw_delta(left, right) {
+        Some(0) => "same".to_owned(),
+        Some(delta) if delta > 0 => "nearest-after".to_owned(),
+        Some(_) => "nearest-before".to_owned(),
+        None => "missing".to_owned(),
+    }
+}
+
+fn draw_delta(left: Option<u64>, right: Option<u64>) -> Option<i64> {
+    Some(i64::try_from(right?).ok()? - i64::try_from(left?).ok()?)
 }
 
 fn mean(sum: f64, count: u64) -> Option<f64> {
@@ -443,6 +482,11 @@ fn markdown_report(report: &JoinReport) -> String {
         "Frontmost To Nearest Rendered Base-Color Materials",
         &report.frontmost_to_nearest_rendered_base_color_materials,
     );
+    write_top_counts(
+        &mut output,
+        "Frontmost To Nearest Rendered Base-Color Draw Order",
+        &report.frontmost_to_nearest_rendered_base_color_draw_order,
+    );
     output.push_str("## Owner Material Buckets\n\n");
     output.push_str("| Material | Count | Front material/surface matches | Mean base / linear distance |\n");
     output.push_str("| --- | ---: | ---: | ---: |\n");
@@ -458,16 +502,17 @@ fn markdown_report(report: &JoinReport) -> String {
         ));
     }
     output.push_str("\n## Top Owner-Surface Color Deltas\n\n");
-    output.push_str("| Pixel | Owner | Frontmost | Nearest rendered | Base / linear distance | Rendered | Projected / linear |\n");
-    output.push_str("| --- | --- | --- | --- | ---: | --- | --- |\n");
+    output.push_str("| Pixel | Owner | Frontmost | Nearest rendered | Draw delta frontmost | Base / linear distance | Rendered | Projected / linear |\n");
+    output.push_str("| --- | --- | --- | --- | ---: | ---: | --- | --- |\n");
     for line in &report.top_owner_surface_color_deltas {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} / {} | {} | {} / {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} / {} | {} | {} / {} |\n",
             line.x,
             line.y,
             fmt_surface(line.owner_surface.as_ref()),
             fmt_surface(line.base_frontmost.as_ref()),
             fmt_surface(line.nearest_rendered_base_color.as_ref()),
+            fmt_i64(line.frontmost_to_nearest_rendered_base_color_draw_delta),
             fmt_opt(line.base_color_rendered_rgb_distance),
             fmt_opt(line.texture_as_linear_rendered_rgb_distance),
             fmt_rgba(line.rendered_pixel_rgba),
@@ -506,6 +551,12 @@ fn fmt_rgba(value: Option<[u64; 4]>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn fmt_i64(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn write_file(path: &Path, content: &str) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
@@ -534,12 +585,13 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "frontmost": {
                 "materialName": "body:vrm-rs-flat-diagnostic",
                 "triangle": 7,
+                "drawIndex": 11,
                 "projectedBaseColorSrgb": [10, 11, 12, 255],
                 "projectedBaseColorTextureAsLinearSrgb": [18, 19, 20, 255],
                 "projectedBaseColorRenderedPixelRgbDistance": 17.3205,
                 "projectedBaseColorTextureAsLinearRenderedPixelRgbDistance": 3.4641
             },
-            "nearestRenderedBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7},
+            "nearestRenderedBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7, "drawIndex": 12},
             "nearestRenderedTextureAsLinearBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7}
         }]}}}
     });
@@ -548,6 +600,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(report.owner_matches_base_frontmost_surface, 1);
     assert_eq!(
         report.owner_to_base_frontmost_materials.get("body -> body"),
+        Some(&1)
+    );
+    assert_eq!(
+        report
+            .frontmost_to_nearest_rendered_base_color_draw_order
+            .get("nearest-after"),
         Some(&1)
     );
     assert_eq!(report.owner_material_buckets[0].material_name, "body");
