@@ -29,6 +29,22 @@
   rows need selected-surface material or resolve input inspection, whereas
   `body_nm` should first check whether the backend is truly adopting the
   browser-selected surface before shading.
+- Connected those texture-audit probe recommendations to
+  `tools/render-parity/audit-owner-sample-execution.rs` via `--texture-audit`.
+  The execution audit now reports `Recommended Probe Execution`, joining each
+  recommended material/draw key with renderer draw-selection routing,
+  actual/sample tolerance, expected/sample tolerance, and actual-vs-sample
+  expected closeness. `just
+  render-parity-seed-base-color-flat32-owner-sample-execution-audit` now
+  refreshes the current and expanded texture audits before generating execution
+  reports, so the probe table is not stale. Re-running the recipe on the current
+  Seed-san artifacts shows all recommended expanded probes are routed to their
+  renderer draw selections (`0` missing on wgpu/Bevy/Ash). `backpack_nm` remains
+  mostly actual-closer than the manifest sample despite the
+  `selected_sample_and_renderer_both_far` texture classification, which points
+  away from draw-routing loss and toward material/color evaluation. `body_nm`
+  keeps a larger sample-closer bucket, so it remains the sharper owner/sample
+  adoption sentinel.
 - Strengthened the generated glTF/PBR fallback guard toward the real
   `backpack_nm` blocker. The former broad normal-map swatch is now
   `pbr-backpack-like`, combining a mipped base texture, normal texture,

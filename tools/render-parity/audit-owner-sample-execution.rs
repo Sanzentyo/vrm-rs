@@ -37,6 +37,8 @@ struct Options {
     actual_rgba_json: Option<PathBuf>,
     #[arg(long)]
     expected_rgba_json: Option<PathBuf>,
+    #[arg(long)]
+    texture_audit: Option<PathBuf>,
     #[arg(long, default_value_t = 1.5)]
     tolerance: f64,
     #[arg(long)]
@@ -76,6 +78,7 @@ struct AuditReport {
     manifest: String,
     actual_rgba_json: String,
     expected_rgba_json: Option<String>,
+    texture_audit: Option<String>,
     tolerance: f64,
     totals: AuditBucket,
     by_selection_source: BTreeMap<String, AuditBucket>,
@@ -85,6 +88,7 @@ struct AuditReport {
     sample_closer_by_draw: Vec<SampleCloserBucket>,
     sample_closer_by_material_draw: Vec<SampleCloserBucket>,
     draw_selection_routing: Option<DrawSelectionAudit>,
+    probe_execution: Vec<ProbeExecutionBucket>,
     top_actual_sample_misses: Vec<AuditRow>,
     top_sample_closer_to_expected: Vec<AuditRow>,
 }
@@ -145,6 +149,55 @@ struct SampleCloserBucket {
     mean_expected_sample_distance: f64,
     mean_actual_expected_distance: f64,
     top_pixel: Option<AuditRow>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ProbeExecutionBucket {
+    material_name: String,
+    draw_key: String,
+    classification: String,
+    action: String,
+    entries: u64,
+    routed_entries: Option<u64>,
+    missing_routed_entries: Option<u64>,
+    actual_sample_within_tolerance: u64,
+    expected_sample_within_tolerance: u64,
+    actual_closer_to_expected_than_sample: u64,
+    sample_closer_to_expected_than_actual: u64,
+    actual_sample_expected_tie: u64,
+    mean_actual_sample_distance: Option<f64>,
+    mean_expected_sample_distance: Option<f64>,
+    mean_actual_expected_distance: Option<f64>,
+    top_actual_sample_miss: Option<AuditRow>,
+    top_sample_closer_to_expected: Option<AuditRow>,
+}
+
+#[derive(Clone, Debug)]
+struct ProbeDefinition {
+    material_name: String,
+    draw_key: String,
+    classification: String,
+    action: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProbeExecutionAccumulator {
+    entries: u64,
+    routed_entries: u64,
+    missing_routed_entries: u64,
+    actual_sample_within_tolerance: u64,
+    expected_sample_within_tolerance: u64,
+    actual_closer_to_expected_than_sample: u64,
+    sample_closer_to_expected_than_actual: u64,
+    actual_sample_expected_tie: u64,
+    actual_sample_distance_sum: f64,
+    actual_sample_distance_count: u64,
+    expected_sample_distance_sum: f64,
+    expected_sample_distance_count: u64,
+    actual_expected_distance_sum: f64,
+    actual_expected_distance_count: u64,
+    top_actual_sample_miss: Option<AuditRow>,
+    top_sample_closer_to_expected: Option<AuditRow>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -247,14 +300,21 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .as_ref()
         .map(|path| read_rgba_json(path))
         .transpose()?;
+    let texture_audit = if let Some(path) = &options.texture_audit {
+        Some(serde_json::from_str::<Value>(&fs::read_to_string(path)?)?)
+    } else {
+        None
+    };
     let report = audit(
         manifest_path,
         actual_path,
         options.expected_rgba_json.as_deref(),
+        options.texture_audit.as_deref(),
         options.tolerance,
         &manifest,
         &actual,
         expected.as_ref(),
+        texture_audit.as_ref(),
     )?;
     let json = format!("{}\n", serde_json::to_string_pretty(&report)?);
     if let Some(path) = &options.json_out {
@@ -272,12 +332,18 @@ fn audit(
     manifest_path: &Path,
     actual_path: &Path,
     expected_path: Option<&Path>,
+    texture_audit_path: Option<&Path>,
     tolerance: f64,
     manifest: &Value,
     actual: &RgbaJsonImage,
     expected: Option<&RgbaJsonImage>,
+    texture_audit: Option<&Value>,
 ) -> Result<AuditReport, Box<dyn Error>> {
     let entries = manifest_entries(manifest)?;
+    let probe_definitions = texture_audit
+        .map(probe_definitions)
+        .transpose()?
+        .unwrap_or_default();
     let mut totals = BucketAccumulator::default();
     let mut by_selection_source = BTreeMap::<String, BucketAccumulator>::new();
     let mut by_material = BTreeMap::<String, BucketAccumulator>::new();
@@ -334,8 +400,16 @@ fn audit(
             row.draw_key.clone().unwrap_or_else(|| "unknown".to_owned())
         )
     });
-    let draw_selection_routing =
-        draw_selection_index(actual).map(|index| audit_draw_selection_routing(&rows, &index));
+    let draw_selection_index = draw_selection_index(actual);
+    let draw_selection_routing = draw_selection_index
+        .as_ref()
+        .map(|index| audit_draw_selection_routing(&rows, index));
+    let probe_execution = probe_execution_buckets(
+        &rows,
+        &probe_definitions,
+        draw_selection_index.as_ref(),
+        tolerance,
+    );
 
     let mut top_sample_closer_to_expected = rows
         .iter()
@@ -362,6 +436,7 @@ fn audit(
         manifest: display_path(manifest_path),
         actual_rgba_json: display_path(actual_path),
         expected_rgba_json: expected_path.map(display_path),
+        texture_audit: texture_audit_path.map(display_path),
         tolerance,
         totals: totals.finish(),
         by_selection_source: by_selection_source
@@ -377,9 +452,164 @@ fn audit(
         sample_closer_by_draw,
         sample_closer_by_material_draw,
         draw_selection_routing,
+        probe_execution,
         top_actual_sample_misses: rows,
         top_sample_closer_to_expected,
     })
+}
+
+fn probe_definitions(texture_audit: &Value) -> Result<Vec<ProbeDefinition>, Box<dyn Error>> {
+    let Some(values) = texture_audit
+        .get("recommended_probes")
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    values
+        .iter()
+        .map(|value| {
+            Ok(ProbeDefinition {
+                material_name: value
+                    .get("material_name")
+                    .and_then(Value::as_str)
+                    .ok_or("recommended_probes[].material_name must be a string")?
+                    .to_owned(),
+                draw_key: value
+                    .get("draw_key")
+                    .and_then(Value::as_str)
+                    .ok_or("recommended_probes[].draw_key must be a string")?
+                    .to_owned(),
+                classification: value
+                    .get("classification")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                action: value
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("inspect probe")
+                    .to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn probe_execution_buckets(
+    rows: &[AuditRow],
+    probes: &[ProbeDefinition],
+    draw_selection_index: Option<&DrawSelectionIndex>,
+    tolerance: f64,
+) -> Vec<ProbeExecutionBucket> {
+    probes
+        .iter()
+        .map(|probe| {
+            let mut accumulator = ProbeExecutionAccumulator::default();
+            for row in rows.iter().filter(|row| {
+                row.material_name == probe.material_name
+                    && row.draw_key.as_deref() == Some(probe.draw_key.as_str())
+            }) {
+                let routed = draw_selection_index
+                    .map(|index| index.entries.contains(&(probe.draw_key.clone(), row.x, row.y)));
+                accumulator.push(row, routed, tolerance);
+            }
+            accumulator.finish(probe, draw_selection_index.is_some())
+        })
+        .collect()
+}
+
+impl ProbeExecutionAccumulator {
+    fn push(&mut self, row: &AuditRow, routed: Option<bool>, tolerance: f64) {
+        self.entries += 1;
+        match routed {
+            Some(true) => self.routed_entries += 1,
+            Some(false) => self.missing_routed_entries += 1,
+            None => {}
+        }
+        if row
+            .actual_sample_distance
+            .is_some_and(|distance| distance <= tolerance)
+        {
+            self.actual_sample_within_tolerance += 1;
+        }
+        if row
+            .expected_sample_distance
+            .is_some_and(|distance| distance <= tolerance)
+        {
+            self.expected_sample_within_tolerance += 1;
+        }
+        match row.expected_closeness {
+            Some(ExpectedCloseness::Actual) => self.actual_closer_to_expected_than_sample += 1,
+            Some(ExpectedCloseness::Sample) => self.sample_closer_to_expected_than_actual += 1,
+            Some(ExpectedCloseness::Tie) => self.actual_sample_expected_tie += 1,
+            None => {}
+        }
+        if let Some(distance) = row.actual_sample_distance {
+            self.actual_sample_distance_sum += distance;
+            self.actual_sample_distance_count += 1;
+            if self
+                .top_actual_sample_miss
+                .as_ref()
+                .and_then(|row| row.actual_sample_distance)
+                .is_none_or(|current| distance > current)
+            {
+                self.top_actual_sample_miss = Some(row.clone());
+            }
+        }
+        if let Some(distance) = row.expected_sample_distance {
+            self.expected_sample_distance_sum += distance;
+            self.expected_sample_distance_count += 1;
+        }
+        if let Some(distance) = row.actual_expected_distance {
+            self.actual_expected_distance_sum += distance;
+            self.actual_expected_distance_count += 1;
+        }
+        if row.expected_closeness == Some(ExpectedCloseness::Sample)
+            && self
+                .top_sample_closer_to_expected
+                .as_ref()
+                .and_then(AuditRow::sample_expected_margin)
+                .is_none_or(|current| {
+                    row.sample_expected_margin().unwrap_or(f64::NEG_INFINITY) > current
+                })
+        {
+            self.top_sample_closer_to_expected = Some(row.clone());
+        }
+    }
+
+    fn finish(
+        self,
+        probe: &ProbeDefinition,
+        has_draw_selection_index: bool,
+    ) -> ProbeExecutionBucket {
+        ProbeExecutionBucket {
+            material_name: probe.material_name.clone(),
+            draw_key: probe.draw_key.clone(),
+            classification: probe.classification.clone(),
+            action: probe.action.clone(),
+            entries: self.entries,
+            routed_entries: has_draw_selection_index.then_some(self.routed_entries),
+            missing_routed_entries: has_draw_selection_index.then_some(self.missing_routed_entries),
+            actual_sample_within_tolerance: self.actual_sample_within_tolerance,
+            expected_sample_within_tolerance: self.expected_sample_within_tolerance,
+            actual_closer_to_expected_than_sample: self.actual_closer_to_expected_than_sample,
+            sample_closer_to_expected_than_actual: self.sample_closer_to_expected_than_actual,
+            actual_sample_expected_tie: self.actual_sample_expected_tie,
+            mean_actual_sample_distance: mean_option(
+                self.actual_sample_distance_sum,
+                self.actual_sample_distance_count,
+            ),
+            mean_expected_sample_distance: mean_option(
+                self.expected_sample_distance_sum,
+                self.expected_sample_distance_count,
+            ),
+            mean_actual_expected_distance: mean_option(
+                self.actual_expected_distance_sum,
+                self.actual_expected_distance_count,
+            ),
+            top_actual_sample_miss: self.top_actual_sample_miss,
+            top_sample_closer_to_expected: self.top_sample_closer_to_expected,
+        }
+    }
 }
 
 impl AuditRow {
@@ -783,6 +1013,9 @@ fn markdown(report: &AuditReport) -> String {
     if let Some(expected) = &report.expected_rgba_json {
         output.push_str(&format!("- Expected: `{expected}`\n"));
     }
+    if let Some(texture_audit) = &report.texture_audit {
+        output.push_str(&format!("- Texture audit: `{texture_audit}`\n"));
+    }
     output.push_str(&format!("- Tolerance: `{:.4}`\n\n", report.tolerance));
     output.push_str("## Totals\n\n");
     output.push_str(&bucket_table_header("Bucket"));
@@ -839,6 +1072,14 @@ fn markdown(report: &AuditReport) -> String {
     } else {
         output.push_str("The actual RGBA JSON does not include `renderer.ownerSampleCorrectionPlan.drawSelections` metadata.\n");
     }
+    if !report.probe_execution.is_empty() {
+        output.push_str("\n## Recommended Probe Execution\n\n");
+        output.push_str("| Material | Draw | Class | Entries | Routed/missing | Actual~sample | Expected~sample | Actual closer | Sample closer | Tie | Mean A-S | Mean E-S | Mean A-E | Top A-S miss | Top sample-closer |\n");
+        output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n");
+        for bucket in &report.probe_execution {
+            output.push_str(&probe_execution_bucket_row(bucket));
+        }
+    }
     output.push_str("\n## Top Actual-Sample Misses\n\n");
     output.push_str("| Pixel | Material | Source | Draw | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
     output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
@@ -852,6 +1093,42 @@ fn markdown(report: &AuditReport) -> String {
         output.push_str(&audit_row_table_row(row));
     }
     output
+}
+
+fn probe_execution_bucket_row(bucket: &ProbeExecutionBucket) -> String {
+    format!(
+        "| {} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        bucket.material_name,
+        bucket.draw_key,
+        bucket.classification,
+        bucket.entries,
+        fmt_opt_u64(bucket.routed_entries),
+        fmt_opt_u64(bucket.missing_routed_entries),
+        bucket.actual_sample_within_tolerance,
+        bucket.expected_sample_within_tolerance,
+        bucket.actual_closer_to_expected_than_sample,
+        bucket.sample_closer_to_expected_than_actual,
+        bucket.actual_sample_expected_tie,
+        fmt_f64(bucket.mean_actual_sample_distance),
+        fmt_f64(bucket.mean_expected_sample_distance),
+        fmt_f64(bucket.mean_actual_expected_distance),
+        short_row(bucket.top_actual_sample_miss.as_ref()),
+        short_row(bucket.top_sample_closer_to_expected.as_ref()),
+    )
+}
+
+fn short_row(row: Option<&AuditRow>) -> String {
+    row.map_or_else(|| "n/a".to_owned(), |row| {
+        format!(
+            "{},{} {}:{}",
+            row.x,
+            row.y,
+            row.material_name,
+            row.triangle
+                .map(|triangle| triangle.to_string())
+                .unwrap_or_else(|| "n/a".to_owned())
+        )
+    })
 }
 
 fn draw_selection_bucket_row(bucket: &DrawSelectionBucket) -> String {
@@ -976,6 +1253,12 @@ fn fmt_f64(value: Option<f64>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn fmt_opt_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn fmt_closeness(value: Option<ExpectedCloseness>) -> &'static str {
     match value {
         Some(ExpectedCloseness::Actual) => "actual",
@@ -1050,14 +1333,26 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         ],
         renderer: None,
     };
+    let texture_audit = serde_json::json!({
+        "recommended_probes": [
+            {
+                "material_name": "other",
+                "draw_key": "node0/mesh1/prim2/base",
+                "classification": "selected_sample_matches_three_vrm",
+                "action": "audit whether the backend adopts this selected surface before shading"
+            }
+        ]
+    });
     let report = audit(
         Path::new("manifest.json"),
         Path::new("actual.rgba.json"),
         Some(Path::new("expected.rgba.json")),
+        Some(Path::new("texture-audit.json")),
         1.75,
         &manifest,
         &actual,
         Some(&expected),
+        Some(&texture_audit),
     )?;
     assert_eq!(report.totals.manifest_entries, 2);
     assert_eq!(report.totals.actual_sample_exact, 1);
@@ -1078,10 +1373,22 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(routing.manifest_entries_routed_to_draw_selection, 1);
     assert_eq!(routing.by_draw[0].draw_key, "node0/mesh1/prim2/base");
     assert_eq!(routing.by_draw[0].routed_manifest_entries, 1);
+    assert_eq!(report.probe_execution.len(), 1);
+    assert_eq!(report.probe_execution[0].entries, 1);
+    assert_eq!(report.probe_execution[0].routed_entries, Some(1));
+    assert_eq!(
+        report.probe_execution[0].classification,
+        "selected_sample_matches_three_vrm"
+    );
+    assert_eq!(
+        report.probe_execution[0].sample_closer_to_expected_than_actual,
+        1
+    );
     assert_eq!(report.top_sample_closer_to_expected.len(), 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
     assert!(markdown(&report).contains("Sample-Closer Buckets By Material"));
     assert!(markdown(&report).contains("Sample-Closer Buckets By Draw"));
     assert!(markdown(&report).contains("Renderer Draw Selection Routing"));
+    assert!(markdown(&report).contains("Recommended Probe Execution"));
     Ok(())
 }
