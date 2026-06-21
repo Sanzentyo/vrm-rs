@@ -221,11 +221,11 @@ Focused material-pixel report for the current Seed-san blocker:
 
 ## Seed-san Current Diagnostic Images
 
-The `three-vrm` reference image for this diagnostic comes from the base-color outline-off capture, while the Rust images below are the current render-resolve readbacks. Ash currently has raw `.rgba.json` / `.imqraw` artifacts in this directory, but no PNG image in the local artifact set.
+The `three-vrm` reference image for this diagnostic comes from the base-color outline-off capture, while the Rust images below are the current render-resolve readbacks. Ash PNGs for these focused diagnostics are generated from the raw `.rgba.json` artifacts with `just render-parity-current-ash-pngs`.
 
-| three-vrm reference | wgpu readback | Bevy readback |
-| --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="220"> |
+| three-vrm reference | wgpu readback | Bevy readback | Ash readback |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/ash/Seed-san.frame000.png" width="180"> |
 
 ### Expanded Post-Resolve Diagnostic Images
 
@@ -235,9 +235,9 @@ the expected colors once the source ownership decision is supplied. The focused
 report above shows 0.0000 actual-vs-expected RGB distance for the five selected
 wgpu pixels.
 
-| three-vrm reference | wgpu expanded readback | Bevy expanded readback |
-| --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="220"> |
+| three-vrm reference | wgpu expanded readback | Bevy expanded readback | Ash expanded readback |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/ash/Seed-san.frame000.png" width="180"> |
 
 ### Current Hotspot Reading
 
@@ -255,9 +255,9 @@ The important current reading is that most hotspots keep the same material owner
 
 These images are useful for review, but they are not a desired default behavior. They show why repeated owner-frontier expansion should stay diagnostic until the source behavior is explained.
 
-| wgpu second-frontier | Bevy second-frontier |
-| --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="220"> |
+| wgpu second-frontier | Bevy second-frontier | Ash second-frontier |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="180"> |
 
 ## Real Sample Visual Sweep
 

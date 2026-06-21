@@ -68,6 +68,16 @@ ash-mtoon-smoke-readback avatar=".external-fixtures/official/Seed-san.vrm" out_d
 
 # Stable render-parity gates.
 
+# Convert a render-parity .rgba.json artifact into a byte-equivalent PNG for visual review.
+rgba-json-to-png input png_out:
+    cargo +nightly -Zscript tools/render-parity/rgba-json-to-png.rs --input "{{ input }}" --png-out "{{ png_out }}"
+
+# Fill in Ash PNGs for the current focused Seed-san render-resolve diagnostics from existing RGBA JSON artifacts.
+render-parity-current-ash-pngs:
+    just rgba-json-to-png .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/ash/Seed-san.frame000.rgba.json .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/ash/Seed-san.frame000.png
+    just rgba-json-to-png .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/ash/Seed-san.frame000.rgba.json .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/ash/Seed-san.frame000.png
+    just rgba-json-to-png .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.rgba.json .external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png
+
 # Regenerate the default render parity artifacts using existing fixtures and three-vrm checkout.
 render-parity three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm":
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-background "{{ background }}" --render-mtoon-light-accumulation "{{ light_accumulation }}"

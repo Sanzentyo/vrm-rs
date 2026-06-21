@@ -111,8 +111,8 @@ a default behavior target. The second-frontier run is a negative control:
 blindly expanding ownership improves some pixels and regresses others.
 
 After the latest quad-resolve update, the expanded readback keeps exact alpha
-parity across wgpu, Bevy, and Ash. Ash has `.imqraw` / `.rgba.json` artifacts in
-this artifact set, but no PNG image in the current local image set.
+parity across wgpu, Bevy, and Ash. Ash PNGs can be regenerated from the existing
+`.rgba.json` artifacts with `just render-parity-current-ash-pngs`.
 
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Use |
 | --- | ---: | ---: | ---: | --- |
@@ -120,13 +120,17 @@ this artifact set, but no PNG image in the current local image set.
 | Expanded post-resolve diagnostic, after quad resolve | 36.63 | 36.26 | 36.95 | Target-pixel coverage improved; remaining residuals moved to material/color evaluation. |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | Regression guard, not a fix. |
 
-| three-vrm reference | wgpu current readback | Bevy current readback |
-| --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="210"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="210"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="210"> |
-
-| wgpu expanded diagnostic | Bevy expanded diagnostic | wgpu second-frontier negative control | Bevy second-frontier negative control |
+| three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |
 | --- | --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="160"> |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/ash/Seed-san.frame000.png" width="185"> |
+
+| wgpu expanded diagnostic | Bevy expanded diagnostic | Ash expanded diagnostic |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/ash/Seed-san.frame000.png" width="180"> |
+
+| wgpu second-frontier negative control | Bevy second-frontier negative control | Ash second-frontier negative control |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="180"> |
 
 ### Expanded Material/Color Diagnostic
 

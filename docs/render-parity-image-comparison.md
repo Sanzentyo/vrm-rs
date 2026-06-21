@@ -142,11 +142,11 @@ This fixture deliberately has no `VRMC_materials_mtoon`; it checks the glTF/PBR 
 
 ## Current Blocker Images
 
-The expanded2 diagnostic directory currently has PNG readbacks for wgpu and Bevy only; Ash has `.rgba.json` / `.imqraw` reports but no PNG in the local artifact set. These images should not be treated as a desired final behavior, because the latest notes reject blind owner-frontier expansion as a default fix.
+The expanded2 diagnostic directory has PNG readbacks for wgpu, Bevy, and Ash. Ash PNGs are generated from byte-equivalent `.rgba.json` artifacts with `just render-parity-current-ash-pngs`. These images should not be treated as a desired final behavior, because the latest notes reject blind owner-frontier expansion as a default fix.
 
-| wgpu expanded2 readback | Bevy expanded2 readback |
-| --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="192"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="192"> |
+| wgpu expanded2 readback | Bevy expanded2 readback | Ash expanded2 readback |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="192"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="192"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="192"> |
 
 ## Recommended Reading Order
 

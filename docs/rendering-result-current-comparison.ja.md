@@ -119,7 +119,7 @@ Metric: `rgb-visible`。
 
 このセクションは default behavior の目標ではなく、残差の原因を切り分ける診断です。expanded post-resolve は「正しい source ownership が与えられた場合に近づく pixel」を見るためのもので、blind に適用する修正ではありません。
 
-直近の quad resolve 後の expanded readback は、wgpu / Bevy / Ash すべてで alpha は一致しています。ただし Ash はこの artifact set では `.imqraw` / `.rgba.json` のみがあり、PNG は現時点のローカル画像セットにありません。
+直近の quad resolve 後の expanded readback は、wgpu / Bevy / Ash すべてで alpha は一致しています。Ash PNG は `just render-parity-current-ash-pngs` で既存の `.rgba.json` から byte-equivalent に補完できます。
 
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | 用途 |
 | --- | ---: | ---: | ---: | --- |
@@ -127,13 +127,17 @@ Metric: `rgb-visible`。
 | Expanded post-resolve diagnostic, quad resolve 後 | 36.63 | 36.26 | 36.95 | target-pixel coverage は改善。残差は material/color 評価へ移動。 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | regression guard。修正方針にはしない。 |
 
-| three-vrm reference | wgpu current readback | Bevy current readback |
-| --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="210"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="210"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="210"> |
-
-| wgpu expanded diagnostic | Bevy expanded diagnostic | wgpu second-frontier negative control | Bevy second-frontier negative control |
+| three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |
 | --- | --- | --- | --- |
-| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="160"> |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="185"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/ash/Seed-san.frame000.png" width="185"> |
+
+| wgpu expanded diagnostic | Bevy expanded diagnostic | Ash expanded diagnostic |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/ash/Seed-san.frame000.png" width="180"> |
+
+| wgpu second-frontier negative control | Bevy second-frontier negative control | Ash second-frontier negative control |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="180"> |
 
 ### Expanded readback の material/color 診断
 
