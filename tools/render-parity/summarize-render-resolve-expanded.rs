@@ -324,6 +324,7 @@ struct FocusedMaterialPixelRowSummary {
     browser_material: String,
     renderer_material_draw: String,
     frontmost_material: String,
+    frontmost_pbr_terms: String,
     nearest_expected_material: String,
 }
 
@@ -1032,11 +1033,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 "### {}\n\n- Input: `{}`\n- Actual: `{}`\n\n",
                 focus.renderer, focus.path, focus.actual_source
             ));
-            out.push_str("| Pixel | Interpretation | Selected | Source | Browser material | Renderer material | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
-            out.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n");
+            out.push_str("| Pixel | Interpretation | Selected | Source | Browser material | Renderer material | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | PBR terms | Nearest expected |\n");
+            out.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |\n");
             for row in &focus.rows {
                 out.push_str(&format!(
-                    "| {} | {} | {}{} | {} | {} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
+                    "| {} | {} | {}{} | {} | {} | {} | {} / {} / {} | {} / {} / {} | {} | {} | {} |\n",
                     row.pixel,
                     row.interpretation,
                     row.selected_material,
@@ -1053,6 +1054,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                     fmt_optional_f64(row.selected_actual_distance),
                     fmt_optional_f64(row.selected_expected_distance),
                     row.frontmost_material,
+                    row.frontmost_pbr_terms,
                     row.nearest_expected_material,
                 ));
             }
@@ -1512,12 +1514,33 @@ fn focused_material_pixel_row_summary(
             &["frontmost", "surface", "material_name"],
         )?
         .unwrap_or_else(|| "n/a".to_owned()),
+        frontmost_pbr_terms: focused_pbr_terms_summary(value)?,
         nearest_expected_material: optional_string_path(
             value,
             &["nearest_expected", "surface", "material_name"],
         )?
         .unwrap_or_else(|| "n/a".to_owned()),
     })
+}
+
+fn focused_pbr_terms_summary(value: &Value) -> Result<String, Box<dyn Error>> {
+    let Some(terms) = optional_path(value, &["frontmost", "pbr_terms"]) else {
+        return Ok("n/a".to_owned());
+    };
+    if terms.is_null() {
+        return Ok("n/a".to_owned());
+    }
+    Ok(format!(
+        "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={}",
+        fmt_optional_f64(optional_f64_path(terms, &["n_dot_l"])?),
+        fmt_optional_f64(optional_f64_path(terms, &["n_dot_v"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["diffuse_lobe_rgb"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["specular_lobe_rgb"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["direct_rgb"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["ambient_rgb"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["direct_plus_ambient_rgb"])?),
+        optional_string_path(terms, &["normal_source"])?.unwrap_or_else(|| "n/a".to_owned())
+    ))
 }
 
 fn focused_browser_material_summary(value: &Value) -> Result<String, Box<dyn Error>> {
@@ -2813,7 +2836,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "shading_toony": 0.0,
                     "gi_equalization": 0.0
                 },
-                "frontmost": {"surface": {"material_name": "backpack_nm", "triangle": 42}},
+                "frontmost": {
+                    "surface": {"material_name": "backpack_nm", "triangle": 42},
+                    "pbr_terms": {
+                        "normal_source": "interpolated_vertex_no_normal_map",
+                        "n_dot_l": 0.7,
+                        "n_dot_v": 0.9,
+                        "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
+                        "specular_lobe_rgb": [0.02, 0.02, 0.02],
+                        "direct_rgb": [0.18, 0.17, 0.17],
+                        "ambient_rgb": [0.01, 0.01, 0.01],
+                        "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+                    }
+                },
                 "nearest_expected": {"surface": {"material_name": "arm_plastic", "triangle": 7}}
             }]
         }"#,
@@ -2934,6 +2969,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""pbr_response_diagnostics""#));
     assert!(summary_json.contains(r#""missing_response_rgb_gain":[0.37,0.46,0.49]"#));
     assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
+    assert!(summary_json.contains(r#""frontmost_pbr_terms":"nL/nV=0.7000/0.9000"#));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
@@ -2970,6 +3006,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     ));
     assert!(markdown.contains("## Focused Material Pixels"));
     assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
+    assert!(markdown.contains("nL/nV=0.7000/0.9000 diff=0.16,0.15,0.15 spec=0.02,0.02,0.02 direct=0.18,0.17,0.17 amb=0.01,0.01,0.01 total=0.19,0.18,0.18 normal=interpolated_vertex_no_normal_map"));
     assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
     assert!(markdown.contains(
         "backpack_nm@owner-sample-resolve branch:gltf_pbr m/r/o/d=0.0000/0.6570/1.0000/n/a"

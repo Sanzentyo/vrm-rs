@@ -147,6 +147,9 @@ struct CandidateSummary {
     draw_index: Option<u64>,
     pass: Option<String>,
     shading_model: Option<String>,
+    world_position: Option<[f64; 3]>,
+    world_normal: Option<[f64; 3]>,
+    pbr_terms: Option<PbrTermSummary>,
     base_texture_rgba: Option<[u8; 4]>,
     cpu_base_color_rgba: Option<[u8; 4]>,
     base_uv: Option<[f64; 2]>,
@@ -158,6 +161,23 @@ struct CandidateSummary {
     cull_mode: Option<String>,
     depth_write: Option<bool>,
     blend: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PbrTermSummary {
+    normal_source: Option<String>,
+    light_dir: Option<[f64; 3]>,
+    view_dir: Option<[f64; 3]>,
+    n_dot_l: Option<f64>,
+    n_dot_v: Option<f64>,
+    n_dot_h: Option<f64>,
+    v_dot_h: Option<f64>,
+    diffuse_linear_rgb: Option<[f64; 3]>,
+    diffuse_lobe_rgb: Option<[f64; 3]>,
+    specular_lobe_rgb: Option<[f64; 3]>,
+    direct_rgb: Option<[f64; 3]>,
+    ambient_rgb: Option<[f64; 3]>,
+    direct_plus_ambient_rgb: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -431,6 +451,9 @@ fn candidate_at(value: &Value, pointer: &str) -> Option<CandidateSummary> {
         draw_index: u64_at(value, "/draw_index").or_else(|| u64_at(value, "/drawIndex")),
         pass: string_at(value, "/pass"),
         shading_model: string_at(value, "/material_shading/model"),
+        world_position: vec3_at(value, "/world_position"),
+        world_normal: vec3_at(value, "/world_normal"),
+        pbr_terms: pbr_terms_at(value, "/pbr_terms"),
         base_texture_rgba: rgba_at(value, "/base_texture_rgba"),
         cpu_base_color_rgba: rgba_at(value, "/cpu_base_color_rgba"),
         base_uv: vec2_at(value, "/base_uv"),
@@ -442,6 +465,25 @@ fn candidate_at(value: &Value, pointer: &str) -> Option<CandidateSummary> {
         cull_mode: string_at(value, "/policy/cull_mode"),
         depth_write: bool_at(value, "/policy/depth_write"),
         blend: bool_at(value, "/policy/blend"),
+    })
+}
+
+fn pbr_terms_at(value: &Value, pointer: &str) -> Option<PbrTermSummary> {
+    let value = value.pointer(pointer)?;
+    Some(PbrTermSummary {
+        normal_source: string_at(value, "/normal_source"),
+        light_dir: vec3_at(value, "/light_dir"),
+        view_dir: vec3_at(value, "/view_dir"),
+        n_dot_l: f64_at(value, "/n_dot_l"),
+        n_dot_v: f64_at(value, "/n_dot_v"),
+        n_dot_h: f64_at(value, "/n_dot_h"),
+        v_dot_h: f64_at(value, "/v_dot_h"),
+        diffuse_linear_rgb: vec3_at(value, "/diffuse_linear_rgb"),
+        diffuse_lobe_rgb: vec3_at(value, "/diffuse_lobe_rgb"),
+        specular_lobe_rgb: vec3_at(value, "/specular_lobe_rgb"),
+        direct_rgb: vec3_at(value, "/direct_rgb"),
+        ambient_rgb: vec3_at(value, "/ambient_rgb"),
+        direct_plus_ambient_rgb: vec3_at(value, "/direct_plus_ambient_rgb"),
     })
 }
 
@@ -602,11 +644,11 @@ fn markdown(report: &FocusReport) -> String {
         "- Requested pixels: `{}`\n\n",
         report.requested_pixels.join("`, `")
     ));
-    output.push_str("| Pixel | Expected | Actual | Actual-expected | Delta / RGB | Source | Selected draw | Selected surface | Browser material | Renderer material | Selected RGBA | Selected A/E | Frontmost | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
-    output.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | --- |\n");
+    output.push_str("| Pixel | Expected | Actual | Actual-expected | Delta / RGB | Source | Selected draw | Selected surface | Browser material | Renderer material | Selected RGBA | Selected A/E | Frontmost | PBR terms | Front A/E | Nearest expected | NExp A/E | Edge / gradient | Interpretation |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | --- | ---: | ---: | --- |\n");
     for row in &report.rows {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {} | {} | {} / {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {} | {} | {} / {} | {} | {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             fmt_opt_rgba(row.expected),
@@ -623,6 +665,7 @@ fn markdown(report: &FocusReport) -> String {
             fmt_opt(row.selected_actual_rgb_distance),
             fmt_opt(row.selected_expected_rgb_distance),
             fmt_candidate(row.frontmost.as_ref()),
+            fmt_pbr_terms(row.frontmost.as_ref().and_then(|candidate| candidate.pbr_terms.as_ref())),
             fmt_opt(row.frontmost_actual_rgb_distance),
             fmt_opt(row.frontmost_expected_rgb_distance),
             fmt_candidate(row.nearest_expected.as_ref()),
@@ -716,6 +759,24 @@ fn fmt_candidate(value: Option<&CandidateSummary>) -> String {
                     .blend
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "n/a".to_owned())
+            )
+        })
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_pbr_terms(value: Option<&PbrTermSummary>) -> String {
+    value
+        .map(|terms| {
+            format!(
+                "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} ({})",
+                fmt_opt(terms.n_dot_l),
+                fmt_opt(terms.n_dot_v),
+                fmt_opt_vec3(terms.diffuse_lobe_rgb),
+                fmt_opt_vec3(terms.specular_lobe_rgb),
+                fmt_opt_vec3(terms.direct_rgb),
+                fmt_opt_vec3(terms.ambient_rgb),
+                fmt_opt_vec3(terms.direct_plus_ambient_rgb),
+                terms.normal_source.as_deref().unwrap_or("n/a")
             )
         })
         .unwrap_or_else(|| "n/a".to_owned())

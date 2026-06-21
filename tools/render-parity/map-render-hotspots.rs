@@ -489,9 +489,29 @@ struct CandidateMatch {
     base_texture_rgba: Option<[u8; 4]>,
     base_color_factor: [f32; 4],
     material_shading: MaterialShadingReport,
+    world_position: [f32; 3],
+    world_normal: [f32; 3],
+    pbr_terms: Option<PbrTermReport>,
     cpu_base_color_rgba: [u8; 4],
     base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct PbrTermReport {
+    normal_source: &'static str,
+    light_dir: [f32; 3],
+    view_dir: [f32; 3],
+    n_dot_l: f32,
+    n_dot_v: f32,
+    n_dot_h: f32,
+    v_dot_h: f32,
+    diffuse_linear_rgb: [f32; 3],
+    diffuse_lobe_rgb: [f32; 3],
+    specular_lobe_rgb: [f32; 3],
+    direct_rgb: [f32; 3],
+    ambient_rgb: [f32; 3],
+    direct_plus_ambient_rgb: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -545,6 +565,9 @@ struct HitCandidate {
     base_texture_rgba: Option<[u8; 4]>,
     base_color_factor: [f32; 4],
     material_shading: MaterialShadingReport,
+    world_position: [f32; 3],
+    world_normal: [f32; 3],
+    pbr_terms: Option<PbrTermReport>,
     cpu_base_color_rgba: [u8; 4],
     base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
@@ -560,6 +583,8 @@ struct HitCandidate {
 struct ProjectedVertex {
     screen: [f32; 2],
     depth: f32,
+    world_position: Vec3,
+    world_normal: Vec3,
     uv: [f32; 2],
     reciprocal_w: f32,
 }
@@ -605,6 +630,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         loaded.expression_render_effects(parse_expression_args(&options.expressions)?)?;
     let surfaces = build_surfaces(&loaded, &expression_effects, &options)?;
     let view_projection = view_projection(width, height, &options);
+    let camera_eye = camera_eye(&options);
 
     let hotspots: Vec<Hotspot> = delta_report
         .top
@@ -623,6 +649,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 options.candidate_limit,
                 options.hit_radius,
                 [options.sample_center_x, options.sample_center_y],
+                camera_eye,
             );
             let frontmost_any = frontmost_any_candidate_match(&candidates);
             let frontmost_alpha_visible = frontmost_alpha_visible_candidate_match(&candidates);
@@ -674,6 +701,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 width,
                 height,
                 options.subpixel_steps,
+                camera_eye,
             );
             let coverage_candidates = coverage_frontmost_visible_candidates(
                 delta.x,
@@ -682,6 +710,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 view_projection,
                 width,
                 height,
+                camera_eye,
             );
             let largest_coverage_visible = largest_coverage_match(&coverage_candidates);
             let best_subpixel_visible_actual = best_subpixel_match(
@@ -2385,6 +2414,7 @@ fn candidates_for_pixel(
     candidate_limit: usize,
     hit_radius: i32,
     sample_center: [f32; 2],
+    camera_eye: Vec3,
 ) -> Vec<HitCandidate> {
     let mut candidates = surfaces
         .iter()
@@ -2395,7 +2425,15 @@ fn candidates_for_pixel(
                         x as f32 + sample_center[0] + dx as f32,
                         y as f32 + sample_center[1] + dy as f32,
                     ];
-                    surface_candidates(surface, view_projection, point, [dx, dy], width, height)
+                    surface_candidates(
+                        surface,
+                        view_projection,
+                        point,
+                        [dx, dy],
+                        width,
+                        height,
+                        camera_eye,
+                    )
                 })
             })
         })
@@ -2582,6 +2620,7 @@ fn subpixel_frontmost_visible_candidates(
     width: usize,
     height: usize,
     steps: usize,
+    camera_eye: Vec3,
 ) -> Vec<SubpixelCandidate> {
     let steps = steps.max(1);
     (0..steps)
@@ -2602,6 +2641,7 @@ fn subpixel_frontmost_visible_candidates(
                             [0, 0],
                             width,
                             height,
+                            camera_eye,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -2625,6 +2665,7 @@ fn coverage_frontmost_visible_candidates(
     view_projection: Mat4,
     width: usize,
     height: usize,
+    camera_eye: Vec3,
 ) -> Vec<SubpixelCandidate> {
     surfaces
         .iter()
@@ -2673,6 +2714,7 @@ fn coverage_frontmost_visible_candidates(
                         [0, 0],
                         0.0,
                         false,
+                        camera_eye,
                     )?;
                     let center = [x as f32 + 0.5, y as f32 + 0.5];
                     let center_candidate = hit_candidate_for_projected_triangle(
@@ -2684,6 +2726,7 @@ fn coverage_frontmost_visible_candidates(
                         [0, 0],
                         0.0,
                         true,
+                        camera_eye,
                     )
                     .map(|candidate| candidate_match(0, &candidate, 0.0));
                     candidate.visible_by_policy.then(|| SubpixelCandidate {
@@ -2832,6 +2875,9 @@ fn candidate_match(
         base_texture_rgba: candidate.base_texture_rgba,
         base_color_factor: candidate.base_color_factor,
         material_shading: candidate.material_shading,
+        world_position: candidate.world_position,
+        world_normal: candidate.world_normal,
+        pbr_terms: candidate.pbr_terms,
         cpu_base_color_rgba: candidate.cpu_base_color_rgba,
         base_texture_sampling_rgba: candidate.base_texture_sampling_rgba.clone(),
         base_texture_local_rgb_gradient: candidate.base_texture_local_rgb_gradient,
@@ -2845,6 +2891,7 @@ fn surface_candidates(
     sample_offset: [i32; 2],
     width: usize,
     height: usize,
+    camera_eye: Vec3,
 ) -> Vec<HitCandidate> {
     surface
         .indices
@@ -2883,6 +2930,7 @@ fn surface_candidates(
                     as f32)
                     .sqrt(),
                 false,
+                camera_eye,
             )
         })
         .collect()
@@ -2897,6 +2945,7 @@ fn hit_candidate_for_projected_triangle(
     sample_offset: [i32; 2],
     sample_distance: f32,
     allow_outside_triangle: bool,
+    camera_eye: Vec3,
 ) -> Option<HitCandidate> {
     let [ia, ib, ic] = indices;
     let [a, b, c] = vertices;
@@ -2935,6 +2984,7 @@ fn hit_candidate_for_projected_triangle(
     let cpu_base_color_rgba =
         multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
             .map(quantize_unorm8);
+    let diffuse_linear = multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color);
     let vertex_alpha = if surface.pbr_fallback { vertex_color[3] } else { 1.0 };
     let texture_alpha = texture_color[3];
     let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
@@ -2946,6 +2996,24 @@ fn hit_candidate_for_projected_triangle(
     let edge_indices = triangle_edge_indices([ia, ib, ic], nearest_edge.edge);
     let nearest_edge_neighbor_triangles =
         edge_neighbors(&surface.edge_adjacency, edge_indices, triangle);
+    let world_position = interpolate_perspective_correct_vec3(
+        barycentric,
+        [a.world_position, b.world_position, c.world_position],
+        [a.reciprocal_w, b.reciprocal_w, c.reciprocal_w],
+    );
+    let world_normal = interpolate_perspective_correct_vec3(
+        barycentric,
+        [a.world_normal, b.world_normal, c.world_normal],
+        [a.reciprocal_w, b.reciprocal_w, c.reciprocal_w],
+    )
+    .normalize_or_zero();
+    let pbr_terms = pbr_term_report(
+        surface.material_shading,
+        [diffuse_linear[0], diffuse_linear[1], diffuse_linear[2]],
+        world_position,
+        world_normal,
+        camera_eye,
+    );
     Some(HitCandidate {
         draw_index: surface.draw_index,
         node: surface.node,
@@ -2973,6 +3041,9 @@ fn hit_candidate_for_projected_triangle(
         base_texture_rgba,
         base_color_factor: surface.base_color,
         material_shading: surface.material_shading,
+        world_position: world_position.to_array(),
+        world_normal: world_normal.to_array(),
+        pbr_terms,
         cpu_base_color_rgba,
         base_texture_sampling_rgba,
         base_texture_local_rgb_gradient,
@@ -3087,6 +3158,8 @@ fn project(
             (0.5 - ndc.y * 0.5) * height as f32,
         ],
         depth: ndc.z,
+        world_position: vertex.position,
+        world_normal: vertex.normal.normalize_or_zero(),
         uv: vertex.tex_coord_0,
         reciprocal_w: 1.0 / clip.w,
     })
@@ -3240,8 +3313,15 @@ fn view_projection(width: usize, height: usize, options: &Options) -> Mat4 {
 }
 
 fn camera_view(options: &Options) -> Mat4 {
-    let camera_eye = Vec3::new(0.0, options.camera_y, -options.camera_z);
-    Mat4::look_at_rh(camera_eye, Vec3::new(0.0, options.target_y, 0.0), Vec3::Y)
+    Mat4::look_at_rh(
+        camera_eye(options),
+        Vec3::new(0.0, options.target_y, 0.0),
+        Vec3::Y,
+    )
+}
+
+fn camera_eye(options: &Options) -> Vec3 {
+    Vec3::new(0.0, options.camera_y, -options.camera_z)
 }
 
 fn projection_y_scale() -> f32 {
@@ -3337,6 +3417,116 @@ fn interpolate_perspective_correct_uv(
         (weights[0] * a.uv[0] + weights[1] * b.uv[0] + weights[2] * c.uv[0]) / denominator,
         (weights[0] * a.uv[1] + weights[1] * b.uv[1] + weights[2] * c.uv[1]) / denominator,
     ]
+}
+
+fn interpolate_perspective_correct_vec3(
+    barycentric: [f32; 3],
+    values: [Vec3; 3],
+    reciprocal_w: [f32; 3],
+) -> Vec3 {
+    let weights = [
+        barycentric[0] * reciprocal_w[0],
+        barycentric[1] * reciprocal_w[1],
+        barycentric[2] * reciprocal_w[2],
+    ];
+    let denominator = weights[0] + weights[1] + weights[2];
+    if denominator.abs() <= f32::EPSILON {
+        return values[0] * barycentric[0] + values[1] * barycentric[1] + values[2] * barycentric[2];
+    }
+    (values[0] * weights[0] + values[1] * weights[1] + values[2] * weights[2]) / denominator
+}
+
+fn pbr_term_report(
+    shading: MaterialShadingReport,
+    diffuse: [f32; 3],
+    world_position: Vec3,
+    world_normal: Vec3,
+    camera_eye: Vec3,
+) -> Option<PbrTermReport> {
+    (shading.model == "gltf_pbr").then(|| {
+        let normal = world_normal.normalize_or_zero();
+        let light_dir = Vec3::new(-1.0, 1.0, -1.0).normalize();
+        let view_dir = (camera_eye - world_position).normalize_or_zero();
+        let terms = pbr_direct_terms(
+            Vec3::from_array(diffuse),
+            normal,
+            view_dir,
+            light_dir,
+            shading.metallic,
+            shading.roughness,
+        );
+        let ambient =
+            Vec3::from_array(diffuse) * (1.0 - shading.metallic) * 0.03183098882436752;
+        PbrTermReport {
+            normal_source: "interpolated_vertex_no_normal_map",
+            light_dir: light_dir.to_array(),
+            view_dir: view_dir.to_array(),
+            n_dot_l: terms.n_dot_l,
+            n_dot_v: terms.n_dot_v,
+            n_dot_h: terms.n_dot_h,
+            v_dot_h: terms.v_dot_h,
+            diffuse_linear_rgb: diffuse,
+            diffuse_lobe_rgb: terms.diffuse_lobe.to_array(),
+            specular_lobe_rgb: terms.specular_lobe.to_array(),
+            direct_rgb: terms.direct.to_array(),
+            ambient_rgb: ambient.to_array(),
+            direct_plus_ambient_rgb: (terms.direct + ambient).to_array(),
+        }
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PbrDirectTerms {
+    n_dot_l: f32,
+    n_dot_v: f32,
+    n_dot_h: f32,
+    v_dot_h: f32,
+    diffuse_lobe: Vec3,
+    specular_lobe: Vec3,
+    direct: Vec3,
+}
+
+fn pbr_direct_terms(
+    diffuse: Vec3,
+    normal: Vec3,
+    view_dir: Vec3,
+    light_dir: Vec3,
+    metallic: f32,
+    roughness: f32,
+) -> PbrDirectTerms {
+    let pi = std::f32::consts::PI;
+    let n_dot_l = normal.dot(light_dir).max(0.0);
+    let n_dot_v = normal.dot(view_dir).max(0.0001);
+    let half_dir = (light_dir + view_dir).normalize_or_zero();
+    let n_dot_h = normal.dot(half_dir).max(0.0001);
+    let v_dot_h = view_dir.dot(half_dir).max(0.0);
+    let rough = roughness.clamp(0.04, 1.0);
+    let alpha = rough * rough;
+    let alpha2 = alpha * alpha;
+    let denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
+    let distribution = alpha2 / (pi * denom * denom).max(0.0001);
+    let geometry_v = n_dot_l * (alpha2 + (1.0 - alpha2) * n_dot_v * n_dot_v).sqrt();
+    let geometry_l = n_dot_v * (alpha2 + (1.0 - alpha2) * n_dot_l * n_dot_l).sqrt();
+    let visibility = 0.5 / (geometry_v + geometry_l).max(0.0001);
+    let f0 = Vec3::splat(0.04).lerp(diffuse, metallic);
+    let f90 = lerp_f32(
+        f0.dot(Vec3::splat(50.0 * 0.33)).clamp(0.0, 1.0),
+        1.0,
+        metallic,
+    );
+    let fresnel = f0 + (Vec3::splat(f90) - f0) * (1.0 - v_dot_h).powi(5);
+    let specular_lobe = distribution * visibility * fresnel;
+    let diffuse_lobe = diffuse * (1.0 - metallic) / pi;
+    let direct = (diffuse_lobe + specular_lobe) * pi * n_dot_l;
+    PbrDirectTerms {
+        n_dot_l,
+        n_dot_v,
+        n_dot_h,
+        v_dot_h,
+        diffuse_lobe: diffuse_lobe * pi * n_dot_l,
+        specular_lobe: specular_lobe * pi * n_dot_l,
+        direct,
+    }
 }
 
 fn uv_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
