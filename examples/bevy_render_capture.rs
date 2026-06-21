@@ -71,11 +71,11 @@ use vrm_io::{
     CpuRgba8Image, GltfExpressionRenderEffects, GltfMagFilter, GltfMaterialRenderExtraOptions,
     GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfMaterialTextureBinding,
     GltfMaterialTextureBindingPlan, GltfMaterialTextureColorSpace, GltfMaterialTextureFallback,
-    GltfMaterialTextureSlot, GltfMinFilter, GltfMtoonLightAccumulation as GltfLightAccumulation,
-    GltfNormalMapMode, GltfOutlineScale, GltfOutlineVertexSettings, GltfPrimitiveData,
-    GltfSamplerData, GltfWrapMode, ImageData, LoadedVrm, Rgba8SamplingOrigin, fallback_tangent,
-    generate_rgba_mip_chain, generate_tangents as generate_gltf_tangents, image_data_to_rgba8,
-    load_vrm_from_path,
+    GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMinFilter,
+    GltfMtoonLightAccumulation as GltfLightAccumulation, GltfNormalMapMode, GltfOutlineScale,
+    GltfOutlineVertexSettings, GltfPrimitiveData, GltfSamplerData, GltfWrapMode, ImageData,
+    LoadedVrm, Rgba8SamplingOrigin, fallback_tangent, generate_rgba_mip_chain,
+    generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
 };
 
 const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
@@ -630,6 +630,7 @@ fn spawn_vrm_meshes(
             };
             let normal_plan =
                 primitive.normal_map_plan(shading.normal_scale, options.normal_map_mode.into());
+            let texture_slots = loaded.material_texture_slots(primitive.material);
             let (mesh, has_tangents) = bevy_mesh(
                 primitive,
                 &morph_weights,
@@ -661,6 +662,7 @@ fn spawn_vrm_meshes(
                 material,
                 render_order: material_plan.render_order,
                 owner_source,
+                texture_slots,
                 owner_ids: Vec::new(),
             };
             primitives.push(surface);
@@ -708,6 +710,7 @@ fn spawn_vrm_meshes(
     }
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
+        material_draws: material_draw_metadata(loaded, &primitives),
         render_surfaces,
         render_draws,
     });
@@ -793,6 +796,7 @@ fn assign_owner_id_triangles(
                 transparent_order_offset,
                 phase_order_offset_applied: transparent_order_offset,
                 owner_source: primitive.owner_source,
+                texture_slots: primitive.texture_slots,
                 owner_ids: vec![OwnerTriangle {
                     id: next_id,
                     triangle: 0,
@@ -1267,6 +1271,7 @@ fn owner_sample_resolve_primitive(
         transparent_order_offset: 1.0,
         phase_order_offset_applied: 1.0,
         owner_source: primitive.owner_source,
+        texture_slots: primitive.texture_slots,
         owner_ids: Vec::new(),
     })
 }
@@ -1549,6 +1554,128 @@ fn diagnostic_owner_ids(
             })
         })
         .collect()
+}
+
+fn material_draw_metadata(
+    loaded: &LoadedVrm,
+    primitives: &[BevyPrimitive],
+) -> Vec<serde_json::Value> {
+    primitives
+        .iter()
+        .map(|primitive| {
+            let source = primitive.owner_source;
+            json!({
+                "draw": {
+                    "node": source.node_index,
+                    "mesh": source.mesh_index,
+                    "primitive": source.primitive_index,
+                    "pass": source.pass.as_str(),
+                    "key": owner_source_key(source),
+                },
+                "material": {
+                    "index": source.material,
+                    "name": material_name(loaded, source.material).unwrap_or("unnamed"),
+                },
+                "policy": {
+                    "renderOrder": source.render_order,
+                    "phaseOrder": source.phase_order,
+                    "cullMode": bevy_primitive_cull_mode(primitive),
+                    "frontFace": bevy_primitive_front_face(primitive).as_str(),
+                    "alphaMode": bevy_primitive_alpha_mode(primitive),
+                    "alphaCutoff": bevy_primitive_alpha_cutoff(primitive),
+                    "depthWrite": bevy_primitive_depth_write(primitive),
+                    "depthCompare": bevy_primitive_depth_compare(primitive),
+                    "depthBias": bevy_primitive_depth_bias(primitive),
+                    "blend": bevy_primitive_blend(primitive),
+                    "bevyPhaseOrderOffset": primitive.transparent_order_offset,
+                    "bevyPhaseOrderOffsetApplied": owner_id_phase_order_offset(primitive),
+                },
+                "vertexMaterial": bevy_vertex_material_metadata(primitive),
+                "materialExtra": bevy_material_extra_metadata(primitive),
+                "textureSlots": texture_slot_metadata(primitive.texture_slots),
+            })
+        })
+        .collect()
+}
+
+fn owner_source_key(source: OwnerSource) -> String {
+    format!(
+        "node{}/mesh{}/prim{}/{}",
+        source.node_index,
+        source.mesh_index,
+        source.primitive_index,
+        source.pass.as_str()
+    )
+}
+
+fn bevy_vertex_material_metadata(primitive: &BevyPrimitive) -> serde_json::Value {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => json!({
+            "baseColor": material.base_color.to_array(),
+            "shadeColor": material.shade_color.to_array(),
+            "shading": {
+                "shift": material.shading.x,
+                "toony": material.shading.y,
+                "giEqualization": material.shading.z,
+                "shiftTextureScale": material.shading.w,
+            },
+            "emissive": material.emissive.to_array(),
+            "matcapFactor": material.matcap_factor.to_array(),
+            "rimColor": material.rim_color.to_array(),
+            "rimParams": {
+                "lightingMix": material.rim_params.x,
+                "fresnelPower": material.rim_params.y,
+                "lift": material.rim_params.z,
+                "alphaCutoff": material.rim_params.w,
+            },
+            "normalScale": material.pipeline.z,
+            "doubleSided": material.pipeline.w != 0.0,
+        }),
+    }
+}
+
+fn bevy_material_extra_metadata(primitive: &BevyPrimitive) -> serde_json::Value {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) => json!({
+            "flags": {
+                "pbrFallback": material.material_flags.x != 0.0,
+                "hasNormalTexture": material.material_flags.y != 0.0,
+                "derivativeNormals": material.material_flags.z != 0.0,
+                "viewDerivativeNormals": material.material_flags.w != 0.0,
+            },
+            "pbr": {
+                "metallic": material.pbr_params.x,
+                "roughness": material.pbr_params.y,
+                "emissiveStrength": material.pbr_params.z,
+                "occlusionStrength": material.pbr_params.w,
+            },
+            "alpha": {
+                "cutoff": material.material_flags2.x,
+                "modeCode": material.material_flags2.y,
+                "diagnosticCode": material.material_flags2.z,
+                "ownerResolveMarker": material.material_flags2.w,
+            },
+            "ownerColor": material.owner_color.to_array(),
+        }),
+    }
+}
+
+fn texture_slot_metadata(slots: GltfMaterialTextureSlots) -> serde_json::Value {
+    json!({
+        "base": texture_ref_metadata(slots.base),
+        "shade": texture_ref_metadata(slots.shade),
+        "shadingShift": texture_ref_metadata(slots.shading_shift),
+        "normal": texture_ref_metadata(slots.normal),
+        "matcap": texture_ref_metadata(slots.matcap),
+        "rim": texture_ref_metadata(slots.rim),
+        "emissive": texture_ref_metadata(slots.emissive),
+        "occlusion": texture_ref_metadata(slots.occlusion),
+        "uvAnimationMask": texture_ref_metadata(slots.uv_animation_mask),
+    })
+}
+
+fn texture_ref_metadata(texture: Option<usize>) -> serde_json::Value {
+    texture.map_or(serde_json::Value::Null, |texture| json!(texture))
 }
 
 fn bevy_primitive_alpha_mode(primitive: &BevyPrimitive) -> &'static str {
@@ -1924,6 +2051,7 @@ fn bevy_outline_primitive(
         phase_order_offset_applied: transparent_order_offset,
         material,
         render_order: material_plan.render_order.saturating_add(1),
+        texture_slots: loaded.material_texture_slots(primitive.material),
         owner_source: OwnerSource {
             pass: OwnerPass::Outline,
             render_order: material_plan.render_order.saturating_add(1),
@@ -2006,6 +2134,7 @@ struct BevyPrimitive {
     transparent_order_offset: f32,
     phase_order_offset_applied: f32,
     owner_source: OwnerSource,
+    texture_slots: GltfMaterialTextureSlots,
     owner_ids: Vec<OwnerTriangle>,
 }
 
@@ -2095,6 +2224,7 @@ struct OwnerTriangle {
 #[derive(Clone, Debug, Default, Resource)]
 struct RenderOwnerMetadata {
     diagnostic_owner_ids: Vec<serde_json::Value>,
+    material_draws: Vec<serde_json::Value>,
     render_surfaces: Vec<RenderOwnerSurfaceKey>,
     render_draws: Vec<RenderOwnerSampleDrawKey>,
 }
@@ -3237,6 +3367,9 @@ fn write_capture(
     let diagnostic_owner_ids = owner_metadata
         .map(|metadata| metadata.diagnostic_owner_ids.clone())
         .unwrap_or_default();
+    let material_draws = owner_metadata
+        .map(|metadata| metadata.material_draws.clone())
+        .unwrap_or_default();
     let owner_sample_correction_plan = if let Some(path) = &options.owner_sample_correction_manifest
     {
         let plan = render_capture_correction::load_owner_sample_correction_manifest(path)?;
@@ -3285,6 +3418,7 @@ fn write_capture(
         "renderer": {
             "backend": "bevy",
             "diagnosticOwnerIds": diagnostic_owner_ids,
+            "materialDraws": material_draws,
             "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "expressions": options.expressions,
@@ -3383,6 +3517,35 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("textureSampleGrad("));
         assert!(!MTOON_SHADER_SOURCE.contains("textureSampleLevel("));
         assert!(!MTOON_SHADER_SOURCE.contains("apply_owner_sample_override"));
+    }
+
+    #[test]
+    fn material_draw_metadata_helpers_expose_bevy_policy_and_texture_slots() {
+        let source = OwnerSource {
+            node_index: 145,
+            mesh_index: 4,
+            primitive_index: 9,
+            material: Some(14),
+            pass: OwnerPass::Base,
+            render_order: 2000,
+            phase_order: Some(19),
+        };
+        assert_eq!(owner_source_key(source), "node145/mesh4/prim9/base");
+
+        let slots = GltfMaterialTextureSlots {
+            base: Some(10),
+            normal: Some(13),
+            ..Default::default()
+        };
+        let slots = texture_slot_metadata(slots);
+        assert_eq!(
+            slots.pointer("/base").and_then(serde_json::Value::as_u64),
+            Some(10)
+        );
+        assert_eq!(
+            slots.pointer("/normal").and_then(serde_json::Value::as_u64),
+            Some(13)
+        );
     }
 
     #[test]

@@ -22,6 +22,21 @@
   material-draw update: the join Markdown and expanded summary JSON both retain
   additive/gain `color_fit` fields, and the generated summary artifact no
   longer falls back to serialized `color_fit: null` for those backend rows.
+- Extended the renderer material-draw metadata contract beyond wgpu. Bevy render
+  captures now persist `renderer.materialDraws[]` from the spawned primitive
+  material state, including Bevy-specific front-face/depth-bias/order fields and
+  source texture slots. The Ash unsafe-device capture writes the same contract
+  from `AshRendererFrame` draw calls plus the source frame plan's
+  `AshMtoonPipelinePlan` uniforms/descriptors. `just
+  render-parity-seed-base-color-flat32-focused-material-pixels-expanded` now
+  emits focused material-pixel reports for wgpu, Bevy, and Ash, and the expanded
+  summary consumes all three. A refreshed Seed-san expanded artifact shows Bevy
+  `materialDraws=31` and Ash `materialDraws=21`; Bevy/Ash focused reports now
+  attach concrete renderer material strings such as `body_bake
+  node2/mesh2/prim0/base` with base/shade/normal texture slots and policy
+  fields. The full expanded readback recipe timed out later in the browser
+  projection join, so only the capture artifacts, focused reports, and summary
+  parser path were refreshed in this pass.
 - Added recommended material probes and focused pixel probes to the expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--texture-audit renderer=path` inputs and

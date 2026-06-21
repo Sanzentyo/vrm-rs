@@ -13,16 +13,21 @@ use std::{
     ptr,
 };
 use vrm_adapter::{
-    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey, RenderOwnerSamplePass,
-    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    MtoonTextureSlot, RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey,
+    RenderOwnerSamplePass, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
-    AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_reference_depth_format,
+    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonPass,
+    AshMtoonPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
+    AshVrmFramePlanOptions, AshVrmPrimitive, ash_material_texture_binding,
+    ash_mtoon_texture_binding, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
-use vrm_io::{GltfAlphaMode, GltfMaterialTextureFallback, RgbaMipLevel, generate_rgba_mip_chain};
+use vrm_io::{
+    GltfAlphaMode, GltfMaterialTextureFallback, GltfMaterialTextureSlot, RgbaMipLevel,
+    generate_rgba_mip_chain,
+};
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Materialize a VRM frame plan into real ash Vulkan offscreen draw resources")]
@@ -1490,6 +1495,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 struct RgbaJsonArtifact<'a> {
     options: &'a Options,
     frame: &'a AshRendererFrame,
+    primitives: &'a [AshVrmPrimitive],
+    pipelines: &'a [AshMtoonPipelinePlan],
     diagnostic_owner_ids: &'a [AshDiagnosticOwnerId],
     shaders: ShaderSourceKind,
     readback: &'a ReadbackFrame,
@@ -1534,6 +1541,11 @@ fn write_rgba_json(
             "drawCalls": artifact_input.frame.draw_calls.len(),
             "depthFormat": artifact_input.depth_format.map(ash_format_label),
             "diagnosticOwnerIds": ash_diagnostic_owner_ids_json(artifact_input.diagnostic_owner_ids),
+            "materialDraws": ash_material_draw_metadata(
+                artifact_input.frame,
+                artifact_input.primitives,
+                artifact_input.pipelines,
+            ),
             "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "readback": {
@@ -1607,6 +1619,165 @@ fn ash_owner_sample_draws(primitives: &[AshVrmPrimitive]) -> Vec<RenderOwnerSamp
             )
         })
         .collect()
+}
+
+fn ash_material_draw_metadata(
+    frame: &AshRendererFrame,
+    primitives: &[AshVrmPrimitive],
+    pipelines: &[AshMtoonPipelinePlan],
+) -> Vec<serde_json::Value> {
+    frame
+        .draw_calls
+        .iter()
+        .filter_map(|draw| {
+            let primitive = primitives.get(draw.primitive_index)?;
+            let pipeline = draw
+                .pipeline_plan_index
+                .and_then(|index| pipelines.get(index))?;
+            let material = primitive.material.or(Some(pipeline.material));
+            Some(json!({
+                "draw": {
+                    "node": primitive.node.0,
+                    "mesh": primitive.mesh_index,
+                    "primitive": primitive.primitive_index,
+                    "pass": ash_mtoon_pass_label(pipeline.key.pass),
+                    "key": ash_owner_source_key(primitive, pipeline.key.pass),
+                },
+                "material": {
+                    "index": material.map(|material| material.0),
+                    "name": primitive.material_name.as_deref().or(pipeline.name.as_deref()).unwrap_or("unnamed"),
+                },
+                "policy": {
+                    "renderOrder": pipeline.key.render_order,
+                    "phaseOrder": pipeline.key.phase_order,
+                    "cullMode": ash_cull_mode_label(pipeline.key.cull_mode),
+                    "frontFace": ash_front_face_label(pipeline.key.front_face),
+                    "alphaMode": ash_uniform_alpha_mode_label(pipeline.uniform.flags[3]),
+                    "alphaCutoff": pipeline.alpha_cutoff,
+                    "depthWrite": pipeline.key.depth_write_enable,
+                    "depthTest": pipeline.key.depth_test_enable,
+                    "depthCompare": ash_compare_op_label(pipeline.key.depth_compare_op),
+                    "blend": pipeline.key.blend_enable,
+                },
+                "vertexMaterial": ash_vertex_material_metadata(primitive, pipeline),
+                "materialExtra": ash_material_extra_metadata(pipeline.render_extra_uniform),
+                "textureSlots": ash_texture_slot_metadata(pipeline),
+            }))
+        })
+        .collect()
+}
+
+fn ash_owner_source_key(primitive: &AshVrmPrimitive, pass: AshMtoonPass) -> String {
+    format!(
+        "node{}/mesh{}/prim{}/{}",
+        primitive.node.0,
+        primitive.mesh_index,
+        primitive.primitive_index,
+        ash_mtoon_pass_label(pass)
+    )
+}
+
+fn ash_vertex_material_metadata(
+    primitive: &AshVrmPrimitive,
+    pipeline: &AshMtoonPipelinePlan,
+) -> serde_json::Value {
+    let uniform = pipeline.uniform;
+    let vertex = primitive.vertices.first();
+    json!({
+        "baseColor": uniform.base_color_factor,
+        "shadeColor": [
+            uniform.shade_color_factor_cutoff[0],
+            uniform.shade_color_factor_cutoff[1],
+            uniform.shade_color_factor_cutoff[2],
+            1.0,
+        ],
+        "shading": {
+            "shift": uniform.shading[2],
+            "toony": uniform.shading[3],
+            "giEqualization": uniform.lighting[2],
+            "shiftTextureScale": uniform.lighting[0],
+        },
+        "emissive": [
+            uniform.emissive_color_outline_width[0],
+            uniform.emissive_color_outline_width[1],
+            uniform.emissive_color_outline_width[2],
+            0.0,
+        ],
+        "matcapFactor": uniform.matcap_factor_debug,
+        "rimColor": [
+            uniform.rim_color_lighting_mix[0],
+            uniform.rim_color_lighting_mix[1],
+            uniform.rim_color_lighting_mix[2],
+            0.0,
+        ],
+        "rimParams": {
+            "lightingMix": uniform.rim_color_lighting_mix[3],
+            "fresnelPower": uniform.rim_params[0],
+            "lift": uniform.rim_params[1],
+            "alphaCutoff": uniform.shade_color_factor_cutoff[3],
+        },
+        "normalScale": vertex.map(|vertex| vertex.normal_scale),
+        "doubleSided": vertex.is_some_and(|vertex| vertex.double_sided != 0.0),
+    })
+}
+
+fn ash_material_extra_metadata(extra: AshMaterialExtraUniform) -> serde_json::Value {
+    json!({
+        "flags": {
+            "pbrFallback": extra.flags[0] != 0.0,
+            "hasNormalTexture": extra.flags[1] != 0.0,
+            "derivativeNormals": extra.flags[2] != 0.0,
+            "viewDerivativeNormals": extra.flags[3] != 0.0,
+        },
+        "pbr": {
+            "metallic": extra.pbr_params[0],
+            "roughness": extra.pbr_params[1],
+            "emissiveStrength": extra.pbr_params[2],
+            "occlusionStrength": extra.pbr_params[3],
+        },
+        "alpha": {
+            "cutoff": extra.flags2[0],
+            "modeCode": extra.flags2[1],
+            "diagnosticCode": extra.flags2[2],
+            "ownerResolveMarker": extra.flags2[3],
+        },
+        "ownerColor": extra.owner_color,
+    })
+}
+
+fn ash_texture_slot_metadata(pipeline: &AshMtoonPipelinePlan) -> serde_json::Value {
+    json!({
+        "base": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::Main)),
+        "shade": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::ShadeMultiply)),
+        "shadingShift": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::ShadingShift)),
+        "normal": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::Normal)),
+        "matcap": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::Matcap)),
+        "rim": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::RimMultiply)),
+        "emissive": ash_texture_binding_metadata(pipeline, ash_material_texture_binding(GltfMaterialTextureSlot::Emissive)),
+        "occlusion": ash_texture_binding_metadata(pipeline, ash_material_texture_binding(GltfMaterialTextureSlot::Occlusion)),
+        "uvAnimationMask": ash_texture_binding_metadata(pipeline, ash_mtoon_texture_binding(MtoonTextureSlot::UvAnimationMask)),
+    })
+}
+
+fn ash_texture_binding_metadata(
+    pipeline: &AshMtoonPipelinePlan,
+    binding: u32,
+) -> serde_json::Value {
+    pipeline
+        .descriptor_bindings
+        .iter()
+        .find(|descriptor| descriptor.binding == binding)
+        .and_then(|descriptor| descriptor.texture)
+        .map_or(serde_json::Value::Null, |texture| json!(texture.0))
+}
+
+fn ash_uniform_alpha_mode_label(code: u32) -> &'static str {
+    match code {
+        0 => "opaque",
+        1 => "mask",
+        2 => "blend",
+        _ => "unknown",
+    }
 }
 
 fn ash_owner_sample_pass(pass: AshMtoonPass) -> RenderOwnerSamplePass {
@@ -1818,6 +1989,8 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
         RgbaJsonArtifact {
             options,
             frame: &AshRendererFrame::default(),
+            primitives: &[],
+            pipelines: &[],
             diagnostic_owner_ids: &[],
             shaders: ShaderSourceKind::BuiltInSmoke,
             readback: &readback,
@@ -1993,6 +2166,121 @@ mod tests {
         assert_ne!(readback.checksum, original_checksum);
         assert_eq!(readback.nonzero_pixels, 1);
     }
+
+    #[test]
+    fn material_draw_metadata_exposes_ash_pipeline_policy_and_textures() {
+        use bytemuck::Zeroable;
+        use vrm_adapter::MtoonGpuUniform;
+        use vrm_adapter_ash::{
+            AshDescriptorBindingPlan, AshDrawCallPlan, AshMaterialUvUniform, AshPipelineKey,
+        };
+        use vrm_core::{MaterialRef, NodeRef, TextureRef};
+
+        let primitive = AshVrmPrimitive {
+            node: NodeRef(145),
+            mesh_index: 4,
+            primitive_index: 9,
+            material_name: Some("backpack_nm".to_owned()),
+            material: Some(MaterialRef(14)),
+            pass: AshMtoonPass::Base,
+            vertices: vec![vrm_adapter_ash::AshVrmVertex {
+                normal_scale: 0.75,
+                double_sided: 0.0,
+                ..vrm_adapter_ash::AshVrmVertex::zeroed()
+            }],
+            indices: vec![0, 1, 2],
+        };
+        let mut uniform = MtoonGpuUniform::zeroed();
+        uniform.base_color_factor = [0.1, 0.2, 0.3, 1.0];
+        uniform.shade_color_factor_cutoff = [0.4, 0.5, 0.6, 0.5];
+        uniform.flags[3] = 1;
+        let pipeline = AshMtoonPipelinePlan {
+            material: MaterialRef(14),
+            name: Some("backpack_nm".to_owned()),
+            key: AshPipelineKey {
+                pass: AshMtoonPass::Base,
+                render_order: 2000,
+                phase_order: 19,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                cull_mode: vk::CullModeFlags::BACK,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_test_enable: true,
+                depth_write_enable: true,
+                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                blend_enable: false,
+            },
+            descriptor_bindings: vec![
+                AshDescriptorBindingPlan {
+                    binding: ash_mtoon_texture_binding(MtoonTextureSlot::Main),
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    texture: Some(TextureRef(10)),
+                    color_space: vrm_io::GltfMaterialTextureColorSpace::Srgb,
+                    sampler: None,
+                },
+                AshDescriptorBindingPlan {
+                    binding: ash_mtoon_texture_binding(MtoonTextureSlot::Normal),
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    texture: Some(TextureRef(13)),
+                    color_space: vrm_io::GltfMaterialTextureColorSpace::Linear,
+                    sampler: None,
+                },
+            ],
+            uniform,
+            uv_uniform: AshMaterialUvUniform::default(),
+            render_extra_uniform: AshMaterialExtraUniform {
+                pbr_params: [0.0, 0.657, 1.0, 1.0],
+                ..Default::default()
+            },
+            uniform_buffer_size: 0,
+            alpha_cutoff: 0.5,
+            outline_width: 0.0,
+            base_color_factor: [1.0; 4],
+            emissive_color: [0.0; 3],
+        };
+        let frame = AshRendererFrame {
+            draw_calls: vec![AshDrawCallPlan {
+                primitive_index: 0,
+                material: Some(MaterialRef(14)),
+                pipeline_plan_index: Some(0),
+                descriptor_set_index: Some(0),
+                vertex_buffer_index: 0,
+                index_buffer_index: 1,
+                index_count: 3,
+                render_order: 2000,
+                phase_order: 19,
+            }],
+            ..Default::default()
+        };
+
+        let metadata = ash_material_draw_metadata(&frame, &[primitive], &[pipeline]);
+
+        assert_eq!(
+            metadata[0]
+                .pointer("/draw/key")
+                .and_then(serde_json::Value::as_str),
+            Some("node145/mesh4/prim9/base")
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/policy/alphaMode")
+                .and_then(serde_json::Value::as_str),
+            Some("mask")
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/textureSlots/base")
+                .and_then(serde_json::Value::as_u64),
+            Some(10)
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/textureSlots/normal")
+                .and_then(serde_json::Value::as_u64),
+            Some(13)
+        );
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -2081,6 +2369,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 RgbaJsonArtifact {
                     options: &options,
                     frame: &renderer_frame,
+                    primitives: &frame_plan.primitives,
+                    pipelines: &frame_plan.mtoon_pipelines,
                     diagnostic_owner_ids: &frame_plan.diagnostic_owner_ids,
                     shaders: shaders.source,
                     readback: &summary,
