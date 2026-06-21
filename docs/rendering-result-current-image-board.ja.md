@@ -1,24 +1,27 @@
-# Current Rendering Result Comparison
+# 現状レンダリング画像比較ボード
 
-Updated: 2026-06-21
+更新日: 2026-06-21
 
-This page compares the render images that exist in this workspace right now.
-The image artifacts live under `.external-fixtures/` and are intentionally not
-committed. The reference column is `three-vrm`; the other columns are Rust
-renderers.
+この Markdown は、いまワークスペースに存在するレンダリング結果画像を横並びで確認するための短いレビュー用ページです。画像と raw 比較レポートは `.external-fixtures/` 配下のローカル artifact で、リポジトリにはコミットしません。基準画像は `three-vrm`、比較対象は Rust 側の `wgpu` / Bevy / Ash です。
 
-For numeric decisions, prefer the raw `.imqraw` reports linked from
-[render-parity-current-images.md](render-parity-current-images.md). This file is
-for quick visual review.
+数値判断は PNG ではなく `.imqraw` の raw 比較を優先します。PNG は目視レビュー用です。
 
-## Main Current Image Set
+## 主要な見方
 
-Artifact directory:
+| 観点 | 現状の読み |
+| --- | --- |
+| Alpha / 透明 | 主要な現状セットでは wgpu / Bevy / Ash の alpha mismatch は 0。 |
+| wgpu と Ash | かなり近い傾向。backend transport より material / texture / ownership 側が残差候補。 |
+| Bevy | alpha は一致。Seed-san focused diagnostic では selected sample / fill behavior を別枠で見る必要あり。 |
+| glTF/PBR | generated guard は良好。ただし実モデル Seed-san の `backpack_nm` は残差の主要候補。 |
+| MToon | body / arm / plastic / eye / bake surface の局所差分が残っている。 |
+
+## 現在の Seed-san 基準セット
+
+Artifact:
 [`../.external-fixtures/render-parity-ash-current-base-uv-rerun`](../.external-fixtures/render-parity-ash-current-base-uv-rerun)
 
-Metric: `rgb-visible`, opaque black background, exact alpha parity.
-
-| Renderer | PSNR | Gradient-domain PSNR | Changed RGB pixels | Max channel delta | Alpha mismatches |
+| Renderer | `rgb-visible` PSNR | Gradient PSNR | Changed RGB pixels | Max channel delta | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `wgpu` | 36.8913 | 32.6698 | 1107 | 251 | 0 |
 | Bevy | 36.8708 | 32.6368 | 9252 | 251 | 0 |
@@ -32,25 +35,27 @@ Metric: `rgb-visible`, opaque black background, exact alpha parity.
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.wgpu-vs-three-vrm.diff.png" width="190"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.bevy-vs-three-vrm.diff.png" width="190"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.ash-vs-three-vrm.diff.png" width="190"> |
 
-Reading: this set passes the current visual gate, and alpha/readback format are
-not the blocker. The remaining visible gap is localized around material color,
-texture sampling, and edge/owner behavior.
+読み: alpha と raw readback format は現状の blocker ではありません。残差は material color、texture sampling、edge / owner behavior 周辺に寄っています。
 
-## Real Sample Sweep
+Raw reports:
 
-Artifact directory:
+- [`Seed-san.wgpu-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.wgpu-vs-three-vrm.imqraw-rust.json)
+- [`Seed-san.bevy-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.bevy-vs-three-vrm.imqraw-rust.json)
+- [`Seed-san.ash-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.ash-vs-three-vrm.imqraw-rust.json)
+
+## 実サンプル sweep
+
+Artifact:
 [`../.external-fixtures/render-parity-samples-ash-gated-check`](../.external-fixtures/render-parity-samples-ash-gated-check)
 
-Metric: `rgb-visible`.
-
-| Fixture | wgpu PSNR | Bevy PSNR | Ash PSNR | Current status |
+| Fixture | wgpu PSNR | Bevy PSNR | Ash PSNR | 読み |
 | --- | ---: | ---: | ---: | --- |
-| `Seed-san.vrm` | 34.6538 | 34.1163 | 34.6391 | Passes gate; still the main real-model color/ownership target. |
-| `VRM1_Constraint_Twist_Sample.vrm` | 36.2518 | 36.2349 | 36.2509 | Passes; residuals are local. |
-| `VRMC_materials_mtoon_UV_Animation_Test.vrm` | 35.6342 | 35.6202 | 35.6342 | Passes; UV animation path is covered. |
-| `VRMC_vrm_expressions_isBinary_Overridden.vrm` | 55.6968 | 55.2106 | 55.6968 | Strong parity. |
-| `VRMC_vrm_expressions_isBinary_Overrides.vrm` | 55.7181 | 55.2306 | 55.7181 | Strong parity. |
-| `AliciaSolid_vrm-0.51.vrm` | 35.6238 | 35.6088 | 35.6238 | Passes; VRM0 compatibility path is covered. |
+| `Seed-san.vrm` | 34.6538 | 34.1163 | 34.6391 | 実モデルの主な material / ownership target。 |
+| `VRM1_Constraint_Twist_Sample.vrm` | 36.2518 | 36.2349 | 36.2509 | constraint path の広域 regression は見えない。 |
+| `VRMC_materials_mtoon_UV_Animation_Test.vrm` | 35.6342 | 35.6202 | 35.6342 | UV animation path をカバー。 |
+| `VRMC_vrm_expressions_isBinary_Overridden.vrm` | 55.6968 | 55.2106 | 55.6968 | 高い一致。 |
+| `VRMC_vrm_expressions_isBinary_Overrides.vrm` | 55.7181 | 55.2306 | 55.7181 | 高い一致。 |
+| `AliciaSolid_vrm-0.51.vrm` | 35.6238 | 35.6088 | 35.6238 | VRM0 compatibility path をカバー。 |
 
 ### Seed-san
 
@@ -62,14 +67,14 @@ Metric: `rgb-visible`.
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.wgpu-vs-three-vrm.diff.png" width="175"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.bevy-vs-three-vrm.diff.png" width="175"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/diff/Seed-san.ash-vs-three-vrm.diff.png" width="175"> |
 
-### Constraint And UV Samples
+### Constraint / UV Animation
 
 | Fixture | three-vrm | wgpu | Bevy | Ash |
 | --- | --- | --- | --- | --- |
 | Constraint | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/VRM1_Constraint_Twist_Sample.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/VRM1_Constraint_Twist_Sample.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/VRM1_Constraint_Twist_Sample.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/VRM1_Constraint_Twist_Sample.frame000.png" width="145"> |
 | MToon UV animation | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="145"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/VRMC_materials_mtoon_UV_Animation_Test.frame000.png" width="145"> |
 
-### Expressions And VRM0
+### Expressions / VRM0
 
 | Fixture | three-vrm | wgpu | Bevy | Ash |
 | --- | --- | --- | --- | --- |
@@ -77,12 +82,12 @@ Metric: `rgb-visible`.
 | Expression overrides | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/VRMC_vrm_expressions_isBinary_Overrides.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/VRMC_vrm_expressions_isBinary_Overrides.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/VRMC_vrm_expressions_isBinary_Overrides.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/VRMC_vrm_expressions_isBinary_Overrides.frame000.png" width="130"> |
 | AliciaSolid VRM0 | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/three-vrm/AliciaSolid_vrm-0_51.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/wgpu/AliciaSolid_vrm-0_51.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/bevy/AliciaSolid_vrm-0_51.frame000.png" width="130"> | <img src="../.external-fixtures/render-parity-samples-ash-gated-check/ash/AliciaSolid_vrm-0_51.frame000.png" width="130"> |
 
-## Transparent And PBR Guards
+## 透明 / glTF-PBR guard
 
-| Fixture | Metric | wgpu | Bevy | Ash | Current status |
+| Fixture | Metric | wgpu | Bevy | Ash | 読み |
 | --- | --- | ---: | ---: | ---: | --- |
-| `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | Exact alpha parity, max channel delta 1. |
-| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | Non-MToon glTF/PBR fallback is guarded. |
+| `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | alpha parity は一致。max channel delta は 1。 |
+| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | non-MToon glTF/PBR fallback を guard。 |
 
 ### Generated Transparent Blend
 
@@ -104,21 +109,15 @@ Metric: `rgb-visible`.
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.wgpu-vs-three-vrm.diff.png" width="200"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.bevy-vs-three-vrm.diff.png" width="200"> | <img src="../.external-fixtures/render-parity-gltf-pbr-generated/diff/gltf-pbr_vrm.ash-vs-three-vrm.diff.png" width="200"> |
 
-## Current Blocker Diagnostic
+## Seed-san blocker diagnostic
 
-The remaining Seed-san base-color diagnostic should be read as evidence, not as
-a default behavior target. The second-frontier run is a negative control:
-blindly expanding ownership improves some pixels and regresses others.
+このセクションは default behavior の目標ではなく、残差の原因を切り分ける診断です。expanded post-resolve は「正しい source ownership が与えられた場合に近づく pixel」を見るためのもので、blind に適用する修正ではありません。
 
-After the latest quad-resolve update, the expanded readback keeps exact alpha
-parity across wgpu, Bevy, and Ash. Ash PNGs can be regenerated from the existing
-`.rgba.json` artifacts with `just render-parity-current-ash-pngs`.
-
-| Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Use |
+| Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | 用途 |
 | --- | ---: | ---: | ---: | --- |
-| Current readback | 30.6336 | 28.2142 | 35.8902 | Current source of truth. |
-| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 29.2208 | 35.8901 | Target-pixel coverage diagnostic; not a default fix. |
-| Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | Regression guard, not a fix. |
+| Current readback | 30.6336 | 28.2142 | 35.8902 | 現在の source of truth。 |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 29.2208 | 35.8901 | target-pixel coverage の診断。default fix ではない。 |
+| Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | regression guard。修正方針にはしない。 |
 
 | three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |
 | --- | --- | --- | --- |
@@ -132,31 +131,20 @@ parity across wgpu, Bevy, and Ash. Ash PNGs can be regenerated from the existing
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/ash/Seed-san.frame000.png" width="180"> |
 
-### Expanded Material/Color Diagnostic
+## 次に見る詳細
 
-The `target/texture-draw-audit/` expected-vs-actual (`E-A`) reports show that
-the selected bucket mean E-A distance is wgpu `45.89`, Ash `36.97`, and Bevy
-`93.25`. The direction differs by material and draw key, so this is not a good
-candidate for another global exposure or color-space toggle.
+- 詳細な現状メモ: [`render-parity-current-images.md`](render-parity-current-images.md)
+- 既存の日本語比較ページ: [`rendering-result-current-comparison.ja.md`](rendering-result-current-comparison.ja.md)
+- 広い履歴インデックス: [`render-parity-image-comparison.md`](render-parity-image-comparison.md)
+- parity 全体の進捗: [`render-parity.md`](render-parity.md)
 
-| Renderer | Selected mean E-A | Representative expected-brighter bucket | Representative expected-darker bucket | Reading |
-| --- | ---: | --- | --- | --- |
-| wgpu | 45.89 | `backpack_nm node145/mesh4/prim9/base` `+18.47,+21.00,+22.33` | `body_nm node145/mesh4/prim1/base` `-33.00,-26.50,-24.75` | Split glTF/PBR backpack work from MToon body/plastic work. |
-| Ash | 36.97 | `backpack_nm node145/mesh4/prim9/base` `+16.57,+18.83,+19.83` | `body_nm node145/mesh4/prim1/base` `-9.50,-7.88,-7.75` | Same directional split as wgpu; not backend-only. |
-| Bevy | 93.25 | Large expected-brighter residuals around `backpack_nm` | Large material-pixel residual remains | Material/color evaluation still differs from manifest-following behavior. |
+## 更新コマンド
 
-Audit Markdown:
+```powershell
+just render-parity-samples-ash-gated
+just render-parity-transparent-generated-ash-gated
+just render-parity-gltf-pbr-generated
+just render-parity-seed-base-color-flat32-render-resolve-readback
+```
 
-- [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
-- [`target/texture-draw-audit/Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
-- [`target/texture-draw-audit/Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
-
-## Review Order
-
-1. Start with `Main Current Image Set` for the latest whole-image state.
-2. Check `Real Sample Sweep` to make sure broad parity is still intact.
-3. Use `Transparent And PBR Guards` to confirm alpha and non-MToon paths.
-4. Use `Current Blocker Diagnostic` only for targeted material/color ownership
-   work; do not treat expanded diagnostics as desired renderer behavior.
-5. Use the E-A audit rows to split glTF/PBR backpack color accumulation from
-   MToon body/plastic local material differences.
+最終判断では PNG だけを見ず、対応する `.imqraw` レポートを確認します。

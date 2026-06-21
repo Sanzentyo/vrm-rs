@@ -75,7 +75,7 @@ source-derived selection frontier without explaining the renderer behavior.
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 0 / 0 / 0 |
-| Expanded post-resolve diagnostic, after quad resolve | 36.63 | 36.26 | 36.95 | 0 / 0 / 0 |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 29.2208 | 35.8901 | 0 / 0 / 0 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | 0 / 0 / 0 |
 
 Focused wgpu material-pixel reports:
@@ -157,12 +157,12 @@ looking at final pixel color. A wgpu smoke against the expanded post-resolve
 manifest reported `21` draw selections with nonzero entries for all four
 high-margin draw keys above.
 
-After switching the remaining wgpu and Ash owner/sample resolve paths to the
-same one-pixel triangle-list quad model as Bevy, the expanded Seed-san gradient
-PSNR rose to wgpu `36.63 dB`, Bevy `36.26 dB`, and Ash `36.95 dB` with exact
-alpha. This is a target-pixel coverage improvement, not the final parity answer:
-the refreshed expected-vs-actual material/color audit still reports selected
-mean E-A distance wgpu `45.89`, Ash `36.97`, and Bevy `93.25`.
+The current local expanded Seed-san artifacts report gradient PSNR wgpu
+`32.7302 dB`, Bevy `29.2208 dB`, and Ash `35.8901 dB` with exact alpha. This
+diagnostic remains useful for target-pixel coverage and routed-sample analysis,
+but it is not a default behavior target: the refreshed expected-vs-actual
+material/color audit still reports selected mean E-A distance wgpu `45.89`, Ash
+`36.97`, and Bevy `93.25`.
 
 The E-A direction splits by material/draw key. For example, wgpu
 `backpack_nm node145/mesh4/prim9/base` is expected-brighter
