@@ -16,7 +16,7 @@
 | 実サンプル sweep | [`../.external-fixtures/render-parity-samples-ash-gated-check`](../.external-fixtures/render-parity-samples-ash-gated-check) | Seed-san、constraint、UV animation、expression、VRM0 |
 | 透明 blend guard | [`../.external-fixtures/render-parity-transparent-generated-ash-gated`](../.external-fixtures/render-parity-transparent-generated-ash-gated) | alpha / blend の regression |
 | glTF/PBR fallback guard | [`../.external-fixtures/render-parity-gltf-pbr-generated`](../.external-fixtures/render-parity-gltf-pbr-generated) | MToon 以外の material path |
-| Seed-san blocker diagnostic | [`../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback) | material/color/ownership の残差 |
+| Seed-san blocker diagnostic | [`../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback) / [`../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback) | material/color/ownership の残差 |
 
 ## 現在の Seed-san 基準セット
 
@@ -119,10 +119,12 @@ Metric: `rgb-visible`。
 
 このセクションは default behavior の目標ではなく、残差の原因を切り分ける診断です。expanded post-resolve は「正しい source ownership が与えられた場合に近づく pixel」を見るためのもので、blind に適用する修正ではありません。
 
+直近の quad resolve 後の expanded readback は、wgpu / Bevy / Ash すべてで alpha は一致しています。ただし Ash はこの artifact set では `.imqraw` / `.rgba.json` のみがあり、PNG は現時点のローカル画像セットにありません。
+
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | 用途 |
 | --- | ---: | ---: | ---: | --- |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 現在の source of truth。 |
-| Expanded post-resolve diagnostic | 32.7302 | 29.2224 | 35.8901 | forced sample が有効な箇所を確認する。 |
+| Expanded post-resolve diagnostic, quad resolve 後 | 36.63 | 36.26 | 36.95 | target-pixel coverage は改善。残差は material/color 評価へ移動。 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | regression guard。修正方針にはしない。 |
 
 | three-vrm reference | wgpu current readback | Bevy current readback |
@@ -133,12 +135,29 @@ Metric: `rgb-visible`。
 | --- | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="160"> |
 
+### Expanded readback の material/color 診断
+
+`target/texture-draw-audit/` に出している expected-vs-actual (`E-A`) 診断では、selected bucket の mean E-A distance は wgpu `45.89`、Ash `36.97`、Bevy `93.25` です。方向は material / draw key ごとに分かれており、単一の exposure / color-space knob で直す形ではありません。
+
+| Renderer | Selected mean E-A | 代表的な expected-brighter bucket | 代表的な expected-darker bucket | 読み |
+| --- | ---: | --- | --- | --- |
+| wgpu | 45.89 | `backpack_nm node145/mesh4/prim9/base` `+18.47,+21.00,+22.33` | `body_nm node145/mesh4/prim1/base` `-33.00,-26.50,-24.75` | glTF/PBR backpack と MToon body/plastic を分けて見る。 |
+| Ash | 36.97 | `backpack_nm node145/mesh4/prim9/base` `+16.57,+18.83,+19.83` | `body_nm node145/mesh4/prim1/base` `-9.50,-7.88,-7.75` | wgpu と同じ方向の split。backend だけの差ではない。 |
+| Bevy | 93.25 | `backpack_nm` 周辺が大きく expected-brighter | material pixel residual が大きい | manifest sample 追従とは別に material/color 評価差が残る。 |
+
+Audit Markdown:
+
+- [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
+- [`target/texture-draw-audit/Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
+- [`target/texture-draw-audit/Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
+
 ## 現時点の読み
 
 - `wgpu` と Ash は多くのセットでほぼ同じ傾向を示しており、backend transport だけではなく material/color/texture sampling 側の差分が主な候補です。
 - Bevy は alpha が一致しており、広域の透明処理 regression は現状見えていません。ただし Seed-san の current diagnostic では gradient-domain PSNR が低く、material pixel の residual は残っています。
 - `transparent-blend_vrm` と `gltf-pbr_vrm` の guard は良好です。透明・非MToon fallback の大きな regression は、現状の画像では見えていません。
-- expanded / second-frontier diagnostic は修正結果として扱わず、root-cause を探すための比較対象として使います。
+- quad resolve 後の expanded diagnostic は target coverage の改善確認としては有効ですが、E-A 診断では material / draw key ごとの方向差が残っています。次は全体ノブではなく、glTF/PBR backpack 系と MToon body/plastic 系を分けて詰めます。
+- second-frontier diagnostic は修正結果として扱わず、root-cause を探すための negative control として使います。
 
 ## 関連ドキュメント
 

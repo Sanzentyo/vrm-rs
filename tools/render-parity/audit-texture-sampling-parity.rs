@@ -69,6 +69,11 @@ struct AuditReport {
 #[derive(Clone, Debug, Default, Serialize)]
 struct BucketStats {
     count: u64,
+    mean_expected_actual_rgb_distance: Option<f64>,
+    expected_actual_within_4: u64,
+    expected_actual_within_8: u64,
+    expected_actual_within_16: u64,
+    mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     actual_cpu_closer: u64,
     expected_cpu_closer: u64,
     cpu_tied: u64,
@@ -157,6 +162,11 @@ struct ShadingModelCount {
 struct MaterialBucket {
     material_name: String,
     count: u64,
+    mean_expected_actual_rgb_distance: Option<f64>,
+    expected_actual_within_4: u64,
+    expected_actual_within_8: u64,
+    expected_actual_within_16: u64,
+    mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     actual_cpu_closer: u64,
     expected_cpu_closer: u64,
     cpu_tied: u64,
@@ -227,6 +237,8 @@ struct ResidualRow {
     selected: bool,
     expected: [u8; 4],
     actual: [u8; 4],
+    expected_actual_rgb_distance: f64,
+    expected_minus_actual_rgb_delta: [f64; 3],
     selection_surface: Option<SurfaceLabel>,
     selection_draw_key: Option<String>,
     selection_rgba: Option<[u8; 4]>,
@@ -262,6 +274,13 @@ struct SurfaceLabel {
 #[derive(Clone, Debug, Default)]
 struct Accumulator {
     count: u64,
+    expected_actual_distance_sum: f64,
+    expected_actual_distance_count: u64,
+    expected_actual_within_4: u64,
+    expected_actual_within_8: u64,
+    expected_actual_within_16: u64,
+    expected_minus_actual_delta_sum: [f64; 3],
+    expected_minus_actual_delta_count: u64,
     actual_cpu_closer: u64,
     expected_cpu_closer: u64,
     cpu_tied: u64,
@@ -355,6 +374,13 @@ struct ModeAccumulator {
 #[derive(Clone, Debug, Default)]
 struct MaterialAccumulator {
     count: u64,
+    expected_actual_distance_sum: f64,
+    expected_actual_distance_count: u64,
+    expected_actual_within_4: u64,
+    expected_actual_within_8: u64,
+    expected_actual_within_16: u64,
+    expected_minus_actual_delta_sum: [f64; 3],
+    expected_minus_actual_delta_count: u64,
     actual_cpu_closer: u64,
     expected_cpu_closer: u64,
     cpu_tied: u64,
@@ -438,6 +464,7 @@ impl Accumulator {
         selection_rgba: Option<[u8; 4]>,
     ) {
         self.count += 1;
+        self.add_expected_actual(rgba_at(hotspot, "/actual"), rgba_at(hotspot, "/expected"));
 
         let actual_cpu = f64_at(hotspot, "/frontmost_cpu_base_color_actual_rgb_distance");
         let expected_cpu = f64_at(
@@ -633,6 +660,17 @@ impl Accumulator {
     fn finish(self) -> BucketStats {
         BucketStats {
             count: self.count,
+            mean_expected_actual_rgb_distance: mean(
+                self.expected_actual_distance_sum,
+                self.expected_actual_distance_count,
+            ),
+            expected_actual_within_4: self.expected_actual_within_4,
+            expected_actual_within_8: self.expected_actual_within_8,
+            expected_actual_within_16: self.expected_actual_within_16,
+            mean_expected_minus_actual_rgb_delta: mean_rgb_delta(
+                self.expected_minus_actual_delta_sum,
+                self.expected_minus_actual_delta_count,
+            ),
             actual_cpu_closer: self.actual_cpu_closer,
             expected_cpu_closer: self.expected_cpu_closer,
             cpu_tied: self.cpu_tied,
@@ -879,6 +917,23 @@ impl Accumulator {
         }
     }
 
+    fn add_expected_actual(&mut self, actual: Option<[u8; 4]>, expected: Option<[u8; 4]>) {
+        let Some((actual, expected)) = actual.zip(expected) else {
+            return;
+        };
+        let distance = rgb_distance(actual, expected);
+        self.expected_actual_distance_sum += distance;
+        self.expected_actual_distance_count += 1;
+        self.expected_actual_within_4 += u64::from(distance <= 4.0);
+        self.expected_actual_within_8 += u64::from(distance <= 8.0);
+        self.expected_actual_within_16 += u64::from(distance <= 16.0);
+        add_rgb_delta(
+            &mut self.expected_minus_actual_delta_sum,
+            signed_rgb_delta(expected, actual),
+        );
+        self.expected_minus_actual_delta_count += 1;
+    }
+
     fn add_nearest_expected_distances(
         &mut self,
         actual_distance: Option<f64>,
@@ -982,6 +1037,7 @@ impl MaterialAccumulator {
         same_triangle_as_expected: bool,
     ) {
         self.count += 1;
+        self.add_expected_actual(rgba_at(hotspot, "/actual"), rgba_at(hotspot, "/expected"));
         if let Some(distance) = actual_cpu {
             self.cpu_actual_distance_sum += distance;
             self.cpu_actual_distance_count += 1;
@@ -1046,6 +1102,17 @@ impl MaterialAccumulator {
         MaterialBucket {
             material_name,
             count: self.count,
+            mean_expected_actual_rgb_distance: mean(
+                self.expected_actual_distance_sum,
+                self.expected_actual_distance_count,
+            ),
+            expected_actual_within_4: self.expected_actual_within_4,
+            expected_actual_within_8: self.expected_actual_within_8,
+            expected_actual_within_16: self.expected_actual_within_16,
+            mean_expected_minus_actual_rgb_delta: mean_rgb_delta(
+                self.expected_minus_actual_delta_sum,
+                self.expected_minus_actual_delta_count,
+            ),
             actual_cpu_closer: self.actual_cpu_closer,
             expected_cpu_closer: self.expected_cpu_closer,
             cpu_tied: self.cpu_tied,
@@ -1279,6 +1346,23 @@ impl MaterialAccumulator {
             Some(std::cmp::Ordering::Equal) => self.manifest_sample_tied += 1,
             None => {}
         }
+    }
+
+    fn add_expected_actual(&mut self, actual: Option<[u8; 4]>, expected: Option<[u8; 4]>) {
+        let Some((actual, expected)) = actual.zip(expected) else {
+            return;
+        };
+        let distance = rgb_distance(actual, expected);
+        self.expected_actual_distance_sum += distance;
+        self.expected_actual_distance_count += 1;
+        self.expected_actual_within_4 += u64::from(distance <= 4.0);
+        self.expected_actual_within_8 += u64::from(distance <= 8.0);
+        self.expected_actual_within_16 += u64::from(distance <= 16.0);
+        add_rgb_delta(
+            &mut self.expected_minus_actual_delta_sum,
+            signed_rgb_delta(expected, actual),
+        );
+        self.expected_minus_actual_delta_count += 1;
     }
 
     fn add_nearest_expected_distances(
@@ -1612,6 +1696,14 @@ fn residual_row(
         selected,
         expected: rgba_at(hotspot, "/expected")?,
         actual: rgba_at(hotspot, "/actual")?,
+        expected_actual_rgb_distance: rgb_distance(
+            rgba_at(hotspot, "/expected")?,
+            rgba_at(hotspot, "/actual")?,
+        ),
+        expected_minus_actual_rgb_delta: signed_rgb_delta(
+            rgba_at(hotspot, "/expected")?,
+            rgba_at(hotspot, "/actual")?,
+        ),
         selection_surface,
         selection_draw_key,
         selection_rgba,
@@ -1945,16 +2037,18 @@ fn markdown(report: &AuditReport) -> String {
     push_bucket_markdown(&mut output, "Carried Selection", &report.carried_selection);
     push_bucket_markdown(&mut output, "New Selection", &report.new_selection);
     output.push_str("## Top Residuals\n\n");
-    output.push_str("| Pixel | Sel | Actual | Expected | Selected surface | Selected draw | Selected RGBA | Sel sample A/E | A-S / E-S | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
-    output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
+    output.push_str("| Pixel | Sel | Actual | Expected | E-A dist | E-A delta | Selected surface | Selected draw | Selected RGBA | Sel sample A/E | A-S / E-S | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
+    output.push_str("| --- | --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
     for row in &report.top_residuals {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             if row.selected { "yes" } else { "no" },
             fmt_rgba(row.actual),
             fmt_rgba(row.expected),
+            fmt_opt(Some(row.expected_actual_rgb_distance)),
+            fmt_opt_rgb_delta(Some(row.expected_minus_actual_rgb_delta)),
             fmt_surface(row.selection_surface.as_ref()),
             row.selection_draw_key.as_deref().unwrap_or("n/a"),
             fmt_opt_rgba(row.selection_rgba),
@@ -1980,6 +2074,14 @@ fn markdown(report: &AuditReport) -> String {
 fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) {
     output.push_str(&format!("## {title}\n\n"));
     output.push_str(&format!("- Count: `{}`\n", bucket.count));
+    output.push_str(&format!(
+        "- Expected-vs-actual RGB distance mean `{}`; within4/8/16 `{}` / `{}` / `{}`; mean E-A `{}`\n",
+        fmt_opt(bucket.mean_expected_actual_rgb_distance),
+        bucket.expected_actual_within_4,
+        bucket.expected_actual_within_8,
+        bucket.expected_actual_within_16,
+        fmt_opt_rgb_delta(bucket.mean_expected_minus_actual_rgb_delta)
+    ));
     output.push_str(&format!(
         "- CPU color closer actual/expected/tie: `{}` / `{}` / `{}`\n",
         bucket.actual_cpu_closer, bucket.expected_cpu_closer, bucket.cpu_tied
@@ -2099,13 +2201,18 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture-as-linear A/E/T | Mean Linear A/E | Mean A-L / E-L | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | Mean E-A | E-A <=4/8/16 | Mean E-A delta | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture-as-linear A/E/T | Mean Linear A/E | Mean A-L / E-L | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {} | {}/{}/{} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
+            fmt_opt(material.mean_expected_actual_rgb_distance),
+            material.expected_actual_within_4,
+            material.expected_actual_within_8,
+            material.expected_actual_within_16,
+            fmt_opt_rgb_delta(material.mean_expected_minus_actual_rgb_delta),
             fmt_shading_models(&material.shading_model_counts),
             material.actual_cpu_closer,
             material.expected_cpu_closer,
@@ -2165,15 +2272,20 @@ fn push_material_draw_bucket_markdown(
     materials: &[SelectionMaterialDrawBucket],
 ) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Draw key | Count | Models | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
-    output.push_str("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Draw key | Count | Mean E-A | E-A <=4/8/16 | Mean E-A delta | Models | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | CPU A/E/T | Texture A/E/T | Edge <=0.50px | Best sample <=8 A/E | Best modes A/E |\n");
+    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(12) {
         let stats = &material.stats;
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
+            "| {} | {} | {} | {} | {}/{}/{} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {}/{}/{} | {} | {} / {} | {} / {} |\n",
             material.material_name,
             material.draw_key,
             stats.count,
+            fmt_opt(stats.mean_expected_actual_rgb_distance),
+            stats.expected_actual_within_4,
+            stats.expected_actual_within_8,
+            stats.expected_actual_within_16,
+            fmt_opt_rgb_delta(stats.mean_expected_minus_actual_rgb_delta),
             fmt_shading_models(&stats.shading_model_counts),
             stats.manifest_sample_actual_closer,
             stats.manifest_sample_expected_closer,
@@ -2418,6 +2530,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.manifest_sample_actual_far_expected_near, 0);
     assert_eq!(report.selected.manifest_sample_both_far, 0);
     assert_close(
+        report.selected.mean_expected_actual_rgb_distance,
+        rgb_distance([100, 100, 100, 255], [10, 10, 10, 255]),
+    );
+    assert_eq!(report.selected.expected_actual_within_4, 0);
+    assert_eq!(report.selected.expected_actual_within_8, 0);
+    assert_eq!(report.selected.expected_actual_within_16, 0);
+    assert_eq!(
+        report.selected.mean_expected_minus_actual_rgb_delta,
+        Some([-90.0, -90.0, -90.0])
+    );
+    assert_close(
         report.selected.mean_manifest_sample_actual_rgb_distance,
         rgb_distance([12, 10, 10, 255], [100, 100, 100, 255]),
     );
@@ -2444,6 +2567,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         Some("node145/mesh4/prim1/base")
     );
     assert_eq!(report.top_residuals[0].selection_rgba, Some([12, 10, 10, 255]));
+    assert_close(
+        Some(report.top_residuals[0].expected_actual_rgb_distance),
+        rgb_distance([100, 100, 100, 255], [10, 10, 10, 255]),
+    );
+    assert_eq!(
+        report.top_residuals[0].expected_minus_actual_rgb_delta,
+        [-90.0, -90.0, -90.0]
+    );
     assert_close(
         report.top_residuals[0].selection_expected_rgb_distance,
         rgb_distance([12, 10, 10, 255], [10, 10, 10, 255]),

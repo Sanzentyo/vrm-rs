@@ -110,10 +110,14 @@ The remaining Seed-san base-color diagnostic should be read as evidence, not as
 a default behavior target. The second-frontier run is a negative control:
 blindly expanding ownership improves some pixels and regresses others.
 
+After the latest quad-resolve update, the expanded readback keeps exact alpha
+parity across wgpu, Bevy, and Ash. Ash has `.imqraw` / `.rgba.json` artifacts in
+this artifact set, but no PNG image in the current local image set.
+
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Use |
 | --- | ---: | ---: | ---: | --- |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | Current source of truth. |
-| Expanded post-resolve diagnostic | 32.7302 | 29.2224 | 35.8901 | Shows which forced samples can match. |
+| Expanded post-resolve diagnostic, after quad resolve | 36.63 | 36.26 | 36.95 | Target-pixel coverage improved; remaining residuals moved to material/color evaluation. |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | Regression guard, not a fix. |
 
 | three-vrm reference | wgpu current readback | Bevy current readback |
@@ -124,6 +128,25 @@ blindly expanding ownership improves some pixels and regresses others.
 | --- | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/bevy/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/wgpu/Seed-san.frame000.png" width="160"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback/bevy/Seed-san.frame000.png" width="160"> |
 
+### Expanded Material/Color Diagnostic
+
+The `target/texture-draw-audit/` expected-vs-actual (`E-A`) reports show that
+the selected bucket mean E-A distance is wgpu `45.89`, Ash `36.97`, and Bevy
+`93.25`. The direction differs by material and draw key, so this is not a good
+candidate for another global exposure or color-space toggle.
+
+| Renderer | Selected mean E-A | Representative expected-brighter bucket | Representative expected-darker bucket | Reading |
+| --- | ---: | --- | --- | --- |
+| wgpu | 45.89 | `backpack_nm node145/mesh4/prim9/base` `+18.47,+21.00,+22.33` | `body_nm node145/mesh4/prim1/base` `-33.00,-26.50,-24.75` | Split glTF/PBR backpack work from MToon body/plastic work. |
+| Ash | 36.97 | `backpack_nm node145/mesh4/prim9/base` `+16.57,+18.83,+19.83` | `body_nm node145/mesh4/prim1/base` `-9.50,-7.88,-7.75` | Same directional split as wgpu; not backend-only. |
+| Bevy | 93.25 | Large expected-brighter residuals around `backpack_nm` | Large material-pixel residual remains | Material/color evaluation still differs from manifest-following behavior. |
+
+Audit Markdown:
+
+- [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
+- [`target/texture-draw-audit/Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
+- [`target/texture-draw-audit/Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
+
 ## Review Order
 
 1. Start with `Main Current Image Set` for the latest whole-image state.
@@ -131,3 +154,5 @@ blindly expanding ownership improves some pixels and regresses others.
 3. Use `Transparent And PBR Guards` to confirm alpha and non-MToon paths.
 4. Use `Current Blocker Diagnostic` only for targeted material/color ownership
    work; do not treat expanded diagnostics as desired renderer behavior.
+5. Use the E-A audit rows to split glTF/PBR backpack color accumulation from
+   MToon body/plastic local material differences.

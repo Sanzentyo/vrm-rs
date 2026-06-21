@@ -75,7 +75,7 @@ source-derived selection frontier without explaining the renderer behavior.
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 0 / 0 / 0 |
-| Expanded post-resolve diagnostic | 32.7302 | 29.2224 | 35.8901 | 0 / 0 / 0 |
+| Expanded post-resolve diagnostic, after quad resolve | 36.63 | 36.26 | 36.95 | 0 / 0 / 0 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | 0 / 0 / 0 |
 
 Focused wgpu material-pixel reports:
@@ -156,6 +156,27 @@ verify whether each high-margin manifest entry reached its intended draw before
 looking at final pixel color. A wgpu smoke against the expanded post-resolve
 manifest reported `21` draw selections with nonzero entries for all four
 high-margin draw keys above.
+
+After switching the remaining wgpu and Ash owner/sample resolve paths to the
+same one-pixel triangle-list quad model as Bevy, the expanded Seed-san gradient
+PSNR rose to wgpu `36.63 dB`, Bevy `36.26 dB`, and Ash `36.95 dB` with exact
+alpha. This is a target-pixel coverage improvement, not the final parity answer:
+the refreshed expected-vs-actual material/color audit still reports selected
+mean E-A distance wgpu `45.89`, Ash `36.97`, and Bevy `93.25`.
+
+The E-A direction splits by material/draw key. For example, wgpu
+`backpack_nm node145/mesh4/prim9/base` is expected-brighter
+(`+18.47,+21.00,+22.33`), while `body_nm node145/mesh4/prim1/base` is
+expected-darker (`-33.00,-26.50,-24.75`); Ash shows the same directional split
+at smaller magnitude. Use these audit rows to split glTF/PBR backpack color
+accumulation from MToon body/plastic local material differences, rather than
+adding another global exposure or color-space toggle.
+
+Expected-vs-actual audit Markdown:
+
+- [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
+- [`Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
+- [`Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
 
 `audit-owner-sample-execution.rs` now reads that artifact metadata and adds a
 `Renderer Draw Selection Routing` section. The same focused wgpu smoke routed
