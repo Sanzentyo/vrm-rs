@@ -98,6 +98,13 @@ struct BucketStats {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_frontmost_texture_as_linear_srgb_actual_rgb_distance: Option<f64>,
+    mean_frontmost_texture_as_linear_srgb_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_texture_as_linear_srgb_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_texture_as_linear_srgb_rgb_delta: Option<[f64; 3]>,
+    frontmost_texture_as_linear_srgb_actual_closer: u64,
+    frontmost_texture_as_linear_srgb_expected_closer: u64,
+    frontmost_texture_as_linear_srgb_tied: u64,
     mean_manifest_sample_actual_rgb_distance: Option<f64>,
     mean_manifest_sample_expected_rgb_distance: Option<f64>,
     mean_actual_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
@@ -164,6 +171,13 @@ struct MaterialBucket {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_frontmost_texture_as_linear_srgb_actual_rgb_distance: Option<f64>,
+    mean_frontmost_texture_as_linear_srgb_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_texture_as_linear_srgb_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_texture_as_linear_srgb_rgb_delta: Option<[f64; 3]>,
+    frontmost_texture_as_linear_srgb_actual_closer: u64,
+    frontmost_texture_as_linear_srgb_expected_closer: u64,
+    frontmost_texture_as_linear_srgb_tied: u64,
     mean_manifest_sample_actual_rgb_distance: Option<f64>,
     mean_manifest_sample_expected_rgb_distance: Option<f64>,
     mean_actual_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
@@ -257,6 +271,17 @@ struct Accumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    texture_as_linear_srgb_actual_distance_sum: f64,
+    texture_as_linear_srgb_actual_distance_count: u64,
+    texture_as_linear_srgb_expected_distance_sum: f64,
+    texture_as_linear_srgb_expected_distance_count: u64,
+    actual_minus_texture_as_linear_srgb_delta_sum: [f64; 3],
+    actual_minus_texture_as_linear_srgb_delta_count: u64,
+    expected_minus_texture_as_linear_srgb_delta_sum: [f64; 3],
+    expected_minus_texture_as_linear_srgb_delta_count: u64,
+    frontmost_texture_as_linear_srgb_actual_closer: u64,
+    frontmost_texture_as_linear_srgb_expected_closer: u64,
+    frontmost_texture_as_linear_srgb_tied: u64,
     manifest_sample_actual_distance_sum: f64,
     manifest_sample_actual_distance_count: u64,
     manifest_sample_expected_distance_sum: f64,
@@ -323,6 +348,17 @@ struct MaterialAccumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    texture_as_linear_srgb_actual_distance_sum: f64,
+    texture_as_linear_srgb_actual_distance_count: u64,
+    texture_as_linear_srgb_expected_distance_sum: f64,
+    texture_as_linear_srgb_expected_distance_count: u64,
+    actual_minus_texture_as_linear_srgb_delta_sum: [f64; 3],
+    actual_minus_texture_as_linear_srgb_delta_count: u64,
+    expected_minus_texture_as_linear_srgb_delta_sum: [f64; 3],
+    expected_minus_texture_as_linear_srgb_delta_count: u64,
+    frontmost_texture_as_linear_srgb_actual_closer: u64,
+    frontmost_texture_as_linear_srgb_expected_closer: u64,
+    frontmost_texture_as_linear_srgb_tied: u64,
     manifest_sample_actual_distance_sum: f64,
     manifest_sample_actual_distance_count: u64,
     manifest_sample_expected_distance_sum: f64,
@@ -400,6 +436,11 @@ impl Accumulator {
         let expected_minus_texture =
             signed_rgb_delta_at(hotspot, "/expected", "/frontmost_base_texture_rgba");
         self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
+        self.add_frontmost_texture_as_linear_srgb(
+            rgba_at(hotspot, "/frontmost_base_texture_rgba"),
+            rgba_at(hotspot, "/actual"),
+            rgba_at(hotspot, "/expected"),
+        );
         self.add_manifest_sample(selection_rgba, rgba_at(hotspot, "/actual"), rgba_at(hotspot, "/expected"));
 
         let edge = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels");
@@ -571,6 +612,27 @@ impl Accumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_frontmost_texture_as_linear_srgb_actual_rgb_distance: mean(
+                self.texture_as_linear_srgb_actual_distance_sum,
+                self.texture_as_linear_srgb_actual_distance_count,
+            ),
+            mean_frontmost_texture_as_linear_srgb_expected_rgb_distance: mean(
+                self.texture_as_linear_srgb_expected_distance_sum,
+                self.texture_as_linear_srgb_expected_distance_count,
+            ),
+            mean_actual_minus_texture_as_linear_srgb_rgb_delta: mean_rgb_delta(
+                self.actual_minus_texture_as_linear_srgb_delta_sum,
+                self.actual_minus_texture_as_linear_srgb_delta_count,
+            ),
+            mean_expected_minus_texture_as_linear_srgb_rgb_delta: mean_rgb_delta(
+                self.expected_minus_texture_as_linear_srgb_delta_sum,
+                self.expected_minus_texture_as_linear_srgb_delta_count,
+            ),
+            frontmost_texture_as_linear_srgb_actual_closer: self
+                .frontmost_texture_as_linear_srgb_actual_closer,
+            frontmost_texture_as_linear_srgb_expected_closer: self
+                .frontmost_texture_as_linear_srgb_expected_closer,
+            frontmost_texture_as_linear_srgb_tied: self.frontmost_texture_as_linear_srgb_tied,
             mean_manifest_sample_actual_rgb_distance: mean(
                 self.manifest_sample_actual_distance_sum,
                 self.manifest_sample_actual_distance_count,
@@ -623,6 +685,52 @@ impl Accumulator {
         if let Some(delta) = expected_minus_texture {
             add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
             self.expected_minus_texture_delta_count += 1;
+        }
+    }
+
+    fn add_frontmost_texture_as_linear_srgb(
+        &mut self,
+        texture: Option<[u8; 4]>,
+        actual: Option<[u8; 4]>,
+        expected: Option<[u8; 4]>,
+    ) {
+        let Some(texture) = texture.map(texture_as_linear_srgb_rgba) else {
+            return;
+        };
+        let actual_distance = actual.map(|actual| rgb_distance(texture, actual));
+        let expected_distance = expected.map(|expected| rgb_distance(texture, expected));
+        if let Some(distance) = actual_distance {
+            self.texture_as_linear_srgb_actual_distance_sum += distance;
+            self.texture_as_linear_srgb_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.texture_as_linear_srgb_expected_distance_sum += distance;
+            self.texture_as_linear_srgb_expected_distance_count += 1;
+        }
+        if let Some(actual) = actual {
+            add_rgb_delta(
+                &mut self.actual_minus_texture_as_linear_srgb_delta_sum,
+                signed_rgb_delta(actual, texture),
+            );
+            self.actual_minus_texture_as_linear_srgb_delta_count += 1;
+        }
+        if let Some(expected) = expected {
+            add_rgb_delta(
+                &mut self.expected_minus_texture_as_linear_srgb_delta_sum,
+                signed_rgb_delta(expected, texture),
+            );
+            self.expected_minus_texture_as_linear_srgb_delta_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.frontmost_texture_as_linear_srgb_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => {
+                self.frontmost_texture_as_linear_srgb_expected_closer += 1
+            }
+            Some(std::cmp::Ordering::Equal) => self.frontmost_texture_as_linear_srgb_tied += 1,
+            None => {}
         }
     }
 
@@ -801,6 +909,11 @@ impl MaterialAccumulator {
             expected_cpu,
         );
         self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
+        self.add_frontmost_texture_as_linear_srgb(
+            rgba_at(hotspot, "/frontmost_base_texture_rgba"),
+            rgba_at(hotspot, "/actual"),
+            rgba_at(hotspot, "/expected"),
+        );
         if let Some(model) = shading_model {
             *self.shading_models.entry(model.to_owned()).or_default() += 1;
         }
@@ -880,6 +993,27 @@ impl MaterialAccumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_frontmost_texture_as_linear_srgb_actual_rgb_distance: mean(
+                self.texture_as_linear_srgb_actual_distance_sum,
+                self.texture_as_linear_srgb_actual_distance_count,
+            ),
+            mean_frontmost_texture_as_linear_srgb_expected_rgb_distance: mean(
+                self.texture_as_linear_srgb_expected_distance_sum,
+                self.texture_as_linear_srgb_expected_distance_count,
+            ),
+            mean_actual_minus_texture_as_linear_srgb_rgb_delta: mean_rgb_delta(
+                self.actual_minus_texture_as_linear_srgb_delta_sum,
+                self.actual_minus_texture_as_linear_srgb_delta_count,
+            ),
+            mean_expected_minus_texture_as_linear_srgb_rgb_delta: mean_rgb_delta(
+                self.expected_minus_texture_as_linear_srgb_delta_sum,
+                self.expected_minus_texture_as_linear_srgb_delta_count,
+            ),
+            frontmost_texture_as_linear_srgb_actual_closer: self
+                .frontmost_texture_as_linear_srgb_actual_closer,
+            frontmost_texture_as_linear_srgb_expected_closer: self
+                .frontmost_texture_as_linear_srgb_expected_closer,
+            frontmost_texture_as_linear_srgb_tied: self.frontmost_texture_as_linear_srgb_tied,
             mean_manifest_sample_actual_rgb_distance: mean(
                 self.manifest_sample_actual_distance_sum,
                 self.manifest_sample_actual_distance_count,
@@ -931,6 +1065,52 @@ impl MaterialAccumulator {
         if let Some(delta) = expected_minus_texture {
             add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
             self.expected_minus_texture_delta_count += 1;
+        }
+    }
+
+    fn add_frontmost_texture_as_linear_srgb(
+        &mut self,
+        texture: Option<[u8; 4]>,
+        actual: Option<[u8; 4]>,
+        expected: Option<[u8; 4]>,
+    ) {
+        let Some(texture) = texture.map(texture_as_linear_srgb_rgba) else {
+            return;
+        };
+        let actual_distance = actual.map(|actual| rgb_distance(texture, actual));
+        let expected_distance = expected.map(|expected| rgb_distance(texture, expected));
+        if let Some(distance) = actual_distance {
+            self.texture_as_linear_srgb_actual_distance_sum += distance;
+            self.texture_as_linear_srgb_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.texture_as_linear_srgb_expected_distance_sum += distance;
+            self.texture_as_linear_srgb_expected_distance_count += 1;
+        }
+        if let Some(actual) = actual {
+            add_rgb_delta(
+                &mut self.actual_minus_texture_as_linear_srgb_delta_sum,
+                signed_rgb_delta(actual, texture),
+            );
+            self.actual_minus_texture_as_linear_srgb_delta_count += 1;
+        }
+        if let Some(expected) = expected {
+            add_rgb_delta(
+                &mut self.expected_minus_texture_as_linear_srgb_delta_sum,
+                signed_rgb_delta(expected, texture),
+            );
+            self.expected_minus_texture_as_linear_srgb_delta_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.frontmost_texture_as_linear_srgb_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => {
+                self.frontmost_texture_as_linear_srgb_expected_closer += 1
+            }
+            Some(std::cmp::Ordering::Equal) => self.frontmost_texture_as_linear_srgb_tied += 1,
+            None => {}
         }
     }
 
@@ -1391,6 +1571,25 @@ fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f64 {
         .sqrt()
 }
 
+fn texture_as_linear_srgb_rgba(rgba: [u8; 4]) -> [u8; 4] {
+    [
+        linear_to_srgb_u8(rgba[0]),
+        linear_to_srgb_u8(rgba[1]),
+        linear_to_srgb_u8(rgba[2]),
+        rgba[3],
+    ]
+}
+
+fn linear_to_srgb_u8(channel: u8) -> u8 {
+    let linear = f64::from(channel) / 255.0;
+    let srgb = if linear <= 0.003_130_8 {
+        12.92 * linear
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 fn signed_rgb_delta_at(
     hotspot: &Value,
     target_pointer: &str,
@@ -1610,6 +1809,16 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         fmt_opt_rgb_delta(bucket.mean_expected_minus_texture_rgb_delta)
     ));
     output.push_str(&format!(
+        "- Texture-as-linear-sRGB closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; mean A-L / E-L `{}` / `{}`\n",
+        bucket.frontmost_texture_as_linear_srgb_actual_closer,
+        bucket.frontmost_texture_as_linear_srgb_expected_closer,
+        bucket.frontmost_texture_as_linear_srgb_tied,
+        fmt_opt(bucket.mean_frontmost_texture_as_linear_srgb_actual_rgb_distance),
+        fmt_opt(bucket.mean_frontmost_texture_as_linear_srgb_expected_rgb_distance),
+        fmt_opt_rgb_delta(bucket.mean_actual_minus_texture_as_linear_srgb_rgb_delta),
+        fmt_opt_rgb_delta(bucket.mean_expected_minus_texture_as_linear_srgb_rgb_delta)
+    ));
+    output.push_str(&format!(
         "- Manifest sample closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; mean A-M / E-M `{}` / `{}`\n",
         bucket.manifest_sample_actual_closer,
         bucket.manifest_sample_expected_closer,
@@ -1650,11 +1859,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Manifest A/E/T | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture-as-linear A/E/T | Mean Linear A/E | Mean A-L / E-L | Manifest A/E/T | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             fmt_shading_models(&material.shading_model_counts),
@@ -1676,6 +1885,13 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             fmt_opt(material.mean_frontmost_base_texture_expected_rgb_distance),
             fmt_opt_rgb_delta(material.mean_actual_minus_texture_rgb_delta),
             fmt_opt_rgb_delta(material.mean_expected_minus_texture_rgb_delta),
+            material.frontmost_texture_as_linear_srgb_actual_closer,
+            material.frontmost_texture_as_linear_srgb_expected_closer,
+            material.frontmost_texture_as_linear_srgb_tied,
+            fmt_opt(material.mean_frontmost_texture_as_linear_srgb_actual_rgb_distance),
+            fmt_opt(material.mean_frontmost_texture_as_linear_srgb_expected_rgb_distance),
+            fmt_opt_rgb_delta(material.mean_actual_minus_texture_as_linear_srgb_rgb_delta),
+            fmt_opt_rgb_delta(material.mean_expected_minus_texture_as_linear_srgb_rgb_delta),
             material.manifest_sample_actual_closer,
             material.manifest_sample_expected_closer,
             material.manifest_sample_tied,
