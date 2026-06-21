@@ -1531,7 +1531,7 @@ fn focused_pbr_terms_summary(value: &Value) -> Result<String, Box<dyn Error>> {
         return Ok("n/a".to_owned());
     }
     Ok(format!(
-        "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={}",
+        "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={}",
         fmt_optional_f64(optional_f64_path(terms, &["n_dot_l"])?),
         fmt_optional_f64(optional_f64_path(terms, &["n_dot_v"])?),
         fmt_optional_vec3(optional_vec3_path(terms, &["diffuse_lobe_rgb"])?),
@@ -1539,7 +1539,11 @@ fn focused_pbr_terms_summary(value: &Value) -> Result<String, Box<dyn Error>> {
         fmt_optional_vec3(optional_vec3_path(terms, &["direct_rgb"])?),
         fmt_optional_vec3(optional_vec3_path(terms, &["ambient_rgb"])?),
         fmt_optional_vec3(optional_vec3_path(terms, &["direct_plus_ambient_rgb"])?),
-        optional_string_path(terms, &["normal_source"])?.unwrap_or_else(|| "n/a".to_owned())
+        optional_string_path(terms, &["normal_source"])?.unwrap_or_else(|| "n/a".to_owned()),
+        fmt_optional_vec2(optional_vec2_path(terms, &["normal_uv"])?),
+        fmt_optional_rgba(optional_rgba_path(terms, &["normal_texture_rgba"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["geometric_normal"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &["shading_normal"])?)
     ))
 }
 
@@ -2294,6 +2298,29 @@ fn optional_vec3_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 3]>, 
     ]))
 }
 
+fn optional_vec2_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 2]>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let array = value
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    if array.len() != 2 {
+        return Err(format!("JSON path {} does not have length 2", path.join(".")).into());
+    }
+    Ok(Some([
+        array[0]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[0] is not a number", path.join(".")))?,
+        array[1]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[1] is not a number", path.join(".")))?,
+    ]))
+}
+
 fn optional_rgba_path(value: &Value, path: &[&str]) -> Result<Option<[u64; 4]>, Box<dyn Error>> {
     let Some(value) = optional_path(value, path) else {
         return Ok(None);
@@ -2395,6 +2422,12 @@ fn fmt_optional_f64(value: Option<f64>) -> String {
 fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
     value
         .map(fmt_vec3)
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_vec2(value: Option<[f64; 2]>) -> String {
+    value
+        .map(|value| format!("{:.4},{:.4}", value[0], value[1]))
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
@@ -2839,7 +2872,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "frontmost": {
                     "surface": {"material_name": "backpack_nm", "triangle": 42},
                     "pbr_terms": {
-                        "normal_source": "interpolated_vertex_no_normal_map",
+                        "normal_source": "normal_map_tangent_space",
+                        "geometric_normal": [0.0, 0.0, 1.0],
+                        "shading_normal": [0.1, 0.0, 0.99],
+                        "normal_uv": [0.25, 0.75],
+                        "normal_texture_rgba": [127, 123, 255, 255],
                         "n_dot_l": 0.7,
                         "n_dot_v": 0.9,
                         "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
@@ -2970,6 +3007,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""missing_response_rgb_gain":[0.37,0.46,0.49]"#));
     assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
     assert!(summary_json.contains(r#""frontmost_pbr_terms":"nL/nV=0.7000/0.9000"#));
+    assert!(summary_json.contains("normal=normal_map_tangent_space"));
+    assert!(summary_json.contains("tex=127,123,255,255"));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
@@ -3006,7 +3045,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     ));
     assert!(markdown.contains("## Focused Material Pixels"));
     assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
-    assert!(markdown.contains("nL/nV=0.7000/0.9000 diff=0.16,0.15,0.15 spec=0.02,0.02,0.02 direct=0.18,0.17,0.17 amb=0.01,0.01,0.01 total=0.19,0.18,0.18 normal=interpolated_vertex_no_normal_map"));
+    assert!(markdown.contains("nL/nV=0.7000/0.9000 diff=0.16,0.15,0.15 spec=0.02,0.02,0.02 direct=0.18,0.17,0.17 amb=0.01,0.01,0.01 total=0.19,0.18,0.18 normal=normal_map_tangent_space uv=0.2500,0.7500 tex=127,123,255,255 geom=0.00,0.00,1.00 shade=0.10,0.00,0.99"));
     assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
     assert!(markdown.contains(
         "backpack_nm@owner-sample-resolve branch:gltf_pbr m/r/o/d=0.0000/0.6570/1.0000/n/a"

@@ -2,6 +2,19 @@
 
 ## 2026-06-22
 
+- Added normal-map sampling to the CPU PBR hotspot diagnostic. `map-render-hotspots.rs`
+  now records normal UV, sampled normal texture RGBA, geometric normal, and
+  tangent-space shading normal for glTF/PBR candidates, using the same normal-map
+  channel convention as the wgpu shader (`x = r*2-1`, `y = 1-g*2`,
+  `z = b*2-1`). `summarize-focused-material-pixels.rs` and
+  `summarize-render-resolve-expanded.rs` preserve those fields in compact PBR
+  term strings when present. The refreshed Seed-san expanded hotspot JSON shows
+  `normal_map_tangent_space` rows for `backpack_nm`, while the fixed focused
+  material-pixel sample set still lands on older rows without those fields; do
+  not force the focused recipe to use top-hotspot-only expanded reports until
+  the mapper can include explicit requested pixels. The expanded summary was
+  regenerated from current external artifacts and still contains additive/gain
+  color-fit data without serialized `color_fit: null` rows.
 - Aligned the concrete PBR fallback direct-light BRDF used by wgpu, Bevy, and
   Ash with three.js `MeshStandardMaterial` more closely by replacing the
   Schlick-GGX geometry approximation with Smith-correlated GGX visibility and

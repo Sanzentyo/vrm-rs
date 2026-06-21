@@ -166,6 +166,10 @@ struct CandidateSummary {
 #[derive(Clone, Debug, Serialize)]
 struct PbrTermSummary {
     normal_source: Option<String>,
+    geometric_normal: Option<[f64; 3]>,
+    shading_normal: Option<[f64; 3]>,
+    normal_uv: Option<[f64; 2]>,
+    normal_texture_rgba: Option<[u8; 4]>,
     light_dir: Option<[f64; 3]>,
     view_dir: Option<[f64; 3]>,
     n_dot_l: Option<f64>,
@@ -472,6 +476,10 @@ fn pbr_terms_at(value: &Value, pointer: &str) -> Option<PbrTermSummary> {
     let value = value.pointer(pointer)?;
     Some(PbrTermSummary {
         normal_source: string_at(value, "/normal_source"),
+        geometric_normal: vec3_at(value, "/geometric_normal"),
+        shading_normal: vec3_at(value, "/shading_normal"),
+        normal_uv: vec2_at(value, "/normal_uv"),
+        normal_texture_rgba: rgba_at(value, "/normal_texture_rgba"),
         light_dir: vec3_at(value, "/light_dir"),
         view_dir: vec3_at(value, "/view_dir"),
         n_dot_l: f64_at(value, "/n_dot_l"),
@@ -768,7 +776,7 @@ fn fmt_pbr_terms(value: Option<&PbrTermSummary>) -> String {
     value
         .map(|terms| {
             format!(
-                "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} ({})",
+                "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={}",
                 fmt_opt(terms.n_dot_l),
                 fmt_opt(terms.n_dot_v),
                 fmt_opt_vec3(terms.diffuse_lobe_rgb),
@@ -776,7 +784,11 @@ fn fmt_pbr_terms(value: Option<&PbrTermSummary>) -> String {
                 fmt_opt_vec3(terms.direct_rgb),
                 fmt_opt_vec3(terms.ambient_rgb),
                 fmt_opt_vec3(terms.direct_plus_ambient_rgb),
-                terms.normal_source.as_deref().unwrap_or("n/a")
+                terms.normal_source.as_deref().unwrap_or("n/a"),
+                fmt_opt_vec2(terms.normal_uv),
+                fmt_opt_rgba(terms.normal_texture_rgba),
+                fmt_opt_vec3(terms.geometric_normal),
+                fmt_opt_vec3(terms.shading_normal)
             )
         })
         .unwrap_or_else(|| "n/a".to_owned())

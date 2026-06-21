@@ -17,7 +17,7 @@ vrm-rs = { path = "../.." }
 //! Map direct imqraw hotspot pixels back to CPU-projected glTF primitives.
 
 use clap::Parser;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -119,6 +119,8 @@ struct Surface {
     policy: MaterialPolicyReport,
     base_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
     base_texture: Option<CpuRgba8Image>,
+    normal_uv_transform: Option<vrm_rs::core::TextureTransform2d>,
+    normal_texture: Option<CpuRgba8Image>,
     base_color: [f32; 4],
     base_color_alpha: f32,
     material_shading: MaterialShadingReport,
@@ -500,6 +502,10 @@ struct CandidateMatch {
 #[derive(Clone, Copy, Debug, Serialize)]
 struct PbrTermReport {
     normal_source: &'static str,
+    geometric_normal: [f32; 3],
+    shading_normal: [f32; 3],
+    normal_uv: Option<[f32; 2]>,
+    normal_texture_rgba: Option<[u8; 4]>,
     light_dir: [f32; 3],
     view_dir: [f32; 3],
     n_dot_l: f32,
@@ -585,6 +591,7 @@ struct ProjectedVertex {
     depth: f32,
     world_position: Vec3,
     world_normal: Vec3,
+    world_tangent: Vec4,
     uv: [f32; 2],
     reciprocal_w: f32,
 }
@@ -901,6 +908,26 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         .any(|(actual, expected)| (actual - expected).abs() > 0.003)
     {
         return Err("base-uv sRGB encode/decode should round-trip within one byte".into());
+    }
+    let flat = normal_mapped_shading_normal(
+        Vec3::Z,
+        Vec4::new(1.0, 0.0, 0.0, 1.0),
+        [0.5, 0.5, 1.0, 1.0],
+        1.0,
+        true,
+        true,
+    );
+    assert_vec3_close(flat, Vec3::Z, "flat normal map should preserve normal")?;
+    let tilted = normal_mapped_shading_normal(
+        Vec3::Z,
+        Vec4::new(1.0, 0.0, 0.0, 1.0),
+        [1.0, 0.5, 1.0, 1.0],
+        1.0,
+        true,
+        true,
+    );
+    if tilted.x <= 0.0 || tilted.z <= 0.0 {
+        return Err("normal map red channel should tilt toward tangent +x".into());
     }
     Ok(())
 }
@@ -2276,8 +2303,13 @@ fn build_surfaces(
                 options.mtoon_time,
                 expression_effects,
             );
+            let texture_slots = loaded.material_texture_slots(primitive.material);
             let base_uv_transform = uv_transforms.base;
             let base_texture = loaded.material_base_texture_rgba8_image(primitive.material);
+            let normal_uv_transform = uv_transforms.normal;
+            let normal_texture = texture_slots
+                .normal
+                .and_then(|texture| loaded.texture_rgba8_image(texture));
             let shading = loaded.expression_material_shading_plan(
                 primitive.material,
                 GltfMaterialShadingOptions::default(),
@@ -2297,6 +2329,8 @@ fn build_surfaces(
                 policy: base_policy,
                 base_uv_transform,
                 base_texture: base_texture.clone(),
+                normal_uv_transform,
+                normal_texture: normal_texture.clone(),
                 base_color: shading.base_color,
                 base_color_alpha: shading.base_color[3],
                 material_shading,
@@ -2350,6 +2384,8 @@ fn build_surfaces(
                 policy: outline_material_policy(base_policy),
                 base_uv_transform,
                 base_texture,
+                normal_uv_transform,
+                normal_texture,
                 base_color: [0.0, 0.0, 0.0, 1.0],
                 base_color_alpha: 1.0,
                 material_shading: MaterialShadingReport {
@@ -3007,11 +3043,23 @@ fn hit_candidate_for_projected_triangle(
         [a.reciprocal_w, b.reciprocal_w, c.reciprocal_w],
     )
     .normalize_or_zero();
+    let world_tangent = interpolate_perspective_correct_vec4(
+        barycentric,
+        [a.world_tangent, b.world_tangent, c.world_tangent],
+        [a.reciprocal_w, b.reciprocal_w, c.reciprocal_w],
+    );
+    let normal_sample = pbr_normal_sample(
+        surface,
+        raw_uv,
+        world_normal,
+        world_tangent,
+        front_facing,
+    );
     let pbr_terms = pbr_term_report(
         surface.material_shading,
         [diffuse_linear[0], diffuse_linear[1], diffuse_linear[2]],
         world_position,
-        world_normal,
+        normal_sample,
         camera_eye,
     );
     Some(HitCandidate {
@@ -3160,6 +3208,7 @@ fn project(
         depth: ndc.z,
         world_position: vertex.position,
         world_normal: vertex.normal.normalize_or_zero(),
+        world_tangent: vertex.tangent,
         uv: vertex.tex_coord_0,
         reciprocal_w: 1.0 / clip.w,
     })
@@ -3436,15 +3485,127 @@ fn interpolate_perspective_correct_vec3(
     (values[0] * weights[0] + values[1] * weights[1] + values[2] * weights[2]) / denominator
 }
 
+fn interpolate_perspective_correct_vec4(
+    barycentric: [f32; 3],
+    values: [Vec4; 3],
+    reciprocal_w: [f32; 3],
+) -> Vec4 {
+    let weights = [
+        barycentric[0] * reciprocal_w[0],
+        barycentric[1] * reciprocal_w[1],
+        barycentric[2] * reciprocal_w[2],
+    ];
+    let denominator = weights[0] + weights[1] + weights[2];
+    if denominator.abs() <= f32::EPSILON {
+        return values[0] * barycentric[0] + values[1] * barycentric[1] + values[2] * barycentric[2];
+    }
+    (values[0] * weights[0] + values[1] * weights[1] + values[2] * weights[2]) / denominator
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PbrNormalSample {
+    source: &'static str,
+    geometric_normal: Vec3,
+    shading_normal: Vec3,
+    uv: Option<[f32; 2]>,
+    texture_rgba: Option<[u8; 4]>,
+}
+
+fn pbr_normal_sample(
+    surface: &Surface,
+    raw_uv: [f32; 2],
+    world_normal: Vec3,
+    world_tangent: Vec4,
+    front_facing: bool,
+) -> PbrNormalSample {
+    let face_sign = if front_facing || surface.policy.cull_mode != "off" {
+        1.0
+    } else {
+        -1.0
+    };
+    let geometric_normal = world_normal.normalize_or_zero() * face_sign;
+    let Some(normal_texture) = surface.normal_texture.as_ref() else {
+        return PbrNormalSample {
+            source: "interpolated_vertex_no_normal_map",
+            geometric_normal,
+            shading_normal: geometric_normal,
+            uv: None,
+            texture_rgba: None,
+        };
+    };
+    let normal_uv = transform_tex_coord_0(raw_uv, surface.normal_uv_transform);
+    let normal_rgba_linear =
+        normal_texture.sample_rgba_repeat_linear(normal_uv, Rgba8SamplingOrigin::TopLeft);
+    let texture_rgba = normal_rgba_linear.map(quantize_unorm8);
+    if surface.material_shading.normal_scale <= 0.0 {
+        return PbrNormalSample {
+            source: "interpolated_vertex_normal_map_disabled",
+            geometric_normal,
+            shading_normal: geometric_normal,
+            uv: Some(normal_uv),
+            texture_rgba: Some(texture_rgba),
+        };
+    }
+    let tangent = world_tangent.truncate();
+    if tangent.length_squared() <= 1.0e-10 {
+        return PbrNormalSample {
+            source: "interpolated_vertex_normal_map_missing_tangent",
+            geometric_normal,
+            shading_normal: geometric_normal,
+            uv: Some(normal_uv),
+            texture_rgba: Some(texture_rgba),
+        };
+    }
+    PbrNormalSample {
+        source: "normal_map_tangent_space",
+        geometric_normal,
+        shading_normal: normal_mapped_shading_normal(
+            geometric_normal,
+            world_tangent,
+            normal_rgba_linear,
+            surface.material_shading.normal_scale,
+            front_facing,
+            surface.policy.cull_mode != "off",
+        ),
+        uv: Some(normal_uv),
+        texture_rgba: Some(texture_rgba),
+    }
+}
+
+fn normal_mapped_shading_normal(
+    geometric_normal: Vec3,
+    world_tangent: Vec4,
+    normal_rgba: [f32; 4],
+    normal_scale: f32,
+    front_facing: bool,
+    cull_enabled: bool,
+) -> Vec3 {
+    let face_sign = if front_facing || cull_enabled { 1.0 } else { -1.0 };
+    let geometric_normal = geometric_normal.normalize_or_zero();
+    let tangent = world_tangent.truncate().normalize_or_zero() * face_sign;
+    if geometric_normal.length_squared() <= 1.0e-10 || tangent.length_squared() <= 1.0e-10 {
+        return geometric_normal;
+    }
+    let handedness = if world_tangent.w < 0.0 { -1.0 } else { 1.0 };
+    let bitangent = (geometric_normal.cross(tangent) * handedness).normalize_or_zero() * face_sign;
+    let tangent_normal = Vec3::new(
+        (normal_rgba[0] * 2.0 - 1.0) * normal_scale.abs(),
+        (1.0 - normal_rgba[1] * 2.0) * normal_scale.abs(),
+        normal_rgba[2] * 2.0 - 1.0,
+    );
+    (tangent * tangent_normal.x + bitangent * tangent_normal.y + geometric_normal * tangent_normal.z)
+        .normalize_or_zero()
+}
+
 fn pbr_term_report(
     shading: MaterialShadingReport,
     diffuse: [f32; 3],
     world_position: Vec3,
-    world_normal: Vec3,
+    normal_sample: PbrNormalSample,
     camera_eye: Vec3,
 ) -> Option<PbrTermReport> {
     (shading.model == "gltf_pbr").then(|| {
-        let normal = world_normal.normalize_or_zero();
+        let normal = normal_sample.shading_normal.normalize_or_zero();
         let light_dir = Vec3::new(-1.0, 1.0, -1.0).normalize();
         let view_dir = (camera_eye - world_position).normalize_or_zero();
         let terms = pbr_direct_terms(
@@ -3458,7 +3619,11 @@ fn pbr_term_report(
         let ambient =
             Vec3::from_array(diffuse) * (1.0 - shading.metallic) * 0.03183098882436752;
         PbrTermReport {
-            normal_source: "interpolated_vertex_no_normal_map",
+            normal_source: normal_sample.source,
+            geometric_normal: normal_sample.geometric_normal.to_array(),
+            shading_normal: normal.to_array(),
+            normal_uv: normal_sample.uv,
+            normal_texture_rgba: normal_sample.texture_rgba,
             light_dir: light_dir.to_array(),
             view_dir: view_dir.to_array(),
             n_dot_l: terms.n_dot_l,
@@ -3745,6 +3910,17 @@ fn assert_close(actual: f32, expected: f32, label: &str) -> Result<(), Box<dyn E
         return Err(format!("{label}: expected {expected}, got {actual}").into());
     }
     Ok(())
+}
+
+fn assert_vec3_close(actual: Vec3, expected: Vec3, label: &str) -> Result<(), Box<dyn Error>> {
+    actual
+        .to_array()
+        .into_iter()
+        .zip(expected.to_array())
+        .enumerate()
+        .try_for_each(|(component, (actual, expected))| {
+            assert_close(actual, expected, &format!("{label} component {component}"))
+        })
 }
 
 fn diagnostic_linear_uv(color: [u8; 4]) -> [f32; 2] {
