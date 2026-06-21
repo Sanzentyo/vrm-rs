@@ -14,7 +14,7 @@ serde_json = "1.0.150"
 use clap::Parser;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,7 +50,16 @@ struct SelectionCoverageReport {
     missing_rgb_distance_mean: Option<f64>,
     selected_max_channel_delta_max: Option<u64>,
     missing_max_channel_delta_max: Option<u64>,
+    selected_by_selection_source: Vec<SelectionSourceBucket>,
     top_missing: Vec<MissingDelta>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SelectionSourceBucket {
+    selection_source: String,
+    count: u64,
+    rgb_distance_mean: Option<f64>,
+    max_channel_delta_max: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,7 +149,9 @@ fn audit(
         .ok_or("manifest corrections must be an array")?;
     let selected = corrections
         .iter()
-        .filter_map(|correction| pixel_key(correction).map(|pixel| (pixel, ())))
+        .filter_map(|correction| {
+            pixel_key(correction).map(|pixel| (pixel, selection_source(correction).to_owned()))
+        })
         .collect::<HashMap<_, _>>();
     let deltas = deltas
         .get("top")
@@ -149,14 +160,16 @@ fn audit(
 
     let mut selected_stats = DeltaStats::default();
     let mut missing_stats = DeltaStats::default();
+    let mut selected_by_source = BTreeMap::<String, DeltaStats>::new();
     let mut missing = Vec::new();
 
     for delta in deltas {
         let Some(pixel) = pixel_key(delta) else {
             continue;
         };
-        if selected.contains_key(&pixel) {
+        if let Some(source) = selected.get(&pixel) {
             selected_stats.add(delta);
+            selected_by_source.entry(source.clone()).or_default().add(delta);
         } else {
             missing_stats.add(delta);
             if let Some(missing_delta) = missing_delta(delta) {
@@ -198,12 +211,28 @@ fn audit(
         missing_rgb_distance_mean: missing_stats.mean(),
         selected_max_channel_delta_max: selected_stats.max_channel_delta,
         missing_max_channel_delta_max: missing_stats.max_channel_delta,
+        selected_by_selection_source: selected_by_source
+            .into_iter()
+            .map(|(selection_source, stats)| SelectionSourceBucket {
+                selection_source,
+                count: stats.count,
+                rgb_distance_mean: stats.mean(),
+                max_channel_delta_max: stats.max_channel_delta,
+            })
+            .collect(),
         top_missing: missing,
     })
 }
 
 fn pixel_key(value: &Value) -> Option<(u64, u64)> {
     Some((value.get("x")?.as_u64()?, value.get("y")?.as_u64()?))
+}
+
+fn selection_source(value: &Value) -> &str {
+    value
+        .get("selection_source")
+        .and_then(Value::as_str)
+        .unwrap_or("unspecified")
 }
 
 fn missing_delta(value: &Value) -> Option<MissingDelta> {
@@ -242,12 +271,14 @@ fn display_path(path: &Path) -> String {
 fn self_test() -> Result<(), Box<dyn Error>> {
     let manifest = serde_json::json!({
         "corrections": [
-            {"x": 1, "y": 2, "rgba": [0, 0, 0, 255], "surface": {"materialName": "a", "triangle": 0}, "sample": [0.5, 0.5]}
+            {"x": 1, "y": 2, "rgba": [0, 0, 0, 255], "surface": {"materialName": "a", "triangle": 0}, "sample": [0.5, 0.5], "selection_source": "center"},
+            {"x": 5, "y": 6, "rgba": [0, 0, 0, 255], "surface": {"materialName": "b", "triangle": 1}, "sample": [0.25, 0.75], "selection_source": "webgl-coverage"}
         ]
     });
     let deltas = serde_json::json!({
         "top": [
             {"x": 1, "y": 2, "expected": [1, 2, 3, 255], "actual": [4, 5, 6, 255], "maxChannelDelta": 3, "rgbDistance": 5.0},
+            {"x": 5, "y": 6, "expected": [1, 1, 1, 255], "actual": [9, 9, 9, 255], "maxChannelDelta": 8, "rgbDistance": 13.0},
             {"x": 3, "y": 4, "expected": [10, 20, 30, 255], "actual": [40, 50, 60, 255], "maxChannelDelta": 30, "rgbDistance": 52.0}
         ]
     });
@@ -258,15 +289,26 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         &deltas,
         8,
     )?;
-    assert_eq!(report.delta_count, 2);
-    assert_eq!(report.manifest_count, 1);
-    assert_eq!(report.selected_delta_count, 1);
+    assert_eq!(report.delta_count, 3);
+    assert_eq!(report.manifest_count, 2);
+    assert_eq!(report.selected_delta_count, 2);
     assert_eq!(report.missing_delta_count, 1);
-    assert_eq!(report.selected_delta_percent, 50.0);
-    assert_eq!(report.selected_rgb_distance_mean, Some(5.0));
+    assert_eq!(report.selected_delta_percent, 200.0 / 3.0);
+    assert_eq!(report.selected_rgb_distance_mean, Some(9.0));
     assert_eq!(report.missing_rgb_distance_mean, Some(52.0));
-    assert_eq!(report.selected_max_channel_delta_max, Some(3));
+    assert_eq!(report.selected_max_channel_delta_max, Some(8));
     assert_eq!(report.missing_max_channel_delta_max, Some(30));
+    assert_eq!(report.selected_by_selection_source.len(), 2);
+    assert_eq!(
+        report.selected_by_selection_source[0].selection_source,
+        "center"
+    );
+    assert_eq!(report.selected_by_selection_source[0].count, 1);
+    assert_eq!(
+        report.selected_by_selection_source[1].selection_source,
+        "webgl-coverage"
+    );
+    assert_eq!(report.selected_by_selection_source[1].rgb_distance_mean, Some(13.0));
     assert_eq!(report.top_missing.len(), 1);
     assert_eq!(report.top_missing[0].x, 3);
     assert_eq!(report.top_missing[0].expected, [10, 20, 30, 255]);

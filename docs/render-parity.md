@@ -2853,6 +2853,12 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   entries as `center` and `4` as `webgl-coverage`; future expanded manifests
   should be reviewed with the same source-derived grouping before any
   source-order or color-space default changes.
+- `audit-owner-sample-selection.rs` now reports
+  `selected_by_selection_source[]`, so the selected residual can be grouped by
+  the same source labels. The current wgpu smoke audit covers `64/64` deltas and
+  shows center `60` at mean RGB distance `65.6166` and webgl-coverage `4` at
+  `65.4732`; the high-delta tail therefore remains mostly in center-owner
+  selected pixels, not only in coverage fallback pixels.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are
