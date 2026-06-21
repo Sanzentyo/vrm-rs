@@ -1741,9 +1741,11 @@ fn ash_vertex_material_metadata(
 
 fn ash_material_extra_metadata(extra: AshMaterialExtraUniform) -> serde_json::Value {
     json!({
+        "shaderBranch": ash_shader_branch(extra),
         "flags": {
             "v0CompatShade": extra.flags[0] != 0.0,
             "pbrFallback": extra.flags[1] != 0.0,
+            "gltfPbr": extra.flags[1] != 0.0,
             "threeVrmLightAccumulation": extra.flags[2] != 0.0,
             "derivativeNormals": extra.flags[3] != 0.0,
         },
@@ -1761,6 +1763,16 @@ fn ash_material_extra_metadata(extra: AshMaterialExtraUniform) -> serde_json::Va
         },
         "ownerColor": extra.owner_color,
     })
+}
+
+fn ash_shader_branch(extra: AshMaterialExtraUniform) -> &'static str {
+    if extra.flags2[0] != 0.0 {
+        "unlit"
+    } else if extra.flags[1] != 0.0 {
+        "gltf_pbr"
+    } else {
+        "mtoon"
+    }
 }
 
 fn ash_texture_slot_metadata(pipeline: &AshMtoonPipelinePlan) -> serde_json::Value {
@@ -2338,7 +2350,19 @@ mod tests {
         );
         assert_eq!(
             metadata[0]
+                .pointer("/materialExtra/shaderBranch")
+                .and_then(serde_json::Value::as_str),
+            Some("unlit")
+        );
+        assert_eq!(
+            metadata[0]
                 .pointer("/materialExtra/flags/pbrFallback")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/materialExtra/flags/gltfPbr")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );

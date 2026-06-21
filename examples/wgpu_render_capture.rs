@@ -2678,7 +2678,19 @@ mod tests {
         let extra = material_extra_metadata(extra);
         assert_eq!(
             extra
+                .pointer("/shaderBranch")
+                .and_then(serde_json::Value::as_str),
+            Some("gltf_pbr")
+        );
+        assert_eq!(
+            extra
                 .pointer("/flags/pbrFallback")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            extra
+                .pointer("/flags/gltfPbr")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
@@ -3035,9 +3047,11 @@ fn representative_vertex_material(primitive: &DrawPrimitive) -> serde_json::Valu
 
 fn material_extra_metadata(extra: MaterialExtraUniform) -> serde_json::Value {
     json!({
+        "shaderBranch": shader_branch_from_extra(extra),
         "flags": {
             "v0CompatShade": extra.flags[0] != 0.0,
             "pbrFallback": extra.flags[1] != 0.0,
+            "gltfPbr": extra.flags[1] != 0.0,
             "threeVrmLightAccumulation": extra.flags[2] != 0.0,
             "derivativeNormals": extra.flags[3] != 0.0,
         },
@@ -3055,6 +3069,16 @@ fn material_extra_metadata(extra: MaterialExtraUniform) -> serde_json::Value {
         },
         "ownerColor": extra.owner_color,
     })
+}
+
+fn shader_branch_from_extra(extra: MaterialExtraUniform) -> &'static str {
+    if extra.flags2[0] != 0.0 {
+        "unlit"
+    } else if extra.flags[1] != 0.0 {
+        "gltf_pbr"
+    } else {
+        "mtoon"
+    }
 }
 
 fn texture_slot_metadata(slots: GltfMaterialTextureSlots) -> serde_json::Value {

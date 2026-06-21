@@ -151,6 +151,10 @@ accepts both `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance`
 and the shorter `additive_fit_mean_distance` / `gain_fit_mean_distance` field
 names.
 
+Renderer artifacts also expose `materialExtra.shaderBranch` as `gltf_pbr`,
+`mtoon`, or `unlit`. Prefer that explicit branch field over the older compact
+`pbr:*` text in stale focused reports when reading material/draw diagnostics.
+
 Audit Markdown:
 
 - [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)

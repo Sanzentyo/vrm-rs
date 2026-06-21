@@ -169,6 +169,17 @@
   `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance` names and the
   shorter summary-internal aliases, so the additive/gain fit visible in the
   join Markdown is preserved in the machine-readable summary too.
+- Made renderer material-draw diagnostics expose an explicit
+  `materialExtra.shaderBranch` (`gltf_pbr`, `mtoon`, or `unlit`) for wgpu,
+  Bevy, and Ash artifacts, and changed the focused/expanded summaries to print
+  `branch:*` instead of the ambiguous `pbr:*` shorthand. A focused Seed-san
+  wgpu smoke now reports `backpack_nm node145/mesh4/prim9/base` as
+  `shaderBranch=gltf_pbr`, matching the raw glTF/material-track inspection and
+  preventing stale `pbrFallback=false` artifact rows from being misread as the
+  current shader branch. The full expanded readback refresh was started but hit
+  the 15-minute local timeout before completing, so the next parity pass should
+  rerun that recipe and regenerate the current comparison Markdown from the new
+  branch-aware artifacts.
 
 ## 2026-06-21
 

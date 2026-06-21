@@ -119,6 +119,7 @@ struct RendererMaterialDrawSummary {
     alpha_mode: Option<String>,
     depth_write: Option<bool>,
     blend: Option<bool>,
+    shader_branch: Option<String>,
     pbr_fallback: Option<bool>,
     metallic: Option<f64>,
     roughness: Option<f64>,
@@ -638,15 +639,15 @@ fn fmt_renderer_material_draw(value: Option<&RendererMaterialDrawSummary>) -> St
     value
         .map(|draw| {
             format!(
-                "{} pbr:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+                "{} branch:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
                 format!(
                     "{}@{}",
                     draw.material_name,
                     draw.draw_role.as_deref().unwrap_or("unknown")
                 ),
-                draw.pbr_fallback
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "n/a".to_owned()),
+                draw.shader_branch
+                    .as_deref()
+                    .unwrap_or("n/a"),
                 fmt_opt(draw.metallic),
                 fmt_opt(draw.roughness),
                 fmt_opt(draw.occlusion_strength),
@@ -887,6 +888,7 @@ fn renderer_material_draw_summary(value: &Value) -> RendererMaterialDrawSummary 
         alpha_mode: string_at(value, "/policy/alphaMode"),
         depth_write: bool_at(value, "/policy/depthWrite"),
         blend: bool_at(value, "/policy/blend"),
+        shader_branch: material_shader_branch(value),
         pbr_fallback: bool_at(value, "/materialExtra/flags/pbrFallback"),
         metallic: f64_at(value, "/materialExtra/pbr/metallic"),
         roughness: f64_at(value, "/materialExtra/pbr/roughness"),
@@ -901,6 +903,18 @@ fn renderer_material_draw_summary(value: &Value) -> RendererMaterialDrawSummary 
         shading_toony: f64_at(value, "/vertexMaterial/shading/toony"),
         gi_equalization: f64_at(value, "/vertexMaterial/shading/giEqualization"),
     }
+}
+
+fn material_shader_branch(value: &Value) -> Option<String> {
+    if let Some(branch) = string_at(value, "/materialExtra/shaderBranch") {
+        return Some(branch);
+    }
+    if bool_at(value, "/materialExtra/renderFlags/unlit") == Some(true) {
+        return Some("unlit".to_owned());
+    }
+    bool_at(value, "/materialExtra/flags/gltfPbr")
+        .or_else(|| bool_at(value, "/materialExtra/flags/pbrFallback"))
+        .and_then(|is_pbr| is_pbr.then(|| "gltf_pbr".to_owned()))
 }
 
 fn vec4_at(value: &Value, pointer: &str) -> Option<[f64; 4]> {
@@ -1043,6 +1057,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 alpha_mode: Some("opaque".to_owned()),
                 depth_write: Some(true),
                 blend: Some(false),
+                shader_branch: Some("gltf_pbr".to_owned()),
                 pbr_fallback: Some(true),
                 metallic: Some(0.0),
                 roughness: Some(0.657),
@@ -1118,8 +1133,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .and_then(|material| material.map_color_space.as_deref()),
         Some("srgb")
     );
-    assert!(markdown(&override_report).contains("front@owner-sample-resolve pbr:true"));
+    assert!(markdown(&override_report).contains("front@owner-sample-resolve branch:gltf_pbr"));
     assert!(markdown(&override_report).contains("front MeshStandardMaterial"));
+    assert_eq!(
+        material_shader_branch(&serde_json::json!({
+            "materialExtra": {"flags": {"pbrFallback": false}}
+        })),
+        None
+    );
 
     let draws = material_draws_by_key(&serde_json::json!({
         "renderer": {

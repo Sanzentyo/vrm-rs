@@ -1304,9 +1304,7 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
     let material =
         optional_string_path(draw, &["material_name"])?.unwrap_or_else(|| "n/a".to_owned());
     let role = optional_string_path(draw, &["draw_role"])?.unwrap_or_else(|| "unknown".to_owned());
-    let pbr = optional_bool_path(draw, &["pbr_fallback"])?
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "n/a".to_owned());
+    let branch = focused_material_shader_branch(draw)?;
     let base = optional_u64_path(draw, &["base_texture"])?
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
@@ -1317,10 +1315,10 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
     Ok(format!(
-        "{}@{} pbr:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+        "{}@{} branch:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
         material,
         role,
-        pbr,
+        branch,
         fmt_optional_f64(optional_f64_path(draw, &["metallic"])?),
         fmt_optional_f64(optional_f64_path(draw, &["roughness"])?),
         fmt_optional_f64(optional_f64_path(draw, &["occlusion_strength"])?),
@@ -1342,6 +1340,19 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
             .map(|value| value.to_string())
             .unwrap_or_else(|| "n/a".to_owned()),
     ))
+}
+
+fn focused_material_shader_branch(draw: &Value) -> Result<String, Box<dyn Error>> {
+    if let Some(branch) = optional_string_path(draw, &["shader_branch"])? {
+        return Ok(branch);
+    }
+    if optional_bool_path(draw, &["unlit"])? == Some(true) {
+        return Ok("unlit".to_owned());
+    }
+    Ok(optional_bool_path(draw, &["gltf_pbr"])?
+        .or(optional_bool_path(draw, &["pbr_fallback"])?)
+        .and_then(|is_pbr| is_pbr.then(|| "gltf_pbr".to_owned()))
+        .unwrap_or_else(|| "n/a".to_owned()))
 }
 
 fn base_color_owner_join_summaries(
@@ -2403,6 +2414,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "cull_mode": "off",
                     "depth_write": false,
                     "blend": false,
+                    "shader_branch": "gltf_pbr",
                     "pbr_fallback": false,
                     "metallic": 0.0,
                     "roughness": 0.657,
@@ -2518,8 +2530,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
     assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
     assert!(markdown.contains(
-        "backpack_nm@owner-sample-resolve pbr:false m/r/o/d=0.0000/0.6570/1.0000/n/a"
+        "backpack_nm@owner-sample-resolve branch:gltf_pbr m/r/o/d=0.0000/0.6570/1.0000/n/a"
     ));
+    assert_eq!(
+        focused_material_shader_branch(&serde_json::json!({"pbr_fallback": false}))?,
+        "n/a"
+    );
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

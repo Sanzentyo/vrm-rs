@@ -24,6 +24,8 @@
 
 2026-06-22 の確認では、実データの join Markdown だけでなく expanded summary JSON 側にも `color_fit` が入り、`color_fit: null` には戻っていません。parser は `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance` と、短縮形の `additive_fit_mean_distance` / `gain_fit_mean_distance` の両方を受けます。
 
+renderer artifact は `materialExtra.shaderBranch` として `gltf_pbr` / `mtoon` / `unlit` を出します。material/draw 診断を見るときは、古い focused report に残っている可能性がある `pbr:*` の短縮表示より、この明示的な branch フィールドを優先します。
+
 ## まず見る画像セット
 
 現状の主要な比較対象は、次の順で見るのが分かりやすいです。

@@ -1,6 +1,6 @@
 # Current Rendering Image Comparison
 
-Updated: 2026-06-21
+Updated: 2026-06-22
 
 This page is a compact visual board for the render-parity artifacts that exist in this workspace right now. The images and raw comparison files live under `.external-fixtures/` and are intentionally not committed. Use [render-parity-image-comparison.md](render-parity-image-comparison.md) for the broader historical index.
 
@@ -222,6 +222,14 @@ node2/mesh2/prim1/base` buckets are also additive-dominant, while
 `arm_mat node144/mesh3/prim0/base` is close enough that Bevy/wgpu prefer gain.
 That makes the next implementation split concrete: debug backpack/PBR fill or
 ambient as one track, and MToon eye/arm material accumulation as another.
+
+The expanded summary JSON keeps those additive/gain `color_fit` values as
+machine-readable data. If an upstream join row contains `color_fit: null` plus a
+populated `color_fit_summary`, the parser treats the null as absent and uses the
+populated fit block. Renderer material/draw artifacts now also expose explicit
+`materialExtra.shaderBranch` values (`gltf_pbr`, `mtoon`, or `unlit`), so use
+`branch:*` rows instead of older compact `pbr:*` text when checking current
+shader-path parity.
 
 Expected-vs-actual audit Markdown:
 

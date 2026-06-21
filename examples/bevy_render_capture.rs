@@ -1652,9 +1652,11 @@ fn bevy_vertex_material_metadata(primitive: &BevyPrimitive) -> serde_json::Value
 fn bevy_material_extra_metadata(primitive: &BevyPrimitive) -> serde_json::Value {
     match &primitive.material {
         BevyPrimitiveMaterial::Mtoon(material) => json!({
+            "shaderBranch": bevy_shader_branch(material),
             "flags": {
                 "v0CompatShade": material.material_flags.x != 0.0,
                 "pbrFallback": material.material_flags.y != 0.0,
+                "gltfPbr": material.material_flags.y != 0.0,
                 "threeVrmLightAccumulation": material.material_flags.z != 0.0,
                 "derivativeNormals": material.material_flags.w != 0.0,
             },
@@ -1672,6 +1674,16 @@ fn bevy_material_extra_metadata(primitive: &BevyPrimitive) -> serde_json::Value 
             },
             "ownerColor": material.owner_color.to_array(),
         }),
+    }
+}
+
+fn bevy_shader_branch(material: &BevyMtoonMaterial) -> &'static str {
+    if material.material_flags2.x != 0.0 {
+        "unlit"
+    } else if material.material_flags.y != 0.0 {
+        "gltf_pbr"
+    } else {
+        "mtoon"
     }
 }
 
@@ -3559,7 +3571,19 @@ mod tests {
         ));
         assert_eq!(
             material_extra
+                .pointer("/shaderBranch")
+                .and_then(serde_json::Value::as_str),
+            Some("unlit")
+        );
+        assert_eq!(
+            material_extra
                 .pointer("/flags/pbrFallback")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            material_extra
+                .pointer("/flags/gltfPbr")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
