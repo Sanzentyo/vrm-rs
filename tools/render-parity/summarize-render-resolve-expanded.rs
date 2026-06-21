@@ -300,6 +300,7 @@ struct BaseColorOwnerJoinSummary {
     owner_matches_base_frontmost_surface: u64,
     mean_owner_surface_base_color_rendered_distance: Option<f64>,
     mean_owner_surface_texture_as_linear_rendered_distance: Option<f64>,
+    mean_owner_surface_browser_base_color_rendered_distance: Option<f64>,
     owner_to_base_frontmost_materials: String,
     frontmost_to_nearest_rendered_base_color_materials: String,
     frontmost_to_nearest_rendered_base_color_draw_order: String,
@@ -313,6 +314,7 @@ struct BaseColorOwnerMaterialBucketSummary {
     count: u64,
     mean_base_color_rendered_distance: Option<f64>,
     mean_texture_as_linear_rendered_distance: Option<f64>,
+    mean_browser_base_color_rendered_distance: Option<f64>,
     frontmost_material_matches: u64,
     frontmost_surface_matches: u64,
 }
@@ -327,8 +329,10 @@ struct BaseColorOwnerDeltaSummary {
     draw_delta: Option<i64>,
     projected_base_color: Option<[u64; 4]>,
     projected_texture_as_linear_color: Option<[u64; 4]>,
+    projected_browser_base_color: Option<[u64; 4]>,
     base_color_rendered_distance: Option<f64>,
     texture_as_linear_rendered_distance: Option<f64>,
+    browser_base_color_rendered_distance: Option<f64>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -820,9 +824,9 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 join.owner_matches_base_frontmost_surface
             ));
             out.push_str(&format!(
-                "- Mean owner-surface base/texture-as-linear distance: `{}` / `{}`\n",
+                "- Mean owner-surface base/browser-compatible distance: `{}` / `{}`\n",
                 fmt_optional_f64(join.mean_owner_surface_base_color_rendered_distance),
-                fmt_optional_f64(join.mean_owner_surface_texture_as_linear_rendered_distance)
+                fmt_optional_f64(join.mean_owner_surface_browser_base_color_rendered_distance)
             ));
             out.push_str(&format!(
                 "- Owner to base frontmost materials: `{}`\n",
@@ -836,7 +840,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 "- Frontmost to nearest rendered base-color draw order: `{}`\n\n",
                 join.frontmost_to_nearest_rendered_base_color_draw_order
             ));
-            out.push_str("| Material | Count | Front material/surface matches | Mean base / linear distance |\n");
+            out.push_str("| Material | Count | Front material/surface matches | Mean base / browser-compatible distance |\n");
             out.push_str("| --- | ---: | ---: | ---: |\n");
             for bucket in join.owner_material_buckets.iter().take(8) {
                 out.push_str(&format!(
@@ -846,11 +850,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                     bucket.frontmost_material_matches,
                     bucket.frontmost_surface_matches,
                     fmt_optional_f64(bucket.mean_base_color_rendered_distance),
-                    fmt_optional_f64(bucket.mean_texture_as_linear_rendered_distance)
+                    fmt_optional_f64(bucket.mean_browser_base_color_rendered_distance)
                 ));
             }
             out.push('\n');
-            out.push_str("| Pixel | Owner | Base frontmost | Nearest rendered base | Draw delta | Projected base / linear | Distance base / linear |\n");
+            out.push_str("| Pixel | Owner | Base frontmost | Nearest rendered base | Draw delta | Projected base / browser-compatible | Distance base / browser-compatible |\n");
             out.push_str("| --- | --- | --- | --- | ---: | ---: | ---: |\n");
             for delta in join.top_owner_surface_color_deltas.iter().take(8) {
                 out.push_str(&format!(
@@ -868,9 +872,9 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "n/a".to_owned()),
                     fmt_optional_rgba(delta.projected_base_color),
-                    fmt_optional_rgba(delta.projected_texture_as_linear_color),
+                    fmt_optional_rgba(delta.projected_browser_base_color),
                     fmt_optional_f64(delta.base_color_rendered_distance),
-                    fmt_optional_f64(delta.texture_as_linear_rendered_distance)
+                    fmt_optional_f64(delta.browser_base_color_rendered_distance)
                 ));
             }
             out.push('\n');
@@ -1406,6 +1410,14 @@ fn base_color_owner_join_summary(
             &value,
             &["mean_owner_surface_texture_as_linear_rendered_rgb_distance"],
         )?,
+        mean_owner_surface_browser_base_color_rendered_distance: optional_f64_path(
+            &value,
+            &["mean_owner_surface_browser_base_color_rendered_rgb_distance"],
+        )?
+        .or(optional_f64_path(
+            &value,
+            &["mean_owner_surface_texture_as_linear_rendered_rgb_distance"],
+        )?),
         owner_to_base_frontmost_materials: count_map_summary(
             &value,
             &["owner_to_base_frontmost_materials"],
@@ -1445,6 +1457,14 @@ fn base_color_owner_material_buckets(
                     bucket,
                     &["mean_texture_as_linear_rendered_rgb_distance"],
                 )?,
+                mean_browser_base_color_rendered_distance: optional_f64_path(
+                    bucket,
+                    &["mean_browser_base_color_rendered_rgb_distance"],
+                )?
+                .or(optional_f64_path(
+                    bucket,
+                    &["mean_texture_as_linear_rendered_rgb_distance"],
+                )?),
                 frontmost_material_matches: get_u64_path(
                     bucket,
                     &["frontmost_material_matches"],
@@ -1487,6 +1507,14 @@ fn base_color_owner_deltas(
                     delta,
                     &["base_frontmost_texture_as_linear_color"],
                 )?,
+                projected_browser_base_color: optional_rgba_path(
+                    delta,
+                    &["base_frontmost_browser_base_color"],
+                )?
+                .or(optional_rgba_path(
+                    delta,
+                    &["base_frontmost_texture_as_linear_color"],
+                )?),
                 base_color_rendered_distance: optional_f64_path(
                     delta,
                     &["base_color_rendered_rgb_distance"],
@@ -1495,6 +1523,14 @@ fn base_color_owner_deltas(
                     delta,
                     &["texture_as_linear_rendered_rgb_distance"],
                 )?,
+                browser_base_color_rendered_distance: optional_f64_path(
+                    delta,
+                    &["browser_base_color_rendered_rgb_distance"],
+                )?
+                .or(optional_f64_path(
+                    delta,
+                    &["texture_as_linear_rendered_rgb_distance"],
+                )?),
             })
         })
         .collect()

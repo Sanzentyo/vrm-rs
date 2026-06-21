@@ -303,11 +303,11 @@ wgpu pixels.
 
 The latest owner/base-color join uses 64 current hotspots from the `three-vrm` readback and joins the owner-id projection with the base-color projection. It keeps the rendered image comparison grounded in the same pixels instead of guessing from global PSNR alone.
 
-| Joined hotspots | Owner/frontmost material matches | Owner/frontmost surface matches | Mean owner-surface base distance | Mean texture-as-linear distance | Frontmost-to-nearest draw order |
+| Joined hotspots | Owner/frontmost material matches | Owner/frontmost surface matches | Mean owner-surface base distance | Mean browser-compatible distance | Frontmost-to-nearest draw order |
 | ---: | ---: | ---: | ---: | ---: | --- |
 | 64 | 56 | 27 | 86.2706 | 62.5942 | same 24 / after 23 / before 17 |
 
-The important current reading is that most hotspots keep the same material owner, but only 27/64 keep the same surface. Texture-as-linear sampling is closer on some buckets, especially `backpack_nm`, but worse on others, so it remains a diagnostic axis rather than a default behavior change. The same-stream draw-order split also rules out a simple "later draw always wins" explanation for the current base-color residual. Use the joined report for the detailed per-pixel material and draw-order transitions:
+The important current reading is that most hotspots keep the same material owner, but only 27/64 keep the same surface. The browser-compatible base-color projection is closer on some buckets, especially `backpack_nm`, but worse on others, so it remains a diagnostic axis rather than a default color-space behavior change. Older artifacts may still carry this value under `texture_as_linear` field names. The same-stream draw-order split also rules out a simple "later draw always wins" explanation for the current base-color residual. Use the joined report for the detailed per-pixel material and draw-order transitions:
 
 [`Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md)
 

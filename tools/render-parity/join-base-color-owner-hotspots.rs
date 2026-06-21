@@ -51,6 +51,7 @@ struct JoinReport {
     owner_matches_base_frontmost_surface: u64,
     mean_owner_surface_base_color_rendered_rgb_distance: Option<f64>,
     mean_owner_surface_texture_as_linear_rendered_rgb_distance: Option<f64>,
+    mean_owner_surface_browser_base_color_rendered_rgb_distance: Option<f64>,
     owner_to_base_frontmost_materials: BTreeMap<String, u64>,
     owner_to_nearest_rendered_base_color_materials: BTreeMap<String, u64>,
     owner_to_nearest_rendered_texture_as_linear_materials: BTreeMap<String, u64>,
@@ -78,6 +79,7 @@ struct MaterialBucket {
     count: u64,
     mean_base_color_rendered_rgb_distance: Option<f64>,
     mean_texture_as_linear_rendered_rgb_distance: Option<f64>,
+    mean_browser_base_color_rendered_rgb_distance: Option<f64>,
     frontmost_material_matches: u64,
     frontmost_surface_matches: u64,
 }
@@ -102,8 +104,10 @@ struct JoinedHotspot {
     frontmost_to_nearest_rendered_base_color_draw_delta: Option<i64>,
     base_frontmost_projected_color: Option<[u64; 4]>,
     base_frontmost_texture_as_linear_color: Option<[u64; 4]>,
+    base_frontmost_browser_base_color: Option<[u64; 4]>,
     base_color_rendered_rgb_distance: Option<f64>,
     texture_as_linear_rendered_rgb_distance: Option<f64>,
+    browser_base_color_rendered_rgb_distance: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -170,6 +174,7 @@ fn join_reports(
         owner_matches_base_frontmost_surface: 0,
         mean_owner_surface_base_color_rendered_rgb_distance: None,
         mean_owner_surface_texture_as_linear_rendered_rgb_distance: None,
+        mean_owner_surface_browser_base_color_rendered_rgb_distance: None,
         owner_to_base_frontmost_materials: BTreeMap::new(),
         owner_to_nearest_rendered_base_color_materials: BTreeMap::new(),
         owner_to_nearest_rendered_texture_as_linear_materials: BTreeMap::new(),
@@ -201,7 +206,13 @@ fn join_reports(
         }
         let frontmost = surface_at(base_hotspot, "/frontmost");
         let nearest_base = surface_at(base_hotspot, "/nearestRenderedBaseColor");
-        let nearest_linear = surface_at(base_hotspot, "/nearestRenderedTextureAsLinearBaseColor");
+        let nearest_linear = surface_at_any(
+            base_hotspot,
+            &[
+                "/nearestRenderedBrowserBaseColor",
+                "/nearestRenderedTextureAsLinearBaseColor",
+            ],
+        );
         let frontmost_draw_index = u64_at(base_hotspot, "/frontmost/drawIndex");
         let nearest_base_draw_index = u64_at(base_hotspot, "/nearestRenderedBaseColor/drawIndex");
 
@@ -255,9 +266,12 @@ fn join_reports(
             base_hotspot,
             "/frontmost/projectedBaseColorRenderedPixelRgbDistance",
         );
-        let linear_distance = f64_at(
+        let linear_distance = f64_at_any(
             base_hotspot,
-            "/frontmost/projectedBaseColorTextureAsLinearRenderedPixelRgbDistance",
+            &[
+                "/frontmost/projectedBrowserBaseColorRenderedPixelRgbDistance",
+                "/frontmost/projectedBaseColorTextureAsLinearRenderedPixelRgbDistance",
+            ],
         );
         if surface_match {
             if let Some(distance) = base_distance {
@@ -307,8 +321,16 @@ fn join_reports(
                 base_hotspot,
                 "/frontmost/projectedBaseColorTextureAsLinearSrgb",
             ),
+            base_frontmost_browser_base_color: rgba_at_any(
+                base_hotspot,
+                &[
+                    "/frontmost/projectedBrowserBaseColorSrgb",
+                    "/frontmost/projectedBaseColorTextureAsLinearSrgb",
+                ],
+            ),
             base_color_rendered_rgb_distance: base_distance,
             texture_as_linear_rendered_rgb_distance: linear_distance,
+            browser_base_color_rendered_rgb_distance: linear_distance,
         });
     }
 
@@ -316,6 +338,8 @@ fn join_reports(
         mean(base_distance_sum, base_distance_count);
     report.mean_owner_surface_texture_as_linear_rendered_rgb_distance =
         mean(linear_distance_sum, linear_distance_count);
+    report.mean_owner_surface_browser_base_color_rendered_rgb_distance =
+        report.mean_owner_surface_texture_as_linear_rendered_rgb_distance;
     report.owner_material_buckets = material_buckets
         .into_iter()
         .map(|(material_name, bucket)| MaterialBucket {
@@ -326,6 +350,10 @@ fn join_reports(
                 bucket.base_color_distance_count,
             ),
             mean_texture_as_linear_rendered_rgb_distance: mean(
+                bucket.texture_as_linear_distance_sum,
+                bucket.texture_as_linear_distance_count,
+            ),
+            mean_browser_base_color_rendered_rgb_distance: mean(
                 bucket.texture_as_linear_distance_sum,
                 bucket.texture_as_linear_distance_count,
             ),
@@ -388,6 +416,12 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
     Some((value.get("x")?.as_u64()?, value.get("y")?.as_u64()?))
 }
 
+fn surface_at_any(value: &Value, pointers: &[&str]) -> Option<Surface> {
+    pointers
+        .iter()
+        .find_map(|pointer| surface_at(value, pointer))
+}
+
 fn rgba_at(value: &Value, pointer: &str) -> Option<[u64; 4]> {
     let values = value.pointer(pointer)?.as_array()?;
     Some([
@@ -398,8 +432,16 @@ fn rgba_at(value: &Value, pointer: &str) -> Option<[u64; 4]> {
     ])
 }
 
+fn rgba_at_any(value: &Value, pointers: &[&str]) -> Option<[u64; 4]> {
+    pointers.iter().find_map(|pointer| rgba_at(value, pointer))
+}
+
 fn f64_at(value: &Value, pointer: &str) -> Option<f64> {
     value.pointer(pointer)?.as_f64()
+}
+
+fn f64_at_any(value: &Value, pointers: &[&str]) -> Option<f64> {
+    pointers.iter().find_map(|pointer| f64_at(value, pointer))
 }
 
 fn u64_at(value: &Value, pointer: &str) -> Option<u64> {
@@ -463,9 +505,9 @@ fn markdown_report(report: &JoinReport) -> String {
         report.owner_matches_base_frontmost_material, report.owner_matches_base_frontmost_surface
     ));
     output.push_str(&format!(
-        "- Mean owner-surface base/texture-as-linear distance: `{}` / `{}`\n",
+        "- Mean owner-surface base/browser-compatible distance: `{}` / `{}`\n",
         fmt_opt(report.mean_owner_surface_base_color_rendered_rgb_distance),
-        fmt_opt(report.mean_owner_surface_texture_as_linear_rendered_rgb_distance)
+        fmt_opt(report.mean_owner_surface_browser_base_color_rendered_rgb_distance)
     ));
     write_top_counts(
         &mut output,
@@ -488,7 +530,7 @@ fn markdown_report(report: &JoinReport) -> String {
         &report.frontmost_to_nearest_rendered_base_color_draw_order,
     );
     output.push_str("## Owner Material Buckets\n\n");
-    output.push_str("| Material | Count | Front material/surface matches | Mean base / linear distance |\n");
+    output.push_str("| Material | Count | Front material/surface matches | Mean base / browser-compatible distance |\n");
     output.push_str("| --- | ---: | ---: | ---: |\n");
     for bucket in report.owner_material_buckets.iter().take(12) {
         output.push_str(&format!(
@@ -498,11 +540,11 @@ fn markdown_report(report: &JoinReport) -> String {
             bucket.frontmost_material_matches,
             bucket.frontmost_surface_matches,
             fmt_opt(bucket.mean_base_color_rendered_rgb_distance),
-            fmt_opt(bucket.mean_texture_as_linear_rendered_rgb_distance)
+            fmt_opt(bucket.mean_browser_base_color_rendered_rgb_distance)
         ));
     }
     output.push_str("\n## Top Owner-Surface Color Deltas\n\n");
-    output.push_str("| Pixel | Owner | Frontmost | Nearest rendered | Draw delta frontmost | Base / linear distance | Rendered | Projected / linear |\n");
+    output.push_str("| Pixel | Owner | Frontmost | Nearest rendered | Draw delta frontmost | Base / browser-compatible distance | Rendered | Projected / browser-compatible |\n");
     output.push_str("| --- | --- | --- | --- | ---: | ---: | --- | --- |\n");
     for line in &report.top_owner_surface_color_deltas {
         output.push_str(&format!(
@@ -514,10 +556,10 @@ fn markdown_report(report: &JoinReport) -> String {
             fmt_surface(line.nearest_rendered_base_color.as_ref()),
             fmt_i64(line.frontmost_to_nearest_rendered_base_color_draw_delta),
             fmt_opt(line.base_color_rendered_rgb_distance),
-            fmt_opt(line.texture_as_linear_rendered_rgb_distance),
+            fmt_opt(line.browser_base_color_rendered_rgb_distance),
             fmt_rgba(line.rendered_pixel_rgba),
             fmt_rgba(line.base_frontmost_projected_color),
-            fmt_rgba(line.base_frontmost_texture_as_linear_color)
+            fmt_rgba(line.base_frontmost_browser_base_color)
         ));
     }
     output
@@ -588,11 +630,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "drawIndex": 11,
                 "projectedBaseColorSrgb": [10, 11, 12, 255],
                 "projectedBaseColorTextureAsLinearSrgb": [18, 19, 20, 255],
+                "projectedBrowserBaseColorSrgb": [19, 20, 21, 255],
                 "projectedBaseColorRenderedPixelRgbDistance": 17.3205,
-                "projectedBaseColorTextureAsLinearRenderedPixelRgbDistance": 3.4641
+                "projectedBaseColorTextureAsLinearRenderedPixelRgbDistance": 3.4641,
+                "projectedBrowserBaseColorRenderedPixelRgbDistance": 1.7321
             },
             "nearestRenderedBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7, "drawIndex": 12},
-            "nearestRenderedTextureAsLinearBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7}
+            "nearestRenderedTextureAsLinearBaseColor": {"materialName": "legacy:vrm-rs-flat-diagnostic", "triangle": 8},
+            "nearestRenderedBrowserBaseColor": {"materialName": "body:vrm-rs-flat-diagnostic", "triangle": 7}
         }]}}}
     });
     let report = join_reports(Path::new("owner.json"), Path::new("base.json"), &owner, &base, 8)?;
@@ -609,5 +654,19 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         Some(&1)
     );
     assert_eq!(report.owner_material_buckets[0].material_name, "body");
+    assert_eq!(
+        report.mean_owner_surface_browser_base_color_rendered_rgb_distance,
+        Some(1.7321)
+    );
+    assert_eq!(
+        report.top_owner_surface_color_deltas[0].base_frontmost_browser_base_color,
+        Some([19, 20, 21, 255])
+    );
+    assert_eq!(
+        report
+            .owner_to_nearest_rendered_texture_as_linear_materials
+            .get("body -> body"),
+        Some(&1)
+    );
     Ok(())
 }

@@ -570,7 +570,12 @@ function capturePage(options) {
       quantize(linearToSrgb(color.b * (sampledMapRgba[2] / 255))),
       alpha,
     ];
-    return { sampledMapRgba, projectedBaseColorSrgb, projectedBaseColorTextureAsLinearSrgb };
+    return {
+      sampledMapRgba,
+      projectedBaseColorSrgb,
+      projectedBaseColorTextureAsLinearSrgb,
+      projectedBrowserBaseColorSrgb: projectedBaseColorTextureAsLinearSrgb,
+    };
   };
 
   const rgbDistance = (left, right) => {
@@ -920,8 +925,10 @@ function capturePage(options) {
     sampledMapRgba: candidate.sampledMapRgba,
     projectedBaseColorSrgb: candidate.projectedBaseColorSrgb,
     projectedBaseColorTextureAsLinearSrgb: candidate.projectedBaseColorTextureAsLinearSrgb,
+    projectedBrowserBaseColorSrgb: candidate.projectedBrowserBaseColorSrgb,
     projectedBaseColorRenderedPixelRgbDistance: candidate.projectedBaseColorRenderedPixelRgbDistance,
     projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: candidate.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance,
+    projectedBrowserBaseColorRenderedPixelRgbDistance: candidate.projectedBrowserBaseColorRenderedPixelRgbDistance,
     materialState: candidate.materialState,
   } : null;
 
@@ -1084,6 +1091,7 @@ function capturePage(options) {
           sampledMapRgba: baseColor.sampledMapRgba,
           projectedBaseColorSrgb: baseColor.projectedBaseColorSrgb,
           projectedBaseColorTextureAsLinearSrgb: baseColor.projectedBaseColorTextureAsLinearSrgb,
+          projectedBrowserBaseColorSrgb: baseColor.projectedBrowserBaseColorSrgb,
           expectedRgbDistance: rgbDistance(color, hotspot.expected ?? [0, 0, 0, 255]),
           actualRgbDistance: rgbDistance(color, hotspot.actual ?? [0, 0, 0, 255]),
           projectedBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
@@ -1095,6 +1103,11 @@ function capturePage(options) {
           projectedBaseColorTextureAsLinearActualRgbDistance: rgbDistance(baseColor.projectedBaseColorTextureAsLinearSrgb, hotspot.actual ?? [0, 0, 0, 255]),
           projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: renderedPixelRgba
             ? rgbDistance(baseColor.projectedBaseColorTextureAsLinearSrgb, renderedPixelRgba)
+            : null,
+          projectedBrowserBaseColorExpectedRgbDistance: rgbDistance(baseColor.projectedBrowserBaseColorSrgb, hotspot.expected ?? [0, 0, 0, 255]),
+          projectedBrowserBaseColorActualRgbDistance: rgbDistance(baseColor.projectedBrowserBaseColorSrgb, hotspot.actual ?? [0, 0, 0, 255]),
+          projectedBrowserBaseColorRenderedPixelRgbDistance: renderedPixelRgba
+            ? rgbDistance(baseColor.projectedBrowserBaseColorSrgb, renderedPixelRgba)
             : null,
           screen: [projected.a.screen, projected.b.screen, projected.c.screen],
         });
@@ -1195,6 +1208,11 @@ function capturePage(options) {
             .slice()
             .sort((left, right) => left.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance - right.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance || left.depth - right.depth)[0] ?? null
           : null;
+        const nearestRenderedBrowserBaseColor = renderedPixelRgba
+          ? candidates
+            .slice()
+            .sort((left, right) => left.projectedBrowserBaseColorRenderedPixelRgbDistance - right.projectedBrowserBaseColorRenderedPixelRgbDistance || left.depth - right.depth)[0] ?? null
+          : null;
         const renderedOwner = renderedHotspotOwner(hotspot, renderedRgba);
         const renderedOwnerCandidate = renderedOwner?.id == null
           ? null
@@ -1217,6 +1235,7 @@ function capturePage(options) {
           nearestActualBaseColor,
           nearestRenderedBaseColor,
           nearestRenderedTextureAsLinearBaseColor,
+          nearestRenderedBrowserBaseColor,
           renderedOwnerCandidate,
           renderedOwnerDepthRank: renderedOwnerDepthRank && renderedOwnerDepthRank > 0 ? renderedOwnerDepthRank : null,
           renderedOwnerDepthDeltaFromFrontmost: renderedOwnerCandidate && frontmost ? renderedOwnerCandidate.depth - frontmost.depth : null,
@@ -1229,6 +1248,7 @@ function capturePage(options) {
             nearestActualBaseColor: ownerMatches(renderedOwner, nearestActualBaseColor),
             nearestRenderedBaseColor: ownerMatches(renderedOwner, nearestRenderedBaseColor),
             nearestRenderedTextureAsLinearBaseColor: ownerMatches(renderedOwner, nearestRenderedTextureAsLinearBaseColor),
+            nearestRenderedBrowserBaseColor: ownerMatches(renderedOwner, nearestRenderedBrowserBaseColor),
           } : null,
           candidateCount: candidates.length,
           candidatesByExpected: candidates
@@ -1249,6 +1269,12 @@ function capturePage(options) {
             ? candidates
               .slice()
               .sort((left, right) => left.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance - right.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance || left.depth - right.depth)
+              .slice(0, 8)
+            : [],
+          candidatesByRenderedBrowserBaseColor: renderedPixelRgba
+            ? candidates
+              .slice()
+              .sort((left, right) => left.projectedBrowserBaseColorRenderedPixelRgbDistance - right.projectedBrowserBaseColorRenderedPixelRgbDistance || left.depth - right.depth)
               .slice(0, 8)
             : [],
         };
