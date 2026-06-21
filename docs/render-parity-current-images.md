@@ -6,6 +6,8 @@ This page is a compact visual board for the render-parity artifacts that exist i
 
 For a shorter side-by-side board focused only on the currently generated images,
 use [rendering-result-current-comparison.md](rendering-result-current-comparison.md).
+For a Japanese review board using the same current image artifacts, use
+[rendering-result-current-comparison.ja.md](rendering-result-current-comparison.ja.md).
 
 Reference images are rendered with `three-vrm`. Compared images are Rust renderers: `wgpu`, Bevy, and Ash. Numeric values below are read from the current `.imqraw` comparison reports.
 
