@@ -2824,6 +2824,18 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   (`64/64` each), with merged manifest sizes wgpu `101`, Bevy `93`, and Ash
   `99`. Treat these merged manifests as the next A/B input for renderer-side
   ownership modelling, not as a proof that texture/color accumulation is fixed.
+- Use
+  `just render-parity-seed-base-color-flat32-render-resolve-expanded-readback`
+  to feed those expanded manifests back through wgpu, release Bevy, and Ash
+  without readback replacement. The current A/B raises the selected gradient
+  metric from wgpu `30.6300 dB` to `32.7302 dB` and Bevy `28.2142 dB` to
+  `29.2196 dB`; Ash stays at `35.8902 dB`. Alpha remains exact for all three.
+  The expanded hotspot summaries are still edge-local and low-gradient
+  (`64/64` frontmost-visible, `63/64` within `0.5px`, `0` local texture
+  gradients `>= 32`), so expanded ownership helps but does not close the
+  residual. The next renderer work should inspect shaded/base-color evaluation
+  for the remaining same-material/same-triangle local pixels instead of adding
+  another RGB-distance selection layer.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
