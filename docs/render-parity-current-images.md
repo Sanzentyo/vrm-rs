@@ -16,6 +16,7 @@ Reference images are rendered with `three-vrm`. Compared images are Rust rendere
 | Generated transparent blend | [`.external-fixtures/render-parity-transparent-generated-ash-gated`](../.external-fixtures/render-parity-transparent-generated-ash-gated) | `rgb-visible` |
 | Current Seed-san base-color diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback) | `rgb-shared-nonblack-gradient-interior1px` |
 | Rejected second-frontier diagnostic | [`.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded2-readback) | negative-control only |
+| Owner/base-color hotspot join | [`.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md) | source/owner diagnosis |
 
 ## Quick Metrics
 
@@ -53,6 +54,18 @@ The `three-vrm` reference image for this diagnostic comes from the base-color ou
 | three-vrm reference | wgpu readback | Bevy readback |
 | --- | --- | --- |
 | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/three-vrm/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/wgpu/Seed-san.frame000.png" width="220"> | <img src="../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/bevy/Seed-san.frame000.png" width="220"> |
+
+### Current Hotspot Reading
+
+The latest owner/base-color join uses 64 current hotspots from the `three-vrm` readback and joins the owner-id projection with the base-color projection. It keeps the rendered image comparison grounded in the same pixels instead of guessing from global PSNR alone.
+
+| Joined hotspots | Owner/frontmost material matches | Owner/frontmost surface matches | Mean owner-surface base distance | Mean texture-as-linear distance |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 | 56 | 27 | 86.2706 | 62.5942 |
+
+The important current reading is that most hotspots keep the same material owner, but only 27/64 keep the same surface. Texture-as-linear sampling is closer on some buckets, especially `backpack_nm`, but worse on others, so it remains a diagnostic axis rather than a default behavior change. Use the joined report for the detailed per-pixel material transitions:
+
+[`Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md)
 
 ### Negative Control: Second Frontier
 
