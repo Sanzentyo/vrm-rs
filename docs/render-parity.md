@@ -105,6 +105,18 @@ recipes are convenience entry points. Use these first:
   projection again recovers `64/64` owner IDs for all three backends, so the
   remaining real Seed-san blocker has moved from missing owner/fill geometry to
   recovered-owner texture/base-color differences.
+  `build-owner-sample-selection.rs` now enforces this split directly for
+  `webgl-raster-owner`: browser coverage still identifies the rendered owner
+  surface, but Rust resolves the geometry from `center_candidate` whenever it is
+  available. The refreshed Seed-san render-resolve run remains at wgpu
+  `30.6336 dB`, Bevy `28.2142 dB`, and Ash `35.8902 dB` for the gradient
+  selected metric, confirming the code now matches the documented center-shading
+  policy rather than sampling from the coverage centroid. The follow-up texture
+  audit shows the post-resolve top64 residuals are only partially covered by the
+  original owner manifest (`27/64` for wgpu), and the missing-selection bucket is
+  still mostly expected-closer (`31/37`). The next fix should generalize
+  owner/fill handling beyond the initial top64 manifest pixels before tuning
+  material sampling.
 - `just render-parity-seed-owner-hotspot-depth3-corrected-readback`: regenerate
   the compact depth3 owner/fill fixture, produce owner/sample correction
   manifests, feed those manifests back through `wgpu_render_capture` and

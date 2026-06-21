@@ -379,20 +379,11 @@ fn rust_candidate_for_owner_sample(
         }
         RecoverySource::Subpixel => &["subpixel_visible_candidates"],
     };
-    let prefer_center_candidate = source != RecoverySource::WebglCoverage;
     let recovery = candidate_arrays
         .iter()
         .find_map(|array_name| {
-            rust_candidate_in_array(
-                rust_hotspot,
-                array_name,
-                sample_key,
-                prefer_center_candidate,
-            )
+            rust_candidate_in_array(rust_hotspot, array_name, sample_key)
         })?;
-    if source == RecoverySource::WebglCoverage {
-        return Some(recovery);
-    }
     if recovery.1 == GeometrySource::PixelCenter {
         return Some(recovery);
     }
@@ -411,7 +402,6 @@ fn rust_candidate_in_array(
     rust_hotspot: &Value,
     array_name: &str,
     sample_key: &RenderOwnerSampleKey,
-    prefer_center_candidate: bool,
 ) -> Option<(ResolvedSample, GeometrySource)> {
     rust_hotspot
         .get(array_name)
@@ -426,9 +416,7 @@ fn rust_candidate_in_array(
             ) {
                 return None;
             }
-            let center_candidate = prefer_center_candidate
-                .then(|| candidate.get("center_candidate"))
-                .flatten();
+            let center_candidate = candidate.get("center_candidate");
             let geometry_source = center_candidate
                 .map(|_| GeometrySource::PixelCenter)
                 .unwrap_or(GeometrySource::RecoveryPoint);
@@ -816,13 +804,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     )?;
     assert_eq!(coverage_report.selection_count, 1);
     assert_eq!(coverage_report.rendered_owner_coverage_recovered_count, 1);
-    assert_eq!(coverage_report.rendered_owner_center_shading_geometry_count, 0);
+    assert_eq!(coverage_report.rendered_owner_center_shading_geometry_count, 1);
     assert_eq!(coverage_manifest.corrections[0].sample, [0.25, 0.75]);
-    assert_eq!(coverage_manifest.corrections[0].rgba, [10, 20, 30, 255]);
+    assert_eq!(coverage_manifest.corrections[0].rgba, [200, 210, 220, 255]);
     assert_eq!(
         coverage_manifest.corrections[0].sample_geometry.barycentric,
-        [0.1, 0.2, 0.7]
+        [1.1, 0.2, -0.3]
     );
-    assert_eq!(coverage_manifest.corrections[0].sample_geometry.raw_uv, [0.2, 0.3]);
+    assert_eq!(coverage_manifest.corrections[0].sample_geometry.raw_uv, [0.8, 0.9]);
     Ok(())
 }
