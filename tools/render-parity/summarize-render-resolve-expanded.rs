@@ -62,6 +62,7 @@ struct ExpandedSummary {
     shading_model_join: Option<ShadingModelJoinSummary>,
     material_track_inputs: Option<MaterialTrackInputSummary>,
     texture_audits: Vec<TextureAuditProbeSummary>,
+    pbr_response_diagnostics: Vec<PbrResponseDiagnosticSummary>,
     focused_material_pixels: Vec<FocusedMaterialPixelSummary>,
     base_color_owner_joins: Vec<BaseColorOwnerJoinSummary>,
 }
@@ -82,6 +83,17 @@ struct RendererSummary {
     selected_mtoon_count: u64,
     selected_gltf_pbr_count: u64,
     top_selected_materials: Vec<MaterialSummary>,
+    lighting: Option<RendererLightingSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RendererLightingSummary {
+    exposure: Option<f64>,
+    ambient_base: Option<f64>,
+    ambient_gi_scale: Option<f64>,
+    pbr_ambient: Option<f64>,
+    direct_light_scale: Option<f64>,
+    light_accumulation: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -266,6 +278,19 @@ struct TextureProbeSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct PbrResponseDiagnosticSummary {
+    renderer: String,
+    material_name: String,
+    draw_key: String,
+    count: u64,
+    pbr_ambient: f64,
+    direct_light_scale: Option<f64>,
+    missing_response_rgb_gain: [f64; 3],
+    missing_response_over_pbr_ambient_rgb: [f64; 3],
+    ambient_plus_missing_response_rgb_gain: [f64; 3],
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct FocusedMaterialPixelSummary {
     renderer: String,
     path: String,
@@ -403,8 +428,11 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
                 "gltf_pbr",
             )?,
             top_selected_materials: material_summaries(&audit, 6)?,
+            lighting: renderer_lighting_summary(reports_dir, &options.fixture_stem, renderer)?,
         });
     }
+    let texture_audits = texture_audit_probe_summaries(&options.texture_audit)?;
+    let pbr_response_diagnostics = pbr_response_diagnostics(&renderers, &texture_audits);
     Ok(ExpandedSummary {
         reports_dir: reports_dir.display().to_string(),
         fixture_stem: options.fixture_stem.clone(),
@@ -421,10 +449,95 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
             .as_deref()
             .map(material_track_input_summary)
             .transpose()?,
-        texture_audits: texture_audit_probe_summaries(&options.texture_audit)?,
+        texture_audits,
+        pbr_response_diagnostics,
         focused_material_pixels: focused_material_pixel_summaries(&options.focused_material_pixels)?,
         base_color_owner_joins: base_color_owner_join_summaries(&options.base_color_owner_join)?,
     })
+}
+
+fn renderer_lighting_summary(
+    reports_dir: &Path,
+    fixture_stem: &str,
+    renderer: &str,
+) -> Result<Option<RendererLightingSummary>, Box<dyn Error>> {
+    let file_name = format!("{fixture_stem}.frame000.rgba.json");
+    let direct_path = reports_dir.join(renderer).join(&file_name);
+    let sibling_path = reports_dir
+        .parent()
+        .map(|parent| parent.join(renderer).join(&file_name));
+    let path = std::iter::once(direct_path)
+        .chain(sibling_path)
+        .find(|path| path.exists());
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let value = read_json(&path)?;
+    let exposure = optional_f64_path(&value, &["mtoonLighting", "effective", "exposure"])?
+        .or(optional_f64_path(&value, &["mtoonLighting", "exposure"])?);
+    let ambient_base = optional_f64_path(&value, &["mtoonLighting", "effective", "ambientBase"])?
+        .or(optional_f64_path(&value, &["mtoonLighting", "ambientBase"])?);
+    let ambient_gi_scale =
+        optional_f64_path(&value, &["mtoonLighting", "effective", "ambientGiScale"])?
+            .or(optional_f64_path(&value, &["mtoonLighting", "ambientGiScale"])?);
+    let pbr_ambient = optional_f64_path(&value, &["mtoonLighting", "effective", "pbrAmbient"])?
+        .or(optional_f64_path(&value, &["mtoonLighting", "pbrAmbient"])?);
+    let direct_light_scale = optional_f64_path(&value, &["mtoonLighting", "directLightScale"])?;
+    let light_accumulation = optional_string_path(&value, &["mtoonLighting", "lightAccumulation"])?;
+    if exposure.is_none()
+        && ambient_base.is_none()
+        && ambient_gi_scale.is_none()
+        && pbr_ambient.is_none()
+        && direct_light_scale.is_none()
+        && light_accumulation.is_none()
+    {
+        return Ok(None);
+    }
+    Ok(Some(RendererLightingSummary {
+        exposure,
+        ambient_base,
+        ambient_gi_scale,
+        pbr_ambient,
+        direct_light_scale,
+        light_accumulation,
+    }))
+}
+
+fn pbr_response_diagnostics(
+    renderers: &[RendererSummary],
+    texture_audits: &[TextureAuditProbeSummary],
+) -> Vec<PbrResponseDiagnosticSummary> {
+    texture_audits
+        .iter()
+        .filter_map(|audit| {
+            let lighting = renderers
+                .iter()
+                .find(|renderer| renderer.renderer == audit.renderer)?
+                .lighting
+                .as_ref()?;
+            let pbr_ambient = lighting.pbr_ambient?;
+            (pbr_ambient > 0.0).then_some((audit, lighting, pbr_ambient))
+        })
+        .flat_map(|(audit, lighting, pbr_ambient)| {
+            audit
+                .recommended_probes
+                .iter()
+                .filter_map(move |probe| {
+                    let missing = probe.least_squares_expected_minus_actual_over_manifest_rgb_gain?;
+                    Some(PbrResponseDiagnosticSummary {
+                        renderer: audit.renderer.clone(),
+                        material_name: probe.material_name.clone(),
+                        draw_key: probe.draw_key.clone(),
+                        count: probe.count,
+                        pbr_ambient,
+                        direct_light_scale: lighting.direct_light_scale,
+                        missing_response_rgb_gain: missing,
+                        missing_response_over_pbr_ambient_rgb: scale_vec3(missing, 1.0 / pbr_ambient),
+                        ambient_plus_missing_response_rgb_gain: add_scalar_vec3(missing, pbr_ambient),
+                    })
+                })
+        })
+        .collect()
 }
 
 fn material_summaries(audit: &Value, limit: usize) -> Result<Vec<MaterialSummary>, Box<dyn Error>> {
@@ -501,6 +614,49 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             row.selected_mtoon_count,
             row.selected_gltf_pbr_count
         ));
+    }
+    if summary
+        .renderers
+        .iter()
+        .any(|renderer| renderer.lighting.is_some())
+    {
+        out.push_str("\n## Renderer Lighting Metadata\n\n");
+        out.push_str("| Renderer | Exposure | Ambient base | Ambient GI | PBR ambient | Direct scale | Accumulation |\n");
+        out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | --- |\n");
+        for renderer in &summary.renderers {
+            if let Some(lighting) = &renderer.lighting {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} | {} |\n",
+                    renderer.renderer,
+                    fmt_optional_f64(lighting.exposure),
+                    fmt_optional_f64(lighting.ambient_base),
+                    fmt_optional_f64(lighting.ambient_gi_scale),
+                    fmt_optional_f64(lighting.pbr_ambient),
+                    fmt_optional_f64(lighting.direct_light_scale),
+                    lighting.light_accumulation.as_deref().unwrap_or("n/a"),
+                ));
+            }
+        }
+    }
+    if !summary.pbr_response_diagnostics.is_empty() {
+        out.push_str("\n## PBR Response Diagnostics\n\n");
+        out.push_str("Diagnostic only: missing response is measured in rendered/output RGB gain over the selected manifest sample, so it is not a shader knob by itself.\n\n");
+        out.push_str("| Renderer | Material | Draw key | Count | PBR ambient | Direct scale | Missing gain (E-A)/M | Missing / ambient | Ambient + missing |\n");
+        out.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        for diagnostic in &summary.pbr_response_diagnostics {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {:.4} | {} | {} | {} | {} |\n",
+                diagnostic.renderer,
+                diagnostic.material_name,
+                diagnostic.draw_key,
+                diagnostic.count,
+                diagnostic.pbr_ambient,
+                fmt_optional_f64(diagnostic.direct_light_scale),
+                fmt_vec3(diagnostic.missing_response_rgb_gain),
+                fmt_vec3(diagnostic.missing_response_over_pbr_ambient_rgb),
+                fmt_vec3(diagnostic.ambient_plus_missing_response_rgb_gain),
+            ));
+        }
     }
     out.push_str("\n## Top Selected Materials\n\n");
     for row in &summary.renderers {
@@ -2150,6 +2306,14 @@ fn fmt_vec4(value: [f64; 4]) -> String {
     )
 }
 
+fn scale_vec3(value: [f64; 3], scale: f64) -> [f64; 3] {
+    [value[0] * scale, value[1] * scale, value[2] * scale]
+}
+
+fn add_scalar_vec3(value: [f64; 3], scalar: f64) -> [f64; 3] {
+    [value[0] + scalar, value[1] + scalar, value[2] + scalar]
+}
+
 fn fmt_optional_rgba(value: Option<[u64; 4]>) -> String {
     value
         .map(|value| format!("{},{},{},{}", value[0], value[1], value[2], value[3]))
@@ -2163,6 +2327,29 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     ));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root)?;
+    fs::create_dir_all(root.join("wgpu"))?;
+    fs::write(
+        root.join("wgpu").join("Seed-san.frame000.rgba.json"),
+        r#"{
+            "mtoonLighting": {
+                "exposure": 0.78,
+                "ambientBase": 0.12,
+                "ambientGiScale": 0.2,
+                "pbrAmbient": 0.03183098882436752,
+                "directLightScale": 1.0,
+                "lightAccumulation": "three-vrm",
+                "effective": {
+                    "exposure": 1.0,
+                    "ambientBase": 0.03183098882436752,
+                    "ambientGiScale": 0.0,
+                    "pbrAmbient": 0.03183098882436752
+                }
+            },
+            "width": 1,
+            "height": 1,
+            "rgba": [0, 0, 0, 255]
+        }"#,
+    )?;
     fs::write(
         root.join("Seed-san.wgpu-vs-three-vrm.render-resolve-expanded.gradient.imqraw-rust.json"),
         r#"{
@@ -2544,6 +2731,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .and_then(|backend| backend.material_draw_shading_inputs.first())
         .ok_or("self-test shading input was not parsed")?;
     assert_eq!(shading_input.mean_base_color, Some([1.0, 0.5, 0.25, 1.0]));
+    let pbr_response = summary
+        .pbr_response_diagnostics
+        .first()
+        .ok_or("self-test PBR response diagnostic was not generated")?;
+    assert_eq!(pbr_response.renderer, "wgpu");
+    assert_eq!(pbr_response.material_name, "backpack_nm");
+    assert_eq!(
+        pbr_response.missing_response_rgb_gain,
+        [0.37, 0.46, 0.49]
+    );
+    assert!((pbr_response.pbr_ambient - 0.03183098882436752).abs() < 1e-12);
+    assert!((pbr_response.missing_response_over_pbr_ambient_rgb[0] - 11.624).abs() < 0.01);
     let summary_json = serde_json::to_string(&summary)?;
     assert!(summary_json.contains(r#""preferred_fit":"additive""#));
     assert!(summary_json.contains(r#""additive_fit_mean_rgb_distance":1.0"#));
@@ -2562,6 +2761,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         r#""least_squares_expected_minus_actual_over_manifest_rgb_gain":[0.37,0.46,0.49]"#
     ));
     assert!(summary_json.contains(r#""focused_material_pixels""#));
+    assert!(summary_json.contains(r#""lighting":{"exposure":1.0"#));
+    assert!(summary_json.contains(r#""pbr_response_diagnostics""#));
+    assert!(summary_json.contains(r#""missing_response_rgb_gain":[0.37,0.46,0.49]"#));
     assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
@@ -2569,6 +2771,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
     assert!(markdown.contains("| wgpu | 42.5000 |"));
+    assert!(markdown.contains("## Renderer Lighting Metadata"));
+    assert!(markdown.contains("| wgpu | 1.0000 | 0.0318 | 0.0000 | 0.0318 | 1.0000 | three-vrm |"));
+    assert!(markdown.contains("## PBR Response Diagnostics"));
+    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.37,0.46,0.49 | 11.62,14.45,15.39 | 0.40,0.49,0.52 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));

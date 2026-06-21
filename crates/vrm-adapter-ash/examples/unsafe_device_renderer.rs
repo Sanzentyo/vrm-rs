@@ -13,14 +13,15 @@ use std::{
     ptr,
 };
 use vrm_adapter::{
-    MtoonTextureSlot, RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey,
-    RenderOwnerSamplePass, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    MtoonLightAccumulation, MtoonLightingConfig, MtoonTextureSlot, RenderOwnerSampleCorrectionPlan,
+    RenderOwnerSampleDrawKey, RenderOwnerSamplePass, RenderOwnerSampleSurfaceOverride,
+    RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonPass,
-    AshMtoonPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
-    AshVrmFramePlanOptions, AshVrmPrimitive, ash_material_texture_binding,
-    ash_mtoon_texture_binding, ash_reference_depth_format,
+    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
+    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRendererFrame,
+    AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmPrimitive,
+    ash_material_texture_binding, ash_mtoon_texture_binding, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
@@ -1552,6 +1553,7 @@ fn write_rgba_json(
             "checksum": format!("{:016x}", artifact_input.readback.checksum),
             "nonzeroPixels": artifact_input.readback.nonzero_pixels,
         },
+        "mtoonLighting": ash_mtoon_lighting_metadata(&artifact_input.options.frame),
         "format": "rgba8",
         "rgba": &artifact_input.readback.rgba,
     });
@@ -1560,6 +1562,44 @@ fn write_rgba_json(
         format!("{}\n", serde_json::to_string_pretty(&artifact)?),
     )?;
     Ok(())
+}
+
+fn ash_mtoon_lighting_metadata(options: &AshVrmFramePlanOptions) -> serde_json::Value {
+    let config = MtoonLightingConfig {
+        accumulation: MtoonLightAccumulation::from(options.mtoon_light_accumulation),
+        exposure: options.mtoon_exposure,
+        ambient_base: options.mtoon_ambient_base,
+        ambient_gi_scale: options.mtoon_ambient_gi_scale,
+        pbr_ambient: options.pbr_ambient,
+    };
+    let effective = config.effective_values().to_array();
+    json!({
+        "exposure": options.mtoon_exposure,
+        "ambientBase": options.mtoon_ambient_base,
+        "ambientGiScale": options.mtoon_ambient_gi_scale,
+        "pbrAmbient": options.pbr_ambient,
+        "directLightScale": options.direct_light_scale,
+        "directionalColor": [
+            options.directional_r,
+            options.directional_g,
+            options.directional_b
+        ],
+        "lightAccumulation": ash_mtoon_light_accumulation_label(options.mtoon_light_accumulation),
+        "effective": {
+            "exposure": effective[0],
+            "ambientBase": effective[1],
+            "ambientGiScale": effective[2],
+            "pbrAmbient": effective[3]
+        },
+        "time": options.time
+    })
+}
+
+fn ash_mtoon_light_accumulation_label(value: AshMtoonLightAccumulation) -> &'static str {
+    match value {
+        AshMtoonLightAccumulation::Tuned => "tuned",
+        AshMtoonLightAccumulation::ThreeVrm => "three-vrm",
+    }
 }
 
 fn owner_sample_correction_plan_json(
@@ -2055,6 +2095,28 @@ fn validate_rgba_json(
     }
     if value.get("height").and_then(serde_json::Value::as_u64) != Some(u64::from(height)) {
         return Err(format!("{} has unexpected height", path.display()).into());
+    }
+    if value
+        .pointer("/mtoonLighting/effective/pbrAmbient")
+        .and_then(serde_json::Value::as_f64)
+        .is_none()
+    {
+        return Err(format!(
+            "{} does not contain effective PBR ambient metadata",
+            path.display()
+        )
+        .into());
+    }
+    if value
+        .pointer("/mtoonLighting/lightAccumulation")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+    {
+        return Err(format!(
+            "{} does not contain light accumulation metadata",
+            path.display()
+        )
+        .into());
     }
     let actual = value
         .get("rgba")
