@@ -52,6 +52,7 @@ struct SelectionCoverageReport {
     missing_max_channel_delta_max: Option<u64>,
     selected_by_selection_source: Vec<SelectionSourceBucket>,
     selected_by_selection_source_material: Vec<SelectionSourceMaterialBucket>,
+    top_selected_by_selection_source_material: Vec<SelectedDeltaBucket>,
     top_missing: Vec<MissingDelta>,
 }
 
@@ -70,6 +71,23 @@ struct SelectionSourceMaterialBucket {
     count: u64,
     rgb_distance_mean: Option<f64>,
     max_channel_delta_max: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SelectedDeltaBucket {
+    selection_source: String,
+    material_name: String,
+    top_selected: Vec<SelectedDelta>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SelectedDelta {
+    x: u64,
+    y: u64,
+    expected: [u8; 4],
+    actual: [u8; 4],
+    max_channel_delta: u64,
+    rgb_distance: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -186,6 +204,8 @@ fn audit(
     let mut missing_stats = DeltaStats::default();
     let mut selected_by_source = BTreeMap::<String, DeltaStats>::new();
     let mut selected_by_source_material = BTreeMap::<(String, String), DeltaStats>::new();
+    let mut top_selected_by_source_material =
+        BTreeMap::<(String, String), Vec<SelectedDelta>>::new();
     let mut missing = Vec::new();
 
     for delta in deltas {
@@ -202,6 +222,12 @@ fn audit(
                 .entry((entry.selection_source.clone(), entry.material_name.clone()))
                 .or_default()
                 .add(delta);
+            if let Some(selected_delta) = selected_delta(delta) {
+                top_selected_by_source_material
+                    .entry((entry.selection_source.clone(), entry.material_name.clone()))
+                    .or_default()
+                    .push(selected_delta);
+            }
         } else {
             missing_stats.add(delta);
             if let Some(missing_delta) = missing_delta(delta) {
@@ -253,6 +279,10 @@ fn audit(
             })
             .collect(),
         selected_by_selection_source_material: source_material_buckets(selected_by_source_material),
+        top_selected_by_selection_source_material: selected_delta_buckets(
+            top_selected_by_source_material,
+            top_missing,
+        ),
         top_missing: missing,
     })
 }
@@ -298,6 +328,58 @@ fn source_material_buckets(
             .then_with(|| left.material_name.cmp(&right.material_name))
     });
     buckets
+}
+
+fn selected_delta_buckets(
+    buckets: BTreeMap<(String, String), Vec<SelectedDelta>>,
+    limit: usize,
+) -> Vec<SelectedDeltaBucket> {
+    let mut buckets = buckets
+        .into_iter()
+        .map(|((selection_source, material_name), mut top_selected)| {
+            top_selected.sort_by(delta_desc);
+            top_selected.truncate(limit);
+            SelectedDeltaBucket {
+                selection_source,
+                material_name,
+                top_selected,
+            }
+        })
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| {
+        right
+            .top_selected
+            .len()
+            .cmp(&left.top_selected.len())
+            .then_with(|| left.selection_source.cmp(&right.selection_source))
+            .then_with(|| left.material_name.cmp(&right.material_name))
+    });
+    buckets
+}
+
+fn delta_desc(left: &SelectedDelta, right: &SelectedDelta) -> std::cmp::Ordering {
+    right
+        .max_channel_delta
+        .cmp(&left.max_channel_delta)
+        .then_with(|| {
+            right
+                .rgb_distance
+                .partial_cmp(&left.rgb_distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| left.y.cmp(&right.y))
+        .then_with(|| left.x.cmp(&right.x))
+}
+
+fn selected_delta(value: &Value) -> Option<SelectedDelta> {
+    Some(SelectedDelta {
+        x: value.get("x")?.as_u64()?,
+        y: value.get("y")?.as_u64()?,
+        expected: rgba(value.get("expected")?)?,
+        actual: rgba(value.get("actual")?)?,
+        max_channel_delta: value.get("maxChannelDelta")?.as_u64()?,
+        rgb_distance: value.get("rgbDistance")?.as_f64()?,
+    })
 }
 
 fn missing_delta(value: &Value) -> Option<MissingDelta> {
@@ -391,6 +473,23 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         report.selected_by_selection_source_material[1].material_name,
         "b"
+    );
+    assert_eq!(report.top_selected_by_selection_source_material.len(), 2);
+    assert_eq!(
+        report.top_selected_by_selection_source_material[0].selection_source,
+        "center"
+    );
+    assert_eq!(
+        report.top_selected_by_selection_source_material[0].top_selected[0].x,
+        1
+    );
+    assert_eq!(
+        report.top_selected_by_selection_source_material[1].material_name,
+        "b"
+    );
+    assert_eq!(
+        report.top_selected_by_selection_source_material[1].top_selected[0].max_channel_delta,
+        8
     );
     assert_eq!(report.top_missing.len(), 1);
     assert_eq!(report.top_missing[0].x, 3);

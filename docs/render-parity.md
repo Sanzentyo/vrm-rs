@@ -2865,6 +2865,10 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   `56.8062`, max `95`), while `body_nm` has only `5` rows but the max delta
   sentinel `178`. Treat those as the first center-owner material buckets to
   inspect before widening the owner/fill model again.
+- The audit also emits `top_selected_by_selection_source_material[]`. For the
+  current wgpu smoke, use `backpack_nm` pixels `141,90` and `141,91`,
+  `huku_bake` pixel `146,178`, and `body_nm` pixels `224,90` / `224,91` as the
+  next focused material/color comparison set.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are

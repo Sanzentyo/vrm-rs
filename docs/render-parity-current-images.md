@@ -10,6 +10,7 @@ Reference images are rendered with `three-vrm`. Compared images are Rust rendere
 
 | Purpose | Directory | Main comparison |
 | --- | --- | --- |
+| Current base-UV rerun | [`.external-fixtures/render-parity-ash-current-base-uv-rerun`](../.external-fixtures/render-parity-ash-current-base-uv-rerun) | `rgb-visible` |
 | Opaque real sample sweep | [`.external-fixtures/render-parity-samples-ash-gated-check`](../.external-fixtures/render-parity-samples-ash-gated-check) | `rgb-visible` |
 | Transparent real sample sweep | [`.external-fixtures/render-parity-real-transparent-ash-gated`](../.external-fixtures/render-parity-real-transparent-ash-gated) | `rgb-all` |
 | Generated glTF/PBR fallback | [`.external-fixtures/render-parity-gltf-pbr-generated`](../.external-fixtures/render-parity-gltf-pbr-generated) | `rgb-interior1px` |
@@ -19,6 +20,24 @@ Reference images are rendered with `three-vrm`. Compared images are Rust rendere
 | Owner/base-color hotspot join | [`.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-outline-off-diagnostic/reports/Seed-san.owner-base-color-hotspots.gradient.0.5x0.5.summary.md) | source/owner diagnosis |
 
 ## Quick Metrics
+
+### Current Base-UV Rerun
+
+This is the current image set to open first when visually comparing the latest
+three-vrm, wgpu, Bevy, and Ash outputs. The capture uses `base-uv` diagnostic
+rendering, opaque black background, direct `.imqraw` reports, and exact alpha
+parity across all three Rust renderers.
+
+| Renderer | `rgb-visible` PSNR | `rgbSharedNonblackGradientInterior1px` PSNR | Changed RGB pixels | Max channel delta | Alpha mismatches |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| wgpu | 36.8913 | 32.6698 | 1107 | 251 | 0 |
+| Bevy | 36.8708 | 32.6368 | 9252 | 251 | 0 |
+| Ash | 36.8913 | 32.6698 | 1107 | 251 | 0 |
+
+The visual gate passes for this diagnostic set, but the high max-channel delta
+and the lower gradient-domain metric show that the remaining work is still
+localized material/color and edge ownership parity rather than alpha or raw
+readback format mismatches.
 
 ### Opaque Real Samples
 
@@ -46,6 +65,26 @@ This is the current root visual blocker. Alpha matches exactly. The second-front
 | --- | ---: | ---: | ---: | ---: |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | wgpu 178 / Bevy 179 / Ash 59 |
 | Second-frontier diagnostic | 30.9642 | 28.6200 | 35.8901 | wgpu 149 / Bevy 176 / Ash 59 |
+
+## Current Base-UV Images
+
+These are the latest local images under
+`.external-fixtures/render-parity-ash-current-base-uv-rerun`. Use this section
+for quick visual review, then use the linked raw reports for numeric decisions.
+
+| three-vrm reference | wgpu | Bevy | Ash |
+| --- | --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/three-vrm/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/wgpu/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/bevy/Seed-san.frame000.png" width="180"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/ash/Seed-san.frame000.png" width="180"> |
+
+| wgpu diff | Bevy diff | Ash diff |
+| --- | --- | --- |
+| <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.wgpu-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.bevy-vs-three-vrm.diff.png" width="180"> | <img src="../.external-fixtures/render-parity-ash-current-base-uv-rerun/diff/Seed-san.ash-vs-three-vrm.diff.png" width="180"> |
+
+Raw reports:
+
+- [`Seed-san.wgpu-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.wgpu-vs-three-vrm.imqraw-rust.json)
+- [`Seed-san.bevy-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.bevy-vs-three-vrm.imqraw-rust.json)
+- [`Seed-san.ash-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.ash-vs-three-vrm.imqraw-rust.json)
 
 ## Seed-san Current Diagnostic Images
 
