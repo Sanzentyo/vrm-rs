@@ -484,14 +484,24 @@ model-body overlap region; the remaining Seed-san color blocker starts at
 base-texture sampling, UV/sampler state, texture color-space handling, or a
 texture-selection detail before the MToon lighting stack is applied.
 
-`render-parity-seed-base-color-raw-srgb-diagnostic` is a Rust-only experiment:
-the three-vrm reference still renders its normal `base-color` diagnostic, while
-wgpu/Bevy bind only the base texture as raw `RGBA8Unorm` and manually apply
-shader sRGB decode. The current run reports wgpu `32.1018 dB` / Bevy
-`32.0621 dB`, slightly worse than the normal sRGB-resource path. Because the
-generated texture-boundary and texture-selection guards still pass on the
+`render-parity-seed-base-color-raw-srgb-diagnostic` is a Rust-only resource
+format experiment: the three-vrm reference still renders its normal `base-color`
+diagnostic, while wgpu/Bevy bind only the base texture as raw `RGBA8Unorm` and
+manually apply shader sRGB decode. The current run reports wgpu `32.1018 dB` /
+Bevy `32.0621 dB`, slightly worse than the normal sRGB-resource path. Because
+the generated texture-boundary and texture-selection guards still pass on the
 normal path, this raw-base experiment should stay diagnostic rather than
 becoming the renderer default.
+
+`render-parity-seed-base-color-texture-as-linear-diagnostic` is a separate
+color-space hypothesis check: browser, wgpu, and Bevy all intentionally treat
+base texture bytes as linear data before output encoding. The mode is consistent
+across implementations (`35.3608 dB` wgpu / `35.2372 dB` Bevy against the
+matching three-vrm diagnostic), but it is not the normal three-vrm behavior.
+When the Rust texture-as-linear output is compared against the normal three-vrm
+base-color reference, it falls to `16.6009 dB` wgpu / `16.6118 dB` Bevy. Keep it
+as a diagnostic for suspicious pixels such as `backpack_nm`; do not promote it
+to the default material path.
 
 Two follow-up diagnostics keep that blocker narrower. The
 `render-parity-seed-base-color-interior2-diagnostic` recipe uses the stricter

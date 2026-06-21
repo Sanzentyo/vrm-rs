@@ -383,6 +383,7 @@ enum DiagnosticRender {
     BaseColor,
     BaseColorFlipV,
     BaseColorRawSrgb,
+    BaseColorTextureAsLinear,
     Uv,
     BaseUv,
     OwnerId,
@@ -398,6 +399,7 @@ impl DiagnosticRender {
             Self::BaseColor => "base-color",
             Self::BaseColorFlipV => "base-color-flip-v",
             Self::BaseColorRawSrgb => "base-color-raw-srgb",
+            Self::BaseColorTextureAsLinear => "base-color-texture-as-linear",
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
             Self::OwnerId => "owner-id",
@@ -406,7 +408,10 @@ impl DiagnosticRender {
     }
 
     fn raw_base_color_filter(self) -> bool {
-        matches!(self, Self::BaseColorRawSrgb)
+        matches!(
+            self,
+            Self::BaseColorRawSrgb | Self::BaseColorTextureAsLinear
+        )
     }
 }
 
@@ -914,6 +919,7 @@ fn material_extra_uniform(
                 DiagnosticRender::BaseColor => 1.0,
                 DiagnosticRender::BaseColorFlipV => 2.0,
                 DiagnosticRender::BaseColorRawSrgb => 1.25,
+                DiagnosticRender::BaseColorTextureAsLinear => 0.75,
                 DiagnosticRender::Uv => 3.0,
                 DiagnosticRender::BaseUv => 4.0,
                 DiagnosticRender::OwnerId => 5.0,

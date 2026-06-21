@@ -27,6 +27,19 @@
   normalized `color_fit` field, so the JSON summary cannot silently lose the
   additive/gain fit just because the upstream join artifact used a different
   field spelling.
+- Added `base-color-texture-as-linear` as an explicit browser/wgpu/Bevy
+  diagnostic mode, separate from the existing `base-color-raw-srgb` check.
+  `base-color-raw-srgb` still means "bind raw UNORM but manually decode sRGB";
+  the new mode intentionally treats the base texture bytes as linear before
+  output encoding. The Seed-san run proves the new mode is implemented
+  consistently across browser, wgpu, and Bevy (`rgb-shared-nonblack-interior1px`
+  wgpu `35.3608 dB`, Bevy `35.2372 dB` in texture-as-linear vs
+  texture-as-linear), but it is not the normal three-vrm answer: comparing Rust
+  texture-as-linear output against the normal three-vrm base-color reference
+  drops to wgpu `16.6009 dB` and Bevy `16.6118 dB`. This rejects a broad
+  texture-as-linear default and keeps the remaining `backpack_nm` work focused
+  on local owner/texture selection and material conditions rather than global
+  color-space policy.
 - Extended the renderer material-draw metadata contract beyond wgpu. Bevy render
   captures now persist `renderer.materialDraws[]` from the spawned primitive
   material state, including Bevy-specific front-face/depth-bias/order fields and

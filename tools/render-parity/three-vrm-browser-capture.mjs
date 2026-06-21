@@ -56,7 +56,7 @@ const expressionWeights = parseExpressionWeights(expressions);
 const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--hotspot-subpixel-steps 3] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|uv|base-uv|owner-id]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--hotspot-subpixel-steps 3] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|base-color-texture-as-linear|uv|base-uv|owner-id]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
@@ -102,8 +102,8 @@ if (!['opaque-black', 'transparent'].includes(background)) {
   console.error(`invalid background: ${background}; expected opaque-black or transparent`);
   process.exit(2);
 }
-if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'base-color-raw-srgb', 'uv', 'base-uv', 'owner-id'].includes(diagnosticRender)) {
-  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, base-color-raw-srgb, uv, base-uv, or owner-id`);
+if (!['shaded', 'flat', 'base-factor', 'base-color', 'base-color-flip-v', 'base-color-raw-srgb', 'base-color-texture-as-linear', 'uv', 'base-uv', 'owner-id'].includes(diagnosticRender)) {
+  console.error(`invalid diagnostic-render: ${diagnosticRender}; expected shaded, flat, base-factor, base-color, base-color-flip-v, base-color-raw-srgb, base-color-texture-as-linear, uv, base-uv, or owner-id`);
   process.exit(2);
 }
 
@@ -284,6 +284,15 @@ function capturePage(options) {
       center: texture.center?.toArray?.() ?? null,
       matrix: texture.matrix?.elements ? Array.from(texture.matrix.elements) : null,
     };
+  };
+
+  const diagnosticMap = (material, mode) => {
+    const map = material?.map ?? null;
+    if (!map?.isTexture || mode !== 'base-color-texture-as-linear') return map;
+    const raw = map.clone();
+    raw.colorSpace = THREE.NoColorSpace;
+    raw.needsUpdate = true;
+    return raw;
   };
 
   const materialPass = (material) => (
@@ -1435,12 +1444,14 @@ function capturePage(options) {
             };
             return uv;
           }
-          const color = (mode === 'base-factor' || mode === 'base-color' || mode === 'base-color-flip-v' || mode === 'base-color-raw-srgb') && material?.color?.isColor === true
+          const color = (mode === 'base-factor' || mode === 'base-color' || mode === 'base-color-flip-v' || mode === 'base-color-raw-srgb' || mode === 'base-color-texture-as-linear') && material?.color?.isColor === true
             ? material.color.clone()
             : new THREE.Color(0xffffff);
           const flat = new THREE.MeshBasicMaterial({
             color,
-            map: mode === 'base-color' || mode === 'base-color-flip-v' || mode === 'base-color-raw-srgb' ? material?.map ?? null : null,
+            map: mode === 'base-color' || mode === 'base-color-flip-v' || mode === 'base-color-raw-srgb' || mode === 'base-color-texture-as-linear'
+              ? diagnosticMap(material, mode)
+              : null,
             side: material?.side ?? THREE.FrontSide,
             transparent: material?.transparent ?? false,
             opacity: material?.opacity ?? 1.0,
