@@ -103,8 +103,8 @@ struct RendererMaterialDrawSummary {
     pbr_fallback: Option<bool>,
     metallic: Option<f64>,
     roughness: Option<f64>,
-    emissive_strength: Option<f64>,
     occlusion_strength: Option<f64>,
+    direct_light_scale: Option<f64>,
     base_texture: Option<u64>,
     shade_texture: Option<u64>,
     normal_texture: Option<u64>,
@@ -586,7 +586,7 @@ fn fmt_renderer_material_draw(value: Option<&RendererMaterialDrawSummary>) -> St
     value
         .map(|draw| {
             format!(
-                "{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+                "{} pbr:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
                 format!(
                     "{}@{}",
                     draw.material_name,
@@ -597,8 +597,8 @@ fn fmt_renderer_material_draw(value: Option<&RendererMaterialDrawSummary>) -> St
                     .unwrap_or_else(|| "n/a".to_owned()),
                 fmt_opt(draw.metallic),
                 fmt_opt(draw.roughness),
-                fmt_opt(draw.emissive_strength),
                 fmt_opt(draw.occlusion_strength),
+                fmt_opt(draw.direct_light_scale),
                 fmt_opt_u64(draw.base_texture),
                 fmt_opt_u64(draw.shade_texture),
                 fmt_opt_u64(draw.normal_texture),
@@ -766,8 +766,8 @@ fn renderer_material_draw_summary(value: &Value) -> RendererMaterialDrawSummary 
         pbr_fallback: bool_at(value, "/materialExtra/flags/pbrFallback"),
         metallic: f64_at(value, "/materialExtra/pbr/metallic"),
         roughness: f64_at(value, "/materialExtra/pbr/roughness"),
-        emissive_strength: f64_at(value, "/materialExtra/pbr/emissiveStrength"),
         occlusion_strength: f64_at(value, "/materialExtra/pbr/occlusionStrength"),
+        direct_light_scale: f64_at(value, "/materialExtra/pbr/directLightScale"),
         base_texture: u64_at(value, "/textureSlots/base"),
         shade_texture: u64_at(value, "/textureSlots/shade"),
         normal_texture: u64_at(value, "/textureSlots/normal"),
@@ -896,8 +896,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 pbr_fallback: Some(true),
                 metallic: Some(0.0),
                 roughness: Some(0.657),
-                emissive_strength: Some(1.0),
                 occlusion_strength: Some(1.0),
+                direct_light_scale: Some(1.0),
                 base_texture: Some(12),
                 shade_texture: None,
                 normal_texture: Some(13),

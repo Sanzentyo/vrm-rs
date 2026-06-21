@@ -1083,14 +1083,14 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
     Ok(format!(
-        "{}@{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+        "{}@{} pbr:{} m/r/o/d={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
         material,
         role,
         pbr,
         fmt_optional_f64(optional_f64_path(draw, &["metallic"])?),
         fmt_optional_f64(optional_f64_path(draw, &["roughness"])?),
-        fmt_optional_f64(optional_f64_path(draw, &["emissive_strength"])?),
         fmt_optional_f64(optional_f64_path(draw, &["occlusion_strength"])?),
+        fmt_optional_f64(optional_f64_path(draw, &["direct_light_scale"])?),
         base,
         shade,
         normal,
@@ -1389,7 +1389,7 @@ fn optional_material_draw_color_fits(
 fn optional_color_fit(
     backend: &Value,
 ) -> Result<Option<ShadingModelColorFitSummary>, Box<dyn Error>> {
-    let Some(value) = backend.get("color_fit") else {
+    let Some(value) = optional_color_fit_value(backend) else {
         return Ok(None);
     };
     if value.is_null() {
@@ -1414,6 +1414,12 @@ fn optional_color_fit(
             &["mean_expected_over_actual_rgb_ratio"],
         )?,
     }))
+}
+
+fn optional_color_fit_value(value: &Value) -> Option<&Value> {
+    ["color_fit", "color_fit_summary", "colorFit", "colorFitSummary"]
+        .into_iter()
+        .find_map(|key| value.get(key))
 }
 
 fn shading_model_sample_following_summary(
@@ -1867,7 +1873,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "selected_count": 1,
                     "mean_expected_actual_rgb_distance": 4.5,
                     "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
-                    "color_fit": {
+                    "color_fit_summary": {
                         "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
                         "least_squares_gain_rgb": [1.05, 1.10, 1.15],
                         "gain_fit_mean_rgb_distance": 2.0,
@@ -1881,7 +1887,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "row_count": 2,
                         "mean_expected_actual_rgb_distance": 4.5,
                         "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
-                        "color_fit": {
+                        "colorFit": {
                             "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
                             "least_squares_gain_rgb": [1.05, 1.10, 1.15],
                             "gain_fit_mean_distance": 2.0,

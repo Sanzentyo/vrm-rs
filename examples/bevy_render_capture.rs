@@ -1648,22 +1648,22 @@ fn bevy_material_extra_metadata(primitive: &BevyPrimitive) -> serde_json::Value 
     match &primitive.material {
         BevyPrimitiveMaterial::Mtoon(material) => json!({
             "flags": {
-                "pbrFallback": material.material_flags.x != 0.0,
-                "hasNormalTexture": material.material_flags.y != 0.0,
-                "derivativeNormals": material.material_flags.z != 0.0,
-                "viewDerivativeNormals": material.material_flags.w != 0.0,
+                "v0CompatShade": material.material_flags.x != 0.0,
+                "pbrFallback": material.material_flags.y != 0.0,
+                "threeVrmLightAccumulation": material.material_flags.z != 0.0,
+                "derivativeNormals": material.material_flags.w != 0.0,
             },
             "pbr": {
                 "metallic": material.pbr_params.x,
                 "roughness": material.pbr_params.y,
-                "emissiveStrength": material.pbr_params.z,
-                "occlusionStrength": material.pbr_params.w,
+                "occlusionStrength": material.pbr_params.z,
+                "directLightScale": material.pbr_params.w,
             },
-            "alpha": {
-                "cutoff": material.material_flags2.x,
-                "modeCode": material.material_flags2.y,
-                "diagnosticCode": material.material_flags2.z,
-                "ownerResolveMarker": material.material_flags2.w,
+            "renderFlags": {
+                "unlit": material.material_flags2.x != 0.0,
+                "viewDerivativeNormals": material.material_flags2.y != 0.0,
+                "flatDiagnostic": material.material_flags2.z != 0.0,
+                "diagnosticCode": material.material_flags2.w,
             },
             "ownerColor": material.owner_color.to_array(),
         }),
@@ -3543,8 +3543,38 @@ mod tests {
         assert_eq!(owner_source_key(source), "node145/mesh4/prim9/base");
         let mut source_material = test_mtoon_material();
         source_material.owner_color.w = 1.0;
+        source_material.material_flags = BVec4::new(0.0, 1.0, 1.0, 1.0);
+        source_material.material_flags2 = BVec4::new(1.0, 1.0, 0.0, 1.25);
+        source_material.pbr_params = BVec4::new(0.0, 0.657, 1.0, 1.0);
         let mut resolve_material = source_material.clone();
         resolve_material.owner_color.w = 2.0;
+        let material_extra = bevy_material_extra_metadata(&test_bevy_primitive(
+            BevyPrimitiveMaterial::Mtoon(source_material.clone()),
+        ));
+        assert_eq!(
+            material_extra
+                .pointer("/flags/pbrFallback")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            material_extra
+                .pointer("/flags/derivativeNormals")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            material_extra
+                .pointer("/renderFlags/viewDerivativeNormals")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            material_extra
+                .pointer("/pbr/directLightScale")
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0)
+        );
         let source_primitive = test_bevy_primitive(BevyPrimitiveMaterial::Mtoon(source_material));
         let resolve_primitive = test_bevy_primitive(BevyPrimitiveMaterial::Mtoon(resolve_material));
         assert_eq!(bevy_primitive_draw_role(&source_primitive), "source");

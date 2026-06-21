@@ -1742,22 +1742,22 @@ fn ash_vertex_material_metadata(
 fn ash_material_extra_metadata(extra: AshMaterialExtraUniform) -> serde_json::Value {
     json!({
         "flags": {
-            "pbrFallback": extra.flags[0] != 0.0,
-            "hasNormalTexture": extra.flags[1] != 0.0,
-            "derivativeNormals": extra.flags[2] != 0.0,
-            "viewDerivativeNormals": extra.flags[3] != 0.0,
+            "v0CompatShade": extra.flags[0] != 0.0,
+            "pbrFallback": extra.flags[1] != 0.0,
+            "threeVrmLightAccumulation": extra.flags[2] != 0.0,
+            "derivativeNormals": extra.flags[3] != 0.0,
         },
         "pbr": {
             "metallic": extra.pbr_params[0],
             "roughness": extra.pbr_params[1],
-            "emissiveStrength": extra.pbr_params[2],
-            "occlusionStrength": extra.pbr_params[3],
+            "occlusionStrength": extra.pbr_params[2],
+            "directLightScale": extra.pbr_params[3],
         },
-        "alpha": {
-            "cutoff": extra.flags2[0],
-            "modeCode": extra.flags2[1],
-            "diagnosticCode": extra.flags2[2],
-            "ownerResolveMarker": extra.flags2[3],
+        "renderFlags": {
+            "unlit": extra.flags2[0] != 0.0,
+            "viewDerivativeNormals": extra.flags2[1] != 0.0,
+            "flatDiagnostic": extra.flags2[2] != 0.0,
+            "diagnosticCode": extra.flags2[3],
         },
         "ownerColor": extra.owner_color,
     })
@@ -2249,7 +2249,9 @@ mod tests {
             uniform,
             uv_uniform: AshMaterialUvUniform::default(),
             render_extra_uniform: AshMaterialExtraUniform {
+                flags: [0.0, 1.0, 1.0, 1.0],
                 pbr_params: [0.0, 0.657, 1.0, 1.0],
+                flags2: [1.0, 1.0, 0.0, 1.25],
                 ..Default::default()
             },
             uniform_buffer_size: 0,
@@ -2333,6 +2335,30 @@ mod tests {
                 .pointer("/policy/cullMode")
                 .and_then(serde_json::Value::as_str),
             Some("off")
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/materialExtra/flags/pbrFallback")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/materialExtra/flags/derivativeNormals")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/materialExtra/renderFlags/viewDerivativeNormals")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/materialExtra/pbr/directLightScale")
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0)
         );
         assert_eq!(
             metadata[0]

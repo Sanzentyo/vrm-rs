@@ -22,6 +22,11 @@
   material-draw update: the join Markdown and expanded summary JSON both retain
   additive/gain `color_fit` fields, and the generated summary artifact no
   longer falls back to serialized `color_fit: null` for those backend rows.
+  The expanded summary parser now accepts `color_fit`, `color_fit_summary`,
+  `colorFit`, and `colorFitSummary` as input aliases while always writing the
+  normalized `color_fit` field, so the JSON summary cannot silently lose the
+  additive/gain fit just because the upstream join artifact used a different
+  field spelling.
 - Extended the renderer material-draw metadata contract beyond wgpu. Bevy render
   captures now persist `renderer.materialDraws[]` from the spawned primitive
   material state, including Bevy-specific front-face/depth-bias/order fields and
@@ -47,6 +52,22 @@
   strings such as `backpack_nm@owner-sample-resolve` and consistently expose
   resolve policy (`cull=off`, `depthWrite=false`) instead of depending on
   backend-specific artifact ordering.
+- Fixed the renderer material-draw diagnostic metadata to match the shared
+  uniform ABI. The previous artifact labels treated `flags[0]` as
+  `pbrFallback`, `flags[1]` as `hasNormalTexture`, and `pbr_params[2]` as
+  `emissiveStrength`, even though the shader ABI uses
+  `v0CompatShade/pbrFallback/threeVrmLightAccumulation/derivativeNormals` and
+  `metallic/roughness/occlusionStrength/directLightScale`. wgpu, Bevy, and Ash
+  now emit `materialExtra.flags`, `materialExtra.pbr`, and
+  `materialExtra.renderFlags` with those ABI names, and focused summaries print
+  `m/r/o/d` instead of `m/r/e/o`. This corrects the misleading
+  `backpack_nm@owner-sample-resolve pbr:false` diagnostics before the next
+  color-space/fill-rule pass. The current Seed-san texture audit still suggests
+  the bad `backpack_nm` pixels are closer to a texture-as-linear output than to
+  the CPU sRGB base-color sample, so the next parity work should verify the
+  browser/Rust base-color diagnostic color-space path on those selected
+  same-material edge samples rather than changing broad sampler or material
+  binding policy.
 - Added recommended material probes and focused pixel probes to the expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--texture-audit renderer=path` inputs and
