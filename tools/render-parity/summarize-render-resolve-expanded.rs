@@ -257,6 +257,8 @@ struct TextureProbeSummary {
     mean_manifest_expected_distance: Option<f64>,
     mean_actual_minus_manifest_rgb_delta: Option<[f64; 3]>,
     mean_expected_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    least_squares_actual_over_manifest_rgb_gain: Option<[f64; 3]>,
+    least_squares_expected_over_manifest_rgb_gain: Option<[f64; 3]>,
     manifest_sample_actual_within_1_5: u64,
     manifest_sample_expected_within_1_5: u64,
     manifest_sample_both_far: u64,
@@ -751,11 +753,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 }
                 out.push('\n');
             }
-            out.push_str("| Material | Draw key | Count | Classification | Action | Mean E-A | Manifest A/E | A-M RGB | E-M RGB | Near sample A/E/Both-far |\n");
-            out.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+            out.push_str("| Material | Draw key | Count | Classification | Action | Mean E-A | Manifest A/E | A-M RGB | E-M RGB | LS gain A/M | LS gain E/M | Near sample A/E/Both-far |\n");
+            out.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
             for probe in &audit.recommended_probes {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} / {} | {} | {} | {}/{}/{} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} / {} | {} | {} | {} | {} | {}/{}/{} |\n",
                     probe.material_name,
                     probe.draw_key,
                     probe.count,
@@ -766,6 +768,8 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                     fmt_optional_f64(probe.mean_manifest_expected_distance),
                     fmt_optional_vec3(probe.mean_actual_minus_manifest_rgb_delta),
                     fmt_optional_vec3(probe.mean_expected_minus_manifest_rgb_delta),
+                    fmt_optional_vec3(probe.least_squares_actual_over_manifest_rgb_gain),
+                    fmt_optional_vec3(probe.least_squares_expected_over_manifest_rgb_gain),
                     probe.manifest_sample_actual_within_1_5,
                     probe.manifest_sample_expected_within_1_5,
                     probe.manifest_sample_both_far,
@@ -1180,6 +1184,14 @@ fn texture_probe_summary(value: &Value) -> Result<TextureProbeSummary, Box<dyn E
         mean_expected_minus_manifest_rgb_delta: optional_vec3_path(
             value,
             &["mean_expected_minus_manifest_rgb_delta"],
+        )?,
+        least_squares_actual_over_manifest_rgb_gain: optional_vec3_path(
+            value,
+            &["least_squares_actual_over_manifest_rgb_gain"],
+        )?,
+        least_squares_expected_over_manifest_rgb_gain: optional_vec3_path(
+            value,
+            &["least_squares_expected_over_manifest_rgb_gain"],
         )?,
         manifest_sample_actual_within_1_5: get_u64_path(
             value,
@@ -2407,6 +2419,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "mean_manifest_expected_rgb_distance": 106.2,
                 "mean_actual_minus_manifest_rgb_delta": [37.5, 41.1, 43.1],
                 "mean_expected_minus_manifest_rgb_delta": [56.0, 62.1, 65.4],
+                "least_squares_actual_over_manifest_rgb_gain": [1.74, 1.90, 1.94],
+                "least_squares_expected_over_manifest_rgb_gain": [2.11, 2.36, 2.43],
                 "manifest_sample_actual_within_1_5": 0,
                 "manifest_sample_expected_within_1_5": 0,
                 "manifest_sample_both_far": 12
@@ -2533,6 +2547,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""selection_source_buckets""#));
     assert!(summary_json.contains(r#""selection_source":"webgl-coverage""#));
     assert!(summary_json.contains(r#""recommended_probes""#));
+    assert!(summary_json.contains(r#""least_squares_actual_over_manifest_rgb_gain":[1.74,1.9,1.94]"#));
+    assert!(summary_json.contains(r#""least_squares_expected_over_manifest_rgb_gain":[2.11,2.36,2.43]"#));
     assert!(summary_json.contains(r#""focused_material_pixels""#));
     assert!(summary_json.contains(r#""browser_material":"backpack_nm MeshStandardMaterial"#));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
@@ -2557,6 +2573,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## Recommended Material Probes"));
     assert!(markdown.contains("#### Selection Source Buckets"));
     assert!(markdown.contains("| webgl-coverage | 6 | 51.7500 | 2/4/0 | 0 / 1 | 107.9000 / 75.6000 | -19.00,-20.00,-21.00 / -5.00,-3.00,-2.00 |"));
+    assert!(markdown.contains("LS gain A/M"));
+    assert!(markdown.contains("| backpack_nm | node145/mesh4/prim9/base | 15 | selected_sample_and_renderer_both_far | audit resolve draw binding or selected-surface material inputs | 35.8000 | 70.6000 / 106.2000 | 37.50,41.10,43.10 | 56.00,62.10,65.40 | 1.74,1.90,1.94 | 2.11,2.36,2.43 | 0/0/12 |"));
     assert!(markdown.contains("selected_sample_and_renderer_both_far"));
     assert!(markdown.contains("## Focused Material State Matrix"));
     assert!(markdown.contains(
