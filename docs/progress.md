@@ -2,6 +2,17 @@
 
 ## 2026-06-22
 
+- Routed Rust glTF/PBR tangent-space normal diagnostics through the remaining
+  render-parity report layers. `map-render-hotspots.rs` now stores both
+  three.js-style and wgpu-compatible tangent-space normal terms next to the
+  sampled normal-map texel, `join-owner-render-hotspots.rs` prints them beside
+  browser PBR terms, and the focused/expanded summaries keep `tan3` /
+  `tan-wgpu` in compact PBR strings. Refreshed Seed-san local artifacts confirm
+  `backpack_nm` rows now show browser and Rust `tan-wgpu` values in the same
+  owner/render hotspot Markdown/JSON and in
+  `Seed-san.render-resolve-expanded.summary.md`. Rechecked the real expanded
+  summary JSON after regeneration: additive/gain color-fit fields are still
+  populated from the join artifact, and no serialized `color_fit: null` remains.
 - Added source-material PBR input diagnostics to the three-vrm browser hotspot
   projection path. `three-vrm-browser-capture.mjs` now preserves each diagnostic
   replacement material's original source material, emits per-candidate

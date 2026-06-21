@@ -506,6 +506,8 @@ struct PbrTermReport {
     shading_normal: [f32; 3],
     normal_uv: Option<[f32; 2]>,
     normal_texture_rgba: Option<[u8; 4]>,
+    tangent_space_normal_three_js: Option<[f32; 3]>,
+    tangent_space_normal_wgpu_compat: Option<[f32; 3]>,
     light_dir: [f32; 3],
     view_dir: [f32; 3],
     n_dot_l: f32,
@@ -909,20 +911,33 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     {
         return Err("base-uv sRGB encode/decode should round-trip within one byte".into());
     }
+    let flat_terms = tangent_space_normal_terms([0.5, 0.5, 1.0, 1.0], 1.0);
+    assert_vec3_close(
+        flat_terms.three_js,
+        Vec3::Z,
+        "flat three.js tangent-space normal",
+    )?;
+    assert_vec3_close(
+        flat_terms.wgpu_compat,
+        Vec3::Z,
+        "flat wgpu tangent-space normal",
+    )?;
     let flat = normal_mapped_shading_normal(
         Vec3::Z,
         Vec4::new(1.0, 0.0, 0.0, 1.0),
-        [0.5, 0.5, 1.0, 1.0],
-        1.0,
+        flat_terms.wgpu_compat,
         true,
         true,
     );
     assert_vec3_close(flat, Vec3::Z, "flat normal map should preserve normal")?;
+    let tilted_terms = tangent_space_normal_terms([1.0, 0.25, 1.0, 1.0], 1.0);
+    if tilted_terms.three_js.y >= 0.0 || tilted_terms.wgpu_compat.y <= 0.0 {
+        return Err("normal map green channel conventions should be distinguishable".into());
+    }
     let tilted = normal_mapped_shading_normal(
         Vec3::Z,
         Vec4::new(1.0, 0.0, 0.0, 1.0),
-        [1.0, 0.5, 1.0, 1.0],
-        1.0,
+        tilted_terms.wgpu_compat,
         true,
         true,
     );
@@ -3509,6 +3524,8 @@ struct PbrNormalSample {
     shading_normal: Vec3,
     uv: Option<[f32; 2]>,
     texture_rgba: Option<[u8; 4]>,
+    tangent_space_normal_three_js: Option<Vec3>,
+    tangent_space_normal_wgpu_compat: Option<Vec3>,
 }
 
 fn pbr_normal_sample(
@@ -3531,12 +3548,16 @@ fn pbr_normal_sample(
             shading_normal: geometric_normal,
             uv: None,
             texture_rgba: None,
+            tangent_space_normal_three_js: None,
+            tangent_space_normal_wgpu_compat: None,
         };
     };
     let normal_uv = transform_tex_coord_0(raw_uv, surface.normal_uv_transform);
     let normal_rgba_linear =
         normal_texture.sample_rgba_repeat_linear(normal_uv, Rgba8SamplingOrigin::TopLeft);
     let texture_rgba = normal_rgba_linear.map(quantize_unorm8);
+    let normal_map_terms =
+        tangent_space_normal_terms(normal_rgba_linear, surface.material_shading.normal_scale);
     if surface.material_shading.normal_scale <= 0.0 {
         return PbrNormalSample {
             source: "interpolated_vertex_normal_map_disabled",
@@ -3544,6 +3565,8 @@ fn pbr_normal_sample(
             shading_normal: geometric_normal,
             uv: Some(normal_uv),
             texture_rgba: Some(texture_rgba),
+            tangent_space_normal_three_js: Some(normal_map_terms.three_js),
+            tangent_space_normal_wgpu_compat: Some(normal_map_terms.wgpu_compat),
         };
     }
     let tangent = world_tangent.truncate();
@@ -3554,6 +3577,8 @@ fn pbr_normal_sample(
             shading_normal: geometric_normal,
             uv: Some(normal_uv),
             texture_rgba: Some(texture_rgba),
+            tangent_space_normal_three_js: Some(normal_map_terms.three_js),
+            tangent_space_normal_wgpu_compat: Some(normal_map_terms.wgpu_compat),
         };
     }
     PbrNormalSample {
@@ -3562,21 +3587,44 @@ fn pbr_normal_sample(
         shading_normal: normal_mapped_shading_normal(
             geometric_normal,
             world_tangent,
-            normal_rgba_linear,
-            surface.material_shading.normal_scale,
+            normal_map_terms.wgpu_compat,
             front_facing,
             surface.policy.cull_mode != "off",
         ),
         uv: Some(normal_uv),
         texture_rgba: Some(texture_rgba),
+        tangent_space_normal_three_js: Some(normal_map_terms.three_js),
+        tangent_space_normal_wgpu_compat: Some(normal_map_terms.wgpu_compat),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TangentSpaceNormalTerms {
+    three_js: Vec3,
+    wgpu_compat: Vec3,
+}
+
+fn tangent_space_normal_terms(normal_rgba: [f32; 4], normal_scale: f32) -> TangentSpaceNormalTerms {
+    TangentSpaceNormalTerms {
+        three_js: Vec3::new(
+            (normal_rgba[0] * 2.0 - 1.0) * normal_scale.abs(),
+            (normal_rgba[1] * 2.0 - 1.0) * normal_scale.abs(),
+            normal_rgba[2] * 2.0 - 1.0,
+        )
+        .normalize_or_zero(),
+        wgpu_compat: Vec3::new(
+            (normal_rgba[0] * 2.0 - 1.0) * normal_scale.abs(),
+            (1.0 - normal_rgba[1] * 2.0) * normal_scale.abs(),
+            normal_rgba[2] * 2.0 - 1.0,
+        )
+        .normalize_or_zero(),
     }
 }
 
 fn normal_mapped_shading_normal(
     geometric_normal: Vec3,
     world_tangent: Vec4,
-    normal_rgba: [f32; 4],
-    normal_scale: f32,
+    tangent_normal: Vec3,
     front_facing: bool,
     cull_enabled: bool,
 ) -> Vec3 {
@@ -3588,11 +3636,6 @@ fn normal_mapped_shading_normal(
     }
     let handedness = if world_tangent.w < 0.0 { -1.0 } else { 1.0 };
     let bitangent = (geometric_normal.cross(tangent) * handedness).normalize_or_zero() * face_sign;
-    let tangent_normal = Vec3::new(
-        (normal_rgba[0] * 2.0 - 1.0) * normal_scale.abs(),
-        (1.0 - normal_rgba[1] * 2.0) * normal_scale.abs(),
-        normal_rgba[2] * 2.0 - 1.0,
-    );
     (tangent * tangent_normal.x + bitangent * tangent_normal.y + geometric_normal * tangent_normal.z)
         .normalize_or_zero()
 }
@@ -3624,6 +3667,12 @@ fn pbr_term_report(
             shading_normal: normal.to_array(),
             normal_uv: normal_sample.uv,
             normal_texture_rgba: normal_sample.texture_rgba,
+            tangent_space_normal_three_js: normal_sample
+                .tangent_space_normal_three_js
+                .map(|value| value.to_array()),
+            tangent_space_normal_wgpu_compat: normal_sample
+                .tangent_space_normal_wgpu_compat
+                .map(|value| value.to_array()),
             light_dir: light_dir.to_array(),
             view_dir: view_dir.to_array(),
             n_dot_l: terms.n_dot_l,

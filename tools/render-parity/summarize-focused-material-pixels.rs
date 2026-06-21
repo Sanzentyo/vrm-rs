@@ -170,6 +170,8 @@ struct PbrTermSummary {
     shading_normal: Option<[f64; 3]>,
     normal_uv: Option<[f64; 2]>,
     normal_texture_rgba: Option<[u8; 4]>,
+    tangent_space_normal_three_js: Option<[f64; 3]>,
+    tangent_space_normal_wgpu_compat: Option<[f64; 3]>,
     light_dir: Option<[f64; 3]>,
     view_dir: Option<[f64; 3]>,
     n_dot_l: Option<f64>,
@@ -480,6 +482,8 @@ fn pbr_terms_at(value: &Value, pointer: &str) -> Option<PbrTermSummary> {
         shading_normal: vec3_at(value, "/shading_normal"),
         normal_uv: vec2_at(value, "/normal_uv"),
         normal_texture_rgba: rgba_at(value, "/normal_texture_rgba"),
+        tangent_space_normal_three_js: vec3_at(value, "/tangent_space_normal_three_js"),
+        tangent_space_normal_wgpu_compat: vec3_at(value, "/tangent_space_normal_wgpu_compat"),
         light_dir: vec3_at(value, "/light_dir"),
         view_dir: vec3_at(value, "/view_dir"),
         n_dot_l: f64_at(value, "/n_dot_l"),
@@ -776,7 +780,7 @@ fn fmt_pbr_terms(value: Option<&PbrTermSummary>) -> String {
     value
         .map(|terms| {
             format!(
-                "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={}",
+                "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={} tan3={} tan-wgpu={}",
                 fmt_opt(terms.n_dot_l),
                 fmt_opt(terms.n_dot_v),
                 fmt_opt_vec3(terms.diffuse_lobe_rgb),
@@ -788,7 +792,9 @@ fn fmt_pbr_terms(value: Option<&PbrTermSummary>) -> String {
                 fmt_opt_vec2(terms.normal_uv),
                 fmt_opt_rgba(terms.normal_texture_rgba),
                 fmt_opt_vec3(terms.geometric_normal),
-                fmt_opt_vec3(terms.shading_normal)
+                fmt_opt_vec3(terms.shading_normal),
+                fmt_opt_vec3(terms.tangent_space_normal_three_js),
+                fmt_opt_vec3(terms.tangent_space_normal_wgpu_compat)
             )
         })
         .unwrap_or_else(|| "n/a".to_owned())
@@ -1050,6 +1056,22 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "depth": 0.5,
                 "edge_distance_pixels": 0.2,
                 "base_texture_local_rgb_gradient": 1.0,
+                "pbr_terms": {
+                    "normal_source": "normal_map_tangent_space",
+                    "geometric_normal": [0.0, 0.0, 1.0],
+                    "shading_normal": [0.1, 0.1, 0.99],
+                    "normal_uv": [0.25, 0.75],
+                    "normal_texture_rgba": [127, 123, 255, 255],
+                    "tangent_space_normal_three_js": [0.0, -0.03, 1.0],
+                    "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0],
+                    "n_dot_l": 0.7,
+                    "n_dot_v": 0.9,
+                    "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
+                    "specular_lobe_rgb": [0.02, 0.02, 0.02],
+                    "direct_rgb": [0.18, 0.17, 0.17],
+                    "ambient_rgb": [0.01, 0.01, 0.01],
+                    "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+                },
                 "policy": {
                     "alpha_mode": "opaque",
                     "cull_mode": "back",
@@ -1113,7 +1135,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         Some("gltf_pbr")
     );
     assert!(report.rows[0].selected_actual_rgb_distance.unwrap() < 3.0);
-    assert!(markdown(&report).contains("Focused Material Pixel Summary"));
+    let report_markdown = markdown(&report);
+    assert!(report_markdown.contains("Focused Material Pixel Summary"));
+    assert!(report_markdown.contains("tan-wgpu=0.000,0.030,1.000"));
     let actual_override = RgbaJsonArtifact {
         image: RgbaJsonImage {
             width: 16,

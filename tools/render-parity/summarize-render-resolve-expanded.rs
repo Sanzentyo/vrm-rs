@@ -1533,7 +1533,7 @@ fn focused_pbr_terms_summary(value: &Value) -> Result<String, Box<dyn Error>> {
         return Ok("n/a".to_owned());
     }
     Ok(format!(
-        "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={}",
+        "nL/nV={}/{} diff={} spec={} direct={} amb={} total={} normal={} uv={} tex={} geom={} shade={} tan3={} tan-wgpu={}",
         fmt_optional_f64(optional_f64_path(terms, &["n_dot_l"])?),
         fmt_optional_f64(optional_f64_path(terms, &["n_dot_v"])?),
         fmt_optional_vec3(optional_vec3_path(terms, &["diffuse_lobe_rgb"])?),
@@ -1545,7 +1545,13 @@ fn focused_pbr_terms_summary(value: &Value) -> Result<String, Box<dyn Error>> {
         fmt_optional_vec2(optional_vec2_path(terms, &["normal_uv"])?),
         fmt_optional_rgba(optional_rgba_path(terms, &["normal_texture_rgba"])?),
         fmt_optional_vec3(optional_vec3_path(terms, &["geometric_normal"])?),
-        fmt_optional_vec3(optional_vec3_path(terms, &["shading_normal"])?)
+        fmt_optional_vec3(optional_vec3_path(terms, &["shading_normal"])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &[
+            "tangent_space_normal_three_js"
+        ])?),
+        fmt_optional_vec3(optional_vec3_path(terms, &[
+            "tangent_space_normal_wgpu_compat"
+        ])?)
     ))
 }
 
@@ -2879,6 +2885,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "shading_normal": [0.1, 0.0, 0.99],
                         "normal_uv": [0.25, 0.75],
                         "normal_texture_rgba": [127, 123, 255, 255],
+                        "tangent_space_normal_three_js": [0.0, -0.03, 1.0],
+                        "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0],
                         "n_dot_l": 0.7,
                         "n_dot_v": 0.9,
                         "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
@@ -3011,6 +3019,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""frontmost_pbr_terms":"nL/nV=0.7000/0.9000"#));
     assert!(summary_json.contains("normal=normal_map_tangent_space"));
     assert!(summary_json.contains("tex=127,123,255,255"));
+    assert!(summary_json.contains("tan-wgpu=0.00,0.03,1.00"));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));

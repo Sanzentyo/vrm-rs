@@ -707,7 +707,7 @@ fn rust_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         return "n/a".to_owned();
     }
     format!(
-        "nL/nV={}/{} normal={} uv={} tex={} geom={} shade={} diff={} spec={} direct={} amb={} total={}",
+        "nL/nV={}/{} normal={} uv={} tex={} geom={} shade={} tan3={} tan-wgpu={} diff={} spec={} direct={} amb={} total={}",
         fmt_opt_f64(value_f64_path(terms, "n_dot_l")),
         fmt_opt_f64(value_f64_path(terms, "n_dot_v")),
         string_path(terms, "normal_source"),
@@ -715,6 +715,11 @@ fn rust_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         fmt_rgba(value_rgba_path(terms, "normal_texture_rgba")),
         fmt_vec3(value_vec3_path(terms, "geometric_normal")),
         fmt_vec3(value_vec3_path(terms, "shading_normal")),
+        fmt_vec3(value_vec3_path(terms, "tangent_space_normal_three_js")),
+        fmt_vec3(value_vec3_path(
+            terms,
+            "tangent_space_normal_wgpu_compat",
+        )),
         fmt_vec3(value_vec3_path(terms, "diffuse_lobe_rgb")),
         fmt_vec3(value_vec3_path(terms, "specular_lobe_rgb")),
         fmt_vec3(value_vec3_path(terms, "direct_rgb")),
@@ -1106,6 +1111,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "normal_texture_rgba": [127, 123, 255, 255],
                 "geometric_normal": [0.0, 0.0, 1.0],
                 "shading_normal": [0.1, 0.1, 0.99],
+                "tangent_space_normal_three_js": [0.0, -0.03, 1.0],
+                "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0],
                 "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
                 "specular_lobe_rgb": [0.02, 0.02, 0.02],
                 "direct_rgb": [0.18, 0.17, 0.17],
@@ -1118,5 +1125,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .contains("shade-wgpu=0.100,0.100,0.990"));
     assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
         .contains("total=0.190,0.180,0.180"));
+    assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
+        .contains("tan-wgpu=0.000,0.030,1.000"));
     Ok(())
 }
