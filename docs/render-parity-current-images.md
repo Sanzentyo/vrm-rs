@@ -186,11 +186,22 @@ material code: `gltf_pbr` rows isolate the backpack/PBR path, while `mtoon`
 rows keep the body, arm, plastic, and bake surfaces from being mixed into the
 same evidence bucket.
 
+`just render-parity-seed-base-color-flat32-shading-model-residual-join` now
+joins those model-specific probes across wgpu, Bevy, and Ash. The current join
+report shows `gltf_pbr` has `17` shared top-residual pixels and is entirely
+`backpack_nm node145/mesh4/prim9/base`; wgpu/Ash are close to each other
+(`33.45` / `32.65` mean E-A), while Bevy is much farther (`89.46`) because many
+rows reproduce the selected sample almost exactly but stay darker than
+three-vrm. `mtoon` has `14` shared top-residual pixels; wgpu/Ash again cluster
+near each other (`45.87` / `45.62`), while Bevy is dominated by `huku_bake` and
+`eye` rows at `100.16`.
+
 Expected-vs-actual audit Markdown:
 
 - [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
 - [`Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
 - [`Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
+- [`Seed-san.shading-model-residual-join.md`](../target/texture-draw-audit/Seed-san.shading-model-residual-join.md)
 
 `audit-owner-sample-execution.rs` now reads that artifact metadata and adds a
 `Renderer Draw Selection Routing` section. The same focused wgpu smoke routed

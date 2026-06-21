@@ -589,6 +589,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/join-shading-model-residuals.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/build-owner-sample-selection.rs",
             "--self-test",
         ],
@@ -660,6 +669,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/inspect-pbr-material.rs",
     "tools/render-parity/inspect-mtoon-fixtures.rs",
     "tools/render-parity/join-owner-render-hotspots.rs",
+    "tools/render-parity/join-shading-model-residuals.rs",
     "tools/render-parity/map-render-hotspots.rs",
     "tools/render-parity/merge-owner-sample-selection.rs",
     "tools/render-parity/rgba-json-to-png.rs",

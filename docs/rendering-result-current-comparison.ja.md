@@ -6,6 +6,20 @@
 
 数値判断は direct raw 比較の `.imqraw` / `.psnr.json` を優先します。ここでは、目視確認しやすいように PNG を横並びにしています。
 
+## 現時点の結論
+
+この Markdown で最初に見るべきなのは、`Current Seed-san 基準セット` と `Seed-san blocker diagnostic` です。前者は「現状の全体像」、後者は「まだ three-vrm と一致していない原因候補」を見るための画像セットです。
+
+| 観点 | 現状 |
+| --- | --- |
+| 透明 / alpha | wgpu / Bevy / Ash とも主要セットでは alpha mismatch は出ていません。 |
+| wgpu と Ash | ほぼ同じ傾向で、backend transport より material/color/texture sampling 側が主な残差候補です。 |
+| Bevy | alpha は一致していますが、Seed-san の focused diagnostic では selected sample に寄りすぎるケースがあり、material/color/fill の見方を wgpu/Ash と分ける必要があります。 |
+| glTF/PBR | generated guard は良好ですが、Seed-san の `backpack_nm` はまだ three-vrm より暗い方向の残差が残っています。 |
+| MToon | body / arm / plastic / eye / bake surface の局所差分が残っています。 |
+
+直近の shading-model residual join では、`gltf_pbr` は `17` 個の共有 top-residual pixel がすべて `backpack_nm node145/mesh4/prim9/base` に集まっています。`mtoon` は `14` 個の共有 top-residual pixel があり、wgpu/Ash は近い一方、Bevy は `huku_bake` と `eye` の残差が目立ちます。
+
 ## まず見る画像セット
 
 現状の主要な比較対象は、次の順で見るのが分かりやすいです。
@@ -154,6 +168,18 @@ Audit Markdown:
 - [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
 - [`target/texture-draw-audit/Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
 - [`target/texture-draw-audit/Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
+- [`target/texture-draw-audit/Seed-san.shading-model-residual-join.md`](../target/texture-draw-audit/Seed-san.shading-model-residual-join.md)
+
+### Shading model 別の現在の残差
+
+`just render-parity-seed-base-color-flat32-shading-model-residual-join` で、expanded texture/color audit の `top_residuals_by_shading_model` を wgpu / Bevy / Ash 横断で join できます。これは画像を再解釈する処理ではなく、既存 audit JSON の pixel probe を並べるための診断です。
+
+| Shading model | 共有 top-residual pixels | wgpu mean E-A | Bevy mean E-A | Ash mean E-A | 主な surface / draw key | 読み |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `gltf_pbr` | 17 | 33.45 | 89.46 | 32.65 | `backpack_nm`, `node145/mesh4/prim9/base` | backpack/PBR の color accumulation を独立して追う。 |
+| `mtoon` | 14 | 45.87 | 100.16 | 45.62 | `eye`, `arm_mat`, `arm_plastic`, `huku_bake` | MToon の body/plastic/eye/bake surface を分けて追う。 |
+
+この表から見る限り、次の修正は「全体 exposure を一つ動かす」より、`gltf_pbr` の backpack 系と `mtoon` の局所 material/fill を別々に合わせ込む方が安全です。
 
 ## 現時点の読み
 
