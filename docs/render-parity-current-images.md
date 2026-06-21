@@ -155,6 +155,15 @@ looking at final pixel color. A wgpu smoke against the expanded post-resolve
 manifest reported `21` draw selections with nonzero entries for all four
 high-margin draw keys above.
 
+`audit-owner-sample-execution.rs` now reads that artifact metadata and adds a
+`Renderer Draw Selection Routing` section. The same focused wgpu smoke routed
+`101/101` manifest entries into draw selections with `0` missing entries, so
+the current high-margin residuals are not explained by manifest rows being
+dropped before draw assignment. The next root-cause work should inspect resolve
+shading/writeback for those routed draws, especially `node144/mesh3/prim0/base`,
+`node144/mesh3/prim1/base`, `node145/mesh4/prim1/base`, and
+`node145/mesh4/prim4/base`.
+
 ## Current Base-UV Images
 
 These are the latest local images under

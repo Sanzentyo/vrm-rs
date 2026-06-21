@@ -18,7 +18,7 @@ serde_json = "1.0.150"
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,6 +50,8 @@ struct RgbaJsonImage {
     width: usize,
     height: usize,
     rgba: Vec<u8>,
+    #[serde(default)]
+    renderer: Option<Value>,
 }
 
 impl RgbaJsonImage {
@@ -82,8 +84,56 @@ struct AuditReport {
     sample_closer_by_material_source: Vec<SampleCloserBucket>,
     sample_closer_by_draw: Vec<SampleCloserBucket>,
     sample_closer_by_material_draw: Vec<SampleCloserBucket>,
+    draw_selection_routing: Option<DrawSelectionAudit>,
     top_actual_sample_misses: Vec<AuditRow>,
     top_sample_closer_to_expected: Vec<AuditRow>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DrawSelectionAudit {
+    renderer_draws: u64,
+    renderer_draws_with_entries: u64,
+    renderer_draw_selection_entries: u64,
+    manifest_entries_with_draw_key: u64,
+    manifest_entries_without_draw_key: u64,
+    manifest_entries_routed_to_draw_selection: u64,
+    manifest_entries_missing_from_draw_selection: u64,
+    by_draw: Vec<DrawSelectionBucket>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DrawSelectionBucket {
+    draw_key: String,
+    manifest_entries: u64,
+    renderer_selection_entries: u64,
+    routed_manifest_entries: u64,
+    missing_manifest_entries: u64,
+    sample_closer_to_expected: u64,
+    mean_actual_sample_distance: Option<f64>,
+    mean_actual_expected_distance: Option<f64>,
+    top_missing_manifest_entry: Option<AuditRow>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DrawSelectionBucketAccumulator {
+    manifest_entries: u64,
+    routed_manifest_entries: u64,
+    missing_manifest_entries: u64,
+    sample_closer_to_expected: u64,
+    actual_sample_distance_sum: f64,
+    actual_sample_distance_count: u64,
+    actual_expected_distance_sum: f64,
+    actual_expected_distance_count: u64,
+    top_missing_manifest_entry: Option<AuditRow>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DrawSelectionIndex {
+    renderer_draws: u64,
+    renderer_draws_with_entries: u64,
+    renderer_draw_selection_entries: u64,
+    entries: BTreeSet<(String, u64, u64)>,
+    by_draw_entries: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -284,6 +334,8 @@ fn audit(
             row.draw_key.clone().unwrap_or_else(|| "unknown".to_owned())
         )
     });
+    let draw_selection_routing =
+        draw_selection_index(actual).map(|index| audit_draw_selection_routing(&rows, &index));
 
     let mut top_sample_closer_to_expected = rows
         .iter()
@@ -324,6 +376,7 @@ fn audit(
         sample_closer_by_material_source,
         sample_closer_by_draw,
         sample_closer_by_material_draw,
+        draw_selection_routing,
         top_actual_sample_misses: rows,
         top_sample_closer_to_expected,
     })
@@ -397,6 +450,138 @@ fn sample_closer_buckets(
             .then_with(|| left.label.cmp(&right.label))
     });
     buckets
+}
+
+fn draw_selection_index(actual: &RgbaJsonImage) -> Option<DrawSelectionIndex> {
+    let draw_selections = actual
+        .renderer
+        .as_ref()?
+        .pointer("/ownerSampleCorrectionPlan/drawSelections")?
+        .as_array()?;
+    let mut index = DrawSelectionIndex {
+        renderer_draws: draw_selections.len() as u64,
+        ..DrawSelectionIndex::default()
+    };
+    for selection in draw_selections {
+        let Some(draw_key) = selection.pointer("/draw/key").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(entries) = selection.get("entries").and_then(Value::as_array) else {
+            continue;
+        };
+        if !entries.is_empty() {
+            index.renderer_draws_with_entries += 1;
+        }
+        index
+            .by_draw_entries
+            .insert(draw_key.to_owned(), entries.len() as u64);
+        index.renderer_draw_selection_entries += entries.len() as u64;
+        for entry in entries {
+            let Some([x, y]) = pixel_at(entry, "/pixel") else {
+                continue;
+            };
+            index.entries.insert((draw_key.to_owned(), x, y));
+        }
+    }
+    Some(index)
+}
+
+fn audit_draw_selection_routing(
+    rows: &[AuditRow],
+    index: &DrawSelectionIndex,
+) -> DrawSelectionAudit {
+    let mut manifest_entries_with_draw_key = 0;
+    let mut manifest_entries_without_draw_key = 0;
+    let mut routed = 0;
+    let mut missing = 0;
+    let mut by_draw = BTreeMap::<String, DrawSelectionBucketAccumulator>::new();
+
+    for row in rows {
+        let Some(draw_key) = &row.draw_key else {
+            manifest_entries_without_draw_key += 1;
+            continue;
+        };
+        manifest_entries_with_draw_key += 1;
+        let is_routed = index.entries.contains(&(draw_key.clone(), row.x, row.y));
+        if is_routed {
+            routed += 1;
+        } else {
+            missing += 1;
+        }
+        by_draw
+            .entry(draw_key.clone())
+            .or_default()
+            .push(row, is_routed);
+    }
+
+    DrawSelectionAudit {
+        renderer_draws: index.renderer_draws,
+        renderer_draws_with_entries: index.renderer_draws_with_entries,
+        renderer_draw_selection_entries: index.renderer_draw_selection_entries,
+        manifest_entries_with_draw_key,
+        manifest_entries_without_draw_key,
+        manifest_entries_routed_to_draw_selection: routed,
+        manifest_entries_missing_from_draw_selection: missing,
+        by_draw: by_draw
+            .into_iter()
+            .map(|(draw_key, accumulator)| {
+                accumulator.finish(
+                    draw_key.clone(),
+                    *index.by_draw_entries.get(&draw_key).unwrap_or(&0),
+                )
+            })
+            .collect(),
+    }
+}
+
+impl DrawSelectionBucketAccumulator {
+    fn push(&mut self, row: &AuditRow, is_routed: bool) {
+        self.manifest_entries += 1;
+        if is_routed {
+            self.routed_manifest_entries += 1;
+        } else {
+            self.missing_manifest_entries += 1;
+            if self
+                .top_missing_manifest_entry
+                .as_ref()
+                .and_then(|current| current.actual_sample_distance)
+                .is_none_or(|current| row.actual_sample_distance.unwrap_or_default() > current)
+            {
+                self.top_missing_manifest_entry = Some(row.clone());
+            }
+        }
+        if row.expected_closeness == Some(ExpectedCloseness::Sample) {
+            self.sample_closer_to_expected += 1;
+        }
+        if let Some(distance) = row.actual_sample_distance {
+            self.actual_sample_distance_sum += distance;
+            self.actual_sample_distance_count += 1;
+        }
+        if let Some(distance) = row.actual_expected_distance {
+            self.actual_expected_distance_sum += distance;
+            self.actual_expected_distance_count += 1;
+        }
+    }
+
+    fn finish(self, draw_key: String, renderer_selection_entries: u64) -> DrawSelectionBucket {
+        DrawSelectionBucket {
+            draw_key,
+            manifest_entries: self.manifest_entries,
+            renderer_selection_entries,
+            routed_manifest_entries: self.routed_manifest_entries,
+            missing_manifest_entries: self.missing_manifest_entries,
+            sample_closer_to_expected: self.sample_closer_to_expected,
+            mean_actual_sample_distance: mean_option(
+                self.actual_sample_distance_sum,
+                self.actual_sample_distance_count,
+            ),
+            mean_actual_expected_distance: mean_option(
+                self.actual_expected_distance_sum,
+                self.actual_expected_distance_count,
+            ),
+            top_missing_manifest_entry: self.top_missing_manifest_entry,
+        }
+    }
 }
 
 impl BucketAccumulator {
@@ -527,6 +712,14 @@ fn rgba_at(value: &Value, pointer: &str) -> Option<[u8; 4]> {
     ])
 }
 
+fn pixel_at(value: &Value, pointer: &str) -> Option<[u64; 2]> {
+    let array = value.pointer(pointer)?.as_array()?;
+    if array.len() != 2 {
+        return None;
+    }
+    Some([array[0].as_u64()?, array[1].as_u64()?])
+}
+
 fn read_rgba_json(path: &Path) -> Result<RgbaJsonImage, Box<dyn Error>> {
     let image = serde_json::from_str::<RgbaJsonImage>(&fs::read_to_string(path)?)?;
     let expected_len = image
@@ -578,6 +771,10 @@ fn max_f64(current: Option<f64>, value: f64) -> f64 {
     current.map_or(value, |current| current.max(value))
 }
 
+fn mean_option(sum: f64, count: u64) -> Option<f64> {
+    (count > 0).then_some(sum / count as f64)
+}
+
 fn markdown(report: &AuditReport) -> String {
     let mut output = String::new();
     output.push_str("# Owner/Sample Execution Audit\n\n");
@@ -620,6 +817,28 @@ fn markdown(report: &AuditReport) -> String {
     for bucket in &report.sample_closer_by_material_draw {
         output.push_str(&sample_closer_bucket_row(bucket));
     }
+    output.push_str("\n## Renderer Draw Selection Routing\n\n");
+    if let Some(routing) = &report.draw_selection_routing {
+        output.push_str(&format!(
+            "- Renderer draw selections: `{}` draws, `{}` with entries, `{}` entries\n",
+            routing.renderer_draws,
+            routing.renderer_draws_with_entries,
+            routing.renderer_draw_selection_entries
+        ));
+        output.push_str(&format!(
+            "- Manifest draw-key entries: `{}` routed, `{}` missing, `{}` without draw key\n\n",
+            routing.manifest_entries_routed_to_draw_selection,
+            routing.manifest_entries_missing_from_draw_selection,
+            routing.manifest_entries_without_draw_key
+        ));
+        output.push_str("| Draw | Manifest entries | Renderer entries | Routed | Missing | Sample closer | Mean A-S | Mean A-E | Top missing |\n");
+        output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+        for bucket in &routing.by_draw {
+            output.push_str(&draw_selection_bucket_row(bucket));
+        }
+    } else {
+        output.push_str("The actual RGBA JSON does not include `renderer.ownerSampleCorrectionPlan.drawSelections` metadata.\n");
+    }
     output.push_str("\n## Top Actual-Sample Misses\n\n");
     output.push_str("| Pixel | Material | Source | Draw | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
     output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
@@ -633,6 +852,35 @@ fn markdown(report: &AuditReport) -> String {
         output.push_str(&audit_row_table_row(row));
     }
     output
+}
+
+fn draw_selection_bucket_row(bucket: &DrawSelectionBucket) -> String {
+    let top_missing = bucket.top_missing_manifest_entry.as_ref().map_or_else(
+        || "n/a".to_owned(),
+        |row| {
+            format!(
+                "{},{} {}:{}",
+                row.x,
+                row.y,
+                row.material_name,
+                row.triangle
+                    .map(|triangle| triangle.to_string())
+                    .unwrap_or_else(|| "n/a".to_owned())
+            )
+        },
+    );
+    format!(
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        bucket.draw_key,
+        bucket.manifest_entries,
+        bucket.renderer_selection_entries,
+        bucket.routed_manifest_entries,
+        bucket.missing_manifest_entries,
+        bucket.sample_closer_to_expected,
+        fmt_f64(bucket.mean_actual_sample_distance),
+        fmt_f64(bucket.mean_actual_expected_distance),
+        top_missing,
+    )
 }
 
 fn audit_row_table_row(row: &AuditRow) -> String {
@@ -780,6 +1028,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         rgba: vec![
             0, 0, 0, 255, 10, 20, 30, 255, 51, 61, 71, 255, 0, 0, 0, 255,
         ],
+        renderer: Some(serde_json::json!({
+            "ownerSampleCorrectionPlan": {
+                "drawSelections": [
+                    {
+                        "draw": {"key": "node0/mesh1/prim2/base"},
+                        "entryCount": 1,
+                        "entries": [
+                            {"pixel": [0, 1]}
+                        ]
+                    }
+                ]
+            }
+        })),
     };
     let expected = RgbaJsonImage {
         width: 2,
@@ -787,6 +1048,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         rgba: vec![
             0, 0, 0, 255, 10, 20, 30, 255, 50, 60, 70, 255, 0, 0, 0, 255,
         ],
+        renderer: None,
     };
     let report = audit(
         Path::new("manifest.json"),
@@ -809,9 +1071,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         report.sample_closer_by_draw[0].label,
         "node0/mesh1/prim2/base"
     );
+    let routing = report.draw_selection_routing.as_ref().unwrap();
+    assert_eq!(routing.renderer_draws, 1);
+    assert_eq!(routing.renderer_draw_selection_entries, 1);
+    assert_eq!(routing.manifest_entries_with_draw_key, 1);
+    assert_eq!(routing.manifest_entries_routed_to_draw_selection, 1);
+    assert_eq!(routing.by_draw[0].draw_key, "node0/mesh1/prim2/base");
+    assert_eq!(routing.by_draw[0].routed_manifest_entries, 1);
     assert_eq!(report.top_sample_closer_to_expected.len(), 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
     assert!(markdown(&report).contains("Sample-Closer Buckets By Material"));
     assert!(markdown(&report).contains("Sample-Closer Buckets By Draw"));
+    assert!(markdown(&report).contains("Renderer Draw Selection Routing"));
     Ok(())
 }
