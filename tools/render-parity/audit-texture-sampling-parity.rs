@@ -92,6 +92,8 @@ struct BucketStats {
     nearest_expected_beats_frontmost_for_expected: u64,
     mean_frontmost_base_texture_actual_rgb_distance: Option<f64>,
     mean_frontmost_base_texture_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_texture_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_texture_rgb_delta: Option<[f64; 3]>,
     frontmost_base_texture_actual_closer: u64,
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
@@ -142,6 +144,8 @@ struct MaterialBucket {
     nearest_expected_beats_frontmost_for_expected: u64,
     mean_frontmost_base_texture_actual_rgb_distance: Option<f64>,
     mean_frontmost_base_texture_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_texture_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_texture_rgb_delta: Option<[f64; 3]>,
     frontmost_base_texture_actual_closer: u64,
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
@@ -223,6 +227,10 @@ struct Accumulator {
     frontmost_base_texture_actual_distance_count: u64,
     frontmost_base_texture_expected_distance_sum: f64,
     frontmost_base_texture_expected_distance_count: u64,
+    actual_minus_texture_delta_sum: [f64; 3],
+    actual_minus_texture_delta_count: u64,
+    expected_minus_texture_delta_sum: [f64; 3],
+    expected_minus_texture_delta_count: u64,
     frontmost_base_texture_actual_closer: u64,
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
@@ -273,6 +281,10 @@ struct MaterialAccumulator {
     frontmost_base_texture_actual_distance_count: u64,
     frontmost_base_texture_expected_distance_sum: f64,
     frontmost_base_texture_expected_distance_count: u64,
+    actual_minus_texture_delta_sum: [f64; 3],
+    actual_minus_texture_delta_count: u64,
+    expected_minus_texture_delta_sum: [f64; 3],
+    expected_minus_texture_delta_count: u64,
     frontmost_base_texture_actual_closer: u64,
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
@@ -332,6 +344,11 @@ impl Accumulator {
             frontmost_base_texture_expected,
             expected_cpu,
         );
+        let actual_minus_texture =
+            signed_rgb_delta_at(hotspot, "/actual", "/frontmost_base_texture_rgba");
+        let expected_minus_texture =
+            signed_rgb_delta_at(hotspot, "/expected", "/frontmost_base_texture_rgba");
+        self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
 
         let edge = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels");
         if let Some(edge) = edge {
@@ -380,6 +397,8 @@ impl Accumulator {
                     nearest_expected_expected_cpu,
                     frontmost_base_texture_actual,
                     frontmost_base_texture_expected,
+                    actual_minus_texture,
+                    expected_minus_texture,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -403,6 +422,8 @@ impl Accumulator {
                     nearest_expected_expected_cpu,
                     frontmost_base_texture_actual,
                     frontmost_base_texture_expected,
+                    actual_minus_texture,
+                    expected_minus_texture,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -477,6 +498,14 @@ impl Accumulator {
                 self.frontmost_base_texture_expected_distance_sum,
                 self.frontmost_base_texture_expected_distance_count,
             ),
+            mean_actual_minus_texture_rgb_delta: mean_rgb_delta(
+                self.actual_minus_texture_delta_sum,
+                self.actual_minus_texture_delta_count,
+            ),
+            mean_expected_minus_texture_rgb_delta: mean_rgb_delta(
+                self.expected_minus_texture_delta_sum,
+                self.expected_minus_texture_delta_count,
+            ),
             frontmost_base_texture_actual_closer: self.frontmost_base_texture_actual_closer,
             frontmost_base_texture_expected_closer: self.frontmost_base_texture_expected_closer,
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
@@ -499,6 +528,21 @@ impl Accumulator {
             material_counts: material_counts(self.materials),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
+        }
+    }
+
+    fn add_frontmost_base_texture_deltas(
+        &mut self,
+        actual_minus_texture: Option<[f64; 3]>,
+        expected_minus_texture: Option<[f64; 3]>,
+    ) {
+        if let Some(delta) = actual_minus_texture {
+            add_rgb_delta(&mut self.actual_minus_texture_delta_sum, delta);
+            self.actual_minus_texture_delta_count += 1;
+        }
+        if let Some(delta) = expected_minus_texture {
+            add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
+            self.expected_minus_texture_delta_count += 1;
         }
     }
 
@@ -596,6 +640,8 @@ impl MaterialAccumulator {
         nearest_expected_expected_cpu: Option<f64>,
         frontmost_base_texture_actual: Option<f64>,
         frontmost_base_texture_expected: Option<f64>,
+        actual_minus_texture: Option<[f64; 3]>,
+        expected_minus_texture: Option<[f64; 3]>,
         edge: Option<f64>,
         same_material_as_expected: bool,
         same_triangle_as_expected: bool,
@@ -628,6 +674,7 @@ impl MaterialAccumulator {
             frontmost_base_texture_expected,
             expected_cpu,
         );
+        self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
         let best_actual_sampling = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
@@ -690,6 +737,14 @@ impl MaterialAccumulator {
                 self.frontmost_base_texture_expected_distance_sum,
                 self.frontmost_base_texture_expected_distance_count,
             ),
+            mean_actual_minus_texture_rgb_delta: mean_rgb_delta(
+                self.actual_minus_texture_delta_sum,
+                self.actual_minus_texture_delta_count,
+            ),
+            mean_expected_minus_texture_rgb_delta: mean_rgb_delta(
+                self.expected_minus_texture_delta_sum,
+                self.expected_minus_texture_delta_count,
+            ),
             frontmost_base_texture_actual_closer: self.frontmost_base_texture_actual_closer,
             frontmost_base_texture_expected_closer: self.frontmost_base_texture_expected_closer,
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
@@ -711,6 +766,21 @@ impl MaterialAccumulator {
             best_sampling_expected_within_16: self.best_sampling_expected_within_16,
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
+        }
+    }
+
+    fn add_frontmost_base_texture_deltas(
+        &mut self,
+        actual_minus_texture: Option<[f64; 3]>,
+        expected_minus_texture: Option<[f64; 3]>,
+    ) {
+        if let Some(delta) = actual_minus_texture {
+            add_rgb_delta(&mut self.actual_minus_texture_delta_sum, delta);
+            self.actual_minus_texture_delta_count += 1;
+        }
+        if let Some(delta) = expected_minus_texture {
+            add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
+            self.expected_minus_texture_delta_count += 1;
         }
     }
 
@@ -1114,6 +1184,31 @@ fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f64 {
         .sqrt()
 }
 
+fn signed_rgb_delta_at(
+    hotspot: &Value,
+    target_pointer: &str,
+    source_pointer: &str,
+) -> Option<[f64; 3]> {
+    Some(signed_rgb_delta(
+        rgba_at(hotspot, target_pointer)?,
+        rgba_at(hotspot, source_pointer)?,
+    ))
+}
+
+fn signed_rgb_delta(target: [u8; 4], source: [u8; 4]) -> [f64; 3] {
+    [
+        f64::from(target[0]) - f64::from(source[0]),
+        f64::from(target[1]) - f64::from(source[1]),
+        f64::from(target[2]) - f64::from(source[2]),
+    ]
+}
+
+fn add_rgb_delta(sum: &mut [f64; 3], delta: [f64; 3]) {
+    for (sum, delta) in sum.iter_mut().zip(delta) {
+        *sum += delta;
+    }
+}
+
 fn f64_at(value: &Value, pointer: &str) -> Option<f64> {
     value.pointer(pointer)?.as_f64()
 }
@@ -1124,6 +1219,10 @@ fn compare_f64((left, right): (f64, f64)) -> Option<std::cmp::Ordering> {
 
 fn mean(sum: f64, count: u64) -> Option<f64> {
     (count > 0).then_some(sum / count as f64)
+}
+
+fn mean_rgb_delta(sum: [f64; 3], count: u64) -> Option<[f64; 3]> {
+    (count > 0).then_some(sum.map(|value| value / count as f64))
 }
 
 fn mode_counts(modes: BTreeMap<String, ModeAccumulator>) -> Vec<ModeCount> {
@@ -1281,6 +1380,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         bucket.frontmost_base_texture_beats_cpu_for_expected
     ));
     output.push_str(&format!(
+        "- Mean RGB delta actual-texture / expected-texture: `{}` / `{}`\n",
+        fmt_opt_rgb_delta(bucket.mean_actual_minus_texture_rgb_delta),
+        fmt_opt_rgb_delta(bucket.mean_expected_minus_texture_rgb_delta)
+    ));
+    output.push_str(&format!(
         "- Best texture sampling mean A/E: `{}` / `{}`; within4 A/E `{}` / `{}`; within8 A/E `{}` / `{}`; within16 A/E `{}` / `{}`\n",
         fmt_opt(bucket.mean_best_sampling_actual_rgb_distance),
         fmt_opt(bucket.mean_best_sampling_expected_rgb_distance),
@@ -1307,11 +1411,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             material.actual_cpu_closer,
@@ -1330,6 +1434,8 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             material.frontmost_base_texture_tied,
             fmt_opt(material.mean_frontmost_base_texture_actual_rgb_distance),
             fmt_opt(material.mean_frontmost_base_texture_expected_rgb_distance),
+            fmt_opt_rgb_delta(material.mean_actual_minus_texture_rgb_delta),
+            fmt_opt_rgb_delta(material.mean_expected_minus_texture_rgb_delta),
             material.frontmost_base_texture_beats_cpu_for_expected,
             fmt_opt(material.mean_best_sampling_actual_rgb_distance),
             fmt_opt(material.mean_best_sampling_expected_rgb_distance),
@@ -1377,6 +1483,12 @@ fn fmt_opt_rgba(rgba: Option<[u8; 4]>) -> String {
     rgba.map(fmt_rgba).unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn fmt_opt_rgb_delta(delta: Option<[f64; 3]>) -> String {
+    delta
+        .map(|delta| format!("{:.2},{:.2},{:.2}", delta[0], delta[1], delta[2]))
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn fmt_opt(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:.4}"))
@@ -1404,6 +1516,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "expected": [10, 10, 10, 255],
                 "actual": [100, 100, 100, 255],
                 "frontmost_cpu_base_color_rgba": [12, 10, 10, 255],
+                "frontmost_base_texture_rgba": [12, 10, 10, 255],
                 "frontmost_cpu_base_color_actual_rgb_distance": 154.0,
                 "frontmost_cpu_base_color_expected_rgb_distance": 2.0,
                 "frontmost_visible": {
@@ -1499,6 +1612,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
     assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
     assert_eq!(report.selected.frontmost_base_texture_expected_closer, 0);
+    assert_eq!(
+        report.selected.mean_actual_minus_texture_rgb_delta,
+        Some([88.0, 90.0, 90.0])
+    );
+    assert_eq!(
+        report.selected.mean_expected_minus_texture_rgb_delta,
+        Some([-2.0, 0.0, 0.0])
+    );
+    assert_eq!(
+        report.selected.selection_material_buckets[0].mean_actual_minus_texture_rgb_delta,
+        Some([88.0, 90.0, 90.0])
+    );
     assert_eq!(report.selected.best_sampling_actual_within_4, 1);
     assert_eq!(report.selected.best_sampling_expected_within_4, 1);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));

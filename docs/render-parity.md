@@ -2911,6 +2911,21 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   effect. `body_nm` remains different because expected-near sampling rows do
   exist (`3` rows <= 8 for wgpu and Ash), so it stays in the local fill/UV
   ownership bucket.
+- The same audit now reports signed RGB texture residuals as
+  `mean_actual_minus_texture_rgb_delta` and
+  `mean_expected_minus_texture_rgb_delta`. These fields are diagnostic only:
+  they measure color direction after the RGB-independent owner/sample manifest
+  has already selected a surface. On the expanded2 selected buckets, Bevy
+  `backpack_nm` is effectively the sampled frontmost texture on the Rust side
+  (`A-T = 0.00,0.21,0.11`), while three-vrm expected is much brighter
+  (`E-T = 56.74,63.00,66.42`). wgpu and Ash `backpack_nm` actuals are already
+  brighter than the sampled texture (`36.95,40.68,42.68` and
+  `38.39,42.22,44.39`), with expected brighter still (`54.58,60.68,63.89` and
+  `54.96,61.04,64.22`). That rules out a root fix based on choosing a
+  different local sampler variant for `backpack_nm`; treat it as a
+  color/light/output accumulation target. `body_nm` stays in the fill/UV bucket
+  because expected-minus-texture is lower than actual-minus-texture and the
+  existing expected-near sampling rows remain measurable.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
