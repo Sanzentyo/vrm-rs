@@ -41,6 +41,10 @@ struct Options {
     #[arg(long)]
     material_track_inputs: Option<PathBuf>,
     #[arg(long, value_name = "RENDERER=PATH")]
+    texture_audit: Vec<String>,
+    #[arg(long, value_name = "RENDERER=PATH")]
+    focused_material_pixels: Vec<String>,
+    #[arg(long, value_name = "RENDERER=PATH")]
     base_color_owner_join: Vec<String>,
     #[arg(long)]
     json_out: Option<PathBuf>,
@@ -57,6 +61,8 @@ struct ExpandedSummary {
     renderers: Vec<RendererSummary>,
     shading_model_join: Option<ShadingModelJoinSummary>,
     material_track_inputs: Option<MaterialTrackInputSummary>,
+    texture_audits: Vec<TextureAuditProbeSummary>,
+    focused_material_pixels: Vec<FocusedMaterialPixelSummary>,
     base_color_owner_joins: Vec<BaseColorOwnerJoinSummary>,
 }
 
@@ -214,6 +220,55 @@ struct MaterialTrackMaterialSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct TextureAuditProbeSummary {
+    renderer: String,
+    path: String,
+    recommended_probes: Vec<TextureProbeSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TextureProbeSummary {
+    material_name: String,
+    draw_key: String,
+    count: u64,
+    classification: String,
+    action: String,
+    mean_expected_actual_distance: Option<f64>,
+    mean_manifest_actual_distance: Option<f64>,
+    mean_manifest_expected_distance: Option<f64>,
+    mean_actual_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_both_far: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct FocusedMaterialPixelSummary {
+    renderer: String,
+    path: String,
+    actual_source: String,
+    rows: Vec<FocusedMaterialPixelRowSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct FocusedMaterialPixelRowSummary {
+    pixel: String,
+    interpretation: String,
+    selected_material: String,
+    selected_triangle: Option<u64>,
+    selection_source: String,
+    selected_rgba: Option<[u64; 4]>,
+    actual_rgba: Option<[u64; 4]>,
+    expected_rgba: Option<[u64; 4]>,
+    actual_expected_distance: Option<f64>,
+    selected_actual_distance: Option<f64>,
+    selected_expected_distance: Option<f64>,
+    frontmost_material: String,
+    nearest_expected_material: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct BaseColorOwnerJoinSummary {
     renderer: String,
     path: String,
@@ -338,6 +393,8 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
             .as_deref()
             .map(material_track_input_summary)
             .transpose()?,
+        texture_audits: texture_audit_probe_summaries(&options.texture_audit)?,
+        focused_material_pixels: focused_material_pixel_summaries(&options.focused_material_pixels)?,
         base_color_owner_joins: base_color_owner_join_summaries(&options.base_color_owner_join)?,
     })
 }
@@ -637,6 +694,68 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
         }
         out.push('\n');
     }
+    if !summary.texture_audits.is_empty() {
+        out.push_str("## Recommended Material Probes\n\n");
+        for audit in &summary.texture_audits {
+            out.push_str(&format!(
+                "### {}\n\n- Input: `{}`\n\n",
+                audit.renderer, audit.path
+            ));
+            out.push_str("| Material | Draw key | Count | Classification | Action | Mean E-A | Manifest A/E | A-M RGB | E-M RGB | Near sample A/E/Both-far |\n");
+            out.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+            for probe in &audit.recommended_probes {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} | {} / {} | {} | {} | {}/{}/{} |\n",
+                    probe.material_name,
+                    probe.draw_key,
+                    probe.count,
+                    probe.classification,
+                    probe.action,
+                    fmt_optional_f64(probe.mean_expected_actual_distance),
+                    fmt_optional_f64(probe.mean_manifest_actual_distance),
+                    fmt_optional_f64(probe.mean_manifest_expected_distance),
+                    fmt_optional_vec3(probe.mean_actual_minus_manifest_rgb_delta),
+                    fmt_optional_vec3(probe.mean_expected_minus_manifest_rgb_delta),
+                    probe.manifest_sample_actual_within_1_5,
+                    probe.manifest_sample_expected_within_1_5,
+                    probe.manifest_sample_both_far,
+                ));
+            }
+            out.push('\n');
+        }
+    }
+    if !summary.focused_material_pixels.is_empty() {
+        out.push_str("## Focused Material Pixels\n\n");
+        for focus in &summary.focused_material_pixels {
+            out.push_str(&format!(
+                "### {}\n\n- Input: `{}`\n- Actual: `{}`\n\n",
+                focus.renderer, focus.path, focus.actual_source
+            ));
+            out.push_str("| Pixel | Interpretation | Selected | Source | RGBA A/E/S | Dist A-E / S-A / S-E | Frontmost | Nearest expected |\n");
+            out.push_str("| --- | --- | --- | --- | --- | ---: | --- | --- |\n");
+            for row in &focus.rows {
+                out.push_str(&format!(
+                    "| {} | {} | {}{} | {} | {} / {} / {} | {} / {} / {} | {} | {} |\n",
+                    row.pixel,
+                    row.interpretation,
+                    row.selected_material,
+                    row.selected_triangle
+                        .map(|triangle| format!("#{triangle}"))
+                        .unwrap_or_default(),
+                    row.selection_source,
+                    fmt_optional_rgba(row.actual_rgba),
+                    fmt_optional_rgba(row.expected_rgba),
+                    fmt_optional_rgba(row.selected_rgba),
+                    fmt_optional_f64(row.actual_expected_distance),
+                    fmt_optional_f64(row.selected_actual_distance),
+                    fmt_optional_f64(row.selected_expected_distance),
+                    row.frontmost_material,
+                    row.nearest_expected_material,
+                ));
+            }
+            out.push('\n');
+        }
+    }
     if !summary.base_color_owner_joins.is_empty() {
         out.push_str("## Browser Projected Base-Color Joins\n\n");
         for join in &summary.base_color_owner_joins {
@@ -807,16 +926,157 @@ fn texture_slot_summary(
     Ok(format!("{slot_name}:tex#{texture}:{image}{sampler}"))
 }
 
+fn texture_audit_probe_summaries(
+    audits: &[String],
+) -> Result<Vec<TextureAuditProbeSummary>, Box<dyn Error>> {
+    renderer_path_inputs(audits, "--texture-audit")?
+        .into_iter()
+        .map(|(renderer, path)| texture_audit_probe_summary(&renderer, Path::new(&path)))
+        .collect()
+}
+
+fn texture_audit_probe_summary(
+    renderer: &str,
+    path: &Path,
+) -> Result<TextureAuditProbeSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    let probes = optional_path(&value, &["recommended_probes"])
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .take(8)
+        .map(texture_probe_summary)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(TextureAuditProbeSummary {
+        renderer: renderer.to_owned(),
+        path: path.display().to_string(),
+        recommended_probes: probes,
+    })
+}
+
+fn texture_probe_summary(value: &Value) -> Result<TextureProbeSummary, Box<dyn Error>> {
+    Ok(TextureProbeSummary {
+        material_name: get_str_path(value, &["material_name"])?,
+        draw_key: get_str_path(value, &["draw_key"])?,
+        count: get_u64_path(value, &["count"])?,
+        classification: get_str_path(value, &["classification"])?,
+        action: get_str_path(value, &["action"])?,
+        mean_expected_actual_distance: optional_f64_path(
+            value,
+            &["mean_expected_actual_rgb_distance"],
+        )?,
+        mean_manifest_actual_distance: optional_f64_path(
+            value,
+            &["mean_manifest_actual_rgb_distance"],
+        )?,
+        mean_manifest_expected_distance: optional_f64_path(
+            value,
+            &["mean_manifest_expected_rgb_distance"],
+        )?,
+        mean_actual_minus_manifest_rgb_delta: optional_vec3_path(
+            value,
+            &["mean_actual_minus_manifest_rgb_delta"],
+        )?,
+        mean_expected_minus_manifest_rgb_delta: optional_vec3_path(
+            value,
+            &["mean_expected_minus_manifest_rgb_delta"],
+        )?,
+        manifest_sample_actual_within_1_5: get_u64_path(
+            value,
+            &["manifest_sample_actual_within_1_5"],
+        )?,
+        manifest_sample_expected_within_1_5: get_u64_path(
+            value,
+            &["manifest_sample_expected_within_1_5"],
+        )?,
+        manifest_sample_both_far: get_u64_path(value, &["manifest_sample_both_far"])?,
+    })
+}
+
+fn focused_material_pixel_summaries(
+    inputs: &[String],
+) -> Result<Vec<FocusedMaterialPixelSummary>, Box<dyn Error>> {
+    renderer_path_inputs(inputs, "--focused-material-pixels")?
+        .into_iter()
+        .map(|(renderer, path)| focused_material_pixel_summary(&renderer, Path::new(&path)))
+        .collect()
+}
+
+fn focused_material_pixel_summary(
+    renderer: &str,
+    path: &Path,
+) -> Result<FocusedMaterialPixelSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    let rows = get_path(&value, &["rows"])?
+        .as_array()
+        .ok_or("focused material pixels rows is not an array")?
+        .iter()
+        .take(12)
+        .map(focused_material_pixel_row_summary)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(FocusedMaterialPixelSummary {
+        renderer: renderer.to_owned(),
+        path: path.display().to_string(),
+        actual_source: get_str_path(&value, &["actual_source"])?,
+        rows,
+    })
+}
+
+fn focused_material_pixel_row_summary(
+    value: &Value,
+) -> Result<FocusedMaterialPixelRowSummary, Box<dyn Error>> {
+    Ok(FocusedMaterialPixelRowSummary {
+        pixel: format!(
+            "{},{}",
+            get_u64_path(value, &["x"])?,
+            get_u64_path(value, &["y"])?
+        ),
+        interpretation: get_str_path(value, &["interpretation"])?,
+        selected_material: optional_string_path(value, &["selected_surface", "material_name"])?
+            .unwrap_or_else(|| "n/a".to_owned()),
+        selected_triangle: optional_u64_path(value, &["selected_surface", "triangle"])?,
+        selection_source: optional_string_path(value, &["selection_source"])?
+            .unwrap_or_else(|| "n/a".to_owned()),
+        selected_rgba: optional_rgba_path(value, &["selected_rgba"])?,
+        actual_rgba: optional_rgba_path(value, &["actual"])?,
+        expected_rgba: optional_rgba_path(value, &["expected"])?,
+        actual_expected_distance: optional_f64_path(value, &["actual_expected_rgb_distance"])?,
+        selected_actual_distance: optional_f64_path(value, &["selected_actual_rgb_distance"])?,
+        selected_expected_distance: optional_f64_path(value, &["selected_expected_rgb_distance"])?,
+        frontmost_material: optional_string_path(
+            value,
+            &["frontmost", "surface", "material_name"],
+        )?
+        .unwrap_or_else(|| "n/a".to_owned()),
+        nearest_expected_material: optional_string_path(
+            value,
+            &["nearest_expected", "surface", "material_name"],
+        )?
+        .unwrap_or_else(|| "n/a".to_owned()),
+    })
+}
+
 fn base_color_owner_join_summaries(
     joins: &[String],
 ) -> Result<Vec<BaseColorOwnerJoinSummary>, Box<dyn Error>> {
-    joins
+    renderer_path_inputs(joins, "--base-color-owner-join")?
+        .into_iter()
+        .map(|(renderer, path)| base_color_owner_join_summary(&renderer, Path::new(&path)))
+        .collect()
+}
+
+fn renderer_path_inputs(
+    inputs: &[String],
+    option_name: &str,
+) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    inputs
         .iter()
-        .map(|join| {
-            let (renderer, path) = join
+        .map(|input| {
+            let (renderer, path) = input
                 .split_once('=')
-                .ok_or_else(|| format!("--base-color-owner-join must be RENDERER=PATH: {join}"))?;
-            base_color_owner_join_summary(renderer, Path::new(path))
+                .ok_or_else(|| format!("{option_name} must be RENDERER=PATH: {input}"))?;
+            Ok((renderer.to_owned(), path.to_owned()))
         })
         .collect()
 }
@@ -1712,6 +1972,49 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
+    let texture_audit_path = root.join("Seed-san.wgpu-texture-sampling-audit.json");
+    fs::write(
+        &texture_audit_path,
+        r#"{
+            "recommended_probes": [{
+                "material_name": "backpack_nm",
+                "draw_key": "node145/mesh4/prim9/base",
+                "count": 15,
+                "classification": "selected_sample_and_renderer_both_far",
+                "action": "audit resolve draw binding or selected-surface material inputs",
+                "mean_expected_actual_rgb_distance": 35.8,
+                "mean_manifest_actual_rgb_distance": 70.6,
+                "mean_manifest_expected_rgb_distance": 106.2,
+                "mean_actual_minus_manifest_rgb_delta": [37.5, 41.1, 43.1],
+                "mean_expected_minus_manifest_rgb_delta": [56.0, 62.1, 65.4],
+                "manifest_sample_actual_within_1_5": 0,
+                "manifest_sample_expected_within_1_5": 0,
+                "manifest_sample_both_far": 12
+            }]
+        }"#,
+    )?;
+    let focused_pixels_path = root.join("Seed-san.wgpu-focused-material-pixels.json");
+    fs::write(
+        &focused_pixels_path,
+        r#"{
+            "actual_source": "expanded-readback",
+            "rows": [{
+                "x": 141,
+                "y": 90,
+                "interpretation": "selected sample is closer to three-vrm expected",
+                "selected_surface": {"material_name": "backpack_nm", "triangle": 42},
+                "selection_source": "center",
+                "selected_rgba": [208, 211, 213, 255],
+                "actual": [77, 74, 76, 255],
+                "expected": [208, 211, 213, 255],
+                "actual_expected_rgb_distance": 224.0,
+                "selected_actual_rgb_distance": 224.0,
+                "selected_expected_rgb_distance": 0.0,
+                "frontmost": {"surface": {"material_name": "backpack_nm", "triangle": 42}},
+                "nearest_expected": {"surface": {"material_name": "arm_plastic", "triangle": 7}}
+            }]
+        }"#,
+    )?;
     let options = Options {
         self_test: false,
         reports_dir: Some(root.clone()),
@@ -1721,6 +2024,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         metric_key: "rgbSharedNonblackGradientInterior1px".to_string(),
         shading_model_join: Some(join_path),
         material_track_inputs: Some(material_track_inputs_path),
+        texture_audit: vec![format!("wgpu={}", texture_audit_path.display())],
+        focused_material_pixels: vec![format!("wgpu={}", focused_pixels_path.display())],
         base_color_owner_join: vec![format!(
             "wgpu={}",
             base_color_owner_join_path.display()
@@ -1771,6 +2076,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(!summary_json.contains(r#""gain_fit_mean_distance""#));
     assert!(summary_json.contains(r#""material_draw_shading_inputs""#));
     assert!(summary_json.contains(r#""material_track_inputs""#));
+    assert!(summary_json.contains(r#""texture_audits""#));
+    assert!(summary_json.contains(r#""recommended_probes""#));
+    assert!(summary_json.contains(r#""focused_material_pixels""#));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
@@ -1790,6 +2098,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("backpack_nm#14"));
     assert!(markdown.contains("baseColorTexture:tex#12:backpack min=9985"));
     assert!(markdown.contains("shade=0.43,0.40,0.50 shift/toony/gi=-0.200/0.800/0.900"));
+    assert!(markdown.contains("## Recommended Material Probes"));
+    assert!(markdown.contains("selected_sample_and_renderer_both_far"));
+    assert!(markdown.contains("## Focused Material Pixels"));
+    assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |"));
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

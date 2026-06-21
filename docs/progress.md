@@ -2,6 +2,18 @@
 
 ## 2026-06-22
 
+- Added recommended material probes and focused pixel probes to the expanded
+  render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
+  repeated `--texture-audit renderer=path` inputs and
+  `--focused-material-pixels renderer=path` inputs, preserving the
+  `recommended_probes` classification/action rows and representative
+  selected/actual/expected pixel distances in both JSON and Markdown. The
+  expanded Seed-san summary now carries wgpu/Bevy/Ash probe buckets such as
+  `backpack_nm node145/mesh4/prim9/base`,
+  `eye node2/mesh2/prim1/base`, and `arm_mat node144/mesh3/prim0/base`
+  directly beside PSNR, color-fit, browser base-color, and material-input
+  tables. This keeps the next renderer changes anchored to concrete material,
+  draw-key, and pixel evidence instead of only aggregate PSNR movement.
 - Joined the material-track input inspector into the expanded render-resolve
   summary. `summarize-render-resolve-expanded.rs` now accepts
   `--material-track-inputs`, emits a `material_track_inputs` JSON block, and
