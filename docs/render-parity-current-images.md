@@ -164,6 +164,14 @@ shading/writeback for those routed draws, especially `node144/mesh3/prim0/base`,
 `node144/mesh3/prim1/base`, `node145/mesh4/prim1/base`, and
 `node145/mesh4/prim4/base`.
 
+The capture examples also have an `owner-sample-resolve` diagnostic render mode
+for this handoff. It paints only owner/sample resolve writes green and the rest
+black. Local focused smokes against the expanded manifests reported exact target
+coverage with no extra green pixels: wgpu `101/101` manifest hits and `101`
+green pixels total, Bevy `93/93` manifest hits and `93` green pixels total.
+That leaves the current visible residual in material sampling / color modelling,
+not in target-pixel write coverage.
+
 ## Current Base-UV Images
 
 These are the latest local images under

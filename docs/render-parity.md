@@ -295,6 +295,14 @@ readback, and writes opaque alpha for both OPAQUE and MASK materials after
 discard. Ash also accepts the same render-parity `--diagnostic-render` modes
 and applies the same VRM model-orientation boundary to baked world/skinning
 matrices.
+wgpu and Bevy also expose `--diagnostic-render owner-sample-resolve` for the
+owner/sample resolve path. That mode paints resolve writes green and all normal
+material pixels black, so a manifest can be checked for target-pixel write
+coverage before material color parity is investigated. The current focused
+Seed-san expanded-manifest smokes report exact coverage: wgpu `101/101` hits
+with `101` total green pixels, and Bevy `93/93` hits with `93` total green
+pixels. Treat failures in this mode as resolve/write coverage bugs; treat
+passes with normal base-color residuals as texture/material modelling work.
 Ash now also accepts the same normal-map diagnostic axis as wgpu/Bevy:
 `--normal-map-mode generated-tangents|derivative|view-derivative`,
 `--normal-map-scale`, and `--disable-normal-maps` are forwarded through the

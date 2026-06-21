@@ -417,6 +417,12 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         return owner_id_output_color(material.owner_color.rgb, 1.0);
 #endif
     }
+    if material.material_flags2.w > 5.5 && material.material_flags2.w < 6.5 {
+        return vec4<f32>(
+            select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 0.0), material.owner_color.a > 1.5),
+            opaque_alpha,
+        );
+    }
     if material.material_flags2.w > 2.5 {
         if material.material_flags2.w > 3.5 {
             return output_color(vec3<f32>(base_sample_uv, 0.0), opaque_alpha);

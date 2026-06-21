@@ -386,6 +386,7 @@ enum DiagnosticRender {
     Uv,
     BaseUv,
     OwnerId,
+    OwnerSampleResolve,
 }
 
 impl DiagnosticRender {
@@ -400,6 +401,7 @@ impl DiagnosticRender {
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
             Self::OwnerId => "owner-id",
+            Self::OwnerSampleResolve => "owner-sample-resolve",
         }
     }
 
@@ -915,6 +917,7 @@ fn material_extra_uniform(
                 DiagnosticRender::Uv => 3.0,
                 DiagnosticRender::BaseUv => 4.0,
                 DiagnosticRender::OwnerId => 5.0,
+                DiagnosticRender::OwnerSampleResolve => 6.0,
                 DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
             },
         ],
@@ -2587,6 +2590,7 @@ mod tests {
         assert!(SHADER.contains("owner_sample_has_geometry(owner_sample_index)"));
         assert!(SHADER.contains("owner_sample_base_uv(owner_sample_index"));
         assert!(SHADER.contains("fn vs_owner_sample_resolve"));
+        assert!(SHADER.contains("input.scalar_params.w > 0.5"));
         assert!(SHADER.contains("use_owner_sample_geometry = owner_sample_has_geometry"));
         assert!(SHADER.contains("textureSampleGrad("));
         assert!(!SHADER.contains("textureSampleLevel("));
@@ -3105,7 +3109,7 @@ fn vs_owner_sample_resolve(input: VertexIn) -> VertexOut {
     out.rim_color = input.rim_color;
     out.rim_params = input.rim_params;
     out.outline_color = input.outline_color;
-    out.scalar_params = vec4<f32>(input.alpha_mode, input.normal_scale, input.double_sided, 0.0);
+    out.scalar_params = vec4<f32>(input.alpha_mode, input.normal_scale, input.double_sided, 1.0);
     return out;
 }
 
@@ -3458,6 +3462,12 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     }
     if material_extra.flags2.w > 4.5 && material_extra.flags2.w < 5.5 {
         return owner_id_output_color(input.color.rgb, opaque_alpha);
+    }
+    if material_extra.flags2.w > 5.5 && material_extra.flags2.w < 6.5 {
+        return vec4<f32>(
+            select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 0.0), input.scalar_params.w > 0.5),
+            opaque_alpha,
+        );
     }
     if material_extra.flags2.w > 2.5 {
         if material_extra.flags2.w > 3.5 {

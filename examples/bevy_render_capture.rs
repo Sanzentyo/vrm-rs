@@ -354,6 +354,7 @@ enum DiagnosticRender {
     Uv,
     BaseUv,
     OwnerId,
+    OwnerSampleResolve,
 }
 
 impl DiagnosticRender {
@@ -368,6 +369,7 @@ impl DiagnosticRender {
             Self::Uv => "uv",
             Self::BaseUv => "base-uv",
             Self::OwnerId => "owner-id",
+            Self::OwnerSampleResolve => "owner-sample-resolve",
         }
     }
 
@@ -726,7 +728,10 @@ fn spawn_vrm_meshes(
                     },
                     Transform::IDENTITY,
                 ));
-                if options.diagnostic_render == DiagnosticRender::OwnerId {
+                if matches!(
+                    options.diagnostic_render,
+                    DiagnosticRender::OwnerId | DiagnosticRender::OwnerSampleResolve
+                ) {
                     entity.insert(NoAutomaticBatching);
                 }
             }
@@ -1295,8 +1300,8 @@ fn owner_sample_resolve_mesh(
             record.barycentric_depth[1],
             record.barycentric_depth[2],
         ];
-        resolve_positions.push(owner_sample_pixel_world(record.pixel, options)?);
-        resolve_normals.push(normalize_or_fallback(
+        let quad = owner_sample_pixel_quad_world(record.pixel, options)?;
+        let normal = normalize_or_fallback(
             interpolate_vec3(
                 normals
                     .and_then(|items| items.get(ia))
@@ -1313,30 +1318,41 @@ fn owner_sample_resolve_mesh(
                 weights,
             ),
             [0.0, 0.0, 1.0],
-        ));
-        if let Some((source_tangents, resolve_tangents)) = tangents.zip(resolve_tangents.as_mut()) {
-            resolve_tangents.push(normalize_tangent(interpolate_vec4(
+        );
+        let tangent = tangents.map(|source_tangents| {
+            normalize_tangent(interpolate_vec4(
                 *source_tangents.get(ia).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
                 *source_tangents.get(ib).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
                 *source_tangents.get(ic).unwrap_or(&[1.0, 0.0, 0.0, 1.0]),
                 weights,
-            )));
-        }
-        resolve_uvs.push([record.geometry_uvs[0], record.geometry_uvs[1]]);
-        if let Some((source_colors, resolve_colors)) = colors.zip(resolve_colors.as_mut()) {
-            resolve_colors.push(interpolate_vec4(
+            ))
+        });
+        let uv = [record.geometry_uvs[0], record.geometry_uvs[1]];
+        let color = colors.map(|source_colors| {
+            interpolate_vec4(
                 *source_colors.get(ia).unwrap_or(&[1.0; 4]),
                 *source_colors.get(ib).unwrap_or(&[1.0; 4]),
                 *source_colors.get(ic).unwrap_or(&[1.0; 4]),
                 weights,
-            ));
+            )
+        });
+        for position in quad {
+            resolve_positions.push(position);
+            resolve_normals.push(normal);
+            if let Some((tangent, resolve_tangents)) = tangent.zip(resolve_tangents.as_mut()) {
+                resolve_tangents.push(tangent);
+            }
+            resolve_uvs.push(uv);
+            if let Some((color, resolve_colors)) = color.zip(resolve_colors.as_mut()) {
+                resolve_colors.push(color);
+            }
         }
     }
     if resolve_positions.is_empty() {
         return None;
     }
     let mut mesh = Mesh::new(
-        PrimitiveTopology::PointList,
+        PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, resolve_positions);
@@ -1351,10 +1367,26 @@ fn owner_sample_resolve_mesh(
     Some(mesh)
 }
 
-fn owner_sample_pixel_world(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 3]> {
+fn owner_sample_pixel_quad_world(
+    pixel: [u32; 2],
+    options: &CaptureOptions,
+) -> Option<[[f32; 3]; 6]> {
     (pixel[0] < options.width && pixel[1] < options.height).then_some(())?;
-    let ndc_x = (pixel[0] as f32 + 0.5) / options.width as f32 * 2.0 - 1.0;
-    let ndc_y = 1.0 - (pixel[1] as f32 + 0.5) / options.height as f32 * 2.0;
+    let left = owner_sample_screen_world(pixel[0] as f32, pixel[1] as f32, options)?;
+    let right = owner_sample_screen_world(pixel[0] as f32 + 1.0, pixel[1] as f32, options)?;
+    let bottom_left = owner_sample_screen_world(pixel[0] as f32, pixel[1] as f32 + 1.0, options)?;
+    let bottom_right =
+        owner_sample_screen_world(pixel[0] as f32 + 1.0, pixel[1] as f32 + 1.0, options)?;
+    Some([left, bottom_left, right, right, bottom_left, bottom_right])
+}
+
+fn owner_sample_screen_world(
+    screen_x: f32,
+    screen_y: f32,
+    options: &CaptureOptions,
+) -> Option<[f32; 3]> {
+    let ndc_x = screen_x / options.width as f32 * 2.0 - 1.0;
+    let ndc_y = 1.0 - screen_y / options.height as f32 * 2.0;
     let clip = GVec4::new(ndc_x, ndc_y, 0.5, 1.0);
     let world = diagnostic_view_projection(options).inverse() * clip;
     (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
@@ -2078,6 +2110,7 @@ impl BevyPrimitiveMaterial {
                 material.cull_mode = None;
                 material.depth_bias = 0.0;
                 material.render_alpha_mode = AlphaMode::Blend;
+                material.owner_color.w = 2.0;
             }
         }
     }
@@ -2371,6 +2404,7 @@ impl Material for BevyMtoonMaterial {
         layout: &bevy::mesh::MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.topology = key.mesh_key.primitive_topology();
         descriptor.primitive.front_face = key.bind_group_data.front_face.to_bevy();
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
         if layout.0.contains(Mesh::ATTRIBUTE_TANGENT) {
@@ -2443,6 +2477,7 @@ fn bevy_mtoon_material(
             DiagnosticRender::Uv => 3.0,
             DiagnosticRender::BaseUv => 4.0,
             DiagnosticRender::OwnerId => 5.0,
+            DiagnosticRender::OwnerSampleResolve => 6.0,
             DiagnosticRender::Shaded | DiagnosticRender::Flat => 0.0,
         },
     );
@@ -3290,6 +3325,7 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_override_index(input.position"));
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_has_geometry(owner_sample_index)"));
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_base_uv(owner_sample_index"));
+        assert!(MTOON_SHADER_SOURCE.contains("material.owner_color.a > 1.5"));
         assert!(
             MTOON_SHADER_SOURCE.contains("use_owner_sample_geometry = owner_sample_has_geometry")
         );
@@ -3356,20 +3392,95 @@ mod tests {
         let mesh = owner_sample_resolve_mesh(&source, &[record], &options)
             .expect("geometry-bearing record should build a resolve mesh");
 
-        assert_eq!(mesh.primitive_topology(), PrimitiveTopology::PointList);
-        assert_eq!(mesh_uv0(&mesh).unwrap(), &[[0.42, 0.43]]);
-        assert_eq!(mesh_normals(&mesh).unwrap(), &[[0.0, 0.0, 1.0]]);
-        assert_eq!(mesh_tangents(&mesh).unwrap(), &[[1.0, 0.0, 0.0, 1.0]]);
-        assert_eq!(mesh_colors(&mesh).unwrap(), &[[0.2, 0.3, 0.5, 1.0]]);
+        assert_eq!(mesh.primitive_topology(), PrimitiveTopology::TriangleList);
+        assert_eq!(mesh_uv0(&mesh).unwrap(), &[[0.42, 0.43]; 6]);
+        assert_eq!(mesh_normals(&mesh).unwrap(), &[[0.0, 0.0, 1.0]; 6]);
+        assert_eq!(mesh_tangents(&mesh).unwrap(), &[[1.0, 0.0, 0.0, 1.0]; 6]);
+        assert_eq!(mesh_colors(&mesh).unwrap(), &[[0.2, 0.3, 0.5, 1.0]; 6]);
 
-        let position = mesh_positions(&mesh).unwrap()[0];
-        let clip = diagnostic_view_projection(&options)
-            * GVec4::new(position[0], position[1], position[2], 1.0);
-        let ndc = clip.truncate() / clip.w;
-        let projected_x = ((ndc.x + 1.0) * 0.5 * options.width as f32) - 0.5;
-        let projected_y = ((1.0 - ndc.y) * 0.5 * options.height as f32) - 0.5;
-        assert!((projected_x - 12.0).abs() <= 1.0e-4);
-        assert!((projected_y - 34.0).abs() <= 1.0e-4);
+        let projected = mesh_positions(&mesh)
+            .unwrap()
+            .iter()
+            .map(|position| {
+                let clip = diagnostic_view_projection(&options)
+                    * GVec4::new(position[0], position[1], position[2], 1.0);
+                let ndc = clip.truncate() / clip.w;
+                (
+                    (ndc.x + 1.0) * 0.5 * options.width as f32,
+                    (1.0 - ndc.y) * 0.5 * options.height as f32,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            projected
+                .iter()
+                .any(|point| (point.0 - 12.0).abs() <= 1.0e-4 && (point.1 - 34.0).abs() <= 1.0e-4)
+        );
+        assert!(
+            projected
+                .iter()
+                .any(|point| (point.0 - 13.0).abs() <= 1.0e-4 && (point.1 - 35.0).abs() <= 1.0e-4)
+        );
+    }
+
+    #[test]
+    fn owner_sample_resolve_material_marks_resolve_diagnostic_pass() {
+        let mut material = BevyPrimitiveMaterial::Mtoon(BevyMtoonMaterial {
+            base_color: BVec4::ONE,
+            shade_color: BVec4::ONE,
+            shading: BVec4::ZERO,
+            emissive: BVec4::ZERO,
+            matcap_factor: BVec4::ZERO,
+            rim_color: BVec4::ZERO,
+            rim_params: BVec4::ZERO,
+            material_flags: BVec4::ZERO,
+            material_flags2: BVec4::new(0.0, 0.0, 0.0, 6.0),
+            pbr_params: BVec4::ZERO,
+            owner_color: BVec4::ZERO,
+            outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
+            pipeline: BVec4::ZERO,
+            lighting: BVec4::ONE,
+            light_color: BVec4::ONE,
+            base_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            shade_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            shading_shift_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            normal_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            matcap_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            rim_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            emissive_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            occlusion_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            uv_animation_mask_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            uv_rotation_a: BVec4::ZERO,
+            uv_rotation_b: BVec4::ZERO,
+            uv_animation: BVec4::ZERO,
+            base_texture: Handle::default(),
+            shade_texture: Handle::default(),
+            shading_shift_texture: Handle::default(),
+            matcap_texture: Handle::default(),
+            rim_texture: Handle::default(),
+            normal_texture: Handle::default(),
+            emissive_texture: Handle::default(),
+            uv_animation_mask_texture: Handle::default(),
+            occlusion_texture: Handle::default(),
+            owner_sample_overrides: Handle::default(),
+            shader_alpha_mode: AlphaMode::Opaque,
+            render_alpha_mode: AlphaMode::Opaque,
+            cull_mode: Some(Face::Back),
+            depth_write: true,
+            depth_compare: CompareFunction::GreaterEqual,
+            front_face: CaptureFrontFace::Ccw,
+            depth_bias: 0.0,
+        });
+
+        material.make_owner_sample_resolve();
+
+        match material {
+            BevyPrimitiveMaterial::Mtoon(material) => {
+                assert_eq!(material.owner_color.w, 2.0);
+                assert_eq!(material.depth_compare, CompareFunction::Always);
+                assert!(!material.depth_write);
+            }
+        }
     }
 
     #[test]
