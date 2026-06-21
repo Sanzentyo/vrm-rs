@@ -46,7 +46,7 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{Receiver, Sender};
-use glam::{Mat4, Vec3 as GVec3, Vec4 as GVec4};
+use glam::{Mat4, Vec2 as GVec2, Vec3 as GVec3, Vec4 as GVec4};
 use serde_json::json;
 use std::error::Error;
 use std::fs;
@@ -1279,12 +1279,12 @@ fn owner_sample_resolve_mesh(
     let positions = mesh_positions(source)?;
     let normals = mesh_normals(source);
     let tangents = mesh_tangents(source);
-    let colors = mesh_colors(source);
+    let uvs = mesh_uv0(source)?;
     let mut resolve_positions = Vec::new();
     let mut resolve_normals = Vec::new();
     let mut resolve_tangents = tangents.map(|_| Vec::new());
-    let mut resolve_uvs = Vec::new();
-    let mut resolve_colors = colors.map(|_| Vec::new());
+    let mut resolve_uv_dx = Vec::new();
+    let mut resolve_uv_dy = Vec::new();
     for record in records.iter().filter(|record| record.geometry_flags != 0) {
         let indices = record.geometry_indices;
         let [ia, ib, ic] = [
@@ -1327,25 +1327,25 @@ fn owner_sample_resolve_mesh(
                 weights,
             ))
         });
-        let uv = [record.geometry_uvs[0], record.geometry_uvs[1]];
-        let color = colors.map(|source_colors| {
-            interpolate_vec4(
-                *source_colors.get(ia).unwrap_or(&[1.0; 4]),
-                *source_colors.get(ib).unwrap_or(&[1.0; 4]),
-                *source_colors.get(ic).unwrap_or(&[1.0; 4]),
-                weights,
-            )
-        });
+        let Some([uv_dx, uv_dy]) = owner_sample_uv_gradient(
+            *positions.get(ia)?,
+            *positions.get(ib)?,
+            *positions.get(ic)?,
+            *uvs.get(ia)?,
+            *uvs.get(ib)?,
+            *uvs.get(ic)?,
+            options,
+        ) else {
+            continue;
+        };
         for position in quad {
             resolve_positions.push(position);
             resolve_normals.push(normal);
             if let Some((tangent, resolve_tangents)) = tangent.zip(resolve_tangents.as_mut()) {
                 resolve_tangents.push(tangent);
             }
-            resolve_uvs.push(uv);
-            if let Some((color, resolve_colors)) = color.zip(resolve_colors.as_mut()) {
-                resolve_colors.push(color);
-            }
+            resolve_uv_dx.push(uv_dx);
+            resolve_uv_dy.push(uv_dy);
         }
     }
     if resolve_positions.is_empty() {
@@ -1360,10 +1360,8 @@ fn owner_sample_resolve_mesh(
     if let Some(resolve_tangents) = resolve_tangents {
         mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, resolve_tangents);
     }
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, resolve_uvs);
-    if let Some(resolve_colors) = resolve_colors {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, resolve_colors);
-    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, resolve_uv_dx);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, resolve_uv_dy);
     Some(mesh)
 }
 
@@ -1390,6 +1388,48 @@ fn owner_sample_screen_world(
     let clip = GVec4::new(ndc_x, ndc_y, 0.5, 1.0);
     let world = diagnostic_view_projection(options).inverse() * clip;
     (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
+}
+
+fn owner_sample_uv_gradient(
+    position_a: [f32; 3],
+    position_b: [f32; 3],
+    position_c: [f32; 3],
+    uv_a: [f32; 2],
+    uv_b: [f32; 2],
+    uv_c: [f32; 2],
+    options: &CaptureOptions,
+) -> Option<[[f32; 2]; 2]> {
+    let pa = project_world_to_pixel(position_a, options)?;
+    let pb = project_world_to_pixel(position_b, options)?;
+    let pc = project_world_to_pixel(position_c, options)?;
+    let dx1 = pb.x - pa.x;
+    let dy1 = pb.y - pa.y;
+    let dx2 = pc.x - pa.x;
+    let dy2 = pc.y - pa.y;
+    let det = dx1 * dy2 - dx2 * dy1;
+    if det.abs() <= f32::EPSILON {
+        return None;
+    }
+    let uv_a = GVec2::from_array(uv_a);
+    let uv_b = GVec2::from_array(uv_b);
+    let uv_c = GVec2::from_array(uv_c);
+    let duv1 = uv_b - uv_a;
+    let duv2 = uv_c - uv_a;
+    let duv_dx = (duv1 * dy2 - duv2 * dy1) / det;
+    let duv_dy = (duv2 * dx1 - duv1 * dx2) / det;
+    Some([duv_dx.to_array(), duv_dy.to_array()])
+}
+
+fn project_world_to_pixel(position: [f32; 3], options: &CaptureOptions) -> Option<GVec2> {
+    let clip = diagnostic_view_projection(options) * GVec3::from_array(position).extend(1.0);
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    Some(GVec2::new(
+        (ndc.x + 1.0) * 0.5 * options.width as f32,
+        (1.0 - ndc.y) * 0.5 * options.height as f32,
+    ))
 }
 
 fn owner_sample_surfaces_for_primitive(
@@ -1707,9 +1747,10 @@ fn mesh_uv0(mesh: &Mesh) -> Option<&[[f32; 2]]> {
     }
 }
 
-fn mesh_colors(mesh: &Mesh) -> Option<&[[f32; 4]]> {
-    match mesh.attribute(Mesh::ATTRIBUTE_COLOR)? {
-        VertexAttributeValues::Float32x4(colors) => Some(colors),
+#[cfg(test)]
+fn mesh_uv1(mesh: &Mesh) -> Option<&[[f32; 2]]> {
+    match mesh.attribute(Mesh::ATTRIBUTE_UV_1)? {
+        VertexAttributeValues::Float32x2(uvs) => Some(uvs),
         _ => None,
     }
 }
@@ -2411,6 +2452,12 @@ impl Material for BevyMtoonMaterial {
             descriptor.vertex.shader_defs.push("VERTEX_TANGENTS".into());
             if let Some(fragment) = &mut descriptor.fragment {
                 fragment.shader_defs.push("VERTEX_TANGENTS".into());
+            }
+        }
+        if layout.0.contains(Mesh::ATTRIBUTE_UV_1) {
+            descriptor.vertex.shader_defs.push("VERTEX_UVS_B".into());
+            if let Some(fragment) = &mut descriptor.fragment {
+                fragment.shader_defs.push("VERTEX_UVS_B".into());
             }
         }
         if layout.0.contains(Mesh::ATTRIBUTE_COLOR) {
@@ -3325,6 +3372,10 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_override_index(input.position"));
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_has_geometry(owner_sample_index)"));
         assert!(MTOON_SHADER_SOURCE.contains("owner_sample_base_uv(owner_sample_index"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_uses_explicit_uv_grad"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_uv_grad_dx"));
+        assert!(MTOON_SHADER_SOURCE.contains("owner_sample_uv_grad_dy"));
+        assert!(MTOON_SHADER_SOURCE.contains("input.uv_b"));
         assert!(MTOON_SHADER_SOURCE.contains("material.owner_color.a > 1.5"));
         assert!(
             MTOON_SHADER_SOURCE.contains("use_owner_sample_geometry = owner_sample_has_geometry")
@@ -3393,10 +3444,21 @@ mod tests {
             .expect("geometry-bearing record should build a resolve mesh");
 
         assert_eq!(mesh.primitive_topology(), PrimitiveTopology::TriangleList);
-        assert_eq!(mesh_uv0(&mesh).unwrap(), &[[0.42, 0.43]; 6]);
         assert_eq!(mesh_normals(&mesh).unwrap(), &[[0.0, 0.0, 1.0]; 6]);
         assert_eq!(mesh_tangents(&mesh).unwrap(), &[[1.0, 0.0, 0.0, 1.0]; 6]);
-        assert_eq!(mesh_colors(&mesh).unwrap(), &[[0.2, 0.3, 0.5, 1.0]; 6]);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_none());
+        let [uv_dx, uv_dy] = owner_sample_uv_gradient(
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            &options,
+        )
+        .expect("test triangle should have a screen-space uv gradient");
+        assert_eq!(mesh_uv0(&mesh).unwrap(), &[uv_dx; 6]);
+        assert_eq!(mesh_uv1(&mesh).unwrap(), &[uv_dy; 6]);
 
         let projected = mesh_positions(&mesh)
             .unwrap()

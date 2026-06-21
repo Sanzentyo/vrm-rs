@@ -168,6 +168,38 @@ fn owner_sample_base_uv(index: u32, fallback: vec2<f32>) -> vec2<f32> {
     return fallback;
 }
 
+fn owner_sample_uses_explicit_uv_grad(use_owner_sample_geometry: bool) -> bool {
+#ifdef VERTEX_UVS_A
+#ifdef VERTEX_UVS_B
+    return use_owner_sample_geometry
+        && material.owner_color.a > 1.5;
+#endif
+#endif
+    return false;
+}
+
+fn owner_sample_uv_grad_dx(input: VertexOutput, fallback: vec2<f32>) -> vec2<f32> {
+#ifdef VERTEX_UVS_A
+#ifdef VERTEX_UVS_B
+    if material.owner_color.a > 1.5 {
+        return input.uv;
+    }
+#endif
+#endif
+    return fallback;
+}
+
+fn owner_sample_uv_grad_dy(input: VertexOutput, fallback: vec2<f32>) -> vec2<f32> {
+#ifdef VERTEX_UVS_A
+#ifdef VERTEX_UVS_B
+    if material.owner_color.a > 1.5 {
+        return input.uv_b;
+    }
+#endif
+#endif
+    return fallback;
+}
+
 fn pbr_direct(
     diffuse: vec3<f32>,
     normal: vec3<f32>,
@@ -206,6 +238,20 @@ fn transform_uv(uv: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f
         c * scaled.x - s * scaled.y + offset_scale.x,
         s * scaled.x + c * scaled.y + offset_scale.y,
     );
+}
+
+fn transform_uv_gradient(uv_gradient: vec2<f32>, offset_scale: vec4<f32>, rotation: f32) -> vec2<f32> {
+    let scaled = uv_gradient * offset_scale.zw;
+    let c = cos(rotation);
+    let s = sin(rotation);
+    return vec2<f32>(
+        c * scaled.x - s * scaled.y,
+        s * scaled.x + c * scaled.y,
+    );
+}
+
+fn flip_v_gradient(uv_gradient: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(uv_gradient.x, -uv_gradient.y);
 }
 
 fn animate_uv(uv: vec2<f32>) -> vec2<f32> {
@@ -307,47 +353,64 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         owner_sample_raw_uv(owner_sample_index, uv),
         use_owner_sample_geometry,
     );
+    let use_explicit_texture_grad = owner_sample_uses_explicit_uv_grad(use_owner_sample_geometry);
+    let sampled_raw_uv_dx = owner_sample_uv_grad_dx(input, dpdx(uv));
+    let sampled_raw_uv_dy = owner_sample_uv_grad_dy(input, dpdy(uv));
 
     let default_animated_uv = animate_uv(uv);
     let sampled_animated_uv = animate_uv(sampled_raw_uv);
     let default_base_uv = transform_uv(default_animated_uv, material.base_uv_transform, material.uv_rotation_a.x);
     let sampled_base_uv = transform_uv(sampled_animated_uv, material.base_uv_transform, material.uv_rotation_a.x);
+    let sampled_base_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.base_uv_transform, material.uv_rotation_a.x);
+    let sampled_base_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.base_uv_transform, material.uv_rotation_a.x);
     let base_uv = select(
         default_base_uv,
         owner_sample_base_uv(owner_sample_index, sampled_base_uv),
         use_owner_sample_geometry,
     );
     let default_shade_uv = transform_uv(default_animated_uv, material.shade_uv_transform, material.uv_rotation_a.y);
+    let sampled_shade_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.shade_uv_transform, material.uv_rotation_a.y);
+    let sampled_shade_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.shade_uv_transform, material.uv_rotation_a.y);
     let shade_uv = select(
         default_shade_uv,
         transform_uv(sampled_animated_uv, material.shade_uv_transform, material.uv_rotation_a.y),
         use_owner_sample_geometry,
     );
     let default_shading_shift_uv = transform_uv(default_animated_uv, material.shading_shift_uv_transform, material.uv_rotation_a.z);
+    let sampled_shading_shift_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.shading_shift_uv_transform, material.uv_rotation_a.z);
+    let sampled_shading_shift_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.shading_shift_uv_transform, material.uv_rotation_a.z);
     let shading_shift_uv = select(
         default_shading_shift_uv,
         transform_uv(sampled_animated_uv, material.shading_shift_uv_transform, material.uv_rotation_a.z),
         use_owner_sample_geometry,
     );
     let default_normal_uv = transform_uv(default_animated_uv, material.normal_uv_transform, material.uv_rotation_a.w);
+    let sampled_normal_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.normal_uv_transform, material.uv_rotation_a.w);
+    let sampled_normal_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.normal_uv_transform, material.uv_rotation_a.w);
     let normal_uv = select(
         default_normal_uv,
         transform_uv(sampled_animated_uv, material.normal_uv_transform, material.uv_rotation_a.w),
         use_owner_sample_geometry,
     );
     let default_rim_uv = transform_uv(default_animated_uv, material.rim_uv_transform, material.uv_rotation_b.x);
+    let sampled_rim_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.rim_uv_transform, material.uv_rotation_b.x);
+    let sampled_rim_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.rim_uv_transform, material.uv_rotation_b.x);
     let rim_uv = select(
         default_rim_uv,
         transform_uv(sampled_animated_uv, material.rim_uv_transform, material.uv_rotation_b.x),
         use_owner_sample_geometry,
     );
     let default_emissive_uv = transform_uv(default_animated_uv, material.emissive_uv_transform, material.uv_rotation_b.y);
+    let sampled_emissive_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.emissive_uv_transform, material.uv_rotation_b.y);
+    let sampled_emissive_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.emissive_uv_transform, material.uv_rotation_b.y);
     let emissive_uv = select(
         default_emissive_uv,
         transform_uv(sampled_animated_uv, material.emissive_uv_transform, material.uv_rotation_b.y),
         use_owner_sample_geometry,
     );
     let default_occlusion_uv = transform_uv(default_animated_uv, material.occlusion_uv_transform, material.uv_animation.w);
+    let sampled_occlusion_uv_dx = transform_uv_gradient(sampled_raw_uv_dx, material.occlusion_uv_transform, material.uv_animation.w);
+    let sampled_occlusion_uv_dy = transform_uv_gradient(sampled_raw_uv_dy, material.occlusion_uv_transform, material.uv_animation.w);
     let occlusion_uv = select(
         default_occlusion_uv,
         transform_uv(sampled_animated_uv, material.occlusion_uv_transform, material.uv_animation.w),
@@ -358,8 +421,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         input,
         front_facing,
         normal_uv,
-        dpdx(default_normal_uv),
-        dpdy(default_normal_uv),
+        select(dpdx(default_normal_uv), sampled_normal_uv_dx, use_explicit_texture_grad),
+        select(dpdy(default_normal_uv), sampled_normal_uv_dy, use_explicit_texture_grad),
         use_owner_sample_geometry,
     );
     let light_dir = normalize(vec3<f32>(-1.0, 1.0, -1.0));
@@ -375,14 +438,24 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
         vec2<f32>(base_uv.x, 1.0 - base_uv.y),
         material.material_flags2.w > 1.5 && material.material_flags2.w < 2.5,
     );
+    let sampled_base_sample_uv_dx = select(
+        sampled_base_uv_dx,
+        flip_v_gradient(sampled_base_uv_dx),
+        material.material_flags2.w > 1.5 && material.material_flags2.w < 2.5,
+    );
+    let sampled_base_sample_uv_dy = select(
+        sampled_base_uv_dy,
+        flip_v_gradient(sampled_base_uv_dy),
+        material.material_flags2.w > 1.5 && material.material_flags2.w < 2.5,
+    );
     var raw_texel = textureSample(base_texture, base_sampler, base_sample_uv);
     if use_owner_sample_geometry {
         raw_texel = textureSampleGrad(
             base_texture,
             base_sampler,
             base_sample_uv,
-            dpdx(default_base_sample_uv),
-            dpdy(default_base_sample_uv),
+            select(dpdx(default_base_sample_uv), sampled_base_sample_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_base_sample_uv), sampled_base_sample_uv_dy, use_explicit_texture_grad),
         );
     }
     let texel_rgb = select(
@@ -397,8 +470,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             emissive_texture,
             emissive_sampler,
             emissive_uv,
-            dpdx(default_emissive_uv),
-            dpdy(default_emissive_uv),
+            select(dpdx(default_emissive_uv), sampled_emissive_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_emissive_uv), sampled_emissive_uv_dy, use_explicit_texture_grad),
         ).rgb;
     }
     let is_pbr_fallback = material.material_flags.y > 0.5;
@@ -456,8 +529,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
                 occlusion_texture,
                 occlusion_sampler,
                 occlusion_uv,
-                dpdx(default_occlusion_uv),
-                dpdy(default_occlusion_uv),
+                select(dpdx(default_occlusion_uv), sampled_occlusion_uv_dx, use_explicit_texture_grad),
+                select(dpdy(default_occlusion_uv), sampled_occlusion_uv_dy, use_explicit_texture_grad),
             ).r;
         }
         let occlusion = (occlusion_sample - 1.0) * material.pbr_params.z + 1.0;
@@ -475,8 +548,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             shade_texture,
             shade_sampler,
             shade_uv,
-            dpdx(default_shade_uv),
-            dpdy(default_shade_uv),
+            select(dpdx(default_shade_uv), sampled_shade_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_shade_uv), sampled_shade_uv_dy, use_explicit_texture_grad),
         );
     }
     let shade = material.shade_color.rgb * shade_texel.rgb;
@@ -486,8 +559,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             shading_shift_texture,
             shading_shift_sampler,
             shading_shift_uv,
-            dpdx(default_shading_shift_uv),
-            dpdy(default_shading_shift_uv),
+            select(dpdx(default_shading_shift_uv), sampled_shading_shift_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_shading_shift_uv), sampled_shading_shift_uv_dy, use_explicit_texture_grad),
         ).r;
     }
     let shift = material.shading.x + shift_texel * material.shading.w;
@@ -506,8 +579,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             occlusion_texture,
             occlusion_sampler,
             occlusion_uv,
-            dpdx(default_occlusion_uv),
-            dpdy(default_occlusion_uv),
+            select(dpdx(default_occlusion_uv), sampled_occlusion_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_occlusion_uv), sampled_occlusion_uv_dy, use_explicit_texture_grad),
         ).r;
     }
     let sampled_occlusion = (sampled_occlusion_texel - 1.0) * material.pbr_params.z + 1.0;
@@ -535,8 +608,8 @@ fn fragment(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @
             rim_texture,
             rim_sampler,
             rim_uv,
-            dpdx(default_rim_uv),
-            dpdy(default_rim_uv),
+            select(dpdx(default_rim_uv), sampled_rim_uv_dx, use_explicit_texture_grad),
+            select(dpdy(default_rim_uv), sampled_rim_uv_dy, use_explicit_texture_grad),
         ).rgb;
     }
     let rim_light = material.light_color.rgb * material.pbr_params.w + vec3<f32>(material.lighting.w);

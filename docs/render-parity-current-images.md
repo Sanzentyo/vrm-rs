@@ -75,7 +75,7 @@ source-derived selection frontier without explaining the renderer behavior.
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | Alpha mismatches |
 | --- | ---: | ---: | ---: | ---: |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 0 / 0 / 0 |
-| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 29.2208 | 35.8901 | 0 / 0 / 0 |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 33.6244 | 35.8901 | 0 / 0 / 0 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | 0 / 0 / 0 |
 
 Focused wgpu material-pixel reports:
@@ -89,8 +89,9 @@ Owner/sample execution audits compare each post-resolve manifest entry's target
 pixel against the actual readback pixel. They do not choose or modify samples.
 The important split is not just whether the readback equals the manifest sample,
 but whether the readback or the manifest sample is closer to the three-vrm
-expected pixel. Expanded Bevy follows the manifest sample almost exactly, but
-wgpu and Ash are often closer to three-vrm than the manifest sample itself.
+expected pixel. After the Bevy UV0/UV1 gradient update, Bevy no longer simply
+follows the manifest sample: the expanded readback now lands near the
+three-vrm expected pixel for most entries, much like the wgpu/Ash split.
 
 | Readback | Renderer | Entries | Actual~sample | Actual closer to expected | Sample closer to expected | Tie | Mean actual-sample | Mean actual-expected |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -98,7 +99,7 @@ wgpu and Ash are often closer to three-vrm than the manifest sample itself.
 | Current | Bevy | 93 | 58 | 24 | 44 | 25 | 33.4403 | 65.0680 |
 | Current | Ash | 99 | 10 | 76 | 18 | 5 | 55.6954 | 25.6181 |
 | Expanded | wgpu | 101 | 24 | 77 | 18 | 6 | 45.7751 | 20.3921 |
-| Expanded | Bevy | 93 | 86 | 33 | 26 | 34 | 0.7938 | 45.3764 |
+| Expanded | Bevy | 93 | 20 | 65 | 23 | 5 | 44.7858 | 20.1580 |
 | Expanded | Ash | 99 | 10 | 76 | 18 | 5 | 55.6968 | 25.6175 |
 
 Execution audit reports:
@@ -121,11 +122,10 @@ That table isolates the pixels where the manifest sample is closer to
 `three-vrm` than the current renderer output. In the current local artifacts,
 the largest wgpu/Ash sample-closer buckets are concentrated around
 `armgear_plastic`, `body_nm`, `arm_mat`, `arm_plastic`, `backpack_nm`, and
-`huku_bake`. Bevy's expanded readback is usually nearly identical to the
-manifest sample, so the same table has much smaller actual-vs-sample distances
-there. This reinforces that the next renderer change should target those
-sample-closer buckets specifically, not blindly copy the manifest sample for
-all wgpu/Ash entries.
+`huku_bake`. Bevy's expanded readback now behaves more like a material-evaluated
+resolve than a sample-copy path, so the same table should be read as a remaining
+targeted owner/sample miss list rather than proof that Bevy should preserve the
+old manifest-sample output.
 
 The audits also include `Sample-Closer Buckets By Material` and
 `Sample-Closer Buckets By Material And Source`. They now also include draw-key
@@ -141,7 +141,7 @@ evaluation bucket rather than being folded into the owner/sample miss bucket.
 | --- | --- | --- | --- |
 | wgpu | `huku_bake` `6` rows, mean margin `3.9800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Owner/sample miss rows exist, but the biggest errors are body/plastic/arm surfaces. |
 | Ash | `huku_bake` `5` rows, mean margin `4.5800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Same priority shape as wgpu; backend transport is not the only issue. |
-| Bevy | `huku_bake` `15` rows, mean margin `0.7700` | `arm_plastic` `1.0300`, `body_bake` `1.0000` | Bevy is mostly near the manifest sample; its residuals are smaller and more sample-following. |
+| Bevy | `huku_bake` `9` rows, mean margin `3.1171` | `arm_plastic` `46.4147`, `body_nm` `42.6551`, `arm_mat` `39.7288` | Bevy is no longer mostly sample-following; remaining sample-closer rows overlap the same body/plastic/arm buckets. |
 
 | High-margin material | Draw key | wgpu rows / mean margin | Ash rows / mean margin | Bevy rows / mean margin |
 | --- | --- | ---: | ---: | ---: |
@@ -158,11 +158,13 @@ manifest reported `21` draw selections with nonzero entries for all four
 high-margin draw keys above.
 
 The current local expanded Seed-san artifacts report gradient PSNR wgpu
-`32.7302 dB`, Bevy `29.2208 dB`, and Ash `35.8901 dB` with exact alpha. This
-diagnostic remains useful for target-pixel coverage and routed-sample analysis,
-but it is not a default behavior target: the refreshed expected-vs-actual
-material/color audit still reports selected mean E-A distance wgpu `45.89`, Ash
-`36.97`, and Bevy `93.25`.
+`32.7302 dB`, Bevy `33.6244 dB`, and Ash `35.8901 dB` with exact alpha. The
+Bevy number now comes from the standard UV0/UV1 resolve-gradient path rather
+than the rejected vertex-color carrier experiment. This diagnostic remains
+useful for target-pixel coverage and routed-sample analysis, but it is not a
+full default behavior target: the refreshed expected-vs-actual material/color
+audit still reports selected mean E-A distance wgpu `45.89`, Ash `36.97`, and
+Bevy `93.25`.
 
 The E-A direction splits by material/draw key. For example, wgpu
 `backpack_nm node145/mesh4/prim9/base` is expected-brighter

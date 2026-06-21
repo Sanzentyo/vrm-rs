@@ -140,7 +140,7 @@ Metric: `rgb-visible`。
 | Set | wgpu gradient PSNR | Bevy gradient PSNR | Ash gradient PSNR | 用途 |
 | --- | ---: | ---: | ---: | --- |
 | Current readback | 30.6336 | 28.2142 | 35.8902 | 現在の source of truth。 |
-| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 29.2208 | 35.8901 | target-pixel coverage の診断。default fix ではない。 |
+| Expanded post-resolve diagnostic, current local artifact | 32.7302 | 33.6244 | 35.8901 | target-pixel coverage の診断。Bevy は UV0/UV1 gradient 経路で更新済み。 |
 | Second-frontier negative control | 30.9642 | 28.6200 | 35.8901 | regression guard。修正方針にはしない。 |
 
 | three-vrm reference | wgpu current readback | Bevy current readback | Ash current readback |
