@@ -172,6 +172,14 @@ at smaller magnitude. Use these audit rows to split glTF/PBR backpack color
 accumulation from MToon body/plastic local material differences, rather than
 adding another global exposure or color-space toggle.
 
+The same expected-vs-actual audit now also includes frontmost shading-model
+buckets. This makes the split visible before drilling into material names:
+wgpu selected residuals separate into `mtoon` (`24` rows, mean E-A `52.18`) and
+`gltf_pbr` (`15` rows, mean E-A `35.81`), while Ash separates into `mtoon`
+(`41`, `39.77`) and `gltf_pbr` (`23`, `31.99`). Treat `gltf_pbr` as the
+backpack color-accumulation track and `mtoon` as the body/plastic local
+material/fill track.
+
 Expected-vs-actual audit Markdown:
 
 - [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)

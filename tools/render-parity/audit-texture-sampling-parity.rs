@@ -134,6 +134,7 @@ struct BucketStats {
     best_sampling_expected_within_16: u64,
     material_counts: Vec<MaterialCount>,
     shading_model_counts: Vec<ShadingModelCount>,
+    shading_model_buckets: Vec<ShadingModelBucket>,
     material_buckets: Vec<MaterialBucket>,
     selection_material_buckets: Vec<MaterialBucket>,
     selection_material_draw_buckets: Vec<SelectionMaterialDrawBucket>,
@@ -156,6 +157,12 @@ struct MaterialCount {
 struct ShadingModelCount {
     model: String,
     count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelBucket {
+    model: String,
+    stats: MaterialBucket,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -360,6 +367,7 @@ struct Accumulator {
     best_sampling_expected_within_16: u64,
     materials: BTreeMap<String, u64>,
     shading_models: BTreeMap<String, u64>,
+    shading_model_buckets: BTreeMap<String, MaterialAccumulator>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_draw_buckets: BTreeMap<(String, String), MaterialAccumulator>,
@@ -535,10 +543,37 @@ impl Accumulator {
         if let Some(model) = shading_model {
             *self.shading_models.entry(model.to_owned()).or_default() += 1;
         }
+        let frontmost_same_material_as_expected =
+            same_material(frontmost.as_ref(), expected.as_ref());
+        let frontmost_same_triangle_as_expected =
+            frontmost.as_ref().zip(expected.as_ref()).is_some_and(|(left, right)| {
+                left.material_name == right.material_name && left.triangle == right.triangle
+            });
+        if let Some(model) = shading_model {
+            self.shading_model_buckets
+                .entry(model.to_owned())
+                .or_default()
+                .add(
+                    hotspot,
+                    actual_cpu,
+                    expected_cpu,
+                    nearest_expected_actual_cpu,
+                    nearest_expected_expected_cpu,
+                    frontmost_base_texture_actual,
+                    frontmost_base_texture_expected,
+                    actual_minus_texture,
+                    expected_minus_texture,
+                    shading_model,
+                    selection_rgba,
+                    edge,
+                    frontmost_same_material_as_expected,
+                    frontmost_same_triangle_as_expected,
+                );
+        }
         if same_material(frontmost.as_ref(), actual.as_ref()) {
             self.same_material_as_actual += 1;
         }
-        if same_material(frontmost.as_ref(), expected.as_ref()) {
+        if frontmost_same_material_as_expected {
             self.same_material_as_expected += 1;
         }
         if frontmost.as_ref().zip(actual.as_ref()).is_some_and(|(left, right)| {
@@ -546,18 +581,10 @@ impl Accumulator {
         }) {
             self.same_triangle_as_actual += 1;
         }
-        if frontmost.as_ref().zip(expected.as_ref()).is_some_and(|(left, right)| {
-            left.material_name == right.material_name && left.triangle == right.triangle
-        }) {
+        if frontmost_same_triangle_as_expected {
             self.same_triangle_as_expected += 1;
         }
         if let Some(surface) = frontmost {
-            let same_material_as_expected = same_material(Some(&surface), expected.as_ref());
-            let same_triangle_as_expected =
-                expected.as_ref().is_some_and(|expected| {
-                    surface.material_name == expected.material_name
-                        && surface.triangle == expected.triangle
-                });
             *self.materials.entry(surface.material_name.clone()).or_default() += 1;
             self.material_buckets
                 .entry(surface.material_name)
@@ -575,8 +602,8 @@ impl Accumulator {
                     shading_model,
                     selection_rgba,
                     edge,
-                    same_material_as_expected,
-                    same_triangle_as_expected,
+                    frontmost_same_material_as_expected,
+                    frontmost_same_triangle_as_expected,
                 );
         }
         if let Some(surface) = selection_surface {
@@ -791,6 +818,7 @@ impl Accumulator {
             best_sampling_expected_within_16: self.best_sampling_expected_within_16,
             material_counts: material_counts(self.materials),
             shading_model_counts: shading_model_counts(self.shading_models),
+            shading_model_buckets: shading_model_buckets(self.shading_model_buckets),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
             selection_material_draw_buckets: material_draw_buckets(
@@ -1983,6 +2011,26 @@ fn material_buckets(materials: BTreeMap<String, MaterialAccumulator>) -> Vec<Mat
     values
 }
 
+fn shading_model_buckets(
+    models: BTreeMap<String, MaterialAccumulator>,
+) -> Vec<ShadingModelBucket> {
+    let mut values = models
+        .into_iter()
+        .map(|(model, accumulator)| ShadingModelBucket {
+            stats: accumulator.finish(model.clone()),
+            model,
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .stats
+            .count
+            .cmp(&left.stats.count)
+            .then_with(|| left.model.cmp(&right.model))
+    });
+    values
+}
+
 fn material_draw_buckets(
     materials: BTreeMap<(String, String), MaterialAccumulator>,
 ) -> Vec<SelectionMaterialDrawBucket> {
@@ -2182,6 +2230,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         "- Frontmost shading models: `{}`\n\n",
         fmt_shading_models(&bucket.shading_model_counts)
     ));
+    push_shading_model_bucket_markdown(
+        output,
+        "Frontmost shading-model buckets",
+        &bucket.shading_model_buckets,
+    );
     push_material_bucket_markdown(output, "Frontmost material buckets", &bucket.material_buckets);
     if !bucket.selection_material_buckets.is_empty() {
         push_material_bucket_markdown(
@@ -2197,6 +2250,54 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
             &bucket.selection_material_draw_buckets,
         );
     }
+}
+
+fn push_shading_model_bucket_markdown(
+    output: &mut String,
+    title: &str,
+    models: &[ShadingModelBucket],
+) {
+    output.push_str(&format!("### {title}\n\n"));
+    output.push_str("| Model | Count | Mean E-A | E-A <=4/8/16 | Mean E-A delta | CPU A/E/T | Mean CPU A/E | Texture A/E/T | Mean Texture A/E | Manifest A/E/T | Manifest <=1.5 A/E | Mean Manifest A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    for model in models.iter().take(8) {
+        let stats = &model.stats;
+        output.push_str(&format!(
+            "| {} | {} | {} | {}/{}/{} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            model.model,
+            stats.count,
+            fmt_opt(stats.mean_expected_actual_rgb_distance),
+            stats.expected_actual_within_4,
+            stats.expected_actual_within_8,
+            stats.expected_actual_within_16,
+            fmt_opt_rgb_delta(stats.mean_expected_minus_actual_rgb_delta),
+            stats.actual_cpu_closer,
+            stats.expected_cpu_closer,
+            stats.cpu_tied,
+            fmt_opt(stats.mean_cpu_actual_rgb_distance),
+            fmt_opt(stats.mean_cpu_expected_rgb_distance),
+            stats.frontmost_base_texture_actual_closer,
+            stats.frontmost_base_texture_expected_closer,
+            stats.frontmost_base_texture_tied,
+            fmt_opt(stats.mean_frontmost_base_texture_actual_rgb_distance),
+            fmt_opt(stats.mean_frontmost_base_texture_expected_rgb_distance),
+            stats.manifest_sample_actual_closer,
+            stats.manifest_sample_expected_closer,
+            stats.manifest_sample_tied,
+            stats.manifest_sample_actual_within_1_5,
+            stats.manifest_sample_expected_within_1_5,
+            fmt_opt(stats.mean_manifest_sample_actual_rgb_distance),
+            fmt_opt(stats.mean_manifest_sample_expected_rgb_distance),
+            stats.best_sampling_actual_within_8,
+            stats.best_sampling_expected_within_8,
+            stats.edge_distance_lte_050px,
+            stats.same_material_as_expected,
+            stats.same_triangle_as_expected,
+            fmt_modes(&stats.best_sampling_modes_for_actual),
+            fmt_modes(&stats.best_sampling_modes_for_expected),
+        ));
+    }
+    output.push('\n');
 }
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
@@ -2495,6 +2596,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.all.shading_model_counts[0].count, 1);
     assert_eq!(report.all.shading_model_counts[1].model, "mtoon");
     assert_eq!(report.all.shading_model_counts[1].count, 1);
+    assert_eq!(report.all.shading_model_buckets.len(), 2);
+    assert_eq!(report.all.shading_model_buckets[0].model, "gltf_pbr");
+    assert_eq!(report.all.shading_model_buckets[0].stats.count, 1);
+    assert_eq!(
+        report.all.shading_model_buckets[0].stats.actual_cpu_closer,
+        1
+    );
+    assert_eq!(report.all.shading_model_buckets[1].model, "mtoon");
+    assert_eq!(report.all.shading_model_buckets[1].stats.count, 1);
+    assert_eq!(
+        report.all.shading_model_buckets[1].stats.expected_cpu_closer,
+        1
+    );
     assert_eq!(report.all.material_buckets[0].material_name, "body");
     assert_eq!(report.all.material_buckets[0].expected_cpu_closer, 1);
     assert_eq!(report.all.material_buckets[0].shading_model_counts[0].model, "mtoon");
@@ -2581,6 +2695,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     let markdown = markdown(&report);
     assert!(markdown.contains("Texture Sampling Parity Audit"));
+    assert!(markdown.contains("Frontmost shading-model buckets"));
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
     assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));
