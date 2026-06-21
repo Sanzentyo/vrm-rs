@@ -82,17 +82,19 @@ Focused wgpu material-pixel reports:
 
 Owner/sample execution audits compare each post-resolve manifest entry's target
 pixel against the actual readback pixel. They do not choose or modify samples.
-The current split shows that all three renderers load the manifests, but the
-expanded readback only fully reflects those samples in the Bevy path so far.
+The important split is not just whether the readback equals the manifest sample,
+but whether the readback or the manifest sample is closer to the three-vrm
+expected pixel. Expanded Bevy follows the manifest sample almost exactly, but
+wgpu and Ash are often closer to three-vrm than the manifest sample itself.
 
-| Readback | Renderer | Entries | Actual~sample | Mean actual-sample RGB distance | Max actual-sample RGB distance |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Current | wgpu | 101 | 10 | 71.6334 | 271.7756 |
-| Current | Bevy | 93 | 58 | 33.4403 | 273.4977 |
-| Current | Ash | 99 | 10 | 55.6954 | 219.7317 |
-| Expanded | wgpu | 101 | 24 | 45.7751 | 219.7317 |
-| Expanded | Bevy | 93 | 86 | 0.7938 | 1.7321 |
-| Expanded | Ash | 99 | 10 | 55.6968 | 219.7317 |
+| Readback | Renderer | Entries | Actual~sample | Actual closer to expected | Sample closer to expected | Tie | Mean actual-sample | Mean actual-expected |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Current | wgpu | 101 | 10 | 53 | 43 | 5 | 71.6334 | 43.7365 |
+| Current | Bevy | 93 | 58 | 24 | 44 | 25 | 33.4403 | 65.0680 |
+| Current | Ash | 99 | 10 | 76 | 18 | 5 | 55.6954 | 25.6181 |
+| Expanded | wgpu | 101 | 24 | 77 | 18 | 6 | 45.7751 | 20.3921 |
+| Expanded | Bevy | 93 | 86 | 33 | 26 | 34 | 0.7938 | 45.3764 |
+| Expanded | Ash | 99 | 10 | 76 | 18 | 5 | 55.6968 | 25.6175 |
 
 Execution audit reports:
 

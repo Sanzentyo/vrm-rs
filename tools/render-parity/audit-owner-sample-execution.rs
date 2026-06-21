@@ -92,6 +92,9 @@ struct AuditBucket {
     expected_sample_within_tolerance: u64,
     actual_expected_exact: u64,
     actual_expected_within_tolerance: u64,
+    actual_closer_to_expected_than_sample: u64,
+    sample_closer_to_expected_than_actual: u64,
+    actual_sample_expected_tie: u64,
     mean_actual_sample_distance: Option<f64>,
     mean_expected_sample_distance: Option<f64>,
     mean_actual_expected_distance: Option<f64>,
@@ -121,6 +124,7 @@ struct AuditRow {
     actual_sample_distance: Option<f64>,
     expected_sample_distance: Option<f64>,
     actual_expected_distance: Option<f64>,
+    expected_closeness: Option<ExpectedCloseness>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +135,14 @@ struct ManifestEntry {
     material_name: String,
     triangle: Option<u64>,
     selection_source: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ExpectedCloseness {
+    Actual,
+    Sample,
+    Tie,
 }
 
 fn main() {
@@ -210,6 +222,11 @@ fn audit(
             actual_expected_distance: actual_rgba
                 .zip(expected_rgba)
                 .map(|(actual, expected)| rgb_distance(actual, expected)),
+            expected_closeness: expected_closeness(
+                actual_rgba,
+                Some(entry.rgba),
+                expected_rgba,
+            ),
         };
         totals.push(&row, tolerance);
         by_selection_source
@@ -286,6 +303,12 @@ impl BucketAccumulator {
             if distance <= tolerance {
                 self.bucket.actual_expected_within_tolerance += 1;
             }
+        }
+        match row.expected_closeness {
+            Some(ExpectedCloseness::Actual) => self.bucket.actual_closer_to_expected_than_sample += 1,
+            Some(ExpectedCloseness::Sample) => self.bucket.sample_closer_to_expected_than_actual += 1,
+            Some(ExpectedCloseness::Tie) => self.bucket.actual_sample_expected_tie += 1,
+            None => {}
         }
     }
 
@@ -393,6 +416,21 @@ fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f64 {
         .sqrt()
 }
 
+fn expected_closeness(
+    actual: Option<[u8; 4]>,
+    sample: Option<[u8; 4]>,
+    expected: Option<[u8; 4]>,
+) -> Option<ExpectedCloseness> {
+    let (actual, sample, expected) = (actual?, sample?, expected?);
+    let actual_distance = rgb_distance(actual, expected);
+    let sample_distance = rgb_distance(sample, expected);
+    match actual_distance.partial_cmp(&sample_distance)? {
+        std::cmp::Ordering::Less => Some(ExpectedCloseness::Actual),
+        std::cmp::Ordering::Greater => Some(ExpectedCloseness::Sample),
+        std::cmp::Ordering::Equal => Some(ExpectedCloseness::Tie),
+    }
+}
+
 fn max_f64(current: Option<f64>, value: f64) -> f64 {
     current.map_or(value, |current| current.max(value))
 }
@@ -420,11 +458,11 @@ fn markdown(report: &AuditReport) -> String {
         output.push_str(&bucket_table_row(material, bucket));
     }
     output.push_str("\n## Top Actual-Sample Misses\n\n");
-    output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E |\n");
-    output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |\n");
+    output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
     for row in &report.top_actual_sample_misses {
         output.push_str(&format!(
-            "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             row.x,
             row.y,
             row.material_name,
@@ -438,6 +476,7 @@ fn markdown(report: &AuditReport) -> String {
             fmt_f64(row.actual_sample_distance),
             fmt_f64(row.expected_sample_distance),
             fmt_f64(row.actual_expected_distance),
+            fmt_closeness(row.expected_closeness),
         ));
     }
     output
@@ -445,14 +484,14 @@ fn markdown(report: &AuditReport) -> String {
 
 fn bucket_table_header(label: &str) -> String {
     format!(
-        "| {label} | Entries | Actual pixels | Actual=sample | Actual~sample | Expected=sample | Expected~sample | Actual~expected | Mean A-S | Mean E-S | Mean A-E | Max A-S |\n\
-         | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        "| {label} | Entries | Actual pixels | Actual=sample | Actual~sample | Expected=sample | Expected~sample | Actual~expected | Actual closer | Sample closer | Tie | Mean A-S | Mean E-S | Mean A-E | Max A-S |\n\
+         | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n"
     )
 }
 
 fn bucket_table_row(label: &str, bucket: &AuditBucket) -> String {
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         bucket.manifest_entries,
         bucket.actual_pixels_present,
@@ -461,6 +500,9 @@ fn bucket_table_row(label: &str, bucket: &AuditBucket) -> String {
         bucket.expected_sample_exact,
         bucket.expected_sample_within_tolerance,
         bucket.actual_expected_within_tolerance,
+        bucket.actual_closer_to_expected_than_sample,
+        bucket.sample_closer_to_expected_than_actual,
+        bucket.actual_sample_expected_tie,
         fmt_f64(bucket.mean_actual_sample_distance),
         fmt_f64(bucket.mean_expected_sample_distance),
         fmt_f64(bucket.mean_actual_expected_distance),
@@ -478,6 +520,15 @@ fn fmt_f64(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:.4}"))
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_closeness(value: Option<ExpectedCloseness>) -> &'static str {
+    match value {
+        Some(ExpectedCloseness::Actual) => "actual",
+        Some(ExpectedCloseness::Sample) => "sample",
+        Some(ExpectedCloseness::Tie) => "tie",
+        None => "n/a",
+    }
 }
 
 fn write_file(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
@@ -538,6 +589,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.totals.actual_sample_exact, 1);
     assert_eq!(report.totals.actual_sample_within_tolerance, 2);
     assert_eq!(report.totals.expected_sample_exact, 2);
+    assert_eq!(report.totals.sample_closer_to_expected_than_actual, 1);
+    assert_eq!(report.totals.actual_sample_expected_tie, 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
     Ok(())
 }
