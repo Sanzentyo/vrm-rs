@@ -571,6 +571,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/audit-texture-sampling-parity.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/build-owner-sample-selection.rs",
             "--self-test",
         ],
@@ -592,6 +601,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/apply-owner-sample-correction.rs",
     "tools/render-parity/audit-center-owner-misses.rs",
     "tools/render-parity/audit-owner-sample-selection.rs",
+    "tools/render-parity/audit-texture-sampling-parity.rs",
     "tools/render-parity/build-owner-sample-selection.rs",
     "tools/render-parity/compare-imqraw.rs",
     "tools/render-parity/compare-owner-id-images.rs",

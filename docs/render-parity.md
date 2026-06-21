@@ -2778,6 +2778,16 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   strict pixel-center diagnostic; `--selection-mode recovered-owner` remains a
   broader coverage/subpixel investigation mode and should not become a default
   unless it is backed by owner-id/fill-rule evidence rather than RGB distance.
+- Use `just render-parity-seed-base-color-flat32-render-resolve-texture-audit`
+  after the current blocker readback to split post-resolve color residuals by
+  owner/sample manifest coverage, CPU base-color distance, edge locality,
+  material/triangle relation, and texture sampling variant. The first audit
+  shows the remaining Seed-san slice is not a global V-flip, mip, or sampler
+  policy issue: many residuals are still unselected post-resolve edge pixels,
+  while selected-pixel color drift differs between wgpu, Bevy, and Ash. Treat
+  this as evidence for a broader owner/fill/source-order model first, then
+  address backend material sampling only where selected-pixel buckets isolate
+  it.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
