@@ -1906,6 +1906,28 @@ colored-direct, and ambient-only recipes below, so default, direct, colored
 direct/rim, and indirect accumulation drift are separated in their own report
 directories.
 
+For the non-MToon glTF PBR fallback fixture, run:
+
+```powershell
+just render-parity-gltf-pbr-generated
+```
+
+This writes `.external-fixtures/generated/gltf-pbr.vrm.gltf` and renders it into
+`.external-fixtures/render-parity-gltf-pbr-generated/`. The fixture intentionally
+does not use `VRMC_materials_mtoon`; it covers glTF `baseColorFactor`,
+`baseColorTexture`, roughness, metallic, `KHR_materials_emissive_strength`,
+`occlusionTexture`, `KHR_materials_unlit`, and texture-factor cases through the
+same Rust fallback shader branch used by real non-MToon materials such as
+Seed-san's `backpack_nm`. The current guard uses direct `.imqraw`
+`rgb-interior1px >= 48 dB`, max selected channel delta `<= 3`, and per-swatch
+`>= 40 dB` / max delta `<= 3` across wgpu, Bevy, and Ash. The latest run passes
+with selected PSNR wgpu `49.2238 dB`, Bevy `48.5934 dB`, and Ash `49.2238 dB`.
+The weakest swatch is the rough blue PBR case at about `41 dB` but still with
+max channel delta `3`; most other swatches are `50 dB` or exact. Treat this as a
+generated guard that broad glTF/PBR fallback is close, while real-model
+`backpack_nm` residuals still need local owner/sample/material-condition
+diagnostics.
+
 For the same generated fixture with ambient disabled on both sides, run:
 
 ```powershell

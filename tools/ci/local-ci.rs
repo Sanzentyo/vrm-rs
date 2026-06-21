@@ -618,6 +618,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/extract-owner-tail-fixture.rs",
     "tools/render-parity/generate-dense-ownership-fixture.rs",
     "tools/render-parity/generate-front-face-cull-fixture.rs",
+    "tools/render-parity/generate-gltf-pbr-fixture.rs",
     "tools/render-parity/generate-material-seam-fixture.rs",
     "tools/render-parity/generate-morph-expression-fixture.rs",
     "tools/render-parity/generate-mtoon-light-fixture.rs",

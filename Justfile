@@ -1,6 +1,7 @@
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 light_swatch_names := "direct-base,forced-shade,ambient-ao-ignored,parametric-rim,matcap-rim,mixed-rim,toon-ramp-lit-normal,toon-ramp-shade-normal,toon-ramp-mid-normal,toon-ramp-shifted-mid,emissive-factor,emissive-texture-strength"
+pbr_swatch_names := "pbr-base-red,pbr-texture-gradient,pbr-rough-blue,pbr-metal-gold,pbr-emissive-strength,pbr-occlusion,pbr-unlit,pbr-texture-factor"
 
 default:
     @just --list
@@ -581,6 +582,14 @@ render-parity-mtoon-light-ambient-generated three_vrm_root=".external-fixtures/t
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-mtoon-light-ambient-generated --render-background transparent --render-alpha-mismatch-tolerance 512 --render-psnr-metric rgb-interior1px --render-fail-under 50 --render-max-selected-channel-delta 2 --render-mtoon-light-accumulation three-vrm --render-direct-light-scale 0 --render-three-vrm-directional-intensity 0 --render-fixture .external-fixtures/generated/mtoon-light.vrm.gltf
     cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-ambient-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-ambient-generated/wgpu/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 50 --max-channel-delta 2 --json-out .external-fixtures/render-parity-mtoon-light-ambient-generated/reports/mtoon-light_vrm.wgpu.swatches.json
     cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-mtoon-light-ambient-generated/three-vrm/mtoon-light_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-mtoon-light-ambient-generated/bevy/mtoon-light_vrm.frame000.rgba.json --names "{{ light_swatch_names }}" --fail-under 47 --max-channel-delta 2 --json-out .external-fixtures/render-parity-mtoon-light-ambient-generated/reports/mtoon-light_vrm.bevy.swatches.json
+
+# Generate and render a source-like non-MToon glTF PBR fallback fixture.
+render-parity-gltf-pbr-generated three_vrm_root=".external-fixtures/three-vrm":
+    cargo +nightly -Zscript tools/render-parity/generate-gltf-pbr-fixture.rs
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --skip-download --skip-three-vrm-build --skip-playwright-install --render-parity --render-ash-readback --three-vrm-root "{{ three_vrm_root }}" --render-parity-dir .external-fixtures/render-parity-gltf-pbr-generated --render-background transparent --render-alpha-mismatch-tolerance 512 --render-psnr-metric rgb-interior1px --render-fail-under 48 --render-max-selected-channel-delta 3 --render-mtoon-light-accumulation three-vrm --render-fixture .external-fixtures/generated/gltf-pbr.vrm.gltf
+    cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-gltf-pbr-generated/three-vrm/gltf-pbr_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-gltf-pbr-generated/wgpu/gltf-pbr_vrm.frame000.rgba.json --names "{{ pbr_swatch_names }}" --fail-under 40 --max-channel-delta 3 --json-out .external-fixtures/render-parity-gltf-pbr-generated/reports/gltf-pbr_vrm.wgpu.swatches.json
+    cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-gltf-pbr-generated/three-vrm/gltf-pbr_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-gltf-pbr-generated/bevy/gltf-pbr_vrm.frame000.rgba.json --names "{{ pbr_swatch_names }}" --fail-under 40 --max-channel-delta 3 --json-out .external-fixtures/render-parity-gltf-pbr-generated/reports/gltf-pbr_vrm.bevy.swatches.json
+    cargo +nightly -Zscript tools/render-parity/compare-swatch-colors.rs --expected .external-fixtures/render-parity-gltf-pbr-generated/three-vrm/gltf-pbr_vrm.frame000.rgba.json --actual .external-fixtures/render-parity-gltf-pbr-generated/ash/gltf-pbr_vrm.frame000.rgba.json --names "{{ pbr_swatch_names }}" --fail-under 40 --max-channel-delta 3 --json-out .external-fixtures/render-parity-gltf-pbr-generated/reports/gltf-pbr_vrm.ash.swatches.json
 
 # Inspect local fixtures for MToon material features that should be covered by render parity.
 inspect-mtoon-fixtures root=".external-fixtures/official":
