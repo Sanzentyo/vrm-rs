@@ -213,6 +213,13 @@ struct ResidualRow {
     selected: bool,
     expected: [u8; 4],
     actual: [u8; 4],
+    selection_surface: Option<SurfaceLabel>,
+    selection_draw_key: Option<String>,
+    selection_rgba: Option<[u8; 4]>,
+    selection_actual_rgb_distance: Option<f64>,
+    selection_expected_rgb_distance: Option<f64>,
+    actual_minus_selection_rgb_delta: Option<[f64; 3]>,
+    expected_minus_selection_rgb_delta: Option<[f64; 3]>,
     frontmost: Option<SurfaceLabel>,
     actual_match: Option<SurfaceLabel>,
     expected_match: Option<SurfaceLabel>,
@@ -1412,7 +1419,13 @@ fn audit(
         } else {
             missing_acc.add(hotspot, None, None, None);
         }
-        if let Some(row) = residual_row(hotspot, is_selected) {
+        if let Some(row) = residual_row(
+            hotspot,
+            is_selected,
+            selection_surface.cloned(),
+            selection_draw_key.map(ToOwned::to_owned),
+            selection_rgba,
+        ) {
             residuals.push(row);
         }
     }
@@ -1504,7 +1517,13 @@ fn manifest_draw_keys(manifest: &Value) -> Result<HashMap<(u64, u64), String>, B
         .collect())
 }
 
-fn residual_row(hotspot: &Value, selected: bool) -> Option<ResidualRow> {
+fn residual_row(
+    hotspot: &Value,
+    selected: bool,
+    selection_surface: Option<SurfaceLabel>,
+    selection_draw_key: Option<String>,
+    selection_rgba: Option<[u8; 4]>,
+) -> Option<ResidualRow> {
     let actual_best = best_sampling_mode(
         hotspot,
         "/frontmost_texture_sampling_variants",
@@ -1521,6 +1540,21 @@ fn residual_row(hotspot: &Value, selected: bool) -> Option<ResidualRow> {
         selected,
         expected: rgba_at(hotspot, "/expected")?,
         actual: rgba_at(hotspot, "/actual")?,
+        selection_surface,
+        selection_draw_key,
+        selection_rgba,
+        selection_actual_rgb_distance: selection_rgba
+            .zip(rgba_at(hotspot, "/actual"))
+            .map(|(selection, actual)| rgb_distance(selection, actual)),
+        selection_expected_rgb_distance: selection_rgba
+            .zip(rgba_at(hotspot, "/expected"))
+            .map(|(selection, expected)| rgb_distance(selection, expected)),
+        actual_minus_selection_rgb_delta: selection_rgba
+            .zip(rgba_at(hotspot, "/actual"))
+            .map(|(selection, actual)| signed_rgb_delta(actual, selection)),
+        expected_minus_selection_rgb_delta: selection_rgba
+            .zip(rgba_at(hotspot, "/expected"))
+            .map(|(selection, expected)| signed_rgb_delta(expected, selection)),
         frontmost: surface_at(hotspot, "/frontmost_visible"),
         actual_match: surface_at(hotspot, "/nearest_visible_actual"),
         expected_match: surface_at(hotspot, "/nearest_visible_expected"),
@@ -1839,16 +1873,23 @@ fn markdown(report: &AuditReport) -> String {
     push_bucket_markdown(&mut output, "Carried Selection", &report.carried_selection);
     push_bucket_markdown(&mut output, "New Selection", &report.new_selection);
     output.push_str("## Top Residuals\n\n");
-    output.push_str("| Pixel | Sel | Actual | Expected | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
-    output.push_str("| --- | --- | --- | --- | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
+    output.push_str("| Pixel | Sel | Actual | Expected | Selected surface | Selected draw | Selected RGBA | Sel sample A/E | A-S / E-S | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
     for row in &report.top_residuals {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             if row.selected { "yes" } else { "no" },
             fmt_rgba(row.actual),
             fmt_rgba(row.expected),
+            fmt_surface(row.selection_surface.as_ref()),
+            row.selection_draw_key.as_deref().unwrap_or("n/a"),
+            fmt_opt_rgba(row.selection_rgba),
+            fmt_opt(row.selection_actual_rgb_distance),
+            fmt_opt(row.selection_expected_rgb_distance),
+            fmt_opt_rgb_delta(row.actual_minus_selection_rgb_delta),
+            fmt_opt_rgb_delta(row.expected_minus_selection_rgb_delta),
             fmt_surface(row.frontmost.as_ref()),
             fmt_opt(row.cpu_actual_rgb_distance),
             fmt_opt(row.cpu_expected_rgb_distance),
@@ -2302,9 +2343,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(report.selected.best_sampling_actual_within_4, 1);
     assert_eq!(report.selected.best_sampling_expected_within_4, 1);
+    assert_eq!(
+        report.top_residuals[0].selection_draw_key.as_deref(),
+        Some("node145/mesh4/prim1/base")
+    );
+    assert_eq!(report.top_residuals[0].selection_rgba, Some([12, 10, 10, 255]));
+    assert_close(
+        report.top_residuals[0].selection_expected_rgb_distance,
+        rgb_distance([12, 10, 10, 255], [10, 10, 10, 255]),
+    );
     let markdown = markdown(&report);
     assert!(markdown.contains("Texture Sampling Parity Audit"));
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
+    assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));
     let baseline = serde_json::json!({
         "corrections": [

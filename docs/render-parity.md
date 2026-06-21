@@ -3037,6 +3037,15 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   `node144/mesh3/prim1/base`. Use these draw labels when instrumenting shader
   material evaluation or owner/sample resolve writes; material-only grouping is
   no longer precise enough for the next pass.
+- The same audit now carries manifest-selected surface/draw/sample fields into
+  `Top Residuals`. Read those rows before changing renderer behavior: a row
+  where actual is near the selected RGBA but expected is far away points to a
+  chosen-sample-versus-three-vrm material/color/fill mismatch; a row where
+  actual is also far from the selected RGBA points to backend resolve/material
+  evaluation not reproducing the selected sample. In the current expanded
+  Seed-san artifacts, Bevy `backpack_nm` sample rows are often in the first
+  category, while wgpu/Ash still include the second category on the same
+  draw-key families.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
