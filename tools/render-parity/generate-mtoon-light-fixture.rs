@@ -60,6 +60,7 @@ fn fixture_json() -> String {
         "extensionsUsed": [
             "VRMC_vrm",
             "VRMC_materials_mtoon",
+            "KHR_materials_unlit",
             "KHR_materials_emissive_strength"
         ],
         "scene": 0,
@@ -155,7 +156,7 @@ fn accessors(primitive_count: usize) -> Vec<Value> {
             "componentType": 5126,
             "count": vertex_count,
             "type": "VEC3",
-            "min": [-0.78, 0.25, 0.0],
+            "min": [-0.78, 0.20, 0.0],
             "max": [0.78, 1.75, 0.0]
         }),
         json!({
@@ -234,6 +235,7 @@ fn mtoon_materials() -> Vec<Value> {
         mtoon_material("toon-ramp-shifted-mid", [0.16, 0.92, 0.84, 1.0], [0.02, 0.14, 0.12], -0.35, 0.0, 0.0, 1.0, [0.0, 0.0, 0.0], None, false),
         emissive_mtoon_material("emissive-factor", [0.16, 0.24, 0.42], None, false),
         emissive_mtoon_material("emissive-texture-strength", [0.18, 0.22, 0.36], Some(1.75), true),
+        mtoon_with_khr_unlit_material("mtoon-plus-khr-unlit"),
     ]
 }
 
@@ -314,20 +316,38 @@ fn emissive_mtoon_material(
     material
 }
 
+fn mtoon_with_khr_unlit_material(name: &str) -> Value {
+    let mut material = mtoon_material(
+        name,
+        [0.85, 0.10, 0.10, 1.0],
+        [0.02, 0.04, 0.20],
+        -1.5,
+        0.9,
+        0.0,
+        1.0,
+        [0.0, 0.0, 0.0],
+        None,
+        false,
+    );
+    material["extensions"]["KHR_materials_unlit"] = json!({});
+    material
+}
+
 fn mesh_buffer() -> Vec<u8> {
     let quads = [
-        (-0.78f32, -0.43f32, 0.25f32, 0.67f32),
-        (-0.38, -0.03, 0.25, 0.67),
-        (0.03, 0.38, 0.25, 0.67),
-        (0.43, 0.78, 0.25, 0.67),
-        (-0.78, -0.43, 0.79, 1.21),
-        (-0.38, -0.03, 0.79, 1.21),
-        (0.03, 0.38, 0.79, 1.21),
-        (0.43, 0.78, 0.79, 1.21),
-        (-0.78, -0.43, 1.33, 1.75),
-        (-0.38, -0.03, 1.33, 1.75),
-        (0.03, 0.38, 1.33, 1.75),
-        (0.43, 0.78, 1.33, 1.75),
+        (-0.78f32, -0.43f32, 0.20f32, 0.52f32),
+        (-0.38, -0.03, 0.20, 0.52),
+        (0.03, 0.38, 0.20, 0.52),
+        (0.43, 0.78, 0.20, 0.52),
+        (-0.78, -0.43, 0.61, 0.93),
+        (-0.38, -0.03, 0.61, 0.93),
+        (0.03, 0.38, 0.61, 0.93),
+        (0.43, 0.78, 0.61, 0.93),
+        (-0.78, -0.43, 1.02, 1.34),
+        (-0.38, -0.03, 1.02, 1.34),
+        (0.03, 0.38, 1.02, 1.34),
+        (0.43, 0.78, 1.02, 1.34),
+        (-0.78, -0.43, 1.43, 1.75),
     ];
     let normal_vectors = [
         [0.0f32, 0.0, 1.0],
@@ -340,6 +360,7 @@ fn mesh_buffer() -> Vec<u8> {
         [0.8164966, 0.0, 0.57735026],
         [0.70710677, 0.0, -0.70710677],
         [0.2981424, 0.745356, 0.5962848],
+        [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
     ];

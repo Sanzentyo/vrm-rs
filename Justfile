@@ -1,6 +1,6 @@
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
-light_swatch_names := "direct-base,forced-shade,ambient-ao-ignored,parametric-rim,matcap-rim,mixed-rim,toon-ramp-lit-normal,toon-ramp-shade-normal,toon-ramp-mid-normal,toon-ramp-shifted-mid,emissive-factor,emissive-texture-strength"
+light_swatch_names := "direct-base,forced-shade,ambient-ao-ignored,parametric-rim,matcap-rim,mixed-rim,toon-ramp-lit-normal,toon-ramp-shade-normal,toon-ramp-mid-normal,toon-ramp-shifted-mid,emissive-factor,emissive-texture-strength,mtoon-plus-khr-unlit"
 pbr_swatch_names := "pbr-base-red,pbr-texture-gradient,pbr-rough-blue,pbr-metal-gold,pbr-emissive-strength,pbr-occlusion,pbr-unlit,pbr-texture-factor,pbr-normal-map"
 
 default:

@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-06-21
+
+- Added a generated MToon branch-parity guard where `VRMC_materials_mtoon` and
+  `KHR_materials_unlit` are both present on the same material. The source-like
+  MToon light fixture now has 13 visible swatches and the `Justfile` swatch
+  list includes `mtoon-plus-khr-unlit`, so wgpu, Bevy, and Ash comparisons fail
+  if the renderer accidentally falls back to glTF unlit instead of MToon. The
+  refreshed focused run passes at selected `rgb-interior1px`: wgpu `60.0462
+  dB` with max selected-channel delta `1`, Bevy `51.4259 dB` with max delta
+  `2`, and Ash `60.0462 dB` with max delta `1`. The new swatch itself passes
+  at wgpu/Ash `62.2143 dB` and Bevy `53.1816 dB`.
+- Rechecked the real Seed-san shading-model residual join and expanded summary
+  JSON path after the color-fit parser concern. The current real join uses
+  `color_fit` / `material_draw_color_fits`, `summarize-render-resolve-expanded`
+  parses those exact fields, its self-test asserts the summary JSON does not
+  contain `color_fit: null`, and the regenerated real summary artifact keeps
+  additive/gain fit values in JSON as well as Markdown.
+
 ## 2026-06-20
 
 - Added 3x3 subpixel triangle-containment diagnostics to the owner-id projection-gap

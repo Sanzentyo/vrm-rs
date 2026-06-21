@@ -477,9 +477,10 @@ glTF unlit extension is present, matching the measured three-vrm behavior of
 the official UV-animation fixture. This keeps model-specific sampler and
 material policy from being flattened into one renderer-global or
 material-global rule. The generated MToon
-light/color fixture now contains 12 swatches, including mid-ramp interpolation
-cases, and the swatch comparator is run after aggregate PSNR to catch per-term
-drift. Use `just render-parity-mtoon-light-ash-generated` when the same
+light/color fixture now contains 13 swatches, including mid-ramp interpolation
+cases and an MToon material that also carries `KHR_materials_unlit`, and the
+swatch comparator is run after aggregate PSNR to catch per-term drift. Use
+`just render-parity-mtoon-light-ash-generated` when the same
 source-like light fixture should also emit Ash readback artifacts and Ash
 swatch reports; the Ash comparison remains non-gating in the review manifest,
 but the recipe verifies aggregate `rgb-interior1px` and named swatch color

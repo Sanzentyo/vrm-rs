@@ -1870,27 +1870,29 @@ fixture with supplemental Ash readback and Ash swatch reports.
 
 This writes `.external-fixtures/generated/mtoon-light.vrm.gltf` and renders it
 into `.external-fixtures/render-parity-mtoon-light-generated/`. The fixture
-contains twelve opaque MToon quads for forced base lighting, forced shade
+contains thirteen opaque MToon quads for forced base lighting, forced shade
 lighting, ambient behavior with a glTF `occlusionTexture` that three-vrm MToon
 ignores, parametric rim, matcap rim, mixed rim/matcap, two low-toony ramp
 materials with angled normals, two mid-ramp interpolation cases, pure
 `emissiveFactor`, and `emissiveTexture` multiplied by
-`KHR_materials_emissive_strength`. It
+`KHR_materials_emissive_strength`, plus an MToon material that also carries
+`KHR_materials_unlit` so the MToon branch stays preferred over glTF unlit. It
 uses `--mtoon-light-accumulation three-vrm`,
 `--render-background transparent`, and selected metric `rgb-interior1px` so a
 one-pixel silhouette/rasterization disagreement does not dominate the shader
-color score. The current run reports selected PSNR wgpu `59.7573 dB` with max
-selected channel delta `2`, and Bevy `51.1653 dB` with max selected channel
+color score. The current run reports selected PSNR wgpu `60.0462 dB` with max
+selected channel delta `1`, and Bevy `51.4259 dB` with max selected channel
 delta `2`; the aggregate recipe now fails if selected channel delta exceeds
 `2`. The Ash variant writes
 `.external-fixtures/render-parity-mtoon-light-ash-generated/`, currently passes
-Ash at selected `rgb-interior1px` `59.7573 dB` with max selected channel delta
-`2`, and keeps Ash non-gating in the review manifest while still enforcing the
-explicit Ash swatch report. The browser reference logs that `aoMap`/`aoMapIntensity` are not
+Ash at selected `rgb-interior1px` `60.0462 dB` with max selected channel delta
+`1`, and keeps Ash non-gating in the review manifest while still enforcing the
+explicit Ash swatch report. The `mtoon-plus-khr-unlit` swatch currently passes
+at wgpu/Ash `62.2143 dB` and Bevy `53.1816 dB`. The browser reference logs that `aoMap`/`aoMapIntensity` are not
 ShaderMaterial properties for WebGL MToon, so Rust keeps MToon occlusion
 disabled for parity while still extracting and applying glTF occlusion to
 non-MToon/PBR fallback materials. The expected edge-only alpha mismatch is
-`330` pixels and the recipe allows up to `512`; use the strict transparent
+`357` pixels and the recipe allows up to `512`; use the strict transparent
 generated fixture below for alpha/blend correctness. Review
 `.external-fixtures/render-parity-mtoon-light-generated/visual-review.html`
 when changing MToon accumulation code. The remaining broad-fixture PSNR gap is
