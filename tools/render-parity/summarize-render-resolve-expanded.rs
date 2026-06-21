@@ -113,8 +113,19 @@ struct ShadingModelBackendSummary {
     selected_count: u64,
     mean_expected_actual_distance: f64,
     mean_expected_minus_actual_rgb_delta: [f64; 3],
+    color_fit: Option<ShadingModelColorFitSummary>,
     materials: String,
     draw_keys: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelColorFitSummary {
+    preferred_fit: String,
+    additive_rgb_delta: Option<[f64; 3]>,
+    additive_fit_mean_distance: Option<f64>,
+    least_squares_gain_rgb: Option<[f64; 3]>,
+    gain_fit_mean_distance: Option<f64>,
+    mean_expected_over_actual_rgb_ratio: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -356,6 +367,30 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 ));
             }
             out.push('\n');
+            if model
+                .backends
+                .iter()
+                .any(|backend| backend.color_fit.is_some())
+            {
+                out.push_str("#### Backend Color Fit\n\n");
+                out.push_str("| Backend | Preferred | Additive RGB | Additive error | Gain RGB | Gain error | Mean E/A ratio |\n");
+                out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+                for backend in &model.backends {
+                    if let Some(fit) = &backend.color_fit {
+                        out.push_str(&format!(
+                            "| {} | {} | {} | {} | {} | {} | {} |\n",
+                            backend.backend,
+                            fit.preferred_fit,
+                            fmt_optional_vec3(fit.additive_rgb_delta),
+                            fmt_optional_f64(fit.additive_fit_mean_distance),
+                            fmt_optional_vec3(fit.least_squares_gain_rgb),
+                            fmt_optional_f64(fit.gain_fit_mean_distance),
+                            fmt_optional_vec3(fit.mean_expected_over_actual_rgb_ratio),
+                        ));
+                    }
+                }
+                out.push('\n');
+            }
             out.push_str(
                 "| Backend | Shared rows | Sample exact | Exact ratio | Mean A-S | Mean E-S |\n",
             );
@@ -454,9 +489,29 @@ fn shading_model_backend_summary(
             value,
             &["mean_expected_minus_actual_rgb_delta"],
         )?,
+        color_fit: optional_color_fit(value)?,
         materials: key_count_list(value, &["materials"])?,
         draw_keys: key_count_list(value, &["draw_keys"])?,
     })
+}
+
+fn optional_color_fit(
+    backend: &Value,
+) -> Result<Option<ShadingModelColorFitSummary>, Box<dyn Error>> {
+    let Some(value) = backend.get("color_fit") else {
+        return Ok(None);
+    };
+    Ok(Some(ShadingModelColorFitSummary {
+        preferred_fit: get_str_path(value, &["preferred_fit"])?,
+        additive_rgb_delta: optional_vec3_path(value, &["additive_rgb_delta"])?,
+        additive_fit_mean_distance: optional_f64_path(value, &["additive_fit_mean_rgb_distance"])?,
+        least_squares_gain_rgb: optional_vec3_path(value, &["least_squares_gain_rgb"])?,
+        gain_fit_mean_distance: optional_f64_path(value, &["gain_fit_mean_rgb_distance"])?,
+        mean_expected_over_actual_rgb_ratio: optional_vec3_path(
+            value,
+            &["mean_expected_over_actual_rgb_ratio"],
+        )?,
+    }))
 }
 
 fn shading_model_sample_following_summary(
@@ -567,6 +622,53 @@ fn get_vec3_path(value: &Value, path: &[&str]) -> Result<[f64; 3], Box<dyn Error
     ])
 }
 
+fn optional_f64_path(value: &Value, path: &[&str]) -> Result<Option<f64>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_f64()
+        .map(Some)
+        .ok_or_else(|| format!("JSON path {} is not a number", path.join(".")).into())
+}
+
+fn optional_vec3_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 3]>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let array = value
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    if array.len() != 3 {
+        return Err(format!("JSON path {} does not have length 3", path.join(".")).into());
+    }
+    Ok(Some([
+        array[0]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[0] is not a number", path.join(".")))?,
+        array[1]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[1] is not a number", path.join(".")))?,
+        array[2]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[2] is not a number", path.join(".")))?,
+    ]))
+}
+
+fn optional_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
 fn get_named_count_path(
     value: &Value,
     path: &[&str],
@@ -581,6 +683,18 @@ fn get_named_count_path(
         .find(|entry| entry.get(name_key).and_then(Value::as_str) == Some(name))
         .and_then(|entry| entry.get("count").and_then(Value::as_u64))
         .unwrap_or(0))
+}
+
+fn fmt_optional_f64(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.4}"))
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
+    value
+        .map(|value| format!("{:.2},{:.2},{:.2}", value[0], value[1], value[2]))
+        .unwrap_or_else(|| "n/a".to_owned())
 }
 
 fn self_test() -> Result<(), Box<dyn Error>> {
@@ -641,6 +755,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "selected_count": 1,
                     "mean_expected_actual_rgb_distance": 4.5,
                     "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
+                    "color_fit": {
+                        "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
+                        "least_squares_gain_rgb": [1.05, 1.10, 1.15],
+                        "gain_fit_mean_rgb_distance": 2.0,
+                        "additive_rgb_delta": [1.0, 2.0, 3.0],
+                        "additive_fit_mean_rgb_distance": 1.0,
+                        "preferred_fit": "additive"
+                    },
                     "materials": [{"key": "backpack_nm", "count": 2}],
                     "draw_keys": [{"key": "node145/mesh4/prim9/base", "count": 2}]
                 }],
@@ -684,9 +806,24 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary.renderers[0].top_selected_materials[0].material,
         "mat"
     );
+    let color_fit = summary
+        .shading_model_join
+        .as_ref()
+        .and_then(|join| join.models.first())
+        .and_then(|model| model.backends.first())
+        .and_then(|backend| backend.color_fit.as_ref())
+        .ok_or("self-test shading model color_fit was not parsed")?;
+    assert_eq!(color_fit.preferred_fit, "additive");
+    let summary_json = serde_json::to_string(&summary)?;
+    assert!(summary_json.contains(r#""preferred_fit":"additive""#));
+    assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
     assert!(markdown.contains("| wgpu | 42.5000 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
+    assert!(markdown.contains("#### Backend Color Fit"));
+    assert!(markdown.contains(
+        "| wgpu | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 | 1.10,1.20,1.30 |"
+    ));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));
     fs::remove_dir_all(root)?;
     Ok(())

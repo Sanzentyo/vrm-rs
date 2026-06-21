@@ -131,8 +131,19 @@ struct BackendModelSummary {
     selected_count: u64,
     mean_expected_actual_rgb_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
+    color_fit: ColorFitSummary,
     materials: Vec<CountSummary>,
     draw_keys: Vec<CountSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ColorFitSummary {
+    mean_expected_over_actual_rgb_ratio: Option<[f64; 3]>,
+    least_squares_gain_rgb: Option<[f64; 3]>,
+    gain_fit_mean_rgb_distance: Option<f64>,
+    additive_rgb_delta: Option<[f64; 3]>,
+    additive_fit_mean_rgb_distance: Option<f64>,
+    preferred_fit: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -216,7 +227,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     }
     let report = join_from_paths(&options.inputs)?;
     if let Some(path) = options.json_out.as_deref() {
-        write_file(path, &format!("{}\n", serde_json::to_string_pretty(&report)?))?;
+        write_file(
+            path,
+            &format!("{}\n", serde_json::to_string_pretty(&report)?),
+        )?;
     } else if options.markdown_out.is_none() {
         print!("{}\n", serde_json::to_string_pretty(&report)?);
     }
@@ -290,7 +304,9 @@ fn model_join(model: String, backend_rows: BTreeMap<String, Vec<ResidualRow>>) -
             PixelJoin {
                 x: pixel.x,
                 y: pixel.y,
-                material_names: unique_strings(rows.iter().filter_map(|row| row.material_name.as_deref())),
+                material_names: unique_strings(
+                    rows.iter().filter_map(|row| row.material_name.as_deref()),
+                ),
                 draw_keys: unique_strings(rows.iter().filter_map(|row| row.draw_key.as_deref())),
                 rows,
             }
@@ -341,8 +357,111 @@ fn backend_summary(backend: &str, rows: &[ResidualRow]) -> BackendModelSummary {
             .unwrap_or(u64::MAX),
         mean_expected_actual_rgb_distance: mean(distance_sum, rows.len()),
         mean_expected_minus_actual_rgb_delta: mean_delta(delta_sum, rows.len()),
+        color_fit: color_fit(rows),
         materials: count_summaries(materials),
         draw_keys: count_summaries(draw_keys),
+    }
+}
+
+fn color_fit(rows: &[ResidualRow]) -> ColorFitSummary {
+    let additive_rgb_delta = mean_delta(
+        rows.iter().fold([0.0; 3], |mut sum, row| {
+            add_delta(&mut sum, row.expected_minus_actual_rgb_delta);
+            sum
+        }),
+        rows.len(),
+    );
+    let ratio = mean_ratio(rows);
+    let gain = least_squares_gain(rows);
+    let additive_error = additive_rgb_delta.map(|delta| {
+        rows.iter()
+            .map(|row| fitted_distance(row, |actual, channel| actual + delta[channel]))
+            .sum::<f64>()
+            / rows.len() as f64
+    });
+    let gain_error = gain.map(|gain| {
+        rows.iter()
+            .map(|row| fitted_distance(row, |actual, channel| actual * gain[channel]))
+            .sum::<f64>()
+            / rows.len() as f64
+    });
+    ColorFitSummary {
+        mean_expected_over_actual_rgb_ratio: ratio,
+        least_squares_gain_rgb: gain,
+        gain_fit_mean_rgb_distance: gain_error,
+        additive_rgb_delta,
+        additive_fit_mean_rgb_distance: additive_error,
+        preferred_fit: preferred_fit(additive_error, gain_error),
+    }
+}
+
+fn mean_ratio(rows: &[ResidualRow]) -> Option<[f64; 3]> {
+    if rows.is_empty() {
+        return None;
+    }
+    let mut sums = [0.0; 3];
+    let mut counts = [0usize; 3];
+    for row in rows {
+        for channel in 0..3 {
+            let actual = f64::from(row.actual[channel]);
+            if actual > 0.5 {
+                sums[channel] += f64::from(row.expected[channel]) / actual;
+                counts[channel] += 1;
+            }
+        }
+    }
+    counts.iter().all(|count| *count > 0).then(|| {
+        [
+            sums[0] / counts[0] as f64,
+            sums[1] / counts[1] as f64,
+            sums[2] / counts[2] as f64,
+        ]
+    })
+}
+
+fn least_squares_gain(rows: &[ResidualRow]) -> Option<[f64; 3]> {
+    if rows.is_empty() {
+        return None;
+    }
+    let mut numerator = [0.0; 3];
+    let mut denominator = [0.0; 3];
+    for row in rows {
+        for channel in 0..3 {
+            let actual = f64::from(row.actual[channel]);
+            let expected = f64::from(row.expected[channel]);
+            numerator[channel] += actual * expected;
+            denominator[channel] += actual * actual;
+        }
+    }
+    denominator.iter().all(|value| *value > 0.0).then(|| {
+        [
+            numerator[0] / denominator[0],
+            numerator[1] / denominator[1],
+            numerator[2] / denominator[2],
+        ]
+    })
+}
+
+fn fitted_distance(row: &ResidualRow, fit_channel: impl Fn(f64, usize) -> f64) -> f64 {
+    (0..3)
+        .map(|channel| {
+            let expected = f64::from(row.expected[channel]);
+            let actual = f64::from(row.actual[channel]);
+            let delta = expected - fit_channel(actual, channel);
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+fn preferred_fit(additive_error: Option<f64>, gain_error: Option<f64>) -> &'static str {
+    match (additive_error, gain_error) {
+        (Some(additive), Some(gain)) if additive + 0.5 < gain => "additive",
+        (Some(additive), Some(gain)) if gain + 0.5 < additive => "gain",
+        (Some(_), Some(_)) => "similar",
+        (Some(_), None) => "additive",
+        (None, Some(_)) => "gain",
+        (None, None) => "n/a",
     }
 }
 
@@ -437,9 +556,8 @@ fn backend_pair_summaries(pixels: &[PixelJoin]) -> Vec<BackendPairSummary> {
                 let accumulator = by_pair.entry(key).or_default();
                 accumulator.count += 1;
                 accumulator.actual_distance_sum += rgb_distance(left.actual, right.actual);
-                accumulator.gap_delta_sum += (left.expected_actual_rgb_distance
-                    - right.expected_actual_rgb_distance)
-                    .abs();
+                accumulator.gap_delta_sum +=
+                    (left.expected_actual_rgb_distance - right.expected_actual_rgb_distance).abs();
             }
         }
     }
@@ -476,11 +594,13 @@ fn shared_direction_buckets(pixels: &[PixelJoin]) -> Vec<DirectionBucketSummary>
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let accumulator = by_signature.entry(signature).or_insert_with(|| Accumulator {
-            count: 0,
-            materials: BTreeMap::new(),
-            draw_keys: BTreeMap::new(),
-        });
+        let accumulator = by_signature
+            .entry(signature)
+            .or_insert_with(|| Accumulator {
+                count: 0,
+                materials: BTreeMap::new(),
+                draw_keys: BTreeMap::new(),
+            });
         accumulator.count += 1;
         for material in &pixel.material_names {
             *accumulator.materials.entry(material.clone()).or_default() += 1;
@@ -523,7 +643,9 @@ fn markdown(report: &JoinReport) -> String {
             "- Shared top-residual pixels across multiple backends: `{}`\n\n",
             model.shared_pixel_count
         ));
-        output.push_str("| Backend | Rows | Selected | Mean E-A | Mean E-A delta | Materials | Draw keys |\n");
+        output.push_str(
+            "| Backend | Rows | Selected | Mean E-A | Mean E-A delta | Materials | Draw keys |\n",
+        );
         output.push_str("| --- | ---: | ---: | ---: | ---: | --- | --- |\n");
         for backend in &model.backends {
             output.push_str(&format!(
@@ -535,6 +657,22 @@ fn markdown(report: &JoinReport) -> String {
                 fmt_opt_delta(backend.mean_expected_minus_actual_rgb_delta),
                 fmt_counts(&backend.materials),
                 fmt_counts(&backend.draw_keys),
+            ));
+        }
+        output.push('\n');
+        output.push_str("### Backend Color Fit\n\n");
+        output.push_str("| Backend | Preferred | Additive RGB | Additive error | Gain RGB | Gain error | Mean E/A ratio |\n");
+        output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+        for backend in &model.backends {
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                backend.backend,
+                backend.color_fit.preferred_fit,
+                fmt_opt_delta(backend.color_fit.additive_rgb_delta),
+                fmt_opt(backend.color_fit.additive_fit_mean_rgb_distance),
+                fmt_opt_delta(backend.color_fit.least_squares_gain_rgb),
+                fmt_opt(backend.color_fit.gain_fit_mean_rgb_distance),
+                fmt_opt_delta(backend.color_fit.mean_expected_over_actual_rgb_ratio),
             ));
         }
         output.push('\n');
@@ -554,7 +692,8 @@ fn markdown(report: &JoinReport) -> String {
         }
         output.push('\n');
         output.push_str("### Backend Pair Agreement\n\n");
-        output.push_str("| Pair | Shared pixels | Mean actual RGB distance | Mean E-A gap delta |\n");
+        output
+            .push_str("| Pair | Shared pixels | Mean actual RGB distance | Mean E-A gap delta |\n");
         output.push_str("| --- | ---: | ---: | ---: |\n");
         for pair in &model.backend_pairs {
             output.push_str(&format!(
@@ -581,7 +720,9 @@ fn markdown(report: &JoinReport) -> String {
         }
         output.push('\n');
         output.push_str("| Pixel | Materials | Draw keys | Backend | Model | Surface | Actual | Expected | E-A | E-A delta | Selected RGBA | Sel A/E | A-S / E-S |\n");
-        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: |\n");
+        output.push_str(
+            "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: |\n",
+        );
         for pixel in model.pixels.iter().take(24) {
             for (index, row) in pixel.rows.iter().enumerate() {
                 output.push_str(&format!(
@@ -768,7 +909,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         top_residuals_by_shading_model: vec![
             ResidualGroup {
                 key: "gltf_pbr".to_owned(),
-                rows: vec![residual_row(1, 2, "backpack_nm", "node/mesh/prim/base", 40.0)],
+                rows: vec![residual_row(
+                    1,
+                    2,
+                    "backpack_nm",
+                    "node/mesh/prim/base",
+                    40.0,
+                )],
             },
             ResidualGroup {
                 key: "mtoon".to_owned(),
@@ -804,10 +951,23 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(gltf.shared_backend_summaries.len(), 2);
     assert_eq!(gltf.backend_pairs.len(), 1);
     assert_eq!(gltf.shared_direction_buckets.len(), 1);
+    assert!(matches!(
+        gltf.backends[0].color_fit.preferred_fit,
+        "additive" | "similar" | "gain"
+    ));
+    assert!(gltf.backends[0]
+        .color_fit
+        .additive_fit_mean_rgb_distance
+        .is_some());
+    assert!(gltf.backends[0]
+        .color_fit
+        .gain_fit_mean_rgb_distance
+        .is_some());
     assert_eq!(gltf.pixels[0].x, 1);
     assert_eq!(gltf.pixels[0].rows.len(), 2);
     let markdown = markdown(&report);
     assert!(markdown.contains("Shading Model Residual Join"));
+    assert!(markdown.contains("Backend Color Fit"));
     assert!(markdown.contains("Shared Backend Sample Following"));
     assert!(markdown.contains("Backend Pair Agreement"));
     assert!(markdown.contains("Shared Direction Buckets"));

@@ -198,23 +198,20 @@ same evidence bucket.
 
 `just render-parity-seed-base-color-flat32-shading-model-residual-join` now
 joins those model-specific probes across wgpu, Bevy, and Ash. The current join
-report shows `gltf_pbr` has `17` shared top-residual pixels and is entirely
-`backpack_nm node145/mesh4/prim9/base`; wgpu/Ash are close to each other
-(`33.45` / `32.65` mean E-A), while Bevy is much farther (`89.46`) because many
-rows reproduce the selected sample almost exactly but stay darker than
-three-vrm. `mtoon` has `14` shared top-residual pixels; wgpu/Ash again cluster
-near each other (`45.87` / `45.62`), while Bevy is dominated by `huku_bake` and
-`eye` rows at `100.16`.
+report shows `gltf_pbr` has `16` shared top-residual pixels and is entirely
+`backpack_nm node145/mesh4/prim9/base`; all three backends are now in the same
+mean E-A band (`33.45` wgpu, `33.22` Bevy, `32.65` Ash). `mtoon` also has `16`
+shared top-residual pixels, with wgpu `45.87`, Bevy `45.89`, and Ash `45.62`.
 
-The join report also emits shared backend sample-following, backend-pair
-agreement, and direction buckets. On the current expanded Seed-san artifacts,
-`gltf_pbr` shows wgpu/Ash actual RGB distance `2.92` with almost no E-A gap
-delta (`0.04`), while Bevy follows the selected sample exactly for `10/15`
-shared rows. `mtoon` is even sharper: wgpu/Ash actual RGB distance is `0.14`,
-while Bevy's four shared rows are all selected-sample exact. The dominant
-direction buckets are still `expected_brighter`, so the next parity work should
-split wgpu/Ash shared material output from Bevy's selected-sample/fill behavior
-instead of applying one backend-wide color correction.
+The join report also emits backend color-fit, shared backend sample-following,
+backend-pair agreement, and direction buckets. On the current expanded Seed-san
+artifacts, `gltf_pbr` still shows Ash/wgpu actual RGB distance `2.92`, but
+Bevy/wgpu is even closer at `0.99`; `mtoon` is tightly clustered across all
+pairs (`0.14` Ash/wgpu, `0.79` Bevy/wgpu). Every backend/model currently
+prefers an additive RGB fit over a global gain fit. This points the next parity
+work toward ambient/fill/light accumulation or material-local offsets, not a
+single backend-wide exposure/gain correction or a Bevy-only selected-sample
+story.
 
 Expected-vs-actual audit Markdown:
 

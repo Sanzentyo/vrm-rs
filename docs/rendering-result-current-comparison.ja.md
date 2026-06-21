@@ -14,13 +14,13 @@
 | --- | --- |
 | 透明 / alpha | wgpu / Bevy / Ash とも主要セットでは alpha mismatch は出ていません。 |
 | wgpu と Ash | ほぼ同じ傾向で、backend transport より material/color/texture sampling 側が主な残差候補です。 |
-| Bevy | alpha は一致していますが、Seed-san の focused diagnostic では selected sample に寄りすぎるケースがあり、material/color/fill の見方を wgpu/Ash と分ける必要があります。 |
+| Bevy | alpha は一致しています。現行の expanded residual join では wgpu/Ash との差も縮まり、Bevy だけを selected-sample 問題として分離する読みは弱くなっています。 |
 | glTF/PBR | generated guard は良好ですが、Seed-san の `backpack_nm` はまだ three-vrm より暗い方向の残差が残っています。 |
 | MToon | body / arm / plastic / eye / bake surface の局所差分が残っています。 |
 
-直近の shading-model residual join では、`gltf_pbr` は `17` 個の共有 top-residual pixel がすべて `backpack_nm node145/mesh4/prim9/base` に集まっています。`mtoon` は `14` 個の共有 top-residual pixel があり、wgpu/Ash は近い一方、Bevy は `huku_bake` と `eye` の残差が目立ちます。
+直近の shading-model residual join では、`gltf_pbr` は `16` 個の共有 top-residual pixel がすべて `backpack_nm node145/mesh4/prim9/base` に集まっています。`mtoon` も `16` 個の共有 top-residual pixel があり、wgpu / Bevy / Ash はかなり近い mean E-A 帯に入っています。
 
-追加の shared backend 診断では、`gltf_pbr` の wgpu/Ash actual RGB distance は `2.92`、`mtoon` は `0.14` まで近く、Bevy は selected sample exact の比率が高いです。したがって次の実装は、wgpu/Ash 共通の material output と Bevy の selected-sample/fill 挙動を分けて追います。
+追加の shared backend 診断では、`gltf_pbr` の wgpu/Ash actual RGB distance は `2.92`、Bevy/wgpu は `0.99`、`mtoon` は Ash/wgpu `0.14`、Bevy/wgpu `0.79` まで近くなっています。additive RGB fit が gain fit より近いため、次の実装は ambient/fill/light accumulation と material-local offset を中心に追います。
 
 ## まず見る画像セット
 
@@ -178,12 +178,12 @@ Audit Markdown:
 
 | Shading model | 共有 top-residual pixels | wgpu mean E-A | Bevy mean E-A | Ash mean E-A | 主な surface / draw key | 読み |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `gltf_pbr` | 17 | 33.45 | 89.46 | 32.65 | `backpack_nm`, `node145/mesh4/prim9/base` | backpack/PBR の color accumulation を独立して追う。 |
-| `mtoon` | 14 | 45.87 | 100.16 | 45.62 | `eye`, `arm_mat`, `arm_plastic`, `huku_bake` | MToon の body/plastic/eye/bake surface を分けて追う。 |
+| `gltf_pbr` | 16 | 33.45 | 33.22 | 32.65 | `backpack_nm`, `node145/mesh4/prim9/base` | backpack/PBR の additive color gap を独立して追う。 |
+| `mtoon` | 16 | 45.87 | 45.89 | 45.62 | `eye`, `arm_mat`, `arm_plastic`, `huku_bake` | MToon の eye/arm/plastic/bake surface を分けて追う。 |
 
-この表から見る限り、次の修正は「全体 exposure を一つ動かす」より、`gltf_pbr` の backpack 系と `mtoon` の局所 material/fill を別々に合わせ込む方が安全です。
+この表から見る限り、次の修正は「全体 exposure/gain を一つ動かす」より、`gltf_pbr` の backpack 系と `mtoon` の局所 material/fill/light accumulation を別々に合わせ込む方が安全です。
 
-現在の shared backend 診断では、`gltf_pbr` は wgpu/Ash がほぼ同じ出力で Bevy が selected sample に寄る傾向、`mtoon` は wgpu/Ash がさらに強く一致して Bevy の shared rows は selected sample exact です。これは「三 renderer 共通の一括色補正」ではなく、renderer group ごとの原因分離が必要という読みを補強します。
+現在の shared backend 診断では、`gltf_pbr` は Bevy/wgpu が `0.99`、Ash/wgpu が `2.92`、`mtoon` は三 renderer すべてが `1.0` 未満級の actual RGB distance に収まっています。さらに Backend Color Fit は全 backend/model で additive を選ぶため、次は三 renderer 共通の additive/fill 成分を調べます。
 
 ## 現時点の読み
 
