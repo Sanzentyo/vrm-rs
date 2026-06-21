@@ -1925,18 +1925,20 @@ This writes `.external-fixtures/generated/gltf-pbr.vrm.gltf` and renders it into
 `.external-fixtures/render-parity-gltf-pbr-generated/`. The fixture intentionally
 does not use `VRMC_materials_mtoon`; it covers glTF `baseColorFactor`,
 `baseColorTexture`, roughness, metallic, `KHR_materials_emissive_strength`,
-`occlusionTexture`, `KHR_materials_unlit`, texture-factor, and `normalTexture`
-cases through the same Rust fallback shader branch used by real non-MToon
-materials such as Seed-san's `backpack_nm`. The current guard uses direct
+`occlusionTexture`, `KHR_materials_unlit`, texture-factor, and a
+Seed-san-shaped `pbr-backpack-like` normalTexture case with mipped base texture,
+roughness `0.657`, and single-sided rendering through the same Rust fallback
+shader branch used by real non-MToon materials such as Seed-san's
+`backpack_nm`. The current guard uses direct
 `.imqraw` `rgb-interior1px >= 47 dB`, max selected channel delta `<= 6`, and
 per-swatch `>= 40 dB` / max delta `<= 6` across wgpu, Bevy, and Ash. The latest
-run passes with selected PSNR wgpu `47.8016 dB`, Bevy `47.2691 dB`, and Ash
-`47.8016 dB`. The weakest swatches remain the rough blue and metallic PBR
-lighting cases around `41-42 dB`, while the new `pbr-normal-map` swatch is exact
+run passes with selected PSNR wgpu `47.8937 dB`, Bevy `47.4289 dB`, and Ash
+`47.8937 dB`. The weakest swatches remain the rough blue and metallic PBR
+lighting cases around `41-42 dB`, while `pbr-backpack-like` is exact
 (`Infinity`, max channel delta `0`) for wgpu, Bevy, and Ash. Treat this as a
-generated guard that broad glTF/PBR fallback, including normalTexture plumbing,
-is close; real-model `backpack_nm` residuals still need local
-owner/sample/material-condition diagnostics.
+generated guard that broad glTF/PBR fallback, including Seed-san-like
+normalTexture/mipped-base plumbing, is close; real-model `backpack_nm`
+residuals still need local owner/sample/material-condition diagnostics.
 
 To inspect those real Seed-san PBR inputs without committing binary assets, run:
 

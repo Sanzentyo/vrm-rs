@@ -60,7 +60,7 @@ readback format mismatches.
 
 | Fixture | Metric | wgpu | Bevy | Ash | Max channel delta |
 | --- | --- | ---: | ---: | ---: | ---: |
-| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | 6 |
+| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8937 | 47.4289 | 47.8937 | 6 |
 | `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | 1 |
 
 ### Current Seed-san Base-Color Diagnostic

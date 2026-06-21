@@ -94,6 +94,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    if !options.names.is_empty() && options.names.len() != components.len() {
+        return Err(format!(
+            "swatch name count ({}) does not match detected opaque component count ({})",
+            options.names.len(),
+            components.len()
+        )
+        .into());
+    }
     let swatches = components
         .iter()
         .enumerate()

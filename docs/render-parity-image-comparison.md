@@ -37,7 +37,7 @@ Gate: `rgbInterior1px >= 47 dB`, max selected channel delta `<= 6`, per-swatch `
 
 | Fixture | wgpu PSNR | Bevy PSNR | Ash PSNR | Notes |
 | --- | ---: | ---: | ---: | --- |
-| `gltf-pbr_vrm` | 47.8016 | 47.2691 | 47.8016 | Broad non-MToon glTF/PBR fallback, including normalTexture, is guarded. |
+| `gltf-pbr_vrm` | 47.8937 | 47.4289 | 47.8937 | Broad non-MToon glTF/PBR fallback, including a Seed-san-like mipped base + normalTexture swatch, is guarded. |
 
 ### Generated Transparent Blend
 

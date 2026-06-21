@@ -110,6 +110,7 @@ fn fixture_json() -> String {
                 "sampler": match index {
                     0 => 0,
                     2 => 2,
+                    3 => 2,
                     _ => 1,
                 },
                 "source": index
@@ -305,8 +306,8 @@ fn pbr_materials() -> Vec<Value> {
             ..PbrMaterialSpec::default()
         },
         PbrMaterialSpec {
-            name: "pbr-normal-map",
-            base_texture: Some(0),
+            name: "pbr-backpack-like",
+            base_texture: Some(3),
             normal_texture: Some(2),
             roughness: 0.657,
             double_sided: false,
@@ -440,7 +441,7 @@ fn mesh_buffer() -> Vec<u8> {
 }
 
 fn texture_pngs() -> Vec<Vec<u8>> {
-    vec![gradient_png(), occlusion_png(), normal_png()]
+    vec![gradient_png(), occlusion_png(), normal_png(), backpack_png()]
 }
 
 fn gradient_png() -> Vec<u8> {
@@ -490,6 +491,24 @@ fn normal_png() -> Vec<u8> {
                     _ => 84,
                 };
                 [red, green, 255, 255]
+            })
+        })
+        .collect::<Vec<_>>();
+    png_rgba(4, 4, &rgba)
+}
+
+fn backpack_png() -> Vec<u8> {
+    let rgba = (0..4)
+        .flat_map(|y| {
+            (0..4).flat_map(move |x| {
+                let u = x as f32 / 3.0;
+                let v = y as f32 / 3.0;
+                [
+                    (72.0 + 92.0 * u + 18.0 * v).round() as u8,
+                    (80.0 + 72.0 * v + 12.0 * u).round() as u8,
+                    (92.0 + 100.0 * (1.0 - u) + 20.0 * v).round() as u8,
+                    255,
+                ]
             })
         })
         .collect::<Vec<_>>();

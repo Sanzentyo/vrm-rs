@@ -17,6 +17,21 @@
   parses those exact fields, its self-test asserts the summary JSON does not
   contain `color_fit: null`, and the regenerated real summary artifact keeps
   additive/gain fit values in JSON as well as Markdown.
+- Strengthened the generated glTF/PBR fallback guard toward the real
+  `backpack_nm` blocker. The former broad normal-map swatch is now
+  `pbr-backpack-like`, combining a mipped base texture, normal texture,
+  roughness `0.657`, and single-sided rendering to mirror the relevant
+  Seed-san material conditions without committing sample assets. The focused
+  `just render-parity-gltf-pbr-generated` run passes with selected
+  `rgb-interior1px`: wgpu `47.8937 dB`, Bevy `47.4289 dB`, and Ash `47.8937
+  dB`; the `pbr-backpack-like` swatch itself is exact (`Infinity`, max channel
+  delta `0`) for all three Rust renderers. This keeps the remaining
+  `backpack_nm` residual classified as real-model local owner/fill or
+  material-condition behavior rather than missing broad PBR normal/mipped-base
+  plumbing. `compare-swatch-colors.rs` now also rejects `--names` lists whose
+  length does not match the detected opaque swatch count, so future generated
+  fixture edits cannot silently pass with a named swatch outside the camera
+  frame.
 
 ## 2026-06-20
 

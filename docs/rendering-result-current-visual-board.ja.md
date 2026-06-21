@@ -90,7 +90,7 @@ Artifact:
 | Fixture | Metric | wgpu | Bevy | Ash | 読み |
 | --- | --- | ---: | ---: | ---: | --- |
 | `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | alpha parity は一致。max channel delta は 1。 |
-| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | non-MToon glTF/PBR fallback を guard。 |
+| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8937 | 47.4289 | 47.8937 | Seed-san 風 backpack swatch を含めて non-MToon glTF/PBR fallback を guard。 |
 
 ### Generated Transparent Blend
 

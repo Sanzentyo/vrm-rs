@@ -82,7 +82,7 @@ Metric: `rgb-visible`.
 | Fixture | Metric | wgpu | Bevy | Ash | Current status |
 | --- | --- | ---: | ---: | ---: | --- |
 | `transparent-blend_vrm` | `rgb-visible` | 54.3997 | 56.8605 | 54.3997 | Exact alpha parity, max channel delta 1. |
-| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8016 | 47.2691 | 47.8016 | Non-MToon glTF/PBR fallback is guarded. |
+| `gltf-pbr_vrm` | `rgb-interior1px` | 47.8937 | 47.4289 | 47.8937 | Non-MToon glTF/PBR fallback is guarded, including a Seed-san-like backpack swatch. |
 
 ### Generated Transparent Blend
 
