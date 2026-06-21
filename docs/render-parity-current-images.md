@@ -80,6 +80,35 @@ Focused wgpu material-pixel reports:
 - Expanded post-resolve:
   [`Seed-san.wgpu-focused-material-pixels.render-resolve-expanded.gradient.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.wgpu-focused-material-pixels.render-resolve-expanded.gradient.md)
 
+Owner/sample execution audits compare each post-resolve manifest entry's target
+pixel against the actual readback pixel. They do not choose or modify samples.
+The current split shows that all three renderers load the manifests, but the
+expanded readback only fully reflects those samples in the Bevy path so far.
+
+| Readback | Renderer | Entries | Actual~sample | Mean actual-sample RGB distance | Max actual-sample RGB distance |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Current | wgpu | 101 | 10 | 71.6334 | 271.7756 |
+| Current | Bevy | 93 | 58 | 33.4403 | 273.4977 |
+| Current | Ash | 99 | 10 | 55.6954 | 219.7317 |
+| Expanded | wgpu | 101 | 24 | 45.7751 | 219.7317 |
+| Expanded | Bevy | 93 | 86 | 0.7938 | 1.7321 |
+| Expanded | Ash | 99 | 10 | 55.6968 | 219.7317 |
+
+Execution audit reports:
+
+- Current wgpu:
+  [`Seed-san.wgpu-owner-sample-execution.current-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.wgpu-owner-sample-execution.current-readback.md)
+- Current Bevy:
+  [`Seed-san.bevy-owner-sample-execution.current-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.bevy-owner-sample-execution.current-readback.md)
+- Current Ash:
+  [`Seed-san.ash-owner-sample-execution.current-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.ash-owner-sample-execution.current-readback.md)
+- Expanded wgpu:
+  [`Seed-san.wgpu-owner-sample-execution.expanded-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.wgpu-owner-sample-execution.expanded-readback.md)
+- Expanded Bevy:
+  [`Seed-san.bevy-owner-sample-execution.expanded-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.bevy-owner-sample-execution.expanded-readback.md)
+- Expanded Ash:
+  [`Seed-san.ash-owner-sample-execution.expanded-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.ash-owner-sample-execution.expanded-readback.md)
+
 ## Current Base-UV Images
 
 These are the latest local images under
