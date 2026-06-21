@@ -126,8 +126,9 @@ sample-closer buckets specifically, not blindly copy the manifest sample for
 all wgpu/Ash entries.
 
 The audits also include `Sample-Closer Buckets By Material` and
-`Sample-Closer Buckets By Material And Source`. On the expanded readback, the
-largest actionable wgpu/Ash margins are not the same as the largest counts:
+`Sample-Closer Buckets By Material And Source`. They now also include draw-key
+views (`node/mesh/primitive/pass`) sourced from manifest `sample_geometry`. On
+the expanded readback, the largest actionable wgpu/Ash margins are not the same as the largest counts:
 `huku_bake` has the most sample-closer rows but low mean margin, while `body_nm`,
 `arm_plastic`, `arm_mat`, and `armgear_plastic` have much larger mean margins.
 `backpack_nm` appears as only one low-margin sample-closer row in this audit, so
@@ -139,6 +140,13 @@ evaluation bucket rather than being folded into the owner/sample miss bucket.
 | wgpu | `huku_bake` `6` rows, mean margin `3.9800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Owner/sample miss rows exist, but the biggest errors are body/plastic/arm surfaces. |
 | Ash | `huku_bake` `5` rows, mean margin `4.5800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Same priority shape as wgpu; backend transport is not the only issue. |
 | Bevy | `huku_bake` `15` rows, mean margin `0.7700` | `arm_plastic` `1.0300`, `body_bake` `1.0000` | Bevy is mostly near the manifest sample; its residuals are smaller and more sample-following. |
+
+| High-margin material | Draw key | wgpu rows / mean margin | Ash rows / mean margin | Bevy rows / mean margin |
+| --- | --- | ---: | ---: | ---: |
+| `body_nm` | `node145/mesh4/prim1/base` | 4 / 43.7600 | 4 / 43.7600 | 1 / 0.3200 |
+| `arm_plastic` | `node144/mesh3/prim1/base` | 2 / 46.7300 | 2 / 46.7300 | 3 / 1.0300 |
+| `arm_mat` | `node144/mesh3/prim0/base` | 2 / 40.9900 | 2 / 40.9900 | 0 / n/a |
+| `armgear_plastic` | `node145/mesh4/prim4/base` | 2 / 37.8500 | 3 / 30.0900 | 3 / 0.7200 |
 
 ## Current Base-UV Images
 

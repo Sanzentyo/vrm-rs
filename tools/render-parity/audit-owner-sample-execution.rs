@@ -80,6 +80,8 @@ struct AuditReport {
     by_material: BTreeMap<String, AuditBucket>,
     sample_closer_by_material: Vec<SampleCloserBucket>,
     sample_closer_by_material_source: Vec<SampleCloserBucket>,
+    sample_closer_by_draw: Vec<SampleCloserBucket>,
+    sample_closer_by_material_draw: Vec<SampleCloserBucket>,
     top_actual_sample_misses: Vec<AuditRow>,
     top_sample_closer_to_expected: Vec<AuditRow>,
 }
@@ -142,6 +144,7 @@ struct AuditRow {
     material_name: String,
     triangle: Option<u64>,
     selection_source: String,
+    draw_key: Option<String>,
     manifest_rgba: [u8; 4],
     actual_rgba: Option<[u8; 4]>,
     expected_rgba: Option<[u8; 4]>,
@@ -159,6 +162,7 @@ struct ManifestEntry {
     material_name: String,
     triangle: Option<u64>,
     selection_source: String,
+    draw_key: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -238,6 +242,7 @@ fn audit(
             material_name: entry.material_name.clone(),
             triangle: entry.triangle,
             selection_source: entry.selection_source.clone(),
+            draw_key: entry.draw_key.clone(),
             manifest_rgba: entry.rgba,
             actual_rgba,
             expected_rgba,
@@ -268,6 +273,16 @@ fn audit(
         sample_closer_buckets(&rows, |row| row.material_name.clone());
     let sample_closer_by_material_source = sample_closer_buckets(&rows, |row| {
         format!("{} / {}", row.material_name, row.selection_source)
+    });
+    let sample_closer_by_draw = sample_closer_buckets(&rows, |row| {
+        row.draw_key.clone().unwrap_or_else(|| "unknown".to_owned())
+    });
+    let sample_closer_by_material_draw = sample_closer_buckets(&rows, |row| {
+        format!(
+            "{} / {}",
+            row.material_name,
+            row.draw_key.clone().unwrap_or_else(|| "unknown".to_owned())
+        )
     });
 
     let mut top_sample_closer_to_expected = rows
@@ -307,6 +322,8 @@ fn audit(
             .collect(),
         sample_closer_by_material,
         sample_closer_by_material_source,
+        sample_closer_by_draw,
+        sample_closer_by_material_draw,
         top_actual_sample_misses: rows,
         top_sample_closer_to_expected,
     })
@@ -484,7 +501,17 @@ fn manifest_entry(value: &Value, index: usize) -> Result<ManifestEntry, Box<dyn 
             .and_then(Value::as_str)
             .unwrap_or("unspecified")
             .to_owned(),
+        draw_key: draw_key_at(value, "/sample_geometry"),
     })
+}
+
+fn draw_key_at(value: &Value, pointer: &str) -> Option<String> {
+    let geometry = value.pointer(pointer)?;
+    let node = geometry.get("node")?.as_u64()?;
+    let mesh = geometry.get("mesh")?.as_u64()?;
+    let primitive = geometry.get("primitive")?.as_u64()?;
+    let pass = geometry.get("pass")?.as_str()?;
+    Some(format!("node{node}/mesh{mesh}/prim{primitive}/{pass}"))
 }
 
 fn rgba_at(value: &Value, pointer: &str) -> Option<[u8; 4]> {
@@ -583,15 +610,25 @@ fn markdown(report: &AuditReport) -> String {
     for bucket in &report.sample_closer_by_material_source {
         output.push_str(&sample_closer_bucket_row(bucket));
     }
+    output.push_str("\n## Sample-Closer Buckets By Draw\n\n");
+    output.push_str(&sample_closer_bucket_table());
+    for bucket in &report.sample_closer_by_draw {
+        output.push_str(&sample_closer_bucket_row(bucket));
+    }
+    output.push_str("\n## Sample-Closer Buckets By Material And Draw\n\n");
+    output.push_str(&sample_closer_bucket_table());
+    for bucket in &report.sample_closer_by_material_draw {
+        output.push_str(&sample_closer_bucket_row(bucket));
+    }
     output.push_str("\n## Top Actual-Sample Misses\n\n");
-    output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
-    output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Pixel | Material | Source | Draw | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
     for row in &report.top_actual_sample_misses {
         output.push_str(&audit_row_table_row(row));
     }
     output.push_str("\n## Top Sample-Closer Expected Pixels\n\n");
-    output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
-    output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Pixel | Material | Source | Draw | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
     for row in &report.top_sample_closer_to_expected {
         output.push_str(&audit_row_table_row(row));
     }
@@ -600,7 +637,7 @@ fn markdown(report: &AuditReport) -> String {
 
 fn audit_row_table_row(row: &AuditRow) -> String {
     format!(
-        "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         row.x,
         row.y,
         row.material_name,
@@ -608,6 +645,7 @@ fn audit_row_table_row(row: &AuditRow) -> String {
             .map(|triangle| triangle.to_string())
             .unwrap_or_else(|| "n/a".to_owned()),
         row.selection_source,
+        row.draw_key.as_deref().unwrap_or("n/a"),
         fmt_rgba(Some(row.manifest_rgba)),
         fmt_rgba(row.actual_rgba),
         fmt_rgba(row.expected_rgba),
@@ -726,7 +764,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "y": 1,
                 "rgba": [50, 60, 70, 255],
                 "surface": {"materialName": "other", "triangle": 2},
-                "selection_source": "webgl-coverage"
+                "selection_source": "webgl-coverage",
+                "sample_geometry": {
+                    "node": 0,
+                    "mesh": 1,
+                    "primitive": 2,
+                    "pass": "base"
+                }
             }
         ]
     });
@@ -761,8 +805,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.totals.actual_sample_expected_tie, 1);
     assert_eq!(report.sample_closer_by_material.len(), 1);
     assert_eq!(report.sample_closer_by_material[0].label, "other");
+    assert_eq!(
+        report.sample_closer_by_draw[0].label,
+        "node0/mesh1/prim2/base"
+    );
     assert_eq!(report.top_sample_closer_to_expected.len(), 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
     assert!(markdown(&report).contains("Sample-Closer Buckets By Material"));
+    assert!(markdown(&report).contains("Sample-Closer Buckets By Draw"));
     Ok(())
 }
