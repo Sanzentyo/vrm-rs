@@ -2833,9 +2833,12 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   The expanded hotspot summaries are still edge-local and low-gradient
   (`64/64` frontmost-visible, `63/64` within `0.5px`, `0` local texture
   gradients `>= 32`), so expanded ownership helps but does not close the
-  residual. The next renderer work should inspect shaded/base-color evaluation
-  for the remaining same-material/same-triangle local pixels instead of adding
-  another RGB-distance selection layer.
+  residual. The expanded texture audit refines the split: wgpu still has
+  `25/64` new residual pixels outside the expanded manifest, Bevy has `21/64`,
+  while Ash has `0/64`. Do not treat this as a mandate for RGB-distance
+  selection. The next work should model or iterate source-derived owner/fill
+  behavior for the wgpu/Bevy shifted residuals, then inspect shaded/base-color
+  evaluation for selected same-material/same-triangle buckets.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
