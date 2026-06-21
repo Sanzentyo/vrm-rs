@@ -115,6 +115,7 @@ struct ShadingModelBackendSummary {
     mean_expected_minus_actual_rgb_delta: [f64; 3],
     color_fit: Option<ShadingModelColorFitSummary>,
     material_draw_color_fits: Vec<ShadingModelMaterialDrawColorFitSummary>,
+    material_draw_shading_inputs: Vec<ShadingModelMaterialDrawShadingInputSummary>,
     materials: String,
     draw_keys: String,
 }
@@ -137,6 +138,23 @@ struct ShadingModelMaterialDrawColorFitSummary {
     mean_expected_actual_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     color_fit: Option<ShadingModelColorFitSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelMaterialDrawShadingInputSummary {
+    material_name: String,
+    draw_key: String,
+    row_count: u64,
+    models: String,
+    mean_base_color: Option<[f64; 4]>,
+    mean_shade_color: Option<[f64; 4]>,
+    mean_emissive: Option<[f64; 3]>,
+    mean_metallic: Option<f64>,
+    mean_roughness: Option<f64>,
+    mean_occlusion_strength: Option<f64>,
+    mean_normal_scale: Option<f64>,
+    unlit_count: u64,
+    v0_compat_shade_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -439,6 +457,37 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 }
                 out.push('\n');
             }
+            if model
+                .backends
+                .iter()
+                .any(|backend| !backend.material_draw_shading_inputs.is_empty())
+            {
+                out.push_str("#### Material / Draw Shading Inputs\n\n");
+                out.push_str("| Backend | Material | Draw key | Rows | Models | Base | Shade | Emissive | M/R/O/N | Unlit | V0 shade |\n");
+                out.push_str("| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+                for backend in &model.backends {
+                    for input in backend.material_draw_shading_inputs.iter().take(8) {
+                        out.push_str(&format!(
+                            "| {} | {} | {} | {} | {} | {} | {} | {} | {} / {} / {} / {} | {} | {} |\n",
+                            backend.backend,
+                            input.material_name,
+                            input.draw_key,
+                            input.row_count,
+                            input.models,
+                            fmt_optional_vec4(input.mean_base_color),
+                            fmt_optional_vec4(input.mean_shade_color),
+                            fmt_optional_vec3(input.mean_emissive),
+                            fmt_optional_f64(input.mean_metallic),
+                            fmt_optional_f64(input.mean_roughness),
+                            fmt_optional_f64(input.mean_occlusion_strength),
+                            fmt_optional_f64(input.mean_normal_scale),
+                            input.unlit_count,
+                            input.v0_compat_shade_count,
+                        ));
+                    }
+                }
+                out.push('\n');
+            }
             out.push_str(
                 "| Backend | Shared rows | Sample exact | Exact ratio | Mean A-S | Mean E-S |\n",
             );
@@ -539,9 +588,41 @@ fn shading_model_backend_summary(
         )?,
         color_fit: optional_color_fit(value)?,
         material_draw_color_fits: optional_material_draw_color_fits(value)?,
+        material_draw_shading_inputs: optional_material_draw_shading_inputs(value)?,
         materials: key_count_list(value, &["materials"])?,
         draw_keys: key_count_list(value, &["draw_keys"])?,
     })
+}
+
+fn optional_material_draw_shading_inputs(
+    backend: &Value,
+) -> Result<Vec<ShadingModelMaterialDrawShadingInputSummary>, Box<dyn Error>> {
+    let Some(entries) = optional_path(backend, &["material_draw_shading_inputs"]) else {
+        return Ok(Vec::new());
+    };
+    let entries = entries
+        .as_array()
+        .ok_or("material_draw_shading_inputs is not an array")?;
+    entries
+        .iter()
+        .map(|entry| {
+            Ok(ShadingModelMaterialDrawShadingInputSummary {
+                material_name: get_str_path(entry, &["material_name"])?,
+                draw_key: get_str_path(entry, &["draw_key"])?,
+                row_count: get_u64_path(entry, &["row_count"])?,
+                models: key_count_list(entry, &["models"])?,
+                mean_base_color: optional_vec4_path(entry, &["mean_base_color"])?,
+                mean_shade_color: optional_vec4_path(entry, &["mean_shade_color"])?,
+                mean_emissive: optional_vec3_path(entry, &["mean_emissive"])?,
+                mean_metallic: optional_f64_path(entry, &["mean_metallic"])?,
+                mean_roughness: optional_f64_path(entry, &["mean_roughness"])?,
+                mean_occlusion_strength: optional_f64_path(entry, &["mean_occlusion_strength"])?,
+                mean_normal_scale: optional_f64_path(entry, &["mean_normal_scale"])?,
+                unlit_count: get_u64_path(entry, &["unlit_count"])?,
+                v0_compat_shade_count: get_u64_path(entry, &["v0_compat_shade_count"])?,
+            })
+        })
+        .collect()
 }
 
 fn optional_material_draw_color_fits(
@@ -759,6 +840,35 @@ fn optional_vec3_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 3]>, 
     ]))
 }
 
+fn optional_vec4_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 4]>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let array = value
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    if array.len() != 4 {
+        return Err(format!("JSON path {} does not have length 4", path.join(".")).into());
+    }
+    Ok(Some([
+        array[0]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[0] is not a number", path.join(".")))?,
+        array[1]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[1] is not a number", path.join(".")))?,
+        array[2]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[2] is not a number", path.join(".")))?,
+        array[3]
+            .as_f64()
+            .ok_or_else(|| format!("JSON path {}[3] is not a number", path.join(".")))?,
+    ]))
+}
+
 fn optional_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut current = value;
     for key in path {
@@ -792,6 +902,17 @@ fn fmt_optional_f64(value: Option<f64>) -> String {
 fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
     value
         .map(|value| format!("{:.2},{:.2},{:.2}", value[0], value[1], value[2]))
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_vec4(value: Option<[f64; 4]>) -> String {
+    value
+        .map(|value| {
+            format!(
+                "{:.2},{:.2},{:.2},{:.2}",
+                value[0], value[1], value[2], value[3]
+            )
+        })
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
@@ -876,6 +997,21 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                             "preferred_fit": "additive"
                         }
                     }],
+                    "material_draw_shading_inputs": [{
+                        "material_name": "backpack_nm",
+                        "draw_key": "node145/mesh4/prim9/base",
+                        "row_count": 2,
+                        "models": [{"key": "gltf_pbr", "count": 2}],
+                        "mean_base_color": [1.0, 0.5, 0.25, 1.0],
+                        "mean_shade_color": [1.0, 1.0, 1.0, 1.0],
+                        "mean_emissive": [0.0, 0.0, 0.0],
+                        "mean_metallic": 0.0,
+                        "mean_roughness": 0.65,
+                        "mean_occlusion_strength": 1.0,
+                        "mean_normal_scale": 1.0,
+                        "unlit_count": 0,
+                        "v0_compat_shade_count": 0
+                    }],
                     "materials": [{"key": "backpack_nm", "count": 2}],
                     "draw_keys": [{"key": "node145/mesh4/prim9/base", "count": 2}]
                 }],
@@ -927,8 +1063,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .and_then(|backend| backend.color_fit.as_ref())
         .ok_or("self-test shading model color_fit was not parsed")?;
     assert_eq!(color_fit.preferred_fit, "additive");
+    let shading_input = summary
+        .shading_model_join
+        .as_ref()
+        .and_then(|join| join.models.first())
+        .and_then(|model| model.backends.first())
+        .and_then(|backend| backend.material_draw_shading_inputs.first())
+        .ok_or("self-test shading input was not parsed")?;
+    assert_eq!(shading_input.mean_base_color, Some([1.0, 0.5, 0.25, 1.0]));
     let summary_json = serde_json::to_string(&summary)?;
     assert!(summary_json.contains(r#""preferred_fit":"additive""#));
+    assert!(summary_json.contains(r#""material_draw_shading_inputs""#));
     assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
     assert!(markdown.contains("| wgpu | 42.5000 |"));
@@ -939,6 +1084,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         "| wgpu | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 | 1.10,1.20,1.30 |"
     ));
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | 4.5000 | 1.00,2.00,3.00 | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 |"));
+    assert!(markdown.contains("#### Material / Draw Shading Inputs"));
+    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | gltf_pbr:2 | 1.00,0.50,0.25,1.00 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));
     fs::remove_dir_all(root)?;
     Ok(())

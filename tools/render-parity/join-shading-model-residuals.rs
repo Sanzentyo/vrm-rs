@@ -92,6 +92,8 @@ struct ResidualRow {
     actual_minus_selection_rgb_delta: Option<[f64; 3]>,
     expected_minus_selection_rgb_delta: Option<[f64; 3]>,
     frontmost_shading_model: Option<String>,
+    #[serde(default)]
+    frontmost_material_shading: Option<MaterialShadingSnapshot>,
     frontmost: Option<SurfaceLabel>,
 }
 
@@ -99,6 +101,20 @@ struct ResidualRow {
 struct SurfaceLabel {
     material_name: String,
     triangle: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct MaterialShadingSnapshot {
+    model: String,
+    base_color: Option<[f64; 4]>,
+    shade_color: Option<[f64; 4]>,
+    emissive: Option<[f64; 3]>,
+    metallic: Option<f64>,
+    roughness: Option<f64>,
+    occlusion_strength: Option<f64>,
+    normal_scale: Option<f64>,
+    unlit: Option<bool>,
+    v0_compat_shade: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -133,6 +149,7 @@ struct BackendModelSummary {
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     color_fit: ColorFitSummary,
     material_draw_color_fits: Vec<MaterialDrawColorFitSummary>,
+    material_draw_shading_inputs: Vec<MaterialDrawShadingInputSummary>,
     materials: Vec<CountSummary>,
     draw_keys: Vec<CountSummary>,
 }
@@ -155,6 +172,23 @@ struct MaterialDrawColorFitSummary {
     mean_expected_actual_rgb_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     color_fit: ColorFitSummary,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialDrawShadingInputSummary {
+    material_name: String,
+    draw_key: String,
+    row_count: u64,
+    models: Vec<CountSummary>,
+    mean_base_color: Option<[f64; 4]>,
+    mean_shade_color: Option<[f64; 4]>,
+    mean_emissive: Option<[f64; 3]>,
+    mean_metallic: Option<f64>,
+    mean_roughness: Option<f64>,
+    mean_occlusion_strength: Option<f64>,
+    mean_normal_scale: Option<f64>,
+    unlit_count: u64,
+    v0_compat_shade_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -216,6 +250,68 @@ struct BackendResidual {
     selection_expected_rgb_distance: Option<f64>,
     actual_minus_selection_rgb_delta: Option<[f64; 3]>,
     expected_minus_selection_rgb_delta: Option<[f64; 3]>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Vec4Accumulator {
+    sum: [f64; 4],
+    count: usize,
+}
+
+impl Vec4Accumulator {
+    fn add(&mut self, value: Option<[f64; 4]>) {
+        let Some(value) = value else {
+            return;
+        };
+        for (sum, value) in self.sum.iter_mut().zip(value) {
+            *sum += value;
+        }
+        self.count += 1;
+    }
+
+    fn mean(self) -> Option<[f64; 4]> {
+        (self.count > 0).then(|| self.sum.map(|value| value / self.count as f64))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Vec3Accumulator {
+    sum: [f64; 3],
+    count: usize,
+}
+
+impl Vec3Accumulator {
+    fn add(&mut self, value: Option<[f64; 3]>) {
+        let Some(value) = value else {
+            return;
+        };
+        add_delta(&mut self.sum, value);
+        self.count += 1;
+    }
+
+    fn mean(self) -> Option<[f64; 3]> {
+        mean_delta(self.sum, self.count)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ScalarAccumulator {
+    sum: f64,
+    count: usize,
+}
+
+impl ScalarAccumulator {
+    fn add(&mut self, value: Option<f64>) {
+        let Some(value) = value else {
+            return;
+        };
+        self.sum += value;
+        self.count += 1;
+    }
+
+    fn mean(self) -> Option<f64> {
+        mean(self.sum, self.count)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -370,9 +466,79 @@ fn backend_summary(backend: &str, rows: &[ResidualRow]) -> BackendModelSummary {
         mean_expected_minus_actual_rgb_delta: mean_delta(delta_sum, rows.len()),
         color_fit: color_fit(rows),
         material_draw_color_fits: material_draw_color_fits(rows),
+        material_draw_shading_inputs: material_draw_shading_inputs(rows),
         materials: count_summaries(materials),
         draw_keys: count_summaries(draw_keys),
     }
+}
+
+fn material_draw_shading_inputs(rows: &[ResidualRow]) -> Vec<MaterialDrawShadingInputSummary> {
+    let mut groups = BTreeMap::<(String, String), Vec<&MaterialShadingSnapshot>>::new();
+    for row in rows {
+        let Some(material) = material_name(row) else {
+            continue;
+        };
+        let Some(draw_key) = &row.selection_draw_key else {
+            continue;
+        };
+        let Some(shading) = &row.frontmost_material_shading else {
+            continue;
+        };
+        groups
+            .entry((material, draw_key.clone()))
+            .or_default()
+            .push(shading);
+    }
+    let mut summaries = groups
+        .into_iter()
+        .map(|((material_name, draw_key), rows)| {
+            let mut models = BTreeMap::<String, u64>::new();
+            let mut base = Vec4Accumulator::default();
+            let mut shade = Vec4Accumulator::default();
+            let mut emissive = Vec3Accumulator::default();
+            let mut metallic = ScalarAccumulator::default();
+            let mut roughness = ScalarAccumulator::default();
+            let mut occlusion = ScalarAccumulator::default();
+            let mut normal = ScalarAccumulator::default();
+            let mut unlit_count = 0;
+            let mut v0_compat_shade_count = 0;
+            for row in &rows {
+                *models.entry(row.model.clone()).or_default() += 1;
+                base.add(row.base_color);
+                shade.add(row.shade_color);
+                emissive.add(row.emissive);
+                metallic.add(row.metallic);
+                roughness.add(row.roughness);
+                occlusion.add(row.occlusion_strength);
+                normal.add(row.normal_scale);
+                unlit_count += u64::from(row.unlit.unwrap_or(false));
+                v0_compat_shade_count += u64::from(row.v0_compat_shade.unwrap_or(false));
+            }
+            MaterialDrawShadingInputSummary {
+                material_name,
+                draw_key,
+                row_count: rows.len().try_into().unwrap_or(u64::MAX),
+                models: count_summaries(models),
+                mean_base_color: base.mean(),
+                mean_shade_color: shade.mean(),
+                mean_emissive: emissive.mean(),
+                mean_metallic: metallic.mean(),
+                mean_roughness: roughness.mean(),
+                mean_occlusion_strength: occlusion.mean(),
+                mean_normal_scale: normal.mean(),
+                unlit_count,
+                v0_compat_shade_count,
+            }
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .row_count
+            .cmp(&left.row_count)
+            .then_with(|| left.material_name.cmp(&right.material_name))
+            .then_with(|| left.draw_key.cmp(&right.draw_key))
+    });
+    summaries
 }
 
 fn material_draw_color_fits(rows: &[ResidualRow]) -> Vec<MaterialDrawColorFitSummary> {
@@ -765,6 +931,37 @@ fn markdown(report: &JoinReport) -> String {
             }
             output.push('\n');
         }
+        if model
+            .backends
+            .iter()
+            .any(|backend| !backend.material_draw_shading_inputs.is_empty())
+        {
+            output.push_str("### Material / Draw Shading Inputs\n\n");
+            output.push_str("| Backend | Material | Draw key | Rows | Models | Base | Shade | Emissive | M/R/O/N | Unlit | V0 shade |\n");
+            output.push_str("| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+            for backend in &model.backends {
+                for input in backend.material_draw_shading_inputs.iter().take(8) {
+                    output.push_str(&format!(
+                        "| {} | {} | {} | {} | {} | {} | {} | {} | {} / {} / {} / {} | {} | {} |\n",
+                        backend.backend,
+                        input.material_name,
+                        input.draw_key,
+                        input.row_count,
+                        fmt_counts(&input.models),
+                        fmt_opt_vec4(input.mean_base_color),
+                        fmt_opt_vec4(input.mean_shade_color),
+                        fmt_opt_delta(input.mean_emissive),
+                        fmt_opt(input.mean_metallic),
+                        fmt_opt(input.mean_roughness),
+                        fmt_opt(input.mean_occlusion_strength),
+                        fmt_opt(input.mean_normal_scale),
+                        input.unlit_count,
+                        input.v0_compat_shade_count,
+                    ));
+                }
+            }
+            output.push('\n');
+        }
         output.push_str("### Shared Backend Sample Following\n\n");
         output.push_str("| Backend | Shared rows | Sample exact rows | Sample exact ratio | Mean A-S | Mean E-S |\n");
         output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
@@ -972,6 +1169,17 @@ fn fmt_opt_delta(delta: Option<[f64; 3]>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn fmt_opt_vec4(value: Option<[f64; 4]>) -> String {
+    value
+        .map(|value| {
+            format!(
+                "{:.2},{:.2},{:.2},{:.2}",
+                value[0], value[1], value[2], value[3]
+            )
+        })
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn option_f64_desc(left: Option<f64>, right: Option<f64>) -> std::cmp::Ordering {
     match (left, right) {
         (Some(left), Some(right)) => left.total_cmp(&right),
@@ -1069,12 +1277,21 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         gltf.backends[0].material_draw_color_fits[0].draw_key,
         "node/mesh/prim/base"
     );
+    assert_eq!(
+        gltf.backends[0].material_draw_shading_inputs[0].material_name,
+        "backpack_nm"
+    );
+    assert_eq!(
+        gltf.backends[0].material_draw_shading_inputs[0].mean_base_color,
+        Some([1.0, 0.5, 0.25, 1.0])
+    );
     assert_eq!(gltf.pixels[0].x, 1);
     assert_eq!(gltf.pixels[0].rows.len(), 2);
     let markdown = markdown(&report);
     assert!(markdown.contains("Shading Model Residual Join"));
     assert!(markdown.contains("Backend Color Fit"));
     assert!(markdown.contains("Material / Draw Color Fit"));
+    assert!(markdown.contains("Material / Draw Shading Inputs"));
     assert!(markdown.contains("Shared Backend Sample Following"));
     assert!(markdown.contains("Backend Pair Agreement"));
     assert!(markdown.contains("Shared Direction Buckets"));
@@ -1105,6 +1322,18 @@ fn residual_row(x: u64, y: u64, material: &str, draw_key: &str, distance: f64) -
         actual_minus_selection_rgb_delta: Some([-1.0, -1.0, -1.0]),
         expected_minus_selection_rgb_delta: Some([29.0, 29.0, 29.0]),
         frontmost_shading_model: Some("gltf_pbr".to_owned()),
+        frontmost_material_shading: Some(MaterialShadingSnapshot {
+            model: "gltf_pbr".to_owned(),
+            base_color: Some([1.0, 0.5, 0.25, 1.0]),
+            shade_color: Some([1.0, 1.0, 1.0, 1.0]),
+            emissive: Some([0.0, 0.0, 0.0]),
+            metallic: Some(0.0),
+            roughness: Some(0.65),
+            occlusion_strength: Some(1.0),
+            normal_scale: Some(1.0),
+            unlit: Some(false),
+            v0_compat_shade: Some(false),
+        }),
         frontmost: Some(SurfaceLabel {
             material_name: material.to_owned(),
             triangle: 7,

@@ -275,6 +275,7 @@ struct ResidualRow {
     actual_minus_selection_rgb_delta: Option<[f64; 3]>,
     expected_minus_selection_rgb_delta: Option<[f64; 3]>,
     frontmost_shading_model: Option<String>,
+    frontmost_material_shading: Option<MaterialShadingSnapshot>,
     frontmost: Option<SurfaceLabel>,
     actual_match: Option<SurfaceLabel>,
     expected_match: Option<SurfaceLabel>,
@@ -304,6 +305,20 @@ struct ResidualGroup {
 struct SurfaceLabel {
     material_name: String,
     triangle: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialShadingSnapshot {
+    model: String,
+    base_color: Option<[f64; 4]>,
+    shade_color: Option<[f64; 4]>,
+    emissive: Option<[f64; 3]>,
+    metallic: Option<f64>,
+    roughness: Option<f64>,
+    occlusion_strength: Option<f64>,
+    normal_scale: Option<f64>,
+    unlit: Option<bool>,
+    v0_compat_shade: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1821,6 +1836,10 @@ fn residual_row(
             .map(|(selection, expected)| signed_rgb_delta(expected, selection)),
         frontmost_shading_model: str_at(hotspot, "/frontmost_visible/material_shading/model")
             .map(ToOwned::to_owned),
+        frontmost_material_shading: material_shading_at(
+            hotspot,
+            "/frontmost_visible/material_shading",
+        ),
         frontmost: surface_at(hotspot, "/frontmost_visible"),
         actual_match: surface_at(hotspot, "/nearest_visible_actual"),
         expected_match: surface_at(hotspot, "/nearest_visible_expected"),
@@ -1923,6 +1942,41 @@ fn pixel_key(value: &Value) -> Option<(u64, u64)> {
 
 fn rgba_at(value: &Value, pointer: &str) -> Option<[u8; 4]> {
     rgba(value.pointer(pointer)?)
+}
+
+fn material_shading_at(value: &Value, pointer: &str) -> Option<MaterialShadingSnapshot> {
+    let value = value.pointer(pointer)?;
+    Some(MaterialShadingSnapshot {
+        model: value.get("model")?.as_str()?.to_owned(),
+        base_color: f64_array4(value, "base_color"),
+        shade_color: f64_array4(value, "shade_color"),
+        emissive: f64_array3(value, "emissive"),
+        metallic: value.get("metallic").and_then(Value::as_f64),
+        roughness: value.get("roughness").and_then(Value::as_f64),
+        occlusion_strength: value.get("occlusion_strength").and_then(Value::as_f64),
+        normal_scale: value.get("normal_scale").and_then(Value::as_f64),
+        unlit: value.get("unlit").and_then(Value::as_bool),
+        v0_compat_shade: value.get("v0_compat_shade").and_then(Value::as_bool),
+    })
+}
+
+fn f64_array3(value: &Value, key: &str) -> Option<[f64; 3]> {
+    let array = value.get(key)?.as_array()?;
+    Some([
+        array.first()?.as_f64()?,
+        array.get(1)?.as_f64()?,
+        array.get(2)?.as_f64()?,
+    ])
+}
+
+fn f64_array4(value: &Value, key: &str) -> Option<[f64; 4]> {
+    let array = value.get(key)?.as_array()?;
+    Some([
+        array.first()?.as_f64()?,
+        array.get(1)?.as_f64()?,
+        array.get(2)?.as_f64()?,
+        array.get(3)?.as_f64()?,
+    ])
 }
 
 fn rgba(value: &Value) -> Option<[u8; 4]> {

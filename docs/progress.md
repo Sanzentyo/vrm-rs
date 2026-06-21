@@ -48,6 +48,17 @@
   away from draw-routing loss and toward material/color evaluation. `body_nm`
   keeps a larger sample-closer bucket, so it remains the sharper owner/sample
   adoption sentinel.
+- Preserved material shading inputs through the Seed-san residual diagnostics.
+  `audit-texture-sampling-parity` now keeps the frontmost `material_shading`
+  snapshot on residual rows, `join-shading-model-residuals` groups it by
+  material/draw key, and `summarize-render-resolve-expanded` carries the same
+  `material_draw_shading_inputs` into the expanded summary JSON/Markdown. The
+  regenerated real summary now shows `backpack_nm` as a stable glTF/PBR input
+  (`roughness=0.657`, metallic `0`, occlusion `1`) across Ash/Bevy/wgpu, while
+  the MToon `eye` rows share base `1,1,1,1`, shade `0.44,0.40,0.50,1`, and no
+  emissive. This narrows the remaining additive residual away from missing
+  material-parameter extraction and toward texture sample ownership or
+  light/color accumulation at those fixed inputs.
 - Strengthened the generated glTF/PBR fallback guard toward the real
   `backpack_nm` blocker. The former broad normal-map swatch is now
   `pbr-backpack-like`, combining a mipped base texture, normal texture,
