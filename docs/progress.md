@@ -53,6 +53,17 @@
   matches and `15/15` owner-sample-resolve rows, so the remaining focused
   residuals should stay classified as owner/fill/sample or narrower texture/color
   evaluation work rather than missing material draw assignment.
+- Split `audit-texture-sampling-parity.rs` selected rows by owner/sample manifest
+  `selection_source`. The refreshed expanded Seed-san texture audits now show
+  center selections and WebGL-coverage selections separately: wgpu center rows
+  are `33` with manifest A/E/T `20/13/0`, Bevy center rows are `34` with
+  `22/12/0`, and Ash center rows are `58` with `43/15/0`; the shared
+  WebGL-coverage bucket is `6` rows on all three backends with manifest A/E/T
+  `2/4/0` and the same material mix (`arm_plastic`, `backpack_nm`, `body_nm`,
+  `eye`). This keeps the next parity work split by selection provenance instead
+  of by PSNR: coverage-derived rows are already selecting the WebGL owner but
+  still need material/color evaluation audit, while center rows remain the
+  larger owner/fill/sample modelling bucket.
 - Added `base-color-texture-as-linear` as an explicit browser/wgpu/Bevy
   diagnostic mode, separate from the existing `base-color-raw-srgb` check.
   `base-color-raw-srgb` still means "bind raw UNORM but manually decode sRGB";

@@ -63,6 +63,7 @@ struct AuditReport {
     missing_selection: BucketStats,
     carried_selection: BucketStats,
     new_selection: BucketStats,
+    selection_source_buckets: Vec<SelectionSourceBucket>,
     recommended_probes: Vec<ProbeRecommendation>,
     top_residuals: Vec<ResidualRow>,
     top_residuals_by_shading_model: Vec<ResidualGroup>,
@@ -237,6 +238,12 @@ struct SelectionMaterialDrawBucket {
     material_name: String,
     draw_key: String,
     stats: MaterialBucket,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SelectionSourceBucket {
+    selection_source: String,
+    stats: BucketStats,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1613,6 +1620,10 @@ fn audit(
         .map(manifest_draw_keys)
         .transpose()?
         .unwrap_or_default();
+    let selected_sources = manifest
+        .map(manifest_selection_sources)
+        .transpose()?
+        .unwrap_or_default();
     let baseline_selected = baseline_manifest
         .map(manifest_pixels)
         .transpose()?
@@ -1623,6 +1634,7 @@ fn audit(
     let mut missing_acc = Accumulator::default();
     let mut carried_acc = Accumulator::default();
     let mut new_acc = Accumulator::default();
+    let mut source_accs = BTreeMap::<String, Accumulator>::new();
     let mut residuals = Vec::new();
 
     for hotspot in hotspot_items {
@@ -1635,9 +1647,18 @@ fn audit(
         let selection_surface = selected_surfaces.get(&pixel);
         let selection_rgba = selected_rgba.get(&pixel).copied();
         let selection_draw_key = selected_draw_keys.get(&pixel).map(String::as_str);
+        let selection_source = selected_sources.get(&pixel).map(String::as_str);
         all.add(hotspot, selection_surface, selection_draw_key, selection_rgba);
         if is_selected {
             selected_acc.add(hotspot, selection_surface, selection_draw_key, selection_rgba);
+            if let Some(selection_source) = selection_source {
+                source_accs.entry(selection_source.to_owned()).or_default().add(
+                    hotspot,
+                    selection_surface,
+                    selection_draw_key,
+                    selection_rgba,
+                );
+            }
             if is_carried {
                 carried_acc.add(hotspot, selection_surface, selection_draw_key, selection_rgba);
             } else if is_new {
@@ -1681,6 +1702,7 @@ fn audit(
     let new_selection_stats = new_acc.finish();
     let recommended_probes =
         recommended_probes(&selected_stats.selection_material_draw_buckets, top);
+    let selection_source_buckets = selection_source_buckets(source_accs);
     Ok(AuditReport {
         hotspots: display_path(hotspots_path),
         manifest: manifest_path.map(display_path),
@@ -1697,6 +1719,7 @@ fn audit(
         missing_selection: missing_selection_stats,
         carried_selection: carried_selection_stats,
         new_selection: new_selection_stats,
+        selection_source_buckets,
         recommended_probes,
         top_residuals: residuals,
         top_residuals_by_shading_model,
@@ -1784,6 +1807,25 @@ fn manifest_draw_keys(manifest: &Value) -> Result<HashMap<(u64, u64), String>, B
                 pixel_key(correction)?,
                 draw_key_at(correction, "/sample_geometry")?,
             ))
+        })
+        .collect())
+}
+
+fn manifest_selection_sources(
+    manifest: &Value,
+) -> Result<HashMap<(u64, u64), String>, Box<dyn Error>> {
+    let corrections = manifest
+        .get("corrections")
+        .and_then(Value::as_array)
+        .ok_or("manifest corrections must be an array")?;
+    Ok(corrections
+        .iter()
+        .filter_map(|correction| {
+            let source = correction
+                .get("selection_source")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            Some((pixel_key(correction)?, source.to_owned()))
         })
         .collect())
 }
@@ -2187,6 +2229,30 @@ fn material_draw_buckets(
     values
 }
 
+fn selection_source_buckets(sources: BTreeMap<String, Accumulator>) -> Vec<SelectionSourceBucket> {
+    let mut values = sources
+        .into_iter()
+        .map(|(selection_source, accumulator)| SelectionSourceBucket {
+            selection_source,
+            stats: accumulator.finish(),
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .stats
+            .count
+            .cmp(&left.stats.count)
+            .then_with(|| {
+                right
+                    .stats
+                    .manifest_sample_expected_closer
+                    .cmp(&left.stats.manifest_sample_expected_closer)
+            })
+            .then_with(|| left.selection_source.cmp(&right.selection_source))
+    });
+    values
+}
+
 fn recommended_probes(
     buckets: &[SelectionMaterialDrawBucket],
     top: usize,
@@ -2322,6 +2388,7 @@ fn markdown(report: &AuditReport) -> String {
         report.new_selection_count
     ));
     push_probe_recommendations_markdown(&mut output, &report.recommended_probes);
+    push_selection_source_buckets_markdown(&mut output, &report.selection_source_buckets);
     push_bucket_markdown(&mut output, "All", &report.all);
     push_bucket_markdown(&mut output, "Selected", &report.selected);
     push_bucket_markdown(&mut output, "Missing Selection", &report.missing_selection);
@@ -2339,6 +2406,42 @@ fn markdown(report: &AuditReport) -> String {
         }
     }
     output
+}
+
+fn push_selection_source_buckets_markdown(
+    output: &mut String,
+    buckets: &[SelectionSourceBucket],
+) {
+    if buckets.is_empty() {
+        return;
+    }
+    output.push_str("## Selection Source Buckets\n\n");
+    output.push_str("| Source | Count | Mean E-A | Manifest A/E/T | Manifest <=1.5 A/E | Manifest near/far A/E/both | Mean Manifest A/E | Mean A-M / E-M | Materials | Draw keys |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n");
+    for bucket in buckets {
+        let stats = &bucket.stats;
+        output.push_str(&format!(
+            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} |\n",
+            bucket.selection_source,
+            stats.count,
+            fmt_opt(stats.mean_expected_actual_rgb_distance),
+            stats.manifest_sample_actual_closer,
+            stats.manifest_sample_expected_closer,
+            stats.manifest_sample_tied,
+            stats.manifest_sample_actual_within_1_5,
+            stats.manifest_sample_expected_within_1_5,
+            stats.manifest_sample_actual_near_expected_far,
+            stats.manifest_sample_actual_far_expected_near,
+            stats.manifest_sample_both_far,
+            fmt_opt(stats.mean_manifest_sample_actual_rgb_distance),
+            fmt_opt(stats.mean_manifest_sample_expected_rgb_distance),
+            fmt_opt_rgb_delta(stats.mean_actual_minus_manifest_sample_rgb_delta),
+            fmt_opt_rgb_delta(stats.mean_expected_minus_manifest_sample_rgb_delta),
+            fmt_materials(&stats.material_counts),
+            fmt_material_draws(&stats.selection_material_draw_buckets),
+        ));
+    }
+    output.push('\n');
 }
 
 fn push_probe_recommendations_markdown(output: &mut String, probes: &[ProbeRecommendation]) {
@@ -2723,6 +2826,15 @@ fn fmt_materials(materials: &[MaterialCount]) -> String {
         .join(", ")
 }
 
+fn fmt_material_draws(draws: &[SelectionMaterialDrawBucket]) -> String {
+    draws
+        .iter()
+        .take(4)
+        .map(|draw| format!("{} {}:{}", draw.material_name, draw.draw_key, draw.stats.count))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn fmt_shading_models(models: &[ShadingModelCount]) -> String {
     models
         .iter()
@@ -2854,6 +2966,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "y": 2,
                 "rgba": [12, 10, 10, 255],
                 "surface": {"materialName": "selected_body", "triangle": 70},
+                "selection_source": "webgl-coverage",
                 "sample_geometry": {
                     "node": 145,
                     "mesh": 4,
@@ -2924,6 +3037,19 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         report.selected.selection_material_draw_buckets[0].stats.count,
         1
+    );
+    assert_eq!(report.selection_source_buckets.len(), 1);
+    assert_eq!(
+        report.selection_source_buckets[0].selection_source,
+        "webgl-coverage"
+    );
+    assert_eq!(report.selection_source_buckets[0].stats.count, 1);
+    assert_eq!(
+        report.selection_source_buckets[0]
+            .stats
+            .selection_material_draw_buckets[0]
+            .draw_key,
+        "node145/mesh4/prim1/base"
     );
     assert_eq!(report.recommended_probes.len(), 1);
     assert_eq!(report.recommended_probes[0].material_name, "selected_body");
@@ -3000,6 +3126,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("Top Residuals: mtoon"));
     assert!(markdown.contains("Recommended Material Probes"));
     assert!(markdown.contains("selected_sample_matches_three_vrm"));
+    assert!(markdown.contains("Selection Source Buckets"));
+    assert!(markdown.contains("| webgl-coverage | 1 |"));
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
     assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));
