@@ -196,6 +196,16 @@ three-vrm. `mtoon` has `14` shared top-residual pixels; wgpu/Ash again cluster
 near each other (`45.87` / `45.62`), while Bevy is dominated by `huku_bake` and
 `eye` rows at `100.16`.
 
+The join report also emits shared backend sample-following, backend-pair
+agreement, and direction buckets. On the current expanded Seed-san artifacts,
+`gltf_pbr` shows wgpu/Ash actual RGB distance `2.92` with almost no E-A gap
+delta (`0.04`), while Bevy follows the selected sample exactly for `10/15`
+shared rows. `mtoon` is even sharper: wgpu/Ash actual RGB distance is `0.14`,
+while Bevy's four shared rows are all selected-sample exact. The dominant
+direction buckets are still `expected_brighter`, so the next parity work should
+split wgpu/Ash shared material output from Bevy's selected-sample/fill behavior
+instead of applying one backend-wide color correction.
+
 Expected-vs-actual audit Markdown:
 
 - [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)

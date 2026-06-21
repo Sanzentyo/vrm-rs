@@ -118,6 +118,9 @@ struct ModelJoin {
     model: String,
     backends: Vec<BackendModelSummary>,
     shared_pixel_count: u64,
+    shared_backend_summaries: Vec<SharedBackendSummary>,
+    backend_pairs: Vec<BackendPairSummary>,
+    shared_direction_buckets: Vec<DirectionBucketSummary>,
     pixels: Vec<PixelJoin>,
 }
 
@@ -128,6 +131,33 @@ struct BackendModelSummary {
     selected_count: u64,
     mean_expected_actual_rgb_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
+    materials: Vec<CountSummary>,
+    draw_keys: Vec<CountSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SharedBackendSummary {
+    backend: String,
+    shared_rows: u64,
+    sample_exact_rows: u64,
+    sample_exact_ratio: Option<f64>,
+    mean_actual_selection_rgb_distance: Option<f64>,
+    mean_expected_selection_rgb_distance: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BackendPairSummary {
+    left: String,
+    right: String,
+    shared_pixels: u64,
+    mean_actual_rgb_distance: Option<f64>,
+    mean_expected_actual_gap_delta: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DirectionBucketSummary {
+    signature: String,
+    count: u64,
     materials: Vec<CountSummary>,
     draw_keys: Vec<CountSummary>,
 }
@@ -278,6 +308,9 @@ fn model_join(model: String, backend_rows: BTreeMap<String, Vec<ResidualRow>>) -
         model,
         backends,
         shared_pixel_count,
+        shared_backend_summaries: shared_backend_summaries(&pixels),
+        backend_pairs: backend_pair_summaries(&pixels),
+        shared_direction_buckets: shared_direction_buckets(&pixels),
         pixels,
     }
 }
@@ -339,6 +372,141 @@ fn backend_residual(backend: &str, row: ResidualRow) -> BackendResidual {
     }
 }
 
+fn shared_backend_summaries(pixels: &[PixelJoin]) -> Vec<SharedBackendSummary> {
+    #[derive(Default)]
+    struct Accumulator {
+        rows: u64,
+        sample_exact_rows: u64,
+        actual_selection_sum: f64,
+        actual_selection_count: usize,
+        expected_selection_sum: f64,
+        expected_selection_count: usize,
+    }
+
+    let mut by_backend = BTreeMap::<String, Accumulator>::new();
+    for pixel in pixels.iter().filter(|pixel| pixel.rows.len() > 1) {
+        for row in &pixel.rows {
+            let accumulator = by_backend.entry(row.backend.clone()).or_default();
+            accumulator.rows += 1;
+            if let Some(distance) = row.selection_actual_rgb_distance {
+                accumulator.actual_selection_sum += distance;
+                accumulator.actual_selection_count += 1;
+                if distance <= 1.5 {
+                    accumulator.sample_exact_rows += 1;
+                }
+            }
+            if let Some(distance) = row.selection_expected_rgb_distance {
+                accumulator.expected_selection_sum += distance;
+                accumulator.expected_selection_count += 1;
+            }
+        }
+    }
+    by_backend
+        .into_iter()
+        .map(|(backend, accumulator)| SharedBackendSummary {
+            backend,
+            shared_rows: accumulator.rows,
+            sample_exact_rows: accumulator.sample_exact_rows,
+            sample_exact_ratio: (accumulator.rows > 0)
+                .then_some(accumulator.sample_exact_rows as f64 / accumulator.rows as f64),
+            mean_actual_selection_rgb_distance: mean(
+                accumulator.actual_selection_sum,
+                accumulator.actual_selection_count,
+            ),
+            mean_expected_selection_rgb_distance: mean(
+                accumulator.expected_selection_sum,
+                accumulator.expected_selection_count,
+            ),
+        })
+        .collect()
+}
+
+fn backend_pair_summaries(pixels: &[PixelJoin]) -> Vec<BackendPairSummary> {
+    #[derive(Default)]
+    struct Accumulator {
+        count: usize,
+        actual_distance_sum: f64,
+        gap_delta_sum: f64,
+    }
+
+    let mut by_pair = BTreeMap::<(String, String), Accumulator>::new();
+    for pixel in pixels.iter().filter(|pixel| pixel.rows.len() > 1) {
+        for (left_index, left) in pixel.rows.iter().enumerate() {
+            for right in pixel.rows.iter().skip(left_index + 1) {
+                let key = ordered_pair(&left.backend, &right.backend);
+                let accumulator = by_pair.entry(key).or_default();
+                accumulator.count += 1;
+                accumulator.actual_distance_sum += rgb_distance(left.actual, right.actual);
+                accumulator.gap_delta_sum += (left.expected_actual_rgb_distance
+                    - right.expected_actual_rgb_distance)
+                    .abs();
+            }
+        }
+    }
+    by_pair
+        .into_iter()
+        .map(|((left, right), accumulator)| BackendPairSummary {
+            left,
+            right,
+            shared_pixels: accumulator.count.try_into().unwrap_or(u64::MAX),
+            mean_actual_rgb_distance: mean(accumulator.actual_distance_sum, accumulator.count),
+            mean_expected_actual_gap_delta: mean(accumulator.gap_delta_sum, accumulator.count),
+        })
+        .collect()
+}
+
+fn shared_direction_buckets(pixels: &[PixelJoin]) -> Vec<DirectionBucketSummary> {
+    struct Accumulator {
+        count: u64,
+        materials: BTreeMap<String, u64>,
+        draw_keys: BTreeMap<String, u64>,
+    }
+
+    let mut by_signature = BTreeMap::<String, Accumulator>::new();
+    for pixel in pixels.iter().filter(|pixel| pixel.rows.len() > 1) {
+        let signature = pixel
+            .rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{}:{}",
+                    row.backend,
+                    delta_direction(row.expected_minus_actual_rgb_delta)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let accumulator = by_signature.entry(signature).or_insert_with(|| Accumulator {
+            count: 0,
+            materials: BTreeMap::new(),
+            draw_keys: BTreeMap::new(),
+        });
+        accumulator.count += 1;
+        for material in &pixel.material_names {
+            *accumulator.materials.entry(material.clone()).or_default() += 1;
+        }
+        for draw_key in &pixel.draw_keys {
+            *accumulator.draw_keys.entry(draw_key.clone()).or_default() += 1;
+        }
+    }
+    let mut buckets = by_signature
+        .into_iter()
+        .map(|(signature, accumulator)| DirectionBucketSummary {
+            signature,
+            count: accumulator.count,
+            materials: count_summaries(accumulator.materials),
+            draw_keys: count_summaries(accumulator.draw_keys),
+        })
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.signature.cmp(&right.signature))
+    });
+    buckets
+}
+
 fn markdown(report: &JoinReport) -> String {
     let mut output = String::new();
     output.push_str("# Shading Model Residual Join\n\n");
@@ -367,6 +535,48 @@ fn markdown(report: &JoinReport) -> String {
                 fmt_opt_delta(backend.mean_expected_minus_actual_rgb_delta),
                 fmt_counts(&backend.materials),
                 fmt_counts(&backend.draw_keys),
+            ));
+        }
+        output.push('\n');
+        output.push_str("### Shared Backend Sample Following\n\n");
+        output.push_str("| Backend | Shared rows | Sample exact rows | Sample exact ratio | Mean A-S | Mean E-S |\n");
+        output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
+        for backend in &model.shared_backend_summaries {
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                backend.backend,
+                backend.shared_rows,
+                backend.sample_exact_rows,
+                fmt_opt(backend.sample_exact_ratio),
+                fmt_opt(backend.mean_actual_selection_rgb_distance),
+                fmt_opt(backend.mean_expected_selection_rgb_distance),
+            ));
+        }
+        output.push('\n');
+        output.push_str("### Backend Pair Agreement\n\n");
+        output.push_str("| Pair | Shared pixels | Mean actual RGB distance | Mean E-A gap delta |\n");
+        output.push_str("| --- | ---: | ---: | ---: |\n");
+        for pair in &model.backend_pairs {
+            output.push_str(&format!(
+                "| {} / {} | {} | {} | {} |\n",
+                pair.left,
+                pair.right,
+                pair.shared_pixels,
+                fmt_opt(pair.mean_actual_rgb_distance),
+                fmt_opt(pair.mean_expected_actual_gap_delta),
+            ));
+        }
+        output.push('\n');
+        output.push_str("### Shared Direction Buckets\n\n");
+        output.push_str("| Signature | Count | Materials | Draw keys |\n");
+        output.push_str("| --- | ---: | --- | --- |\n");
+        for bucket in model.shared_direction_buckets.iter().take(12) {
+            output.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                bucket.signature,
+                bucket.count,
+                fmt_counts(&bucket.materials),
+                fmt_counts(&bucket.draw_keys),
             ));
         }
         output.push('\n');
@@ -448,6 +658,39 @@ fn unique_strings<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn ordered_pair(left: &str, right: &str) -> (String, String) {
+    if left <= right {
+        (left.to_owned(), right.to_owned())
+    } else {
+        (right.to_owned(), left.to_owned())
+    }
+}
+
+fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f64 {
+    left[..3]
+        .iter()
+        .zip(&right[..3])
+        .map(|(&left, &right)| {
+            let delta = f64::from(left) - f64::from(right);
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+fn delta_direction(delta: [f64; 3]) -> &'static str {
+    const EPSILON: f64 = 0.5;
+    if delta.iter().all(|value| *value > EPSILON) {
+        "expected_brighter"
+    } else if delta.iter().all(|value| *value < -EPSILON) {
+        "expected_darker"
+    } else if delta.iter().all(|value| value.abs() <= EPSILON) {
+        "matched"
+    } else {
+        "mixed"
+    }
 }
 
 fn mean(sum: f64, count: usize) -> Option<f64> {
@@ -558,10 +801,17 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .expect("gltf_pbr model");
     assert_eq!(gltf.shared_pixel_count, 1);
     assert_eq!(gltf.backends.len(), 2);
+    assert_eq!(gltf.shared_backend_summaries.len(), 2);
+    assert_eq!(gltf.backend_pairs.len(), 1);
+    assert_eq!(gltf.shared_direction_buckets.len(), 1);
     assert_eq!(gltf.pixels[0].x, 1);
     assert_eq!(gltf.pixels[0].rows.len(), 2);
     let markdown = markdown(&report);
     assert!(markdown.contains("Shading Model Residual Join"));
+    assert!(markdown.contains("Shared Backend Sample Following"));
+    assert!(markdown.contains("Backend Pair Agreement"));
+    assert!(markdown.contains("Shared Direction Buckets"));
+    assert!(markdown.contains("expected_brighter"));
     assert!(markdown.contains("`gltf_pbr`"));
     assert!(markdown.contains("backpack_nm"));
     assert!(markdown.contains("wgpu"));

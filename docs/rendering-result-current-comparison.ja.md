@@ -20,6 +20,8 @@
 
 直近の shading-model residual join では、`gltf_pbr` は `17` 個の共有 top-residual pixel がすべて `backpack_nm node145/mesh4/prim9/base` に集まっています。`mtoon` は `14` 個の共有 top-residual pixel があり、wgpu/Ash は近い一方、Bevy は `huku_bake` と `eye` の残差が目立ちます。
 
+追加の shared backend 診断では、`gltf_pbr` の wgpu/Ash actual RGB distance は `2.92`、`mtoon` は `0.14` まで近く、Bevy は selected sample exact の比率が高いです。したがって次の実装は、wgpu/Ash 共通の material output と Bevy の selected-sample/fill 挙動を分けて追います。
+
 ## まず見る画像セット
 
 現状の主要な比較対象は、次の順で見るのが分かりやすいです。
@@ -180,6 +182,8 @@ Audit Markdown:
 | `mtoon` | 14 | 45.87 | 100.16 | 45.62 | `eye`, `arm_mat`, `arm_plastic`, `huku_bake` | MToon の body/plastic/eye/bake surface を分けて追う。 |
 
 この表から見る限り、次の修正は「全体 exposure を一つ動かす」より、`gltf_pbr` の backpack 系と `mtoon` の局所 material/fill を別々に合わせ込む方が安全です。
+
+現在の shared backend 診断では、`gltf_pbr` は wgpu/Ash がほぼ同じ出力で Bevy が selected sample に寄る傾向、`mtoon` は wgpu/Ash がさらに強く一致して Bevy の shared rows は selected sample exact です。これは「三 renderer 共通の一括色補正」ではなく、renderer group ごとの原因分離が必要という読みを補強します。
 
 ## 現時点の読み
 
