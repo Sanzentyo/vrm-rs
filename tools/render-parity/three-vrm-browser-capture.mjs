@@ -312,6 +312,23 @@ function capturePage(options) {
     map: textureReport(material?.map),
   });
 
+  const compactMaterialState = (material) => material ? {
+    name: material.name ?? '',
+    uuid: material.uuid ?? null,
+    type: material.type ?? null,
+    side: material.side ?? null,
+    transparent: material.transparent ?? false,
+    opacity: material.opacity ?? 1.0,
+    alphaTest: material.alphaTest ?? 0.0,
+    depthWrite: material.depthWrite ?? true,
+    depthTest: material.depthTest ?? true,
+    blending: material.blending ?? null,
+    premultipliedAlpha: material.premultipliedAlpha ?? false,
+    toneMapped: material.toneMapped ?? null,
+    color: material.color?.isColor ? material.color.toArray() : null,
+    map: textureReport(material.map),
+  } : null;
+
   const attributeReport = (attribute) => {
     if (!attribute) return null;
     const array = attribute.array ?? [];
@@ -891,6 +908,7 @@ function capturePage(options) {
     projectedBaseColorTextureAsLinearSrgb: candidate.projectedBaseColorTextureAsLinearSrgb,
     projectedBaseColorRenderedPixelRgbDistance: candidate.projectedBaseColorRenderedPixelRgbDistance,
     projectedBaseColorTextureAsLinearRenderedPixelRgbDistance: candidate.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance,
+    materialState: candidate.materialState,
   } : null;
 
   const summarizeProjectedHotspots = (hotspots) => {
@@ -1027,6 +1045,7 @@ function capturePage(options) {
           materialIndex: projected.materialIndex,
           materialName: projected.materialName,
           materialType: projected.materialType,
+          materialState: compactMaterialState(projected.material),
           triangle: projected.triangle,
           indices: projected.indices,
           ownerId: projected.ownerId,
@@ -1140,6 +1159,16 @@ function capturePage(options) {
         const nearestActualBaseColor = candidates
           .slice()
           .sort((left, right) => left.projectedBaseColorActualRgbDistance - right.projectedBaseColorActualRgbDistance || left.depth - right.depth)[0] ?? null;
+        const nearestRenderedBaseColor = renderedPixelRgba
+          ? candidates
+            .slice()
+            .sort((left, right) => left.projectedBaseColorRenderedPixelRgbDistance - right.projectedBaseColorRenderedPixelRgbDistance || left.depth - right.depth)[0] ?? null
+          : null;
+        const nearestRenderedTextureAsLinearBaseColor = renderedPixelRgba
+          ? candidates
+            .slice()
+            .sort((left, right) => left.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance - right.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance || left.depth - right.depth)[0] ?? null
+          : null;
         const renderedOwner = renderedHotspotOwner(hotspot, renderedRgba);
         const renderedOwnerCandidate = renderedOwner?.id == null
           ? null
@@ -1160,6 +1189,8 @@ function capturePage(options) {
           nearestActual,
           nearestExpectedBaseColor,
           nearestActualBaseColor,
+          nearestRenderedBaseColor,
+          nearestRenderedTextureAsLinearBaseColor,
           renderedOwnerCandidate,
           renderedOwnerDepthRank: renderedOwnerDepthRank && renderedOwnerDepthRank > 0 ? renderedOwnerDepthRank : null,
           renderedOwnerDepthDeltaFromFrontmost: renderedOwnerCandidate && frontmost ? renderedOwnerCandidate.depth - frontmost.depth : null,
@@ -1170,6 +1201,8 @@ function capturePage(options) {
             nearestActual: ownerMatches(renderedOwner, nearestActual),
             nearestExpectedBaseColor: ownerMatches(renderedOwner, nearestExpectedBaseColor),
             nearestActualBaseColor: ownerMatches(renderedOwner, nearestActualBaseColor),
+            nearestRenderedBaseColor: ownerMatches(renderedOwner, nearestRenderedBaseColor),
+            nearestRenderedTextureAsLinearBaseColor: ownerMatches(renderedOwner, nearestRenderedTextureAsLinearBaseColor),
           } : null,
           candidateCount: candidates.length,
           candidatesByExpected: candidates
@@ -1180,6 +1213,18 @@ function capturePage(options) {
             .slice()
             .sort((left, right) => left.projectedBaseColorExpectedRgbDistance - right.projectedBaseColorExpectedRgbDistance || left.depth - right.depth)
             .slice(0, 8),
+          candidatesByRenderedBaseColor: renderedPixelRgba
+            ? candidates
+              .slice()
+              .sort((left, right) => left.projectedBaseColorRenderedPixelRgbDistance - right.projectedBaseColorRenderedPixelRgbDistance || left.depth - right.depth)
+              .slice(0, 8)
+            : [],
+          candidatesByRenderedTextureAsLinearBaseColor: renderedPixelRgba
+            ? candidates
+              .slice()
+              .sort((left, right) => left.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance - right.projectedBaseColorTextureAsLinearRenderedPixelRgbDistance || left.depth - right.depth)
+              .slice(0, 8)
+            : [],
         };
       });
     return {

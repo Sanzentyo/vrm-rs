@@ -46,9 +46,13 @@ struct OwnerHotspotReport {
     rendered_to_frontmost_materials: BTreeMap<String, u64>,
     rendered_to_best_subpixel_materials: BTreeMap<String, u64>,
     rendered_to_best_neighbor_materials: BTreeMap<String, u64>,
+    frontmost_to_nearest_rendered_base_color_materials: BTreeMap<String, u64>,
+    frontmost_to_nearest_rendered_texture_as_linear_materials: BTreeMap<String, u64>,
     rendered_to_frontmost_triangles: BTreeMap<String, u64>,
     rendered_to_best_subpixel_triangles: BTreeMap<String, u64>,
     rendered_to_best_neighbor_triangles: BTreeMap<String, u64>,
+    frontmost_to_nearest_rendered_base_color_triangles: BTreeMap<String, u64>,
+    frontmost_to_nearest_rendered_texture_as_linear_triangles: BTreeMap<String, u64>,
 }
 
 fn main() {
@@ -91,9 +95,13 @@ fn summarize_report(
     let mut rendered_to_frontmost_materials = BTreeMap::new();
     let mut rendered_to_best_subpixel_materials = BTreeMap::new();
     let mut rendered_to_best_neighbor_materials = BTreeMap::new();
+    let mut frontmost_to_nearest_rendered_base_color_materials = BTreeMap::new();
+    let mut frontmost_to_nearest_rendered_texture_as_linear_materials = BTreeMap::new();
     let mut rendered_to_frontmost_triangles = BTreeMap::new();
     let mut rendered_to_best_subpixel_triangles = BTreeMap::new();
     let mut rendered_to_best_neighbor_triangles = BTreeMap::new();
+    let mut frontmost_to_nearest_rendered_base_color_triangles = BTreeMap::new();
+    let mut frontmost_to_nearest_rendered_texture_as_linear_triangles = BTreeMap::new();
 
     for hotspot in top {
         let rendered = owner_material(hotspot, "/renderedOwner/owner");
@@ -109,6 +117,30 @@ fn summarize_report(
             &mut rendered_to_frontmost_triangles,
             rendered_triangle_key(hotspot).as_deref(),
             candidate_triangle_key(hotspot, "frontmost").as_deref(),
+        );
+
+        let nearest_rendered_base_color = candidate_material(hotspot, "nearestRenderedBaseColor");
+        let nearest_rendered_texture_as_linear =
+            candidate_material(hotspot, "nearestRenderedTextureAsLinearBaseColor");
+        bump_pair(
+            &mut frontmost_to_nearest_rendered_base_color_materials,
+            frontmost.as_deref(),
+            nearest_rendered_base_color.as_deref(),
+        );
+        bump_pair(
+            &mut frontmost_to_nearest_rendered_texture_as_linear_materials,
+            frontmost.as_deref(),
+            nearest_rendered_texture_as_linear.as_deref(),
+        );
+        bump_pair(
+            &mut frontmost_to_nearest_rendered_base_color_triangles,
+            candidate_triangle_key(hotspot, "frontmost").as_deref(),
+            candidate_triangle_key(hotspot, "nearestRenderedBaseColor").as_deref(),
+        );
+        bump_pair(
+            &mut frontmost_to_nearest_rendered_texture_as_linear_triangles,
+            candidate_triangle_key(hotspot, "frontmost").as_deref(),
+            candidate_triangle_key(hotspot, "nearestRenderedTextureAsLinearBaseColor").as_deref(),
         );
 
         let best_subpixel = hotspot.pointer("/renderedOwnerRecovery/bestSubpixel");
@@ -165,9 +197,13 @@ fn summarize_report(
         rendered_to_frontmost_materials,
         rendered_to_best_subpixel_materials,
         rendered_to_best_neighbor_materials,
+        frontmost_to_nearest_rendered_base_color_materials,
+        frontmost_to_nearest_rendered_texture_as_linear_materials,
         rendered_to_frontmost_triangles,
         rendered_to_best_subpixel_triangles,
         rendered_to_best_neighbor_triangles,
+        frontmost_to_nearest_rendered_base_color_triangles,
+        frontmost_to_nearest_rendered_texture_as_linear_triangles,
     })
 }
 
@@ -211,6 +247,7 @@ fn triangle_key(value: &Value) -> Option<String> {
 
 fn normalize_material(name: &str) -> String {
     name.strip_suffix(":vrm-rs-owner-id-diagnostic")
+        .or_else(|| name.strip_suffix(":vrm-rs-flat-diagnostic"))
         .unwrap_or(name)
         .to_owned()
 }
@@ -260,6 +297,16 @@ fn markdown_report(report: &OwnerHotspotReport) -> String {
         &mut output,
         "Rendered To Best Neighbor Materials",
         &report.rendered_to_best_neighbor_materials,
+    );
+    write_top_counts(
+        &mut output,
+        "Frontmost To Nearest Rendered Base-Color Materials",
+        &report.frontmost_to_nearest_rendered_base_color_materials,
+    );
+    write_top_counts(
+        &mut output,
+        "Frontmost To Nearest Rendered Texture-As-Linear Materials",
+        &report.frontmost_to_nearest_rendered_texture_as_linear_materials,
     );
     output
 }
