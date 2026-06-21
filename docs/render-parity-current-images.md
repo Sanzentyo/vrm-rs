@@ -125,6 +125,21 @@ there. This reinforces that the next renderer change should target those
 sample-closer buckets specifically, not blindly copy the manifest sample for
 all wgpu/Ash entries.
 
+The audits also include `Sample-Closer Buckets By Material` and
+`Sample-Closer Buckets By Material And Source`. On the expanded readback, the
+largest actionable wgpu/Ash margins are not the same as the largest counts:
+`huku_bake` has the most sample-closer rows but low mean margin, while `body_nm`,
+`arm_plastic`, `arm_mat`, and `armgear_plastic` have much larger mean margins.
+`backpack_nm` appears as only one low-margin sample-closer row in this audit, so
+the remaining `backpack_nm` work should stay in the separate material/color
+evaluation bucket rather than being folded into the owner/sample miss bucket.
+
+| Expanded readback | Top sample-closer count bucket | Highest-margin buckets | Reading |
+| --- | --- | --- | --- |
+| wgpu | `huku_bake` `6` rows, mean margin `3.9800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Owner/sample miss rows exist, but the biggest errors are body/plastic/arm surfaces. |
+| Ash | `huku_bake` `5` rows, mean margin `4.5800` | `arm_plastic` `46.7300`, `body_nm` `43.7600`, `arm_mat` `40.9900` | Same priority shape as wgpu; backend transport is not the only issue. |
+| Bevy | `huku_bake` `15` rows, mean margin `0.7700` | `arm_plastic` `1.0300`, `body_bake` `1.0000` | Bevy is mostly near the manifest sample; its residuals are smaller and more sample-following. |
+
 ## Current Base-UV Images
 
 These are the latest local images under

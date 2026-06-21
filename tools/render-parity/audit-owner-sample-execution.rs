@@ -78,8 +78,31 @@ struct AuditReport {
     totals: AuditBucket,
     by_selection_source: BTreeMap<String, AuditBucket>,
     by_material: BTreeMap<String, AuditBucket>,
+    sample_closer_by_material: Vec<SampleCloserBucket>,
+    sample_closer_by_material_source: Vec<SampleCloserBucket>,
     top_actual_sample_misses: Vec<AuditRow>,
     top_sample_closer_to_expected: Vec<AuditRow>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SampleCloserBucket {
+    label: String,
+    entries: u64,
+    mean_sample_expected_margin: f64,
+    max_sample_expected_margin: f64,
+    mean_expected_sample_distance: f64,
+    mean_actual_expected_distance: f64,
+    top_pixel: Option<AuditRow>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SampleCloserAccumulator {
+    entries: u64,
+    margin_sum: f64,
+    expected_sample_distance_sum: f64,
+    actual_expected_distance_sum: f64,
+    max_margin: f64,
+    top_pixel: Option<AuditRow>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -241,6 +264,12 @@ fn audit(
         rows.push(row);
     }
 
+    let sample_closer_by_material =
+        sample_closer_buckets(&rows, |row| row.material_name.clone());
+    let sample_closer_by_material_source = sample_closer_buckets(&rows, |row| {
+        format!("{} / {}", row.material_name, row.selection_source)
+    });
+
     let mut top_sample_closer_to_expected = rows
         .iter()
         .filter(|row| row.expected_closeness == Some(ExpectedCloseness::Sample))
@@ -276,6 +305,8 @@ fn audit(
             .into_iter()
             .map(|(key, value)| (key, value.finish()))
             .collect(),
+        sample_closer_by_material,
+        sample_closer_by_material_source,
         top_actual_sample_misses: rows,
         top_sample_closer_to_expected,
     })
@@ -285,6 +316,70 @@ impl AuditRow {
     fn sample_expected_margin(&self) -> Option<f64> {
         Some(self.actual_expected_distance? - self.expected_sample_distance?)
     }
+}
+
+impl SampleCloserAccumulator {
+    fn push(&mut self, row: &AuditRow) {
+        let Some(margin) = row.sample_expected_margin() else {
+            return;
+        };
+        self.entries += 1;
+        self.margin_sum += margin;
+        self.max_margin = self.max_margin.max(margin);
+        self.expected_sample_distance_sum += row.expected_sample_distance.unwrap_or_default();
+        self.actual_expected_distance_sum += row.actual_expected_distance.unwrap_or_default();
+        if self
+            .top_pixel
+            .as_ref()
+            .and_then(AuditRow::sample_expected_margin)
+            .is_none_or(|current_margin| margin > current_margin)
+        {
+            self.top_pixel = Some(row.clone());
+        }
+    }
+
+    fn finish(self, label: String) -> SampleCloserBucket {
+        let entries = self.entries.max(1);
+        SampleCloserBucket {
+            label,
+            entries: self.entries,
+            mean_sample_expected_margin: self.margin_sum / entries as f64,
+            max_sample_expected_margin: self.max_margin,
+            mean_expected_sample_distance: self.expected_sample_distance_sum / entries as f64,
+            mean_actual_expected_distance: self.actual_expected_distance_sum / entries as f64,
+            top_pixel: self.top_pixel,
+        }
+    }
+}
+
+fn sample_closer_buckets(
+    rows: &[AuditRow],
+    key: impl Fn(&AuditRow) -> String,
+) -> Vec<SampleCloserBucket> {
+    let mut accumulators = BTreeMap::<String, SampleCloserAccumulator>::new();
+    for row in rows
+        .iter()
+        .filter(|row| row.expected_closeness == Some(ExpectedCloseness::Sample))
+    {
+        accumulators.entry(key(row)).or_default().push(row);
+    }
+    let mut buckets = accumulators
+        .into_iter()
+        .map(|(label, accumulator)| accumulator.finish(label))
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| {
+        right
+            .entries
+            .cmp(&left.entries)
+            .then_with(|| {
+                right
+                    .mean_sample_expected_margin
+                    .partial_cmp(&left.mean_sample_expected_margin)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    buckets
 }
 
 impl BucketAccumulator {
@@ -478,6 +573,16 @@ fn markdown(report: &AuditReport) -> String {
     for (material, bucket) in &report.by_material {
         output.push_str(&bucket_table_row(material, bucket));
     }
+    output.push_str("\n## Sample-Closer Buckets By Material\n\n");
+    output.push_str(&sample_closer_bucket_table());
+    for bucket in &report.sample_closer_by_material {
+        output.push_str(&sample_closer_bucket_row(bucket));
+    }
+    output.push_str("\n## Sample-Closer Buckets By Material And Source\n\n");
+    output.push_str(&sample_closer_bucket_table());
+    for bucket in &report.sample_closer_by_material_source {
+        output.push_str(&sample_closer_bucket_row(bucket));
+    }
     output.push_str("\n## Top Actual-Sample Misses\n\n");
     output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
     output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
@@ -538,6 +643,38 @@ fn bucket_table_row(label: &str, bucket: &AuditBucket) -> String {
         fmt_f64(bucket.mean_expected_sample_distance),
         fmt_f64(bucket.mean_actual_expected_distance),
         fmt_f64(bucket.max_actual_sample_distance),
+    )
+}
+
+fn sample_closer_bucket_table() -> &'static str {
+    "| Bucket | Entries | Mean sample margin | Max sample margin | Mean E-S | Mean A-E | Top pixel |\n\
+     | --- | ---: | ---: | ---: | ---: | ---: | --- |\n"
+}
+
+fn sample_closer_bucket_row(bucket: &SampleCloserBucket) -> String {
+    let top_pixel = bucket.top_pixel.as_ref().map_or_else(
+        || "n/a".to_owned(),
+        |row| {
+            format!(
+                "{},{} {}:{}",
+                row.x,
+                row.y,
+                row.material_name,
+                row.triangle
+                    .map(|triangle| triangle.to_string())
+                    .unwrap_or_else(|| "n/a".to_owned())
+            )
+        },
+    );
+    format!(
+        "| {} | {} | {:.4} | {:.4} | {:.4} | {:.4} | {} |\n",
+        bucket.label,
+        bucket.entries,
+        bucket.mean_sample_expected_margin,
+        bucket.max_sample_expected_margin,
+        bucket.mean_expected_sample_distance,
+        bucket.mean_actual_expected_distance,
+        top_pixel,
     )
 }
 
@@ -622,7 +759,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.totals.expected_sample_exact, 2);
     assert_eq!(report.totals.sample_closer_to_expected_than_actual, 1);
     assert_eq!(report.totals.actual_sample_expected_tie, 1);
+    assert_eq!(report.sample_closer_by_material.len(), 1);
+    assert_eq!(report.sample_closer_by_material[0].label, "other");
     assert_eq!(report.top_sample_closer_to_expected.len(), 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
+    assert!(markdown(&report).contains("Sample-Closer Buckets By Material"));
     Ok(())
 }
