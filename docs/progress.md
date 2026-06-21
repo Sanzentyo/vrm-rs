@@ -2,6 +2,15 @@
 
 ## 2026-06-22
 
+- Added `docs/render-parity-current-image-comparison.md` as the current image
+  comparison note for Seed-san render parity. It separates the primary
+  render-resolve-expanded readback set from the latest full-frame three-vrm
+  diagnostic set, records the current PSNR/alpha/hotspot interpretation, and
+  calls out `backpack_nm` glTF/PBR color accumulation as the remaining blocker.
+  The expanded summary JSON serializer now skips absent `color_fit` values
+  instead of writing `color_fit: null`, while still parsing
+  `color_fit_summary`/camelCase aliases from real join artifacts so additive/gain
+  fit diagnostics survive into both JSON and Markdown summaries.
 - Added normal-map sampling to the CPU PBR hotspot diagnostic. `map-render-hotspots.rs`
   now records normal UV, sampled normal texture RGBA, geometric normal, and
   tangent-space shading normal for glTF/PBR candidates, using the same normal-map

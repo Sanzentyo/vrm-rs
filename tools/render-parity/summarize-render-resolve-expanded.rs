@@ -137,6 +137,7 @@ struct ShadingModelBackendSummary {
     selected_count: u64,
     mean_expected_actual_distance: f64,
     mean_expected_minus_actual_rgb_delta: [f64; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
     color_fit: Option<ShadingModelColorFitSummary>,
     material_draw_color_fits: Vec<ShadingModelMaterialDrawColorFitSummary>,
     material_draw_shading_inputs: Vec<ShadingModelMaterialDrawShadingInputSummary>,
@@ -163,6 +164,7 @@ struct ShadingModelMaterialDrawColorFitSummary {
     row_count: u64,
     mean_expected_actual_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     color_fit: Option<ShadingModelColorFitSummary>,
 }
 
