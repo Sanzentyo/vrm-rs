@@ -1571,6 +1571,7 @@ fn material_draw_metadata(
                     "primitive": source.primitive_index,
                     "pass": source.pass.as_str(),
                     "key": owner_source_key(source),
+                    "role": bevy_primitive_draw_role(primitive),
                 },
                 "material": {
                     "index": source.material,
@@ -1596,6 +1597,15 @@ fn material_draw_metadata(
             })
         })
         .collect()
+}
+
+fn bevy_primitive_draw_role(primitive: &BevyPrimitive) -> &'static str {
+    match &primitive.material {
+        BevyPrimitiveMaterial::Mtoon(material) if material.owner_color.w > 1.5 => {
+            "owner-sample-resolve"
+        }
+        BevyPrimitiveMaterial::Mtoon(_) => "source",
+    }
 }
 
 fn owner_source_key(source: OwnerSource) -> String {
@@ -3531,6 +3541,17 @@ mod tests {
             phase_order: Some(19),
         };
         assert_eq!(owner_source_key(source), "node145/mesh4/prim9/base");
+        let mut source_material = test_mtoon_material();
+        source_material.owner_color.w = 1.0;
+        let mut resolve_material = source_material.clone();
+        resolve_material.owner_color.w = 2.0;
+        let source_primitive = test_bevy_primitive(BevyPrimitiveMaterial::Mtoon(source_material));
+        let resolve_primitive = test_bevy_primitive(BevyPrimitiveMaterial::Mtoon(resolve_material));
+        assert_eq!(bevy_primitive_draw_role(&source_primitive), "source");
+        assert_eq!(
+            bevy_primitive_draw_role(&resolve_primitive),
+            "owner-sample-resolve"
+        );
 
         let slots = GltfMaterialTextureSlots {
             base: Some(10),
@@ -3546,6 +3567,79 @@ mod tests {
             slots.pointer("/normal").and_then(serde_json::Value::as_u64),
             Some(13)
         );
+    }
+
+    fn test_bevy_primitive(material: BevyPrimitiveMaterial) -> BevyPrimitive {
+        BevyPrimitive {
+            mesh: Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            ),
+            material,
+            render_order: 2000,
+            transparent_order_offset: 0.0,
+            phase_order_offset_applied: 0.0,
+            owner_source: OwnerSource {
+                node_index: 145,
+                mesh_index: 4,
+                primitive_index: 9,
+                material: Some(14),
+                pass: OwnerPass::Base,
+                render_order: 2000,
+                phase_order: Some(19),
+            },
+            texture_slots: GltfMaterialTextureSlots::default(),
+            owner_ids: Vec::new(),
+        }
+    }
+
+    fn test_mtoon_material() -> BevyMtoonMaterial {
+        BevyMtoonMaterial {
+            base_color: BVec4::ONE,
+            shade_color: BVec4::ONE,
+            shading: BVec4::ZERO,
+            emissive: BVec4::ZERO,
+            matcap_factor: BVec4::ZERO,
+            rim_color: BVec4::ZERO,
+            rim_params: BVec4::ZERO,
+            material_flags: BVec4::ZERO,
+            material_flags2: BVec4::ZERO,
+            pbr_params: BVec4::ZERO,
+            owner_color: BVec4::ZERO,
+            outline_color: BVec4::new(1.0, 1.0, 1.0, -1.0),
+            pipeline: BVec4::ZERO,
+            lighting: BVec4::ONE,
+            light_color: BVec4::ONE,
+            base_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            shade_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            shading_shift_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            normal_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            matcap_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            rim_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            emissive_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            occlusion_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            uv_animation_mask_uv_transform: BVec4::new(0.0, 0.0, 1.0, 1.0),
+            uv_rotation_a: BVec4::ZERO,
+            uv_rotation_b: BVec4::ZERO,
+            uv_animation: BVec4::ZERO,
+            base_texture: Handle::default(),
+            shade_texture: Handle::default(),
+            shading_shift_texture: Handle::default(),
+            matcap_texture: Handle::default(),
+            rim_texture: Handle::default(),
+            normal_texture: Handle::default(),
+            emissive_texture: Handle::default(),
+            uv_animation_mask_texture: Handle::default(),
+            occlusion_texture: Handle::default(),
+            owner_sample_overrides: Handle::default(),
+            shader_alpha_mode: AlphaMode::Opaque,
+            render_alpha_mode: AlphaMode::Opaque,
+            cull_mode: Some(Face::Back),
+            depth_write: true,
+            depth_compare: CompareFunction::GreaterEqual,
+            front_face: CaptureFrontFace::Ccw,
+            depth_bias: 0.0,
+        }
     }
 
     #[test]

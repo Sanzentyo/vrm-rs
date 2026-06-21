@@ -1067,7 +1067,9 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
     if draw.is_null() {
         return Ok("n/a".to_owned());
     }
-    let material = optional_string_path(draw, &["material_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let material =
+        optional_string_path(draw, &["material_name"])?.unwrap_or_else(|| "n/a".to_owned());
+    let role = optional_string_path(draw, &["draw_role"])?.unwrap_or_else(|| "unknown".to_owned());
     let pbr = optional_bool_path(draw, &["pbr_fallback"])?
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
@@ -1081,8 +1083,9 @@ fn focused_renderer_material_draw_summary(value: &Value) -> Result<String, Box<d
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
     Ok(format!(
-        "{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
+        "{}@{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
         material,
+        role,
         pbr,
         fmt_optional_f64(optional_f64_path(draw, &["metallic"])?),
         fmt_optional_f64(optional_f64_path(draw, &["roughness"])?),

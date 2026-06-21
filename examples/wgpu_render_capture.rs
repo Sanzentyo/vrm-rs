@@ -2817,7 +2817,7 @@ fn write_rgba_json(
         "renderer": {
             "backend": "wgpu",
             "diagnosticOwnerIds": diagnostic_owner_ids,
-            "materialDraws": material_draw_metadata(loaded, mesh),
+            "materialDraws": material_draw_metadata(loaded, mesh, options, correction_plan)?,
             "ownerSampleCorrectionPlan": owner_sample_correction_plan,
         },
         "expressions": options.expressions,
@@ -2857,38 +2857,105 @@ fn write_rgba_json(
     Ok(())
 }
 
-fn material_draw_metadata(loaded: &LoadedVrm, mesh: &MeshDrawData) -> Vec<serde_json::Value> {
-    mesh.primitives
-        .iter()
-        .map(|primitive| {
-            let source = primitive.owner_source;
-            json!({
-                "draw": {
-                    "node": source.node_index,
-                    "mesh": source.mesh_index,
-                    "primitive": source.primitive_index,
-                    "pass": source.pass.as_str(),
-                    "key": owner_source_key(source),
-                },
-                "material": {
-                    "index": source.material,
-                    "name": material_name(loaded, source.material).unwrap_or("unnamed"),
-                },
-                "policy": {
-                    "renderOrder": source.render_order,
-                    "phaseOrder": source.phase_order,
-                    "cullMode": primitive.policy.cull_mode.as_str(),
-                    "alphaMode": primitive.policy.alpha_mode.as_str(),
-                    "depthWrite": primitive.policy.depth_write,
-                    "blend": primitive.policy.blend,
-                    "alphaCutoff": primitive.policy.alpha_cutoff,
-                },
-                "vertexMaterial": representative_vertex_material(primitive),
-                "materialExtra": material_extra_metadata(primitive.material_extra),
-                "textureSlots": texture_slot_metadata(primitive.images),
-            })
-        })
-        .collect()
+fn material_draw_metadata(
+    loaded: &LoadedVrm,
+    mesh: &MeshDrawData,
+    options: &CaptureOptions,
+    correction_plan: Option<&RenderOwnerSampleCorrectionPlan>,
+) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
+    let mut result = Vec::new();
+    for primitive in &mesh.primitives {
+        let source = material_draw_metadata_for_primitive(
+            loaded,
+            primitive,
+            MaterialDrawMetadataPolicy::source(primitive),
+        );
+        result.push(source);
+        let records =
+            owner_sample_override_records_for_primitive(loaded, primitive, correction_plan)?;
+        if !owner_sample_resolve_vertices_for_primitive(primitive, &records, options).is_empty() {
+            result.push(material_draw_metadata_for_primitive(
+                loaded,
+                primitive,
+                MaterialDrawMetadataPolicy::owner_sample_resolve(primitive),
+            ));
+        }
+    }
+    Ok(result)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MaterialDrawMetadataPolicy<'a> {
+    role: &'a str,
+    cull_mode: &'a str,
+    depth_write: bool,
+    blend: bool,
+    alpha_cutoff: f32,
+    render_order: i32,
+    phase_order: Option<i32>,
+}
+
+impl<'a> MaterialDrawMetadataPolicy<'a> {
+    fn source(primitive: &'a DrawPrimitive) -> Self {
+        Self {
+            role: "source",
+            cull_mode: primitive.policy.cull_mode.as_str(),
+            depth_write: primitive.policy.depth_write,
+            blend: primitive.policy.blend,
+            alpha_cutoff: primitive.policy.alpha_cutoff,
+            render_order: primitive.owner_source.render_order,
+            phase_order: primitive.owner_source.phase_order,
+        }
+    }
+
+    fn owner_sample_resolve(primitive: &'a DrawPrimitive) -> Self {
+        Self {
+            role: "owner-sample-resolve",
+            cull_mode: "off",
+            depth_write: false,
+            blend: false,
+            alpha_cutoff: primitive.policy.alpha_cutoff,
+            render_order: primitive.owner_source.render_order.saturating_add(10_000),
+            phase_order: primitive
+                .owner_source
+                .phase_order
+                .map(|phase_order| phase_order.saturating_add(10_000)),
+        }
+    }
+}
+
+fn material_draw_metadata_for_primitive(
+    loaded: &LoadedVrm,
+    primitive: &DrawPrimitive,
+    policy: MaterialDrawMetadataPolicy<'_>,
+) -> serde_json::Value {
+    let source = primitive.owner_source;
+    json!({
+        "draw": {
+            "node": source.node_index,
+            "mesh": source.mesh_index,
+            "primitive": source.primitive_index,
+            "pass": source.pass.as_str(),
+            "key": owner_source_key(source),
+            "role": policy.role,
+        },
+        "material": {
+            "index": source.material,
+            "name": material_name(loaded, source.material).unwrap_or("unnamed"),
+        },
+        "policy": {
+            "renderOrder": policy.render_order,
+            "phaseOrder": policy.phase_order,
+            "cullMode": policy.cull_mode,
+            "alphaMode": primitive.policy.alpha_mode.as_str(),
+            "depthWrite": policy.depth_write,
+            "blend": policy.blend,
+            "alphaCutoff": policy.alpha_cutoff,
+        },
+        "vertexMaterial": representative_vertex_material(primitive),
+        "materialExtra": material_extra_metadata(primitive.material_extra),
+        "textureSlots": texture_slot_metadata(primitive.images),
+    })
 }
 
 fn owner_source_key(source: OwnerSource) -> String {

@@ -93,6 +93,7 @@ struct FocusRow {
 
 #[derive(Clone, Debug, Serialize)]
 struct RendererMaterialDrawSummary {
+    draw_role: Option<String>,
     material_name: String,
     material_index: Option<u64>,
     cull_mode: Option<String>,
@@ -586,7 +587,11 @@ fn fmt_renderer_material_draw(value: Option<&RendererMaterialDrawSummary>) -> St
         .map(|draw| {
             format!(
                 "{} pbr:{} m/r/e/o={}/{}/{}/{} tex(b/s/n)={}/{}/{} base={} shade={} shift/toony/gi={}/{}/{} policy={}/{}/dw:{}/blend:{}",
-                draw.material_name,
+                format!(
+                    "{}@{}",
+                    draw.material_name,
+                    draw.draw_role.as_deref().unwrap_or("unknown")
+                ),
                 draw.pbr_fallback
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "n/a".to_owned()),
@@ -721,7 +726,8 @@ fn read_rgba_json_artifact(path: &Path) -> Result<RgbaJsonArtifact, Box<dyn Erro
 }
 
 fn material_draws_by_key(value: &Value) -> HashMap<String, RendererMaterialDrawSummary> {
-    value
+    let mut draws = HashMap::new();
+    for (key, draw) in value
         .pointer("/renderer/materialDraws")
         .and_then(Value::as_array)
         .into_iter()
@@ -729,12 +735,28 @@ fn material_draws_by_key(value: &Value) -> HashMap<String, RendererMaterialDrawS
         .filter_map(|draw| {
             let key = string_at(draw, "/draw/key")?;
             Some((key, renderer_material_draw_summary(draw)))
-        })
-        .collect()
+        }) {
+        let replace = draws
+            .get(&key)
+            .is_none_or(|existing| draw_role_priority(&draw) >= draw_role_priority(existing));
+        if replace {
+            draws.insert(key, draw);
+        }
+    }
+    draws
+}
+
+fn draw_role_priority(draw: &RendererMaterialDrawSummary) -> u8 {
+    match draw.draw_role.as_deref() {
+        Some("owner-sample-resolve") => 2,
+        Some("source") => 1,
+        _ => 0,
+    }
 }
 
 fn renderer_material_draw_summary(value: &Value) -> RendererMaterialDrawSummary {
     RendererMaterialDrawSummary {
+        draw_role: string_at(value, "/draw/role"),
         material_name: string_at(value, "/material/name").unwrap_or_else(|| "n/a".to_owned()),
         material_index: u64_at(value, "/material/index"),
         cull_mode: string_at(value, "/policy/cullMode"),
@@ -864,6 +886,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         material_draws_by_key: [(
             "node1/mesh2/prim3/base".to_owned(),
             RendererMaterialDrawSummary {
+                draw_role: Some("owner-sample-resolve".to_owned()),
                 material_name: "front".to_owned(),
                 material_index: Some(4),
                 cull_mode: Some("back".to_owned()),
@@ -909,6 +932,26 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             .and_then(|draw| draw.normal_texture),
         Some(13)
     );
-    assert!(markdown(&override_report).contains("front pbr:true"));
+    assert!(markdown(&override_report).contains("front@owner-sample-resolve pbr:true"));
+
+    let draws = material_draws_by_key(&serde_json::json!({
+        "renderer": {
+            "materialDraws": [{
+                "draw": {"key": "node1/mesh2/prim3/base", "role": "source"},
+                "material": {"name": "source"},
+                "policy": {"depthWrite": true}
+            }, {
+                "draw": {"key": "node1/mesh2/prim3/base", "role": "owner-sample-resolve"},
+                "material": {"name": "resolve"},
+                "policy": {"depthWrite": false}
+            }]
+        }
+    }));
+    let draw = draws
+        .get("node1/mesh2/prim3/base")
+        .ok_or("self-test material draw role priority missing key")?;
+    assert_eq!(draw.material_name, "resolve");
+    assert_eq!(draw.draw_role.as_deref(), Some("owner-sample-resolve"));
+    assert_eq!(draw.depth_write, Some(false));
     Ok(())
 }

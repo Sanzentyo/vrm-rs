@@ -1631,9 +1631,26 @@ fn ash_material_draw_metadata(
         .iter()
         .filter_map(|draw| {
             let primitive = primitives.get(draw.primitive_index)?;
-            let pipeline = draw
-                .pipeline_plan_index
-                .and_then(|index| pipelines.get(index))?;
+            let graphics_pipeline = draw.pipeline_plan_index.and_then(|index| {
+                frame
+                    .pipelines
+                    .iter()
+                    .find(|pipeline| pipeline.pipeline_plan_index == index)
+            });
+            let source_pipeline_index = draw
+                .descriptor_set_index
+                .and_then(|index| frame.descriptor_sets.get(index))
+                .map(|descriptor_set| descriptor_set.pipeline_plan_index)
+                .or(draw.pipeline_plan_index);
+            let pipeline = source_pipeline_index.and_then(|index| pipelines.get(index))?;
+            let policy = graphics_pipeline
+                .map(|pipeline| pipeline.key)
+                .unwrap_or(pipeline.key);
+            let role = if draw.pipeline_plan_index == source_pipeline_index {
+                "source"
+            } else {
+                "owner-sample-resolve"
+            };
             let material = primitive.material.or(Some(pipeline.material));
             Some(json!({
                 "draw": {
@@ -1642,22 +1659,23 @@ fn ash_material_draw_metadata(
                     "primitive": primitive.primitive_index,
                     "pass": ash_mtoon_pass_label(pipeline.key.pass),
                     "key": ash_owner_source_key(primitive, pipeline.key.pass),
+                    "role": role,
                 },
                 "material": {
                     "index": material.map(|material| material.0),
                     "name": primitive.material_name.as_deref().or(pipeline.name.as_deref()).unwrap_or("unnamed"),
                 },
                 "policy": {
-                    "renderOrder": pipeline.key.render_order,
-                    "phaseOrder": pipeline.key.phase_order,
-                    "cullMode": ash_cull_mode_label(pipeline.key.cull_mode),
-                    "frontFace": ash_front_face_label(pipeline.key.front_face),
+                    "renderOrder": policy.render_order,
+                    "phaseOrder": policy.phase_order,
+                    "cullMode": ash_cull_mode_label(policy.cull_mode),
+                    "frontFace": ash_front_face_label(policy.front_face),
                     "alphaMode": ash_uniform_alpha_mode_label(pipeline.uniform.flags[3]),
                     "alphaCutoff": pipeline.alpha_cutoff,
-                    "depthWrite": pipeline.key.depth_write_enable,
-                    "depthTest": pipeline.key.depth_test_enable,
-                    "depthCompare": ash_compare_op_label(pipeline.key.depth_compare_op),
-                    "blend": pipeline.key.blend_enable,
+                    "depthWrite": policy.depth_write_enable,
+                    "depthTest": policy.depth_test_enable,
+                    "depthCompare": ash_compare_op_label(policy.depth_compare_op),
+                    "blend": policy.blend_enable,
                 },
                 "vertexMaterial": ash_vertex_material_metadata(primitive, pipeline),
                 "materialExtra": ash_material_extra_metadata(pipeline.render_extra_uniform),
@@ -2172,7 +2190,8 @@ mod tests {
         use bytemuck::Zeroable;
         use vrm_adapter::MtoonGpuUniform;
         use vrm_adapter_ash::{
-            AshDescriptorBindingPlan, AshDrawCallPlan, AshMaterialUvUniform, AshPipelineKey,
+            AshDescriptorBindingPlan, AshDescriptorSetPlan, AshDrawCallPlan,
+            AshGraphicsPipelinePlan, AshMaterialUvUniform, AshPipelineKey,
         };
         use vrm_core::{MaterialRef, NodeRef, TextureRef};
 
@@ -2240,17 +2259,52 @@ mod tests {
             emissive_color: [0.0; 3],
         };
         let frame = AshRendererFrame {
-            draw_calls: vec![AshDrawCallPlan {
-                primitive_index: 0,
-                material: Some(MaterialRef(14)),
-                pipeline_plan_index: Some(0),
-                descriptor_set_index: Some(0),
-                vertex_buffer_index: 0,
-                index_buffer_index: 1,
-                index_count: 3,
-                render_order: 2000,
-                phase_order: 19,
+            pipelines: vec![AshGraphicsPipelinePlan {
+                material: MaterialRef(14),
+                pipeline_plan_index: 1,
+                descriptor_set_index: 0,
+                key: AshPipelineKey {
+                    cull_mode: vk::CullModeFlags::empty(),
+                    depth_write_enable: false,
+                    depth_compare_op: vk::CompareOp::ALWAYS,
+                    render_order: 12_000,
+                    phase_order: 10_019,
+                    ..pipeline.key
+                },
+                vertex_stride: 0,
+                vertex_attributes: Vec::new(),
+                color_format: vk::Format::R8G8B8A8_UNORM,
+                depth_format: None,
             }],
+            descriptor_sets: vec![AshDescriptorSetPlan {
+                material: MaterialRef(14),
+                pipeline_plan_index: 0,
+                bindings: Vec::new(),
+            }],
+            draw_calls: vec![
+                AshDrawCallPlan {
+                    primitive_index: 0,
+                    material: Some(MaterialRef(14)),
+                    pipeline_plan_index: Some(0),
+                    descriptor_set_index: Some(0),
+                    vertex_buffer_index: 0,
+                    index_buffer_index: 1,
+                    index_count: 3,
+                    render_order: 2000,
+                    phase_order: 19,
+                },
+                AshDrawCallPlan {
+                    primitive_index: 0,
+                    material: Some(MaterialRef(14)),
+                    pipeline_plan_index: Some(1),
+                    descriptor_set_index: Some(0),
+                    vertex_buffer_index: 2,
+                    index_buffer_index: 3,
+                    index_count: 3,
+                    render_order: 12_000,
+                    phase_order: 10_019,
+                },
+            ],
             ..Default::default()
         };
 
@@ -2261,6 +2315,24 @@ mod tests {
                 .pointer("/draw/key")
                 .and_then(serde_json::Value::as_str),
             Some("node145/mesh4/prim9/base")
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/draw/role")
+                .and_then(serde_json::Value::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata[1]
+                .pointer("/draw/role")
+                .and_then(serde_json::Value::as_str),
+            Some("owner-sample-resolve")
+        );
+        assert_eq!(
+            metadata[1]
+                .pointer("/policy/cullMode")
+                .and_then(serde_json::Value::as_str),
+            Some("off")
         );
         assert_eq!(
             metadata[0]

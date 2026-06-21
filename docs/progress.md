@@ -37,6 +37,16 @@
   fields. The full expanded readback recipe timed out later in the browser
   projection join, so only the capture artifacts, focused reports, and summary
   parser path were refreshed in this pass.
+- Normalized material-draw source/resolve semantics across wgpu, Bevy, and Ash.
+  Each `renderer.materialDraws[]` record now carries `draw.role` (`source` or
+  `owner-sample-resolve`), and focused material-pixel parsing chooses the
+  `owner-sample-resolve` record when multiple records share the same
+  `node/mesh/prim/pass` key. The refreshed Seed-san expanded artifacts now agree
+  on `materialDraws=31` for all three renderers, with `source=21` and
+  `owner-sample-resolve=10`. Focused summaries now show role-qualified material
+  strings such as `backpack_nm@owner-sample-resolve` and consistently expose
+  resolve policy (`cull=off`, `depthWrite=false`) instead of depending on
+  backend-specific artifact ordering.
 - Added recommended material probes and focused pixel probes to the expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--texture-audit renderer=path` inputs and
