@@ -2859,6 +2859,12 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   shows center `60` at mean RGB distance `65.6166` and webgl-coverage `4` at
   `65.4732`; the high-delta tail therefore remains mostly in center-owner
   selected pixels, not only in coverage fallback pixels.
+- The same audit also reports `selected_by_selection_source_material[]`. In the
+  current wgpu smoke run, center-selected rows are dominated by `backpack_nm`
+  (`19`, mean `52.8983`, max delta `71`) and `huku_bake` (`17`, mean
+  `56.8062`, max `95`), while `body_nm` has only `5` rows but the max delta
+  sentinel `178`. Treat those as the first center-owner material buckets to
+  inspect before widening the owner/fill model again.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are

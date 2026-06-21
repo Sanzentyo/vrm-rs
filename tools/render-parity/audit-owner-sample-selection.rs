@@ -51,12 +51,22 @@ struct SelectionCoverageReport {
     selected_max_channel_delta_max: Option<u64>,
     missing_max_channel_delta_max: Option<u64>,
     selected_by_selection_source: Vec<SelectionSourceBucket>,
+    selected_by_selection_source_material: Vec<SelectionSourceMaterialBucket>,
     top_missing: Vec<MissingDelta>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 struct SelectionSourceBucket {
     selection_source: String,
+    count: u64,
+    rgb_distance_mean: Option<f64>,
+    max_channel_delta_max: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SelectionSourceMaterialBucket {
+    selection_source: String,
+    material_name: String,
     count: u64,
     rgb_distance_mean: Option<f64>,
     max_channel_delta_max: Option<u64>,
@@ -70,6 +80,12 @@ struct MissingDelta {
     actual: [u8; 4],
     max_channel_delta: u64,
     rgb_distance: f64,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedEntry {
+    selection_source: String,
+    material_name: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -150,7 +166,15 @@ fn audit(
     let selected = corrections
         .iter()
         .filter_map(|correction| {
-            pixel_key(correction).map(|pixel| (pixel, selection_source(correction).to_owned()))
+            pixel_key(correction).map(|pixel| {
+                (
+                    pixel,
+                    SelectedEntry {
+                        selection_source: selection_source(correction).to_owned(),
+                        material_name: material_name(correction).to_owned(),
+                    },
+                )
+            })
         })
         .collect::<HashMap<_, _>>();
     let deltas = deltas
@@ -161,15 +185,23 @@ fn audit(
     let mut selected_stats = DeltaStats::default();
     let mut missing_stats = DeltaStats::default();
     let mut selected_by_source = BTreeMap::<String, DeltaStats>::new();
+    let mut selected_by_source_material = BTreeMap::<(String, String), DeltaStats>::new();
     let mut missing = Vec::new();
 
     for delta in deltas {
         let Some(pixel) = pixel_key(delta) else {
             continue;
         };
-        if let Some(source) = selected.get(&pixel) {
+        if let Some(entry) = selected.get(&pixel) {
             selected_stats.add(delta);
-            selected_by_source.entry(source.clone()).or_default().add(delta);
+            selected_by_source
+                .entry(entry.selection_source.clone())
+                .or_default()
+                .add(delta);
+            selected_by_source_material
+                .entry((entry.selection_source.clone(), entry.material_name.clone()))
+                .or_default()
+                .add(delta);
         } else {
             missing_stats.add(delta);
             if let Some(missing_delta) = missing_delta(delta) {
@@ -220,6 +252,7 @@ fn audit(
                 max_channel_delta_max: stats.max_channel_delta,
             })
             .collect(),
+        selected_by_selection_source_material: source_material_buckets(selected_by_source_material),
         top_missing: missing,
     })
 }
@@ -233,6 +266,38 @@ fn selection_source(value: &Value) -> &str {
         .get("selection_source")
         .and_then(Value::as_str)
         .unwrap_or("unspecified")
+}
+
+fn material_name(value: &Value) -> &str {
+    value
+        .pointer("/surface/materialName")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+}
+
+fn source_material_buckets(
+    buckets: BTreeMap<(String, String), DeltaStats>,
+) -> Vec<SelectionSourceMaterialBucket> {
+    let mut buckets = buckets
+        .into_iter()
+        .map(
+            |((selection_source, material_name), stats)| SelectionSourceMaterialBucket {
+                selection_source,
+                material_name,
+                count: stats.count,
+                rgb_distance_mean: stats.mean(),
+                max_channel_delta_max: stats.max_channel_delta,
+            },
+        )
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.selection_source.cmp(&right.selection_source))
+            .then_with(|| left.material_name.cmp(&right.material_name))
+    });
+    buckets
 }
 
 fn missing_delta(value: &Value) -> Option<MissingDelta> {
@@ -309,6 +374,24 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         "webgl-coverage"
     );
     assert_eq!(report.selected_by_selection_source[1].rgb_distance_mean, Some(13.0));
+    assert_eq!(report.selected_by_selection_source_material.len(), 2);
+    assert_eq!(
+        report.selected_by_selection_source_material[0].selection_source,
+        "center"
+    );
+    assert_eq!(
+        report.selected_by_selection_source_material[0].material_name,
+        "a"
+    );
+    assert_eq!(report.selected_by_selection_source_material[0].count, 1);
+    assert_eq!(
+        report.selected_by_selection_source_material[1].selection_source,
+        "webgl-coverage"
+    );
+    assert_eq!(
+        report.selected_by_selection_source_material[1].material_name,
+        "b"
+    );
     assert_eq!(report.top_missing.len(), 1);
     assert_eq!(report.top_missing[0].x, 3);
     assert_eq!(report.top_missing[0].expected, [10, 20, 30, 255]);
