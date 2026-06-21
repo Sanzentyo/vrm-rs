@@ -1462,7 +1462,8 @@ fn optional_color_fit(
 fn optional_color_fit_value(value: &Value) -> Option<&Value> {
     ["color_fit", "color_fit_summary", "colorFit", "colorFitSummary"]
         .into_iter()
-        .find_map(|key| value.get(key))
+        .filter_map(|key| value.get(key))
+        .find(|candidate| !candidate.is_null())
 }
 
 fn shading_model_sample_following_summary(
@@ -1916,6 +1917,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "selected_count": 1,
                     "mean_expected_actual_rgb_distance": 4.5,
                     "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
+                    "color_fit": null,
                     "color_fit_summary": {
                         "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
                         "least_squares_gain_rgb": [1.05, 1.10, 1.15],
@@ -1930,6 +1932,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "row_count": 2,
                         "mean_expected_actual_rgb_distance": 4.5,
                         "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
+                        "color_fit": null,
                         "colorFit": {
                             "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
                             "least_squares_gain_rgb": [1.05, 1.10, 1.15],
