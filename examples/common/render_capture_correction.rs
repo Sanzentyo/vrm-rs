@@ -2,7 +2,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use vrm_adapter::{
-    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey, RenderOwnerSampleSurfaceOverride,
+    RenderOwnerSurfaceKey,
 };
 
 pub fn load_owner_sample_correction_manifest(
@@ -27,8 +28,10 @@ pub fn owner_sample_correction_plan_metadata(
     path: &Path,
     plan: &RenderOwnerSampleCorrectionPlan,
     surfaces: impl IntoIterator<Item = RenderOwnerSurfaceKey>,
+    draws: impl IntoIterator<Item = RenderOwnerSampleDrawKey>,
 ) -> serde_json::Value {
     let surfaces = surfaces.into_iter().collect::<Vec<_>>();
+    let draws = draws.into_iter().collect::<Vec<_>>();
     let coverage = plan.surface_coverage(surfaces.iter());
     let selection = plan.surface_selection_plan(surfaces.iter());
     serde_json::json!({
@@ -46,12 +49,41 @@ pub fn owner_sample_correction_plan_metadata(
                 "entries": surface.overrides().map(|entry| entry_json(&surface.surface, entry)).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
+        "drawSelections": draws.iter().map(|draw| {
+            let entries = plan.entries().iter()
+                .filter(|entry| entry.sample_geometry.is_some())
+                .filter(|entry| entry.matches_draw(draw))
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "draw": draw_json(draw),
+                "entryCount": entries.len(),
+                "entries": entries.iter().map(|entry| {
+                    entry_json(entry.sample.surface(), RenderOwnerSampleSurfaceOverride::from(*entry))
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
         "unmatchedEntries": selection.unmatched_entries.iter().map(|entry| {
             entry_json(entry.sample.surface(), RenderOwnerSampleSurfaceOverride::from(entry))
         }).collect::<Vec<_>>(),
         "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
             surface_json(&surface)
         }).collect::<Vec<_>>(),
+    })
+}
+
+fn draw_json(draw: &RenderOwnerSampleDrawKey) -> serde_json::Value {
+    serde_json::json!({
+        "node": draw.node,
+        "mesh": draw.mesh,
+        "primitive": draw.primitive,
+        "pass": draw.pass.as_str(),
+        "key": format!(
+            "node{}/mesh{}/prim{}/{}",
+            draw.node,
+            draw.mesh,
+            draw.primitive,
+            draw.pass.as_str(),
+        ),
     })
 }
 
@@ -93,4 +125,60 @@ fn entry_json(
 
 fn io_other(error: impl ToString) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vrm_adapter::RenderOwnerSamplePass;
+
+    #[test]
+    fn metadata_reports_draw_selections_from_sample_geometry() {
+        let value = serde_json::json!({
+            "corrections": [
+                {
+                    "x": 12,
+                    "y": 34,
+                    "rgba": [1, 2, 3, 255],
+                    "surface": {"materialName": "body", "triangle": 7},
+                    "sample": [0.5, 0.5],
+                    "sample_geometry": {
+                        "node": 1,
+                        "mesh": 2,
+                        "primitive": 3,
+                        "triangle": 7,
+                        "indices": [4, 5, 6],
+                        "barycentric": [0.2, 0.3, 0.5],
+                        "raw_uv": [0.25, 0.75],
+                        "base_uv": [0.25, 0.75],
+                        "depth": 0.42,
+                        "pass": "base"
+                    }
+                }
+            ]
+        });
+        let plan = RenderOwnerSampleCorrectionPlan::from_manifest_value(&value).unwrap();
+        let metadata = owner_sample_correction_plan_metadata(
+            Path::new("manifest.json"),
+            &plan,
+            [RenderOwnerSurfaceKey::new("body", 7)],
+            [RenderOwnerSampleDrawKey::new(
+                1,
+                2,
+                3,
+                RenderOwnerSamplePass::Base,
+            )],
+        );
+
+        assert_eq!(metadata["entryCount"], 1);
+        assert_eq!(metadata["drawSelections"][0]["entryCount"], 1);
+        assert_eq!(
+            metadata["drawSelections"][0]["draw"]["key"],
+            "node1/mesh2/prim3/base"
+        );
+        assert_eq!(
+            metadata["drawSelections"][0]["entries"][0]["pixel"],
+            serde_json::json!([12, 34])
+        );
+    }
 }

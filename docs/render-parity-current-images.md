@@ -148,6 +148,13 @@ evaluation bucket rather than being folded into the owner/sample miss bucket.
 | `arm_mat` | `node144/mesh3/prim0/base` | 2 / 40.9900 | 2 / 40.9900 | 0 / n/a |
 | `armgear_plastic` | `node145/mesh4/prim4/base` | 2 / 37.8500 | 3 / 30.0900 | 3 / 0.7200 |
 
+Renderer RGBA JSON artifacts now expose the same grouping under
+`renderer.ownerSampleCorrectionPlan.drawSelections`, so the next parity pass can
+verify whether each high-margin manifest entry reached its intended draw before
+looking at final pixel color. A wgpu smoke against the expanded post-resolve
+manifest reported `21` draw selections with nonzero entries for all four
+high-margin draw keys above.
+
 ## Current Base-UV Images
 
 These are the latest local images under

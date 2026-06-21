@@ -690,6 +690,7 @@ fn spawn_vrm_meshes(
     }
     configure_owner_id_depth_policy(&mut primitives, options);
     let render_surfaces = render_owner_surfaces(loaded, &primitives);
+    let render_draws = render_owner_draws(&primitives);
     if let Some(path) = &options.owner_sample_correction_manifest {
         let correction_plan =
             render_capture_correction::load_owner_sample_correction_manifest(path)?;
@@ -706,6 +707,7 @@ fn spawn_vrm_meshes(
     commands.insert_resource(RenderOwnerMetadata {
         diagnostic_owner_ids: diagnostic_owner_ids(loaded, &primitives, options),
         render_surfaces,
+        render_draws,
     });
 
     for (draw_index, primitive) in primitives.into_iter().enumerate() {
@@ -1205,6 +1207,13 @@ fn render_owner_surfaces(
                 ))
             })
         })
+        .collect()
+}
+
+fn render_owner_draws(primitives: &[BevyPrimitive]) -> Vec<RenderOwnerSampleDrawKey> {
+    primitives
+        .iter()
+        .filter_map(|primitive| owner_sample_draw_key(primitive.owner_source).ok())
         .collect()
 }
 
@@ -2014,6 +2023,7 @@ struct OwnerTriangle {
 struct RenderOwnerMetadata {
     diagnostic_owner_ids: Vec<serde_json::Value>,
     render_surfaces: Vec<RenderOwnerSurfaceKey>,
+    render_draws: Vec<RenderOwnerSampleDrawKey>,
 }
 
 #[derive(Clone)]
@@ -3162,6 +3172,9 @@ fn write_capture(
                 &plan,
                 owner_metadata
                     .map(|metadata| metadata.render_surfaces.clone())
+                    .unwrap_or_default(),
+                owner_metadata
+                    .map(|metadata| metadata.render_draws.clone())
                     .unwrap_or_default(),
             ),
         )

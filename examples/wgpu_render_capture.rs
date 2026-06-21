@@ -2693,6 +2693,7 @@ fn write_rgba_json(
                     path,
                     plan,
                     diagnostic_owner_surfaces(loaded, mesh),
+                    diagnostic_owner_draws(mesh),
                 )
             })
     });
@@ -2768,6 +2769,13 @@ fn diagnostic_owner_surfaces(
                 ))
             })
         })
+        .collect()
+}
+
+fn diagnostic_owner_draws(mesh: &MeshDrawData) -> Vec<RenderOwnerSampleDrawKey> {
+    mesh.primitives
+        .iter()
+        .filter_map(|primitive| owner_sample_draw_key(primitive.owner_source).ok())
         .collect()
 }
 

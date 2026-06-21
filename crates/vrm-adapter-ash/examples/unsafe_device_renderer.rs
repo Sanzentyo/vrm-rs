@@ -13,11 +13,12 @@ use std::{
     ptr,
 };
 use vrm_adapter::{
-    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
+    RenderOwnerSampleCorrectionPlan, RenderOwnerSampleDrawKey, RenderOwnerSamplePass,
+    RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
     AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMtoonPass, AshRendererFrame, AshSamplerPlan,
-    AshVertexAttributePlan, AshVrmFramePlanOptions, ash_reference_depth_format,
+    AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
     frame_plan_from_options_with_viewport,
 };
@@ -1496,6 +1497,7 @@ struct RgbaJsonArtifact<'a> {
     height: u32,
     depth_format: Option<vk::Format>,
     render_surfaces: &'a [RenderOwnerSurfaceKey],
+    render_draws: &'a [RenderOwnerSampleDrawKey],
     owner_sample_correction_plan: Option<(&'a Path, &'a RenderOwnerSampleCorrectionPlan)>,
 }
 
@@ -1510,7 +1512,12 @@ fn write_rgba_json(
         artifact_input
             .owner_sample_correction_plan
             .map(|(path, plan)| {
-                owner_sample_correction_plan_json(path, plan, artifact_input.render_surfaces)
+                owner_sample_correction_plan_json(
+                    path,
+                    plan,
+                    artifact_input.render_surfaces,
+                    artifact_input.render_draws,
+                )
             });
     let artifact = json!({
         "generator": "vrm-rs crates/vrm-adapter-ash/examples/unsafe_device_renderer.rs",
@@ -1547,6 +1554,7 @@ fn owner_sample_correction_plan_json(
     path: &Path,
     plan: &RenderOwnerSampleCorrectionPlan,
     surfaces: &[RenderOwnerSurfaceKey],
+    draws: &[RenderOwnerSampleDrawKey],
 ) -> serde_json::Value {
     let selection = plan.surface_selection_plan(surfaces.iter());
     let coverage = plan.surface_coverage(surfaces.iter());
@@ -1565,12 +1573,62 @@ fn owner_sample_correction_plan_json(
                 "entries": surface.overrides().map(|entry| owner_sample_entry_json(&surface.surface, entry)).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
+        "drawSelections": draws.iter().map(|draw| {
+            let entries = plan.entries().iter()
+                .filter(|entry| entry.sample_geometry.is_some())
+                .filter(|entry| entry.matches_draw(draw))
+                .collect::<Vec<_>>();
+            json!({
+                "draw": owner_sample_draw_json(draw),
+                "entryCount": entries.len(),
+                "entries": entries.iter().map(|entry| {
+                    owner_sample_entry_json(entry.sample.surface(), RenderOwnerSampleSurfaceOverride::from(*entry))
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
         "unmatchedEntries": selection.unmatched_entries.iter().map(|entry| {
             owner_sample_entry_json(entry.sample.surface(), RenderOwnerSampleSurfaceOverride::from(entry))
         }).collect::<Vec<_>>(),
         "unmatchedSurfaces": coverage.unmatched_surfaces.into_iter().map(|surface| {
             owner_surface_json(&surface)
         }).collect::<Vec<_>>(),
+    })
+}
+
+fn ash_owner_sample_draws(primitives: &[AshVrmPrimitive]) -> Vec<RenderOwnerSampleDrawKey> {
+    primitives
+        .iter()
+        .map(|primitive| {
+            RenderOwnerSampleDrawKey::new(
+                primitive.node.0 as u64,
+                primitive.mesh_index as u64,
+                primitive.primitive_index as u64,
+                ash_owner_sample_pass(primitive.pass),
+            )
+        })
+        .collect()
+}
+
+fn ash_owner_sample_pass(pass: AshMtoonPass) -> RenderOwnerSamplePass {
+    match pass {
+        AshMtoonPass::Base => RenderOwnerSamplePass::Base,
+        AshMtoonPass::Outline => RenderOwnerSamplePass::Outline,
+    }
+}
+
+fn owner_sample_draw_json(draw: &RenderOwnerSampleDrawKey) -> serde_json::Value {
+    json!({
+        "node": draw.node,
+        "mesh": draw.mesh,
+        "primitive": draw.primitive,
+        "pass": draw.pass.as_str(),
+        "key": format!(
+            "node{}/mesh{}/prim{}/{}",
+            draw.node,
+            draw.mesh,
+            draw.primitive,
+            draw.pass.as_str(),
+        ),
     })
 }
 
@@ -1767,6 +1825,7 @@ fn run_artifact_self_test(options: &Options) -> Result<(), Box<dyn Error>> {
             height,
             depth_format: None,
             render_surfaces: &[],
+            render_draws: &[],
             owner_sample_correction_plan: None,
         },
     )?;
@@ -2016,6 +2075,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             summary.checksum
         );
         if let Some(path) = &options.out {
+            let render_draws = ash_owner_sample_draws(&frame_plan.primitives);
             write_rgba_json(
                 path,
                 RgbaJsonArtifact {
@@ -2028,6 +2088,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     height: options.height.max(1),
                     depth_format: Some(resources.depth_format),
                     render_surfaces: &frame_plan.render_surfaces,
+                    render_draws: &render_draws,
                     owner_sample_correction_plan: options
                         .owner_sample_correction_manifest
                         .as_deref()
