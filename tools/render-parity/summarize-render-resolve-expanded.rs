@@ -726,6 +726,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             out.push('\n');
         }
     }
+    push_focused_material_state_matrix(summary, &mut out);
     if !summary.focused_material_pixels.is_empty() {
         out.push_str("## Focused Material Pixels\n\n");
         for focus in &summary.focused_material_pixels {
@@ -832,6 +833,100 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
         }
     }
     out
+}
+
+fn push_focused_material_state_matrix(summary: &ExpandedSummary, out: &mut String) {
+    let rows = summary
+        .focused_material_pixels
+        .iter()
+        .flat_map(|focus| {
+            focus
+                .rows
+                .iter()
+                .map(move |row| (focus.renderer.as_str(), row))
+        })
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return;
+    }
+
+    let material_matches = rows
+        .iter()
+        .filter(|(_, row)| focused_material_names_match(row))
+        .count();
+    let resolve_rows = rows
+        .iter()
+        .filter(|(_, row)| row.renderer_material_draw.contains("@owner-sample-resolve"))
+        .count();
+    let expected_rows = rows
+        .iter()
+        .filter(|(_, row)| row.expected_rgba.is_some())
+        .count();
+
+    out.push_str("## Focused Material State Matrix\n\n");
+    out.push_str(&format!(
+        "- Rows/material matches/resolve rows/expected-color rows: `{}` / `{}` / `{}` / `{}`\n\n",
+        rows.len(),
+        material_matches,
+        resolve_rows,
+        expected_rows
+    ));
+    out.push_str("| Renderer | Pixel | Selected | Source | Browser material | Rust material | Match | Role | RGBA A/E/S | Dist A-E / S-A / S-E |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: |\n");
+    for (renderer, row) in rows {
+        out.push_str(&format!(
+            "| {} | {} | {}{} | {} | {} | {} | {} | {} | {} / {} / {} | {} / {} / {} |\n",
+            renderer,
+            row.pixel,
+            row.selected_material,
+            row.selected_triangle
+                .map(|triangle| format!("#{triangle}"))
+                .unwrap_or_default(),
+            row.selection_source,
+            focused_browser_material_name(row),
+            focused_renderer_material_name(row),
+            if focused_material_names_match(row) {
+                "yes"
+            } else {
+                "no"
+            },
+            focused_renderer_role(row),
+            fmt_optional_rgba(row.actual_rgba),
+            fmt_optional_rgba(row.expected_rgba),
+            fmt_optional_rgba(row.selected_rgba),
+            fmt_optional_f64(row.actual_expected_distance),
+            fmt_optional_f64(row.selected_actual_distance),
+            fmt_optional_f64(row.selected_expected_distance),
+        ));
+    }
+    out.push('\n');
+}
+
+fn focused_material_names_match(row: &FocusedMaterialPixelRowSummary) -> bool {
+    let browser = focused_browser_material_name(row);
+    let renderer = focused_renderer_material_name(row);
+    browser != "n/a" && renderer != "n/a" && browser == renderer
+}
+
+fn focused_browser_material_name(row: &FocusedMaterialPixelRowSummary) -> &str {
+    row.browser_material
+        .split_whitespace()
+        .next()
+        .unwrap_or("n/a")
+}
+
+fn focused_renderer_material_name(row: &FocusedMaterialPixelRowSummary) -> &str {
+    row.renderer_material_draw
+        .split_once('@')
+        .map(|(material, _)| material)
+        .unwrap_or("n/a")
+}
+
+fn focused_renderer_role(row: &FocusedMaterialPixelRowSummary) -> &str {
+    row.renderer_material_draw
+        .split_once('@')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .unwrap_or("n/a")
 }
 
 fn material_track_input_summary(
@@ -2140,6 +2235,26 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "map_min_filter": 1007,
                     "map_mag_filter": 1006
                 },
+                "renderer_material_draw": {
+                    "draw_role": "owner-sample-resolve",
+                    "material_name": "backpack_nm",
+                    "material_index": 14,
+                    "alpha_mode": "opaque",
+                    "cull_mode": "off",
+                    "depth_write": false,
+                    "blend": false,
+                    "pbr_fallback": false,
+                    "metallic": 0.0,
+                    "roughness": 0.657,
+                    "occlusion_strength": 1.0,
+                    "base_texture": 12,
+                    "normal_texture": 13,
+                    "base_color": [1.0, 1.0, 1.0, 1.0],
+                    "shade_color": [1.0, 1.0, 1.0, 1.0],
+                    "shading_shift": 0.0,
+                    "shading_toony": 0.0,
+                    "gi_equalization": 0.0
+                },
                 "frontmost": {"surface": {"material_name": "backpack_nm", "triangle": 42}},
                 "nearest_expected": {"surface": {"material_name": "arm_plastic", "triangle": 7}}
             }]
@@ -2231,12 +2346,16 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("shade=0.43,0.40,0.50 shift/toony/gi=-0.200/0.800/0.900"));
     assert!(markdown.contains("## Recommended Material Probes"));
     assert!(markdown.contains("selected_sample_and_renderer_both_far"));
+    assert!(markdown.contains("## Focused Material State Matrix"));
+    assert!(markdown.contains(
+        "| wgpu | 141,90 | backpack_nm#42 | center | backpack_nm | backpack_nm | yes | owner-sample-resolve |"
+    ));
     assert!(markdown.contains("## Focused Material Pixels"));
     assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
     assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
-    assert!(
-        markdown.contains("| n/a | 77,74,76,255 / 208,211,213,255 / 208,211,213,255 |")
-    );
+    assert!(markdown.contains(
+        "backpack_nm@owner-sample-resolve pbr:false m/r/o/d=0.0000/0.6570/1.0000/n/a"
+    ));
     assert!(markdown.contains("## Browser Projected Base-Color Joins"));
     assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));

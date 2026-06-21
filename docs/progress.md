@@ -46,6 +46,13 @@
   normalized `color_fit` field, so the JSON summary cannot silently lose the
   additive/gain fit just because the upstream join artifact used a different
   field spelling.
+- Added a focused material-state matrix to the expanded render-resolve summary.
+  The refreshed Seed-san matrix compares browser material names, Rust material
+  names, resolve roles, and A/E/S color distances for wgpu, Bevy, and Ash in one
+  table. The current focused rows report `15/15` browser/Rust material-name
+  matches and `15/15` owner-sample-resolve rows, so the remaining focused
+  residuals should stay classified as owner/fill/sample or narrower texture/color
+  evaluation work rather than missing material draw assignment.
 - Added `base-color-texture-as-linear` as an explicit browser/wgpu/Bevy
   diagnostic mode, separate from the existing `base-color-raw-srgb` check.
   `base-color-raw-srgb` still means "bind raw UNORM but manually decode sRGB";
