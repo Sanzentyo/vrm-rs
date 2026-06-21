@@ -37,6 +37,8 @@ struct Options {
     #[arg(long)]
     manifest: Option<PathBuf>,
     #[arg(long)]
+    baseline_manifest: Option<PathBuf>,
+    #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
     markdown_out: Option<PathBuf>,
@@ -48,13 +50,19 @@ struct Options {
 struct AuditReport {
     hotspots: String,
     manifest: Option<String>,
+    baseline_manifest: Option<String>,
     hotspot_count: u64,
     manifest_count: u64,
+    baseline_manifest_count: u64,
     selected_count: u64,
     missing_selection_count: u64,
+    carried_selection_count: u64,
+    new_selection_count: u64,
     all: BucketStats,
     selected: BucketStats,
     missing_selection: BucketStats,
+    carried_selection: BucketStats,
+    new_selection: BucketStats,
     top_residuals: Vec<ResidualRow>,
 }
 
@@ -294,11 +302,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
+    let baseline_manifest = if let Some(path) = options.baseline_manifest.as_deref() {
+        Some(serde_json::from_str::<Value>(&fs::read_to_string(path)?)?)
+    } else {
+        None
+    };
     let report = audit(
         hotspots_path,
         options.manifest.as_deref(),
+        options.baseline_manifest.as_deref(),
         &hotspots,
         manifest.as_ref(),
+        baseline_manifest.as_ref(),
         options.top,
     )?;
     if let Some(path) = options.json_out.as_deref() {
@@ -315,8 +330,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 fn audit(
     hotspots_path: &Path,
     manifest_path: Option<&Path>,
+    baseline_manifest_path: Option<&Path>,
     hotspots: &Value,
     manifest: Option<&Value>,
+    baseline_manifest: Option<&Value>,
     top: usize,
 ) -> Result<AuditReport, Box<dyn Error>> {
     let hotspot_items = hotspots
@@ -327,10 +344,16 @@ fn audit(
         .map(manifest_pixels)
         .transpose()?
         .unwrap_or_default();
+    let baseline_selected = baseline_manifest
+        .map(manifest_pixels)
+        .transpose()?
+        .unwrap_or_default();
 
     let mut all = Accumulator::default();
     let mut selected_acc = Accumulator::default();
     let mut missing_acc = Accumulator::default();
+    let mut carried_acc = Accumulator::default();
+    let mut new_acc = Accumulator::default();
     let mut residuals = Vec::new();
 
     for hotspot in hotspot_items {
@@ -338,9 +361,16 @@ fn audit(
             continue;
         };
         let is_selected = selected.is_empty() || selected.contains(&pixel);
+        let is_carried = !baseline_selected.is_empty() && baseline_selected.contains(&pixel);
+        let is_new = !baseline_selected.is_empty() && is_selected && !is_carried;
         all.add(hotspot);
         if is_selected {
             selected_acc.add(hotspot);
+            if is_carried {
+                carried_acc.add(hotspot);
+            } else if is_new {
+                new_acc.add(hotspot);
+            }
         } else {
             missing_acc.add(hotspot);
         }
@@ -360,6 +390,7 @@ fn audit(
     residuals.truncate(top);
 
     let manifest_count = u64::try_from(selected.len()).unwrap_or(u64::MAX);
+    let baseline_manifest_count = u64::try_from(baseline_selected.len()).unwrap_or(u64::MAX);
     let selected_count = if selected.is_empty() {
         u64::try_from(hotspot_items.len()).unwrap_or(u64::MAX)
     } else {
@@ -368,17 +399,23 @@ fn audit(
     Ok(AuditReport {
         hotspots: display_path(hotspots_path),
         manifest: manifest_path.map(display_path),
+        baseline_manifest: baseline_manifest_path.map(display_path),
         hotspot_count: u64::try_from(hotspot_items.len()).unwrap_or(u64::MAX),
         manifest_count,
+        baseline_manifest_count,
         selected_count,
         missing_selection_count: if selected.is_empty() {
             0
         } else {
             missing_acc.count
         },
+        carried_selection_count: carried_acc.count,
+        new_selection_count: new_acc.count,
         all: all.finish(),
         selected: selected_acc.finish(),
         missing_selection: missing_acc.finish(),
+        carried_selection: carried_acc.finish(),
+        new_selection: new_acc.finish(),
         top_residuals: residuals,
     })
 }
@@ -543,16 +580,24 @@ fn markdown(report: &AuditReport) -> String {
     if let Some(manifest) = &report.manifest {
         output.push_str(&format!("- Manifest: `{manifest}`\n"));
     }
+    if let Some(manifest) = &report.baseline_manifest {
+        output.push_str(&format!("- Baseline manifest: `{manifest}`\n"));
+    }
     output.push_str(&format!(
-        "- Hotspots/manifest/selected/missing: `{}` / `{}` / `{}` / `{}`\n\n",
+        "- Hotspots/manifest/baseline/selected/missing/carried/new: `{}` / `{}` / `{}` / `{}` / `{}` / `{}` / `{}`\n\n",
         report.hotspot_count,
         report.manifest_count,
+        report.baseline_manifest_count,
         report.selected_count,
-        report.missing_selection_count
+        report.missing_selection_count,
+        report.carried_selection_count,
+        report.new_selection_count
     ));
     push_bucket_markdown(&mut output, "All", &report.all);
     push_bucket_markdown(&mut output, "Selected", &report.selected);
     push_bucket_markdown(&mut output, "Missing Selection", &report.missing_selection);
+    push_bucket_markdown(&mut output, "Carried Selection", &report.carried_selection);
+    push_bucket_markdown(&mut output, "New Selection", &report.new_selection);
     output.push_str("## Top Residuals\n\n");
     output.push_str("| Pixel | Sel | Actual | Expected | Frontmost | CPU A/E | Best Sampling A/E | Edge | Gradient |\n");
     output.push_str("| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |\n");
@@ -730,8 +775,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     let report = audit(
         Path::new("hotspots.json"),
         Some(Path::new("manifest.json")),
+        None,
         &hotspots,
         Some(&manifest),
+        None,
         8,
     )?;
     assert_eq!(report.hotspot_count, 2);
@@ -743,5 +790,22 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.best_sampling_modes_for_expected[0].mode, "linear_top_left_half_texel");
     assert_eq!(report.selected.best_sampling_modes_for_actual[0].mode, "linear_bottom_left_half_texel");
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
+    let baseline = serde_json::json!({
+        "corrections": [
+            {"x": 3, "y": 4, "rgba": [21, 20, 20, 255]}
+        ]
+    });
+    let layered_report = audit(
+        Path::new("hotspots.json"),
+        Some(Path::new("manifest.json")),
+        Some(Path::new("baseline.json")),
+        &hotspots,
+        Some(&manifest),
+        Some(&baseline),
+        8,
+    )?;
+    assert_eq!(layered_report.baseline_manifest_count, 1);
+    assert_eq!(layered_report.carried_selection_count, 0);
+    assert_eq!(layered_report.new_selection_count, 1);
     Ok(())
 }

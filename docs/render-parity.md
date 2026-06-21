@@ -2836,9 +2836,21 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   residual. The expanded texture audit refines the split: wgpu still has
   `25/64` new residual pixels outside the expanded manifest, Bevy has `21/64`,
   while Ash has `0/64`. Do not treat this as a mandate for RGB-distance
-  selection. The next work should model or iterate source-derived owner/fill
-  behavior for the wgpu/Bevy shifted residuals, then inspect shaded/base-color
-  evaluation for selected same-material/same-triangle buckets.
+  selection.
+- Use
+  `just render-parity-seed-base-color-flat32-render-resolve-expanded2-readback`
+  as a negative-control diagnostic for repeated source-derived frontier
+  expansion. It adds only the second post-resolve owner/fill frontier, again
+  without reading expected/actual colors. The current run reduces missing
+  top-64 residual coverage to wgpu `13/64` and Bevy `13/64`, while Ash remains
+  fully covered, but it worsens the selected gradient metric from wgpu
+  `32.7302 dB` to `30.9642 dB` and Bevy `29.2208 dB` to `28.6200 dB`. The
+  layered texture audit shows the new selected pixels favor Rust actual color
+  rather than three-vrm expected color (wgpu `11/1` actual/expected closer,
+  Bevy `8/0`). Treat this as evidence that another blind owner-frontier pass is
+  not the root fix; the next renderer work should inspect base-color/material
+  evaluation at the selected same-material edge surfaces and use Ash's fully
+  covered bucket as the cleanest starting point.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
