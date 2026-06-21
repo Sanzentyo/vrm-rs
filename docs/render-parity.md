@@ -2851,6 +2851,17 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   not the root fix; the next renderer work should inspect base-color/material
   evaluation at the selected same-material edge surfaces and use Ash's fully
   covered bucket as the cleanest starting point.
+- `audit-texture-sampling-parity.rs` also reports per-material buckets inside
+  each selection layer. The current second-frontier audit shows the problem is
+  not one global sampler switch: Bevy selected `backpack_nm` is almost exact to
+  Rust CPU color (`19/0` actual/expected closer, mean `0.4955 / 107.7277`),
+  while wgpu selected `backpack_nm` is still actual-closer but not exact
+  (`19/0`, mean `69.7837 / 103.6785`), and Ash selected `backpack_nm` is
+  similarly actual-closer (`23/0`, mean `72.4624 / 104.2864`). Conversely,
+  selected `huku_bake`, `body_nm`, and `arm_plastic` contain expected-closer
+  buckets even after owner coverage is complete. Use these material buckets to
+  target exact base-color/material evaluation per named surface instead of
+  changing a global texture origin, mip, or repeated frontier policy.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or

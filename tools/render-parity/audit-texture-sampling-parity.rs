@@ -85,6 +85,7 @@ struct BucketStats {
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
     material_counts: Vec<MaterialCount>,
+    material_buckets: Vec<MaterialBucket>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -98,6 +99,20 @@ struct ModeCount {
 struct MaterialCount {
     material_name: String,
     count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialBucket {
+    material_name: String,
+    count: u64,
+    actual_cpu_closer: u64,
+    expected_cpu_closer: u64,
+    cpu_tied: u64,
+    mean_cpu_actual_rgb_distance: Option<f64>,
+    mean_cpu_expected_rgb_distance: Option<f64>,
+    edge_distance_lte_050px: u64,
+    same_material_as_expected: u64,
+    same_triangle_as_expected: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -151,12 +166,28 @@ struct Accumulator {
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
     materials: BTreeMap<String, u64>,
+    material_buckets: BTreeMap<String, MaterialAccumulator>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ModeAccumulator {
     count: u64,
     distance_sum: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MaterialAccumulator {
+    count: u64,
+    actual_cpu_closer: u64,
+    expected_cpu_closer: u64,
+    cpu_tied: u64,
+    cpu_actual_distance_sum: f64,
+    cpu_actual_distance_count: u64,
+    cpu_expected_distance_sum: f64,
+    cpu_expected_distance_count: u64,
+    edge_distance_lte_050px: u64,
+    same_material_as_expected: u64,
+    same_triangle_as_expected: u64,
 }
 
 impl Accumulator {
@@ -183,7 +214,8 @@ impl Accumulator {
             None => {}
         }
 
-        if let Some(edge) = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels") {
+        let edge = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels");
+        if let Some(edge) = edge {
             self.edge_distance_sum += edge;
             self.edge_distance_count += 1;
             self.edge_distance_lte_025px += u64::from(edge <= 0.25);
@@ -211,7 +243,23 @@ impl Accumulator {
             self.same_triangle_as_expected += 1;
         }
         if let Some(surface) = frontmost {
-            *self.materials.entry(surface.material_name).or_default() += 1;
+            let same_material_as_expected = same_material(Some(&surface), expected.as_ref());
+            let same_triangle_as_expected =
+                expected.as_ref().is_some_and(|expected| {
+                    surface.material_name == expected.material_name
+                        && surface.triangle == expected.triangle
+                });
+            *self.materials.entry(surface.material_name.clone()).or_default() += 1;
+            self.material_buckets
+                .entry(surface.material_name)
+                .or_default()
+                .add(
+                    actual_cpu,
+                    expected_cpu,
+                    edge,
+                    same_material_as_expected,
+                    same_triangle_as_expected,
+                );
         }
 
         if let Some(best) = best_sampling_mode(hotspot, "/frontmost_texture_sampling_variants", "actual_rgb_distance") {
@@ -269,6 +317,58 @@ impl Accumulator {
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
             material_counts: material_counts(self.materials),
+            material_buckets: material_buckets(self.material_buckets),
+        }
+    }
+}
+
+impl MaterialAccumulator {
+    fn add(
+        &mut self,
+        actual_cpu: Option<f64>,
+        expected_cpu: Option<f64>,
+        edge: Option<f64>,
+        same_material_as_expected: bool,
+        same_triangle_as_expected: bool,
+    ) {
+        self.count += 1;
+        if let Some(distance) = actual_cpu {
+            self.cpu_actual_distance_sum += distance;
+            self.cpu_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_cpu {
+            self.cpu_expected_distance_sum += distance;
+            self.cpu_expected_distance_count += 1;
+        }
+        match actual_cpu.zip(expected_cpu).and_then(compare_f64) {
+            Some(std::cmp::Ordering::Less) => self.actual_cpu_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.expected_cpu_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.cpu_tied += 1,
+            None => {}
+        }
+        self.edge_distance_lte_050px += u64::from(edge.is_some_and(|edge| edge <= 0.50));
+        self.same_material_as_expected += u64::from(same_material_as_expected);
+        self.same_triangle_as_expected += u64::from(same_triangle_as_expected);
+    }
+
+    fn finish(self, material_name: String) -> MaterialBucket {
+        MaterialBucket {
+            material_name,
+            count: self.count,
+            actual_cpu_closer: self.actual_cpu_closer,
+            expected_cpu_closer: self.expected_cpu_closer,
+            cpu_tied: self.cpu_tied,
+            mean_cpu_actual_rgb_distance: mean(
+                self.cpu_actual_distance_sum,
+                self.cpu_actual_distance_count,
+            ),
+            mean_cpu_expected_rgb_distance: mean(
+                self.cpu_expected_distance_sum,
+                self.cpu_expected_distance_count,
+            ),
+            edge_distance_lte_050px: self.edge_distance_lte_050px,
+            same_material_as_expected: self.same_material_as_expected,
+            same_triangle_as_expected: self.same_triangle_as_expected,
         }
     }
 }
@@ -573,6 +673,21 @@ fn material_counts(materials: BTreeMap<String, u64>) -> Vec<MaterialCount> {
     values
 }
 
+fn material_buckets(materials: BTreeMap<String, MaterialAccumulator>) -> Vec<MaterialBucket> {
+    let mut values = materials
+        .into_iter()
+        .map(|(material_name, accumulator)| accumulator.finish(material_name))
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| right.expected_cpu_closer.cmp(&left.expected_cpu_closer))
+            .then_with(|| left.material_name.cmp(&right.material_name))
+    });
+    values
+}
+
 fn markdown(report: &AuditReport) -> String {
     let mut output = String::new();
     output.push_str("# Texture Sampling Parity Audit\n\n");
@@ -659,6 +774,24 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         "- Top materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | Edge <=0.50px | Same expected mat/tri |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
+    for material in bucket.material_buckets.iter().take(8) {
+        output.push_str(&format!(
+            "| {} | {} | {}/{}/{} | {} / {} | {} | {}/{} |\n",
+            material.material_name,
+            material.count,
+            material.actual_cpu_closer,
+            material.expected_cpu_closer,
+            material.cpu_tied,
+            fmt_opt(material.mean_cpu_actual_rgb_distance),
+            fmt_opt(material.mean_cpu_expected_rgb_distance),
+            material.edge_distance_lte_050px,
+            material.same_material_as_expected,
+            material.same_triangle_as_expected,
+        ));
+    }
+    output.push('\n');
 }
 
 fn fmt_modes(modes: &[ModeCount]) -> String {
@@ -789,6 +922,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.all.actual_cpu_closer, 1);
     assert_eq!(report.selected.best_sampling_modes_for_expected[0].mode, "linear_top_left_half_texel");
     assert_eq!(report.selected.best_sampling_modes_for_actual[0].mode, "linear_bottom_left_half_texel");
+    assert_eq!(report.all.material_buckets.len(), 2);
+    assert_eq!(report.all.material_buckets[0].material_name, "body");
+    assert_eq!(report.all.material_buckets[0].expected_cpu_closer, 1);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
     let baseline = serde_json::json!({
         "corrections": [
