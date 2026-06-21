@@ -79,6 +79,7 @@ struct AuditReport {
     by_selection_source: BTreeMap<String, AuditBucket>,
     by_material: BTreeMap<String, AuditBucket>,
     top_actual_sample_misses: Vec<AuditRow>,
+    top_sample_closer_to_expected: Vec<AuditRow>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -240,6 +241,19 @@ fn audit(
         rows.push(row);
     }
 
+    let mut top_sample_closer_to_expected = rows
+        .iter()
+        .filter(|row| row.expected_closeness == Some(ExpectedCloseness::Sample))
+        .cloned()
+        .collect::<Vec<_>>();
+    top_sample_closer_to_expected.sort_by(|left, right| {
+        right
+            .sample_expected_margin()
+            .partial_cmp(&left.sample_expected_margin())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_sample_closer_to_expected.truncate(16);
+
     rows.sort_by(|left, right| {
         right
             .actual_sample_distance
@@ -263,7 +277,14 @@ fn audit(
             .map(|(key, value)| (key, value.finish()))
             .collect(),
         top_actual_sample_misses: rows,
+        top_sample_closer_to_expected,
     })
+}
+
+impl AuditRow {
+    fn sample_expected_margin(&self) -> Option<f64> {
+        Some(self.actual_expected_distance? - self.expected_sample_distance?)
+    }
 }
 
 impl BucketAccumulator {
@@ -461,25 +482,35 @@ fn markdown(report: &AuditReport) -> String {
     output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
     output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
     for row in &report.top_actual_sample_misses {
-        output.push_str(&format!(
-            "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            row.x,
-            row.y,
-            row.material_name,
-            row.triangle
-                .map(|triangle| triangle.to_string())
-                .unwrap_or_else(|| "n/a".to_owned()),
-            row.selection_source,
-            fmt_rgba(Some(row.manifest_rgba)),
-            fmt_rgba(row.actual_rgba),
-            fmt_rgba(row.expected_rgba),
-            fmt_f64(row.actual_sample_distance),
-            fmt_f64(row.expected_sample_distance),
-            fmt_f64(row.actual_expected_distance),
-            fmt_closeness(row.expected_closeness),
-        ));
+        output.push_str(&audit_row_table_row(row));
+    }
+    output.push_str("\n## Top Sample-Closer Expected Pixels\n\n");
+    output.push_str("| Pixel | Material | Source | Manifest RGBA | Actual RGBA | Expected RGBA | A-S | E-S | A-E | Expected closer |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |\n");
+    for row in &report.top_sample_closer_to_expected {
+        output.push_str(&audit_row_table_row(row));
     }
     output
+}
+
+fn audit_row_table_row(row: &AuditRow) -> String {
+    format!(
+        "| {},{} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        row.x,
+        row.y,
+        row.material_name,
+        row.triangle
+            .map(|triangle| triangle.to_string())
+            .unwrap_or_else(|| "n/a".to_owned()),
+        row.selection_source,
+        fmt_rgba(Some(row.manifest_rgba)),
+        fmt_rgba(row.actual_rgba),
+        fmt_rgba(row.expected_rgba),
+        fmt_f64(row.actual_sample_distance),
+        fmt_f64(row.expected_sample_distance),
+        fmt_f64(row.actual_expected_distance),
+        fmt_closeness(row.expected_closeness),
+    )
 }
 
 fn bucket_table_header(label: &str) -> String {
@@ -591,6 +622,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.totals.expected_sample_exact, 2);
     assert_eq!(report.totals.sample_closer_to_expected_than_actual, 1);
     assert_eq!(report.totals.actual_sample_expected_tie, 1);
+    assert_eq!(report.top_sample_closer_to_expected.len(), 1);
     assert!(markdown(&report).contains("Owner/Sample Execution Audit"));
     Ok(())
 }

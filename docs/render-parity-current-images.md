@@ -114,6 +114,17 @@ Execution audit reports:
 - Expanded Ash:
   [`Seed-san.ash-owner-sample-execution.expanded-readback.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.ash-owner-sample-execution.expanded-readback.md)
 
+Each execution audit now includes a `Top Sample-Closer Expected Pixels` table.
+That table isolates the pixels where the manifest sample is closer to
+`three-vrm` than the current renderer output. In the current local artifacts,
+the largest wgpu/Ash sample-closer buckets are concentrated around
+`armgear_plastic`, `body_nm`, `arm_mat`, `arm_plastic`, `backpack_nm`, and
+`huku_bake`. Bevy's expanded readback is usually nearly identical to the
+manifest sample, so the same table has much smaller actual-vs-sample distances
+there. This reinforces that the next renderer change should target those
+sample-closer buckets specifically, not blindly copy the manifest sample for
+all wgpu/Ash entries.
+
 ## Current Base-UV Images
 
 These are the latest local images under
