@@ -1440,6 +1440,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .and_then(|backend| backend.color_fit.as_ref())
         .ok_or("self-test shading model color_fit was not parsed")?;
     assert_eq!(color_fit.preferred_fit, "additive");
+    assert_eq!(color_fit.additive_fit_mean_distance, Some(1.0));
+    assert_eq!(color_fit.gain_fit_mean_distance, Some(2.0));
+    let material_color_fit = summary
+        .shading_model_join
+        .as_ref()
+        .and_then(|join| join.models.first())
+        .and_then(|model| model.backends.first())
+        .and_then(|backend| backend.material_draw_color_fits.first())
+        .and_then(|fit| fit.color_fit.as_ref())
+        .ok_or("self-test material/draw color_fit was not parsed")?;
+    assert_eq!(material_color_fit.additive_fit_mean_distance, Some(1.0));
+    assert_eq!(material_color_fit.gain_fit_mean_distance, Some(2.0));
     let shading_input = summary
         .shading_model_join
         .as_ref()

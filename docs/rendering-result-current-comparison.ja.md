@@ -1,6 +1,6 @@
 # 現状レンダリング結果の画像比較
 
-更新日: 2026-06-21
+更新日: 2026-06-22
 
 このページは、いまローカルに存在するレンダリング比較画像をそのまま並べるためのレビュー用Markdownです。画像・raw比較レポートは `.external-fixtures/` 配下にあり、リポジトリにはコミットしません。基準画像は `three-vrm`、比較対象は Rust 側の `wgpu` / Bevy / Ash です。
 
@@ -21,6 +21,8 @@
 直近の shading-model residual join では、`gltf_pbr` は `16` 個の共有 top-residual pixel がすべて `backpack_nm node145/mesh4/prim9/base` に集まっています。`mtoon` も `16` 個の共有 top-residual pixel があり、wgpu / Bevy / Ash はかなり近い mean E-A 帯に入っています。
 
 追加の shared backend 診断では、`gltf_pbr` の wgpu/Ash actual RGB distance は `2.92`、Bevy/wgpu は `0.99`、`mtoon` は Ash/wgpu `0.14`、Bevy/wgpu `0.79` まで近くなっています。additive RGB fit が gain fit より近いため、次の実装は ambient/fill/light accumulation と material-local offset を中心に追います。
+
+2026-06-22 の確認では、実データの join Markdown だけでなく expanded summary JSON 側にも `color_fit` が入り、`color_fit: null` には戻っていません。parser は `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance` と、短縮形の `additive_fit_mean_distance` / `gain_fit_mean_distance` の両方を受けます。
 
 ## まず見る画像セット
 
@@ -157,13 +159,13 @@ Metric: `rgb-visible`。
 
 ### Expanded readback の material/color 診断
 
-`target/texture-draw-audit/` に出している expected-vs-actual (`E-A`) 診断では、selected bucket の mean E-A distance は wgpu `45.89`、Ash `36.97`、Bevy `93.25` です。方向は material / draw key ごとに分かれており、単一の exposure / color-space knob で直す形ではありません。
+`target/texture-draw-audit/` と expanded summary に出している expected-vs-actual (`E-A`) 診断では、selected bucket の mean E-A distance は wgpu `45.89`、Bevy `45.35`、Ash `36.97` です。方向は material / draw key ごとに分かれており、単一の exposure / color-space knob で直す形ではありません。
 
 | Renderer | Selected mean E-A | 代表的な expected-brighter bucket | 代表的な expected-darker bucket | 読み |
 | --- | ---: | --- | --- | --- |
 | wgpu | 45.89 | `backpack_nm node145/mesh4/prim9/base` `+18.47,+21.00,+22.33` | `body_nm node145/mesh4/prim1/base` `-33.00,-26.50,-24.75` | glTF/PBR backpack と MToon body/plastic を分けて見る。 |
 | Ash | 36.97 | `backpack_nm node145/mesh4/prim9/base` `+16.57,+18.83,+19.83` | `body_nm node145/mesh4/prim1/base` `-9.50,-7.88,-7.75` | wgpu と同じ方向の split。backend だけの差ではない。 |
-| Bevy | 93.25 | `backpack_nm` 周辺が大きく expected-brighter | material pixel residual が大きい | manifest sample 追従とは別に material/color 評価差が残る。 |
+| Bevy | 45.35 | `backpack_nm` 周辺が expected-brighter | `body_nm` / plastic 系で局所差分 | wgpu/Ash と同じ material/draw-key 軸で読む。 |
 
 Audit Markdown:
 
@@ -186,6 +188,13 @@ Audit Markdown:
 現在の shared backend 診断では、`gltf_pbr` は Bevy/wgpu が `0.99`、Ash/wgpu が `2.92`、`mtoon` は三 renderer すべてが `1.0` 未満級の actual RGB distance に収まっています。さらに Backend Color Fit は全 backend/model で additive を選ぶため、次は三 renderer 共通の additive/fill 成分を調べます。
 
 `Material / Draw Color Fit` では、`gltf_pbr` の `backpack_nm node145/mesh4/prim9/base` が backend ごとに additive 優勢です。MToon 側は `eye node2/mesh2/prim1/base` が additive、`arm_mat node144/mesh3/prim0/base` は Bevy/wgpu で gain が僅差優勢に分かれます。次の実装対象は、この draw-key 単位の差を使って PBR backpack と MToon eye/arm を別々に合わせることです。
+
+Summary JSON の確認先:
+
+- [`Seed-san.render-resolve-expanded.summary.json`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.json)
+- [`Seed-san.render-resolve-expanded.summary.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.md)
+
+なお、three-vrm の `owner-id` 診断は source material の base map alpha を反映するように更新済みです。これは alpha/mask owner visibility の正当化であり、Seed-san の現在の base-color 残差そのものは material/color/fill 側として残っています。
 
 ## 現時点の読み
 

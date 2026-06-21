@@ -1382,6 +1382,7 @@ function capturePage(options) {
           if (mode === 'owner-id') {
             const owner = new THREE.MeshBasicMaterial({
               color: 0xffffff,
+              map: material?.map ?? null,
               vertexColors: true,
               side: material?.side ?? THREE.FrontSide,
               transparent: material?.transparent ?? false,
@@ -1393,6 +1394,23 @@ function capturePage(options) {
             owner.name = (material?.name ?? 'material') + ':vrm-rs-owner-id-diagnostic';
             owner.blending = material?.blending ?? THREE.NormalBlending;
             owner.premultipliedAlpha = material?.premultipliedAlpha ?? false;
+            if (material?.map?.isTexture) {
+              owner.onBeforeCompile = (shader) => {
+                // Keep owner RGB from vertex colors while matching base-color alphaTest/map-alpha visibility.
+                shader.fragmentShader = shader.fragmentShader.replace(
+                  '#include <map_fragment>',
+                  [
+                    '#ifdef USE_MAP',
+                    '  vec4 sampledDiffuseColor = texture2D( map, vMapUv );',
+                    '  #ifdef DECODE_VIDEO_TEXTURE',
+                    '    sampledDiffuseColor = sRGBTransferEOTF( sampledDiffuseColor );',
+                    '  #endif',
+                    '  diffuseColor.a *= sampledDiffuseColor.a;',
+                    '#endif',
+                  ].join('\\n'),
+                );
+              };
+            }
             return owner;
           }
           if (mode === 'uv' || mode === 'base-uv') {

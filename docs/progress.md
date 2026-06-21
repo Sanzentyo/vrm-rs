@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-06-22
+
+- Made the three-vrm browser `owner-id` diagnostic alpha-aware without
+  corrupting owner RGB IDs. The diagnostic material now binds the source base
+  map and replaces Three's `map_fragment` so only sampled map alpha affects
+  `diffuseColor.a`; vertex-color owner RGB remains untouched. This aligns the
+  browser owner-id reference with the Rust shaders, which already sample
+  `raw_texel.a` and run alpha cutoff before returning owner color. Re-running
+  the current Seed-san render-resolve expanded browser owner/base-color join
+  succeeded, but the aggregate blocker numbers stayed unchanged (`64/64`
+  owner/base frontmost material matches and `58/64` surface matches for each
+  backend), so this was a correctness fix for alpha/mask owner diagnostics
+  rather than the root cause of the current Seed-san base-color residual.
+- Refreshed the current rendering comparison Markdown and verified the real
+  expanded summary JSON carries shading-model `color_fit` objects instead of
+  `color_fit: null`. The parser path accepts the join JSON's
+  `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance` names and the
+  shorter summary-internal aliases, so the additive/gain fit visible in the
+  join Markdown is preserved in the machine-readable summary too.
+
 ## 2026-06-21
 
 - Added browser-projected base-color joins to the current render-resolve

@@ -1,6 +1,6 @@
 # Current Rendering Result Comparison
 
-Updated: 2026-06-21
+Updated: 2026-06-22
 
 This page compares the render images that exist in this workspace right now.
 The image artifacts live under `.external-fixtures/` and are intentionally not
@@ -135,21 +135,28 @@ parity across wgpu, Bevy, and Ash. Ash PNGs can be regenerated from the existing
 ### Expanded Material/Color Diagnostic
 
 The `target/texture-draw-audit/` expected-vs-actual (`E-A`) reports show that
-the selected bucket mean E-A distance is wgpu `45.89`, Ash `36.97`, and Bevy
-`93.25`. The direction differs by material and draw key, so this is not a good
+the selected bucket mean E-A distance is wgpu `45.89`, Bevy `45.35`, and Ash
+`36.97`. The direction differs by material and draw key, so this is not a good
 candidate for another global exposure or color-space toggle.
 
 | Renderer | Selected mean E-A | Representative expected-brighter bucket | Representative expected-darker bucket | Reading |
 | --- | ---: | --- | --- | --- |
 | wgpu | 45.89 | `backpack_nm node145/mesh4/prim9/base` `+18.47,+21.00,+22.33` | `body_nm node145/mesh4/prim1/base` `-33.00,-26.50,-24.75` | Split glTF/PBR backpack work from MToon body/plastic work. |
 | Ash | 36.97 | `backpack_nm node145/mesh4/prim9/base` `+16.57,+18.83,+19.83` | `body_nm node145/mesh4/prim1/base` `-9.50,-7.88,-7.75` | Same directional split as wgpu; not backend-only. |
-| Bevy | 93.25 | Large expected-brighter residuals around `backpack_nm` | Large material-pixel residual remains | Material/color evaluation still differs from manifest-following behavior. |
+| Bevy | 45.35 | Expected-brighter residuals around `backpack_nm` | Local `body_nm` / plastic residuals | Read it on the same material/draw-key axis as wgpu and Ash. |
+
+The real shading-model join Markdown and the expanded summary JSON now agree:
+`color_fit` is present in JSON instead of serializing as `null`. The parser
+accepts both `additive_fit_mean_rgb_distance` / `gain_fit_mean_rgb_distance`
+and the shorter `additive_fit_mean_distance` / `gain_fit_mean_distance` field
+names.
 
 Audit Markdown:
 
 - [`target/texture-draw-audit/Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)
 - [`target/texture-draw-audit/Seed-san.bevy.expected-actual.md`](../target/texture-draw-audit/Seed-san.bevy.expected-actual.md)
 - [`target/texture-draw-audit/Seed-san.ash.expected-actual.md`](../target/texture-draw-audit/Seed-san.ash.expected-actual.md)
+- [`Seed-san.render-resolve-expanded.summary.json`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-expanded-readback/reports/Seed-san.render-resolve-expanded.summary.json)
 
 ## Review Order
 
