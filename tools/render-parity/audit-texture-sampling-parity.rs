@@ -96,6 +96,14 @@ struct BucketStats {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_best_sampling_actual_rgb_distance: Option<f64>,
+    mean_best_sampling_expected_rgb_distance: Option<f64>,
+    best_sampling_actual_within_4: u64,
+    best_sampling_actual_within_8: u64,
+    best_sampling_actual_within_16: u64,
+    best_sampling_expected_within_4: u64,
+    best_sampling_expected_within_8: u64,
+    best_sampling_expected_within_16: u64,
     material_counts: Vec<MaterialCount>,
     material_buckets: Vec<MaterialBucket>,
     selection_material_buckets: Vec<MaterialBucket>,
@@ -138,6 +146,14 @@ struct MaterialBucket {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_best_sampling_actual_rgb_distance: Option<f64>,
+    mean_best_sampling_expected_rgb_distance: Option<f64>,
+    best_sampling_actual_within_4: u64,
+    best_sampling_actual_within_8: u64,
+    best_sampling_actual_within_16: u64,
+    best_sampling_expected_within_4: u64,
+    best_sampling_expected_within_8: u64,
+    best_sampling_expected_within_16: u64,
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
 }
@@ -211,6 +227,16 @@ struct Accumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    best_sampling_actual_distance_sum: f64,
+    best_sampling_actual_distance_count: u64,
+    best_sampling_expected_distance_sum: f64,
+    best_sampling_expected_distance_count: u64,
+    best_sampling_actual_within_4: u64,
+    best_sampling_actual_within_8: u64,
+    best_sampling_actual_within_16: u64,
+    best_sampling_expected_within_4: u64,
+    best_sampling_expected_within_8: u64,
+    best_sampling_expected_within_16: u64,
     materials: BTreeMap<String, u64>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
@@ -251,6 +277,16 @@ struct MaterialAccumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    best_sampling_actual_distance_sum: f64,
+    best_sampling_actual_distance_count: u64,
+    best_sampling_expected_distance_sum: f64,
+    best_sampling_expected_distance_count: u64,
+    best_sampling_actual_within_4: u64,
+    best_sampling_actual_within_8: u64,
+    best_sampling_actual_within_16: u64,
+    best_sampling_expected_within_4: u64,
+    best_sampling_expected_within_8: u64,
+    best_sampling_expected_within_16: u64,
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
 }
@@ -373,33 +409,26 @@ impl Accumulator {
                 );
         }
 
-        if let Some(best) = best_sampling_mode(hotspot, "/frontmost_texture_sampling_variants", "actual_rgb_distance") {
-            self.actual_modes
-                .entry(best.mode)
-                .and_modify(|entry| {
-                    entry.count += 1;
-                    entry.distance_sum += best.distance;
-                })
-                .or_insert(ModeAccumulator {
-                    count: 1,
-                    distance_sum: best.distance,
-                });
-        }
-        if let Some(best) = best_sampling_mode(
+        let best_actual_sampling = best_sampling_mode(
+            hotspot,
+            "/frontmost_texture_sampling_variants",
+            "actual_rgb_distance",
+        );
+        let best_expected_sampling = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
             "expected_rgb_distance",
-        ) {
-            self.expected_modes
-                .entry(best.mode)
-                .and_modify(|entry| {
-                    entry.count += 1;
-                    entry.distance_sum += best.distance;
-                })
-                .or_insert(ModeAccumulator {
-                    count: 1,
-                    distance_sum: best.distance,
-                });
+        );
+        self.add_best_sampling_distances(
+            best_actual_sampling.as_ref().map(|best| best.distance),
+            best_expected_sampling.as_ref().map(|best| best.distance),
+        );
+
+        if let Some(best) = best_actual_sampling {
+            push_mode_count(&mut self.actual_modes, best);
+        }
+        if let Some(best) = best_expected_sampling {
+            push_mode_count(&mut self.expected_modes, best);
         }
     }
 
@@ -453,6 +482,20 @@ impl Accumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_best_sampling_actual_rgb_distance: mean(
+                self.best_sampling_actual_distance_sum,
+                self.best_sampling_actual_distance_count,
+            ),
+            mean_best_sampling_expected_rgb_distance: mean(
+                self.best_sampling_expected_distance_sum,
+                self.best_sampling_expected_distance_count,
+            ),
+            best_sampling_actual_within_4: self.best_sampling_actual_within_4,
+            best_sampling_actual_within_8: self.best_sampling_actual_within_8,
+            best_sampling_actual_within_16: self.best_sampling_actual_within_16,
+            best_sampling_expected_within_4: self.best_sampling_expected_within_4,
+            best_sampling_expected_within_8: self.best_sampling_expected_within_8,
+            best_sampling_expected_within_16: self.best_sampling_expected_within_16,
             material_counts: material_counts(self.materials),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
@@ -520,6 +563,27 @@ impl Accumulator {
             self.frontmost_base_texture_beats_cpu_for_expected += 1;
         }
     }
+
+    fn add_best_sampling_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.best_sampling_actual_distance_sum += distance;
+            self.best_sampling_actual_distance_count += 1;
+            self.best_sampling_actual_within_4 += u64::from(distance <= 4.0);
+            self.best_sampling_actual_within_8 += u64::from(distance <= 8.0);
+            self.best_sampling_actual_within_16 += u64::from(distance <= 16.0);
+        }
+        if let Some(distance) = expected_distance {
+            self.best_sampling_expected_distance_sum += distance;
+            self.best_sampling_expected_distance_count += 1;
+            self.best_sampling_expected_within_4 += u64::from(distance <= 4.0);
+            self.best_sampling_expected_within_8 += u64::from(distance <= 8.0);
+            self.best_sampling_expected_within_16 += u64::from(distance <= 16.0);
+        }
+    }
 }
 
 impl MaterialAccumulator {
@@ -564,37 +628,26 @@ impl MaterialAccumulator {
             frontmost_base_texture_expected,
             expected_cpu,
         );
-        if let Some(best) = best_sampling_mode(
+        let best_actual_sampling = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
             "actual_rgb_distance",
-        ) {
-            self.actual_modes
-                .entry(best.mode)
-                .and_modify(|entry| {
-                    entry.count += 1;
-                    entry.distance_sum += best.distance;
-                })
-                .or_insert(ModeAccumulator {
-                    count: 1,
-                    distance_sum: best.distance,
-                });
-        }
-        if let Some(best) = best_sampling_mode(
+        );
+        let best_expected_sampling = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
             "expected_rgb_distance",
-        ) {
-            self.expected_modes
-                .entry(best.mode)
-                .and_modify(|entry| {
-                    entry.count += 1;
-                    entry.distance_sum += best.distance;
-                })
-                .or_insert(ModeAccumulator {
-                    count: 1,
-                    distance_sum: best.distance,
-                });
+        );
+        self.add_best_sampling_distances(
+            best_actual_sampling.as_ref().map(|best| best.distance),
+            best_expected_sampling.as_ref().map(|best| best.distance),
+        );
+
+        if let Some(best) = best_actual_sampling {
+            push_mode_count(&mut self.actual_modes, best);
+        }
+        if let Some(best) = best_expected_sampling {
+            push_mode_count(&mut self.expected_modes, best);
         }
     }
 
@@ -642,6 +695,20 @@ impl MaterialAccumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_best_sampling_actual_rgb_distance: mean(
+                self.best_sampling_actual_distance_sum,
+                self.best_sampling_actual_distance_count,
+            ),
+            mean_best_sampling_expected_rgb_distance: mean(
+                self.best_sampling_expected_distance_sum,
+                self.best_sampling_expected_distance_count,
+            ),
+            best_sampling_actual_within_4: self.best_sampling_actual_within_4,
+            best_sampling_actual_within_8: self.best_sampling_actual_within_8,
+            best_sampling_actual_within_16: self.best_sampling_actual_within_16,
+            best_sampling_expected_within_4: self.best_sampling_expected_within_4,
+            best_sampling_expected_within_8: self.best_sampling_expected_within_8,
+            best_sampling_expected_within_16: self.best_sampling_expected_within_16,
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
         }
@@ -708,6 +775,40 @@ impl MaterialAccumulator {
             self.frontmost_base_texture_beats_cpu_for_expected += 1;
         }
     }
+
+    fn add_best_sampling_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.best_sampling_actual_distance_sum += distance;
+            self.best_sampling_actual_distance_count += 1;
+            self.best_sampling_actual_within_4 += u64::from(distance <= 4.0);
+            self.best_sampling_actual_within_8 += u64::from(distance <= 8.0);
+            self.best_sampling_actual_within_16 += u64::from(distance <= 16.0);
+        }
+        if let Some(distance) = expected_distance {
+            self.best_sampling_expected_distance_sum += distance;
+            self.best_sampling_expected_distance_count += 1;
+            self.best_sampling_expected_within_4 += u64::from(distance <= 4.0);
+            self.best_sampling_expected_within_8 += u64::from(distance <= 8.0);
+            self.best_sampling_expected_within_16 += u64::from(distance <= 16.0);
+        }
+    }
+}
+
+fn push_mode_count(modes: &mut BTreeMap<String, ModeAccumulator>, best: BestSamplingMode) {
+    modes
+        .entry(best.mode)
+        .and_modify(|entry| {
+            entry.count += 1;
+            entry.distance_sum += best.distance;
+        })
+        .or_insert(ModeAccumulator {
+            count: 1,
+            distance_sum: best.distance,
+        });
 }
 
 #[derive(Clone, Debug)]
@@ -1180,6 +1281,17 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         bucket.frontmost_base_texture_beats_cpu_for_expected
     ));
     output.push_str(&format!(
+        "- Best texture sampling mean A/E: `{}` / `{}`; within4 A/E `{}` / `{}`; within8 A/E `{}` / `{}`; within16 A/E `{}` / `{}`\n",
+        fmt_opt(bucket.mean_best_sampling_actual_rgb_distance),
+        fmt_opt(bucket.mean_best_sampling_expected_rgb_distance),
+        bucket.best_sampling_actual_within_4,
+        bucket.best_sampling_expected_within_4,
+        bucket.best_sampling_actual_within_8,
+        bucket.best_sampling_expected_within_8,
+        bucket.best_sampling_actual_within_16,
+        bucket.best_sampling_expected_within_16
+    ));
+    output.push_str(&format!(
         "- Top frontmost materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
@@ -1195,11 +1307,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Texture beats CPU | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             material.actual_cpu_closer,
@@ -1219,6 +1331,10 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             fmt_opt(material.mean_frontmost_base_texture_actual_rgb_distance),
             fmt_opt(material.mean_frontmost_base_texture_expected_rgb_distance),
             material.frontmost_base_texture_beats_cpu_for_expected,
+            fmt_opt(material.mean_best_sampling_actual_rgb_distance),
+            fmt_opt(material.mean_best_sampling_expected_rgb_distance),
+            material.best_sampling_actual_within_8,
+            material.best_sampling_expected_within_8,
             material.edge_distance_lte_050px,
             material.same_material_as_expected,
             material.same_triangle_as_expected,
@@ -1383,6 +1499,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
     assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
     assert_eq!(report.selected.frontmost_base_texture_expected_closer, 0);
+    assert_eq!(report.selected.best_sampling_actual_within_4, 1);
+    assert_eq!(report.selected.best_sampling_expected_within_4, 1);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
     let baseline = serde_json::json!({
         "corrections": [

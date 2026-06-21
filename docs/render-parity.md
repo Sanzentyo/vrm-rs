@@ -2896,6 +2896,21 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   local fill/triangle ownership work, and treat `backpack_nm` as a texture/color
   evaluation target because the frontmost texture sample itself remains
   actual-closer (`19/0` wgpu and Bevy, `23/0` Ash).
+- Best texture-sampling distance thresholds are part of the same report. They
+  show whether any currently modeled sampling variant can get close to the
+  expected or actual image without changing owner selection. In the current
+  expanded2 selected audit, Bevy `backpack_nm` is essentially exact to actual
+  (`mean best actual 0.37`, `19/19 <= 8`) but has no expected-near local variant
+  (`0/19 <= 8`, mean best expected `86.28`). wgpu and Ash `backpack_nm` also
+  have `0` expected-near rows at `<= 8`; their actual-side best distances stay
+  around `63`/`62`, which suggests a separate lighting/color-output delta for
+  those backends. Use this to keep `backpack_nm` out of the broad
+  sampler-origin bucket: Bevy proves the modeled texture sample is the Rust
+  actual color, while three-vrm expected needs either different local ownership
+  not covered by the current sampling variants or another color-accumulation
+  effect. `body_nm` remains different because expected-near sampling rows do
+  exist (`3` rows <= 8 for wgpu and Ash), so it stays in the local fill/UV
+  ownership bucket.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
