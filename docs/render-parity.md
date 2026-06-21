@@ -2873,6 +2873,20 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   base-color/material evaluation per named selected surface, while keeping
   wgpu/Bevy missing-residual owner/fill work separate from the selected-surface
   color investigation.
+- The same audit now also reports `nearest_visible_expected` CPU-color
+  distances. This is a diagnostic only: it does not feed manifest selection,
+  but it tells us whether the expected image is better explained by a nearby
+  same-material candidate than by the selected/frontmost candidate. On the
+  current expanded2 run, selected Bevy `huku_bake` flips from frontmost `16/0`
+  actual/expected closer to nearest-expected `2/14`, with `13` rows where the
+  nearest-expected CPU color beats frontmost for the expected image. wgpu
+  `body_nm` shifts from `3/4` to `2/5`, and Ash `body_nm` from `4/4` to `2/6`.
+  Keep those in the fill/triangle ownership bucket. In contrast,
+  `backpack_nm` remains mostly actual-closer even with nearest-expected colors
+  (`12/7` wgpu, `14/5` Bevy, `15/8` Ash), so it is the cleaner next target for
+  material/base-color or color-accumulation parity. Top residual Markdown rows
+  include nearest-expected CPU RGBA and A/E distances to make pixel-level review
+  reproducible without PNG conversion or RGB-driven sample selection.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or

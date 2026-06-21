@@ -84,6 +84,12 @@ struct BucketStats {
     same_triangle_as_expected: u64,
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
+    mean_nearest_expected_cpu_actual_rgb_distance: Option<f64>,
+    mean_nearest_expected_cpu_expected_rgb_distance: Option<f64>,
+    nearest_expected_cpu_actual_closer: u64,
+    nearest_expected_cpu_expected_closer: u64,
+    nearest_expected_cpu_tied: u64,
+    nearest_expected_beats_frontmost_for_expected: u64,
     material_counts: Vec<MaterialCount>,
     material_buckets: Vec<MaterialBucket>,
     selection_material_buckets: Vec<MaterialBucket>,
@@ -114,6 +120,12 @@ struct MaterialBucket {
     edge_distance_lte_050px: u64,
     same_material_as_expected: u64,
     same_triangle_as_expected: u64,
+    mean_nearest_expected_cpu_actual_rgb_distance: Option<f64>,
+    mean_nearest_expected_cpu_expected_rgb_distance: Option<f64>,
+    nearest_expected_cpu_actual_closer: u64,
+    nearest_expected_cpu_expected_closer: u64,
+    nearest_expected_cpu_tied: u64,
+    nearest_expected_beats_frontmost_for_expected: u64,
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
 }
@@ -129,8 +141,11 @@ struct ResidualRow {
     actual_match: Option<SurfaceLabel>,
     expected_match: Option<SurfaceLabel>,
     frontmost_cpu_base_color_rgba: Option<[u8; 4]>,
+    nearest_expected_cpu_base_color_rgba: Option<[u8; 4]>,
     cpu_actual_rgb_distance: Option<f64>,
     cpu_expected_rgb_distance: Option<f64>,
+    nearest_expected_cpu_actual_rgb_distance: Option<f64>,
+    nearest_expected_cpu_expected_rgb_distance: Option<f64>,
     best_actual_sampling_mode: Option<String>,
     best_actual_sampling_rgba: Option<[u8; 4]>,
     best_actual_sampling_rgb_distance: Option<f64>,
@@ -168,6 +183,14 @@ struct Accumulator {
     same_triangle_as_expected: u64,
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
+    nearest_expected_actual_distance_sum: f64,
+    nearest_expected_actual_distance_count: u64,
+    nearest_expected_expected_distance_sum: f64,
+    nearest_expected_expected_distance_count: u64,
+    nearest_expected_cpu_actual_closer: u64,
+    nearest_expected_cpu_expected_closer: u64,
+    nearest_expected_cpu_tied: u64,
+    nearest_expected_beats_frontmost_for_expected: u64,
     materials: BTreeMap<String, u64>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
@@ -192,6 +215,14 @@ struct MaterialAccumulator {
     edge_distance_lte_050px: u64,
     same_material_as_expected: u64,
     same_triangle_as_expected: u64,
+    nearest_expected_actual_distance_sum: f64,
+    nearest_expected_actual_distance_count: u64,
+    nearest_expected_expected_distance_sum: f64,
+    nearest_expected_expected_distance_count: u64,
+    nearest_expected_cpu_actual_closer: u64,
+    nearest_expected_cpu_expected_closer: u64,
+    nearest_expected_cpu_tied: u64,
+    nearest_expected_beats_frontmost_for_expected: u64,
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
 }
@@ -219,6 +250,15 @@ impl Accumulator {
             Some(std::cmp::Ordering::Equal) => self.cpu_tied += 1,
             None => {}
         }
+        let nearest_expected_actual_cpu =
+            candidate_rgb_distance(hotspot, "/nearest_visible_expected", "/actual");
+        let nearest_expected_expected_cpu =
+            candidate_rgb_distance(hotspot, "/nearest_visible_expected", "/expected");
+        self.add_nearest_expected_distances(
+            nearest_expected_actual_cpu,
+            nearest_expected_expected_cpu,
+            expected_cpu,
+        );
 
         let edge = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels");
         if let Some(edge) = edge {
@@ -263,6 +303,8 @@ impl Accumulator {
                     hotspot,
                     actual_cpu,
                     expected_cpu,
+                    nearest_expected_actual_cpu,
+                    nearest_expected_expected_cpu,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -282,6 +324,8 @@ impl Accumulator {
                     hotspot,
                     actual_cpu,
                     expected_cpu,
+                    nearest_expected_actual_cpu,
+                    nearest_expected_expected_cpu,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -342,9 +386,53 @@ impl Accumulator {
             same_triangle_as_expected: self.same_triangle_as_expected,
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
+            mean_nearest_expected_cpu_actual_rgb_distance: mean(
+                self.nearest_expected_actual_distance_sum,
+                self.nearest_expected_actual_distance_count,
+            ),
+            mean_nearest_expected_cpu_expected_rgb_distance: mean(
+                self.nearest_expected_expected_distance_sum,
+                self.nearest_expected_expected_distance_count,
+            ),
+            nearest_expected_cpu_actual_closer: self.nearest_expected_cpu_actual_closer,
+            nearest_expected_cpu_expected_closer: self.nearest_expected_cpu_expected_closer,
+            nearest_expected_cpu_tied: self.nearest_expected_cpu_tied,
+            nearest_expected_beats_frontmost_for_expected: self
+                .nearest_expected_beats_frontmost_for_expected,
             material_counts: material_counts(self.materials),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
+        }
+    }
+
+    fn add_nearest_expected_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+        frontmost_expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.nearest_expected_actual_distance_sum += distance;
+            self.nearest_expected_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.nearest_expected_expected_distance_sum += distance;
+            self.nearest_expected_expected_distance_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.nearest_expected_cpu_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.nearest_expected_cpu_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.nearest_expected_cpu_tied += 1,
+            None => {}
+        }
+        if expected_distance
+            .zip(frontmost_expected_distance)
+            .is_some_and(|(nearest, frontmost)| nearest < frontmost)
+        {
+            self.nearest_expected_beats_frontmost_for_expected += 1;
         }
     }
 }
@@ -355,6 +443,8 @@ impl MaterialAccumulator {
         hotspot: &Value,
         actual_cpu: Option<f64>,
         expected_cpu: Option<f64>,
+        nearest_expected_actual_cpu: Option<f64>,
+        nearest_expected_expected_cpu: Option<f64>,
         edge: Option<f64>,
         same_material_as_expected: bool,
         same_triangle_as_expected: bool,
@@ -377,6 +467,11 @@ impl MaterialAccumulator {
         self.edge_distance_lte_050px += u64::from(edge.is_some_and(|edge| edge <= 0.50));
         self.same_material_as_expected += u64::from(same_material_as_expected);
         self.same_triangle_as_expected += u64::from(same_triangle_as_expected);
+        self.add_nearest_expected_distances(
+            nearest_expected_actual_cpu,
+            nearest_expected_expected_cpu,
+            expected_cpu,
+        );
         if let Some(best) = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
@@ -429,8 +524,52 @@ impl MaterialAccumulator {
             edge_distance_lte_050px: self.edge_distance_lte_050px,
             same_material_as_expected: self.same_material_as_expected,
             same_triangle_as_expected: self.same_triangle_as_expected,
+            mean_nearest_expected_cpu_actual_rgb_distance: mean(
+                self.nearest_expected_actual_distance_sum,
+                self.nearest_expected_actual_distance_count,
+            ),
+            mean_nearest_expected_cpu_expected_rgb_distance: mean(
+                self.nearest_expected_expected_distance_sum,
+                self.nearest_expected_expected_distance_count,
+            ),
+            nearest_expected_cpu_actual_closer: self.nearest_expected_cpu_actual_closer,
+            nearest_expected_cpu_expected_closer: self.nearest_expected_cpu_expected_closer,
+            nearest_expected_cpu_tied: self.nearest_expected_cpu_tied,
+            nearest_expected_beats_frontmost_for_expected: self
+                .nearest_expected_beats_frontmost_for_expected,
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
+        }
+    }
+
+    fn add_nearest_expected_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+        frontmost_expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.nearest_expected_actual_distance_sum += distance;
+            self.nearest_expected_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.nearest_expected_expected_distance_sum += distance;
+            self.nearest_expected_expected_distance_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.nearest_expected_cpu_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.nearest_expected_cpu_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.nearest_expected_cpu_tied += 1,
+            None => {}
+        }
+        if expected_distance
+            .zip(frontmost_expected_distance)
+            .is_some_and(|(nearest, frontmost)| nearest < frontmost)
+        {
+            self.nearest_expected_beats_frontmost_for_expected += 1;
         }
     }
 }
@@ -627,6 +766,10 @@ fn residual_row(hotspot: &Value, selected: bool) -> Option<ResidualRow> {
         actual_match: surface_at(hotspot, "/nearest_visible_actual"),
         expected_match: surface_at(hotspot, "/nearest_visible_expected"),
         frontmost_cpu_base_color_rgba: rgba_at(hotspot, "/frontmost_cpu_base_color_rgba"),
+        nearest_expected_cpu_base_color_rgba: rgba_at(
+            hotspot,
+            "/nearest_visible_expected/cpu_base_color_rgba",
+        ),
         cpu_actual_rgb_distance: f64_at(
             hotspot,
             "/frontmost_cpu_base_color_actual_rgb_distance",
@@ -634,6 +777,16 @@ fn residual_row(hotspot: &Value, selected: bool) -> Option<ResidualRow> {
         cpu_expected_rgb_distance: f64_at(
             hotspot,
             "/frontmost_cpu_base_color_expected_rgb_distance",
+        ),
+        nearest_expected_cpu_actual_rgb_distance: candidate_rgb_distance(
+            hotspot,
+            "/nearest_visible_expected",
+            "/actual",
+        ),
+        nearest_expected_cpu_expected_rgb_distance: candidate_rgb_distance(
+            hotspot,
+            "/nearest_visible_expected",
+            "/expected",
         ),
         best_actual_sampling_mode: actual_best.as_ref().map(|best| best.mode.clone()),
         best_actual_sampling_rgba: actual_best.as_ref().map(|best| best.rgba),
@@ -701,6 +854,27 @@ fn rgba(value: &Value) -> Option<[u8; 4]> {
         u8::try_from(values.get(2)?.as_u64()?).ok()?,
         u8::try_from(values.get(3)?.as_u64()?).ok()?,
     ])
+}
+
+fn candidate_rgb_distance(hotspot: &Value, candidate_pointer: &str, target_pointer: &str) -> Option<f64> {
+    let candidate = rgba_at(
+        hotspot,
+        &format!("{candidate_pointer}/cpu_base_color_rgba"),
+    )?;
+    let target = rgba_at(hotspot, target_pointer)?;
+    Some(rgb_distance(candidate, target))
+}
+
+fn rgb_distance(left: [u8; 4], right: [u8; 4]) -> f64 {
+    left.iter()
+        .zip(right)
+        .take(3)
+        .map(|(left, right)| {
+            let delta = f64::from(*left) - f64::from(right);
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
 }
 
 fn f64_at(value: &Value, pointer: &str) -> Option<f64> {
@@ -792,11 +966,11 @@ fn markdown(report: &AuditReport) -> String {
     push_bucket_markdown(&mut output, "Carried Selection", &report.carried_selection);
     push_bucket_markdown(&mut output, "New Selection", &report.new_selection);
     output.push_str("## Top Residuals\n\n");
-    output.push_str("| Pixel | Sel | Actual | Expected | Frontmost | CPU A/E | Best Sampling A/E | Edge | Gradient |\n");
-    output.push_str("| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |\n");
+    output.push_str("| Pixel | Sel | Actual | Expected | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
+    output.push_str("| --- | --- | --- | --- | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
     for row in &report.top_residuals {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             if row.selected { "yes" } else { "no" },
@@ -805,6 +979,9 @@ fn markdown(report: &AuditReport) -> String {
             fmt_surface(row.frontmost.as_ref()),
             fmt_opt(row.cpu_actual_rgb_distance),
             fmt_opt(row.cpu_expected_rgb_distance),
+            fmt_opt(row.nearest_expected_cpu_actual_rgb_distance),
+            fmt_opt(row.nearest_expected_cpu_expected_rgb_distance),
+            fmt_opt_rgba(row.nearest_expected_cpu_base_color_rgba),
             row.best_actual_sampling_mode.as_deref().unwrap_or("n/a"),
             row.best_expected_sampling_mode.as_deref().unwrap_or("n/a"),
             fmt_opt(row.edge_distance_pixels),
@@ -849,6 +1026,15 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         fmt_modes(&bucket.best_sampling_modes_for_expected)
     ));
     output.push_str(&format!(
+        "- Nearest expected CPU color closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; beats frontmost expected `{}`\n",
+        bucket.nearest_expected_cpu_actual_closer,
+        bucket.nearest_expected_cpu_expected_closer,
+        bucket.nearest_expected_cpu_tied,
+        fmt_opt(bucket.mean_nearest_expected_cpu_actual_rgb_distance),
+        fmt_opt(bucket.mean_nearest_expected_cpu_expected_rgb_distance),
+        bucket.nearest_expected_beats_frontmost_for_expected
+    ));
+    output.push_str(&format!(
         "- Top frontmost materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
@@ -864,11 +1050,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             material.actual_cpu_closer,
@@ -876,6 +1062,12 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             material.cpu_tied,
             fmt_opt(material.mean_cpu_actual_rgb_distance),
             fmt_opt(material.mean_cpu_expected_rgb_distance),
+            material.nearest_expected_cpu_actual_closer,
+            material.nearest_expected_cpu_expected_closer,
+            material.nearest_expected_cpu_tied,
+            fmt_opt(material.mean_nearest_expected_cpu_actual_rgb_distance),
+            fmt_opt(material.mean_nearest_expected_cpu_expected_rgb_distance),
+            material.nearest_expected_beats_frontmost_for_expected,
             material.edge_distance_lte_050px,
             material.same_material_as_expected,
             material.same_triangle_as_expected,
@@ -914,6 +1106,10 @@ fn fmt_rgba(rgba: [u8; 4]) -> String {
     format!("{},{},{},{}", rgba[0], rgba[1], rgba[2], rgba[3])
 }
 
+fn fmt_opt_rgba(rgba: Option<[u8; 4]>) -> String {
+    rgba.map(fmt_rgba).unwrap_or_else(|| "n/a".to_owned())
+}
+
 fn fmt_opt(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:.4}"))
@@ -950,7 +1146,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                     "base_texture_local_rgb_gradient": 3.0
                 },
                 "nearest_visible_actual": {"material_name": "body", "triangle": 8},
-                "nearest_visible_expected": {"material_name": "body", "triangle": 7},
+                "nearest_visible_expected": {
+                    "material_name": "body",
+                    "triangle": 7,
+                    "cpu_base_color_rgba": [10, 10, 10, 255]
+                },
                 "frontmost_texture_sampling_variants": [
                     {
                         "mode": "linear_top_left_half_texel",
@@ -1028,6 +1228,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         "selected_body"
     );
     assert_eq!(report.selected.selection_material_buckets[0].count, 1);
+    assert_eq!(report.selected.nearest_expected_cpu_expected_closer, 1);
+    assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
     let baseline = serde_json::json!({
         "corrections": [
