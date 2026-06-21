@@ -19,7 +19,7 @@ serde_json = "1.0.150"
 use clap::Parser;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -86,6 +86,7 @@ struct BucketStats {
     best_sampling_modes_for_expected: Vec<ModeCount>,
     material_counts: Vec<MaterialCount>,
     material_buckets: Vec<MaterialBucket>,
+    selection_material_buckets: Vec<MaterialBucket>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -169,6 +170,7 @@ struct Accumulator {
     expected_modes: BTreeMap<String, ModeAccumulator>,
     materials: BTreeMap<String, u64>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
+    selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -195,7 +197,7 @@ struct MaterialAccumulator {
 }
 
 impl Accumulator {
-    fn add(&mut self, hotspot: &Value) {
+    fn add(&mut self, hotspot: &Value, selection_surface: Option<&SurfaceLabel>) {
         self.count += 1;
 
         let actual_cpu = f64_at(hotspot, "/frontmost_cpu_base_color_actual_rgb_distance");
@@ -266,6 +268,25 @@ impl Accumulator {
                     same_triangle_as_expected,
                 );
         }
+        if let Some(surface) = selection_surface {
+            let same_material_as_expected = same_material(Some(surface), expected.as_ref());
+            let same_triangle_as_expected =
+                expected.as_ref().is_some_and(|expected| {
+                    surface.material_name == expected.material_name
+                        && surface.triangle == expected.triangle
+                });
+            self.selection_material_buckets
+                .entry(surface.material_name.clone())
+                .or_default()
+                .add(
+                    hotspot,
+                    actual_cpu,
+                    expected_cpu,
+                    edge,
+                    same_material_as_expected,
+                    same_triangle_as_expected,
+                );
+        }
 
         if let Some(best) = best_sampling_mode(hotspot, "/frontmost_texture_sampling_variants", "actual_rgb_distance") {
             self.actual_modes
@@ -323,6 +344,7 @@ impl Accumulator {
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
             material_counts: material_counts(self.materials),
             material_buckets: material_buckets(self.material_buckets),
+            selection_material_buckets: material_buckets(self.selection_material_buckets),
         }
     }
 }
@@ -484,6 +506,10 @@ fn audit(
         .map(manifest_pixels)
         .transpose()?
         .unwrap_or_default();
+    let selected_surfaces = manifest
+        .map(manifest_surfaces)
+        .transpose()?
+        .unwrap_or_default();
     let baseline_selected = baseline_manifest
         .map(manifest_pixels)
         .transpose()?
@@ -503,16 +529,17 @@ fn audit(
         let is_selected = selected.is_empty() || selected.contains(&pixel);
         let is_carried = !baseline_selected.is_empty() && baseline_selected.contains(&pixel);
         let is_new = !baseline_selected.is_empty() && is_selected && !is_carried;
-        all.add(hotspot);
+        let selection_surface = selected_surfaces.get(&pixel);
+        all.add(hotspot, selection_surface);
         if is_selected {
-            selected_acc.add(hotspot);
+            selected_acc.add(hotspot, selection_surface);
             if is_carried {
-                carried_acc.add(hotspot);
+                carried_acc.add(hotspot, selection_surface);
             } else if is_new {
-                new_acc.add(hotspot);
+                new_acc.add(hotspot, selection_surface);
             }
         } else {
-            missing_acc.add(hotspot);
+            missing_acc.add(hotspot, None);
         }
         if let Some(row) = residual_row(hotspot, is_selected) {
             residuals.push(row);
@@ -566,6 +593,17 @@ fn manifest_pixels(manifest: &Value) -> Result<HashSet<(u64, u64)>, Box<dyn Erro
         .and_then(Value::as_array)
         .ok_or("manifest corrections must be an array")?;
     Ok(corrections.iter().filter_map(pixel_key).collect())
+}
+
+fn manifest_surfaces(manifest: &Value) -> Result<HashMap<(u64, u64), SurfaceLabel>, Box<dyn Error>> {
+    let corrections = manifest
+        .get("corrections")
+        .and_then(Value::as_array)
+        .ok_or("manifest corrections must be an array")?;
+    Ok(corrections
+        .iter()
+        .filter_map(|correction| Some((pixel_key(correction)?, surface_at(correction, "/surface")?)))
+        .collect())
 }
 
 fn residual_row(hotspot: &Value, selected: bool) -> Option<ResidualRow> {
@@ -811,12 +849,24 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         fmt_modes(&bucket.best_sampling_modes_for_expected)
     ));
     output.push_str(&format!(
-        "- Top materials: `{}`\n\n",
+        "- Top frontmost materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
+    push_material_bucket_markdown(output, "Frontmost material buckets", &bucket.material_buckets);
+    if !bucket.selection_material_buckets.is_empty() {
+        push_material_bucket_markdown(
+            output,
+            "Manifest-selected material buckets",
+            &bucket.selection_material_buckets,
+        );
+    }
+}
+
+fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
+    output.push_str(&format!("### {title}\n\n"));
     output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
     output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | --- |\n");
-    for material in bucket.material_buckets.iter().take(8) {
+    for material in materials.iter().take(8) {
         output.push_str(&format!(
             "| {} | {} | {}/{}/{} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
@@ -944,7 +994,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     });
     let manifest = serde_json::json!({
         "corrections": [
-            {"x": 1, "y": 2, "rgba": [12, 10, 10, 255]}
+            {
+                "x": 1,
+                "y": 2,
+                "rgba": [12, 10, 10, 255],
+                "surface": {"materialName": "selected_body", "triangle": 70}
+            }
         ]
     });
     let report = audit(
@@ -967,6 +1022,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.all.material_buckets.len(), 2);
     assert_eq!(report.all.material_buckets[0].material_name, "body");
     assert_eq!(report.all.material_buckets[0].expected_cpu_closer, 1);
+    assert_eq!(report.selected.selection_material_buckets.len(), 1);
+    assert_eq!(
+        report.selected.selection_material_buckets[0].material_name,
+        "selected_body"
+    );
+    assert_eq!(report.selected.selection_material_buckets[0].count, 1);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
     let baseline = serde_json::json!({
         "corrections": [

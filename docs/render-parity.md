@@ -2852,20 +2852,27 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   evaluation at the selected same-material edge surfaces and use Ash's fully
   covered bucket as the cleanest starting point.
 - `audit-texture-sampling-parity.rs` also reports per-material buckets inside
-  each selection layer. The current second-frontier audit shows the problem is
-  not one global sampler switch: Bevy selected `backpack_nm` is almost exact to
-  Rust CPU color (`19/0` actual/expected closer, mean `0.4955 / 107.7277`),
-  while wgpu selected `backpack_nm` is still actual-closer but not exact
-  (`19/0`, mean `69.7837 / 103.6785`), and Ash selected `backpack_nm` is
-  similarly actual-closer (`23/0`, mean `72.4624 / 104.2864`). Conversely,
-  selected `huku_bake`, `body_nm`, and `arm_plastic` contain expected-closer
-  buckets even after owner coverage is complete. The per-material best sampling
-  mode split also rejects a single global origin switch: `backpack_nm`
-  expected-best often prefers bottom-left variants, but `body_nm`,
-  `huku_bake`, and `arm_plastic` retain expected-closer rows whose best modes
-  are still mostly top-left variants. Use these material buckets to target exact
-  base-color/material evaluation per named surface instead of changing a global
-  texture origin, mip, or repeated frontier policy.
+  each selection layer. It now reports two material views: `material_buckets`
+  for the hotspot `frontmost_visible` surface and `selection_material_buckets`
+  for the owner/sample manifest `surface` that the renderer resolve path was
+  asked to draw. On the current expanded and second-frontier Seed-san audits,
+  those distributions match for selected pixels across wgpu, Bevy, and Ash, so
+  the selected residual is not explained by reading a different manifest
+  material than the hotspot sees. The problem is also not one global sampler
+  switch: Bevy selected `backpack_nm` is almost exact to Rust CPU color
+  (`19/0` actual/expected closer, mean `0.4955 / 107.7277`), while wgpu
+  selected `backpack_nm` is still actual-closer but not exact (`19/0`, mean
+  `69.7837 / 103.6785`), and Ash selected `backpack_nm` is similarly
+  actual-closer (`23/0`, mean `72.4624 / 104.2864`). Conversely, selected
+  `huku_bake`, `body_nm`, and `arm_plastic` contain expected-closer buckets
+  even after owner coverage is complete. The per-material best sampling mode
+  split also rejects a single global origin switch: `backpack_nm` expected-best
+  often prefers bottom-left variants, but `body_nm`, `huku_bake`, and
+  `arm_plastic` retain expected-closer rows whose best modes are still mostly
+  top-left variants. Use these material buckets to target exact
+  base-color/material evaluation per named selected surface, while keeping
+  wgpu/Bevy missing-residual owner/fill work separate from the selected-surface
+  color investigation.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
