@@ -2887,6 +2887,15 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   material/base-color or color-accumulation parity. Top residual Markdown rows
   include nearest-expected CPU RGBA and A/E distances to make pixel-level review
   reproducible without PNG conversion or RGB-driven sample selection.
+- The audit also reports frontmost base-texture A/E distances beside CPU
+  base-color distances. On the same expanded2 selected buckets, the texture
+  counters match the CPU counters for the main blocker materials and
+  `textureBeatsCpu` is `0`, so the current selected residual is not explained
+  by baseColorFactor, expression material color, or vertex-color multiplication.
+  Treat `huku_bake`/`body_nm`/`arm_plastic` expected-nearest improvements as
+  local fill/triangle ownership work, and treat `backpack_nm` as a texture/color
+  evaluation target because the frontmost texture sample itself remains
+  actual-closer (`19/0` wgpu and Bevy, `23/0` Ash).
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or

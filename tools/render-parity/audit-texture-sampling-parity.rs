@@ -90,6 +90,12 @@ struct BucketStats {
     nearest_expected_cpu_expected_closer: u64,
     nearest_expected_cpu_tied: u64,
     nearest_expected_beats_frontmost_for_expected: u64,
+    mean_frontmost_base_texture_actual_rgb_distance: Option<f64>,
+    mean_frontmost_base_texture_expected_rgb_distance: Option<f64>,
+    frontmost_base_texture_actual_closer: u64,
+    frontmost_base_texture_expected_closer: u64,
+    frontmost_base_texture_tied: u64,
+    frontmost_base_texture_beats_cpu_for_expected: u64,
     material_counts: Vec<MaterialCount>,
     material_buckets: Vec<MaterialBucket>,
     selection_material_buckets: Vec<MaterialBucket>,
@@ -126,6 +132,12 @@ struct MaterialBucket {
     nearest_expected_cpu_expected_closer: u64,
     nearest_expected_cpu_tied: u64,
     nearest_expected_beats_frontmost_for_expected: u64,
+    mean_frontmost_base_texture_actual_rgb_distance: Option<f64>,
+    mean_frontmost_base_texture_expected_rgb_distance: Option<f64>,
+    frontmost_base_texture_actual_closer: u64,
+    frontmost_base_texture_expected_closer: u64,
+    frontmost_base_texture_tied: u64,
+    frontmost_base_texture_beats_cpu_for_expected: u64,
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
 }
@@ -191,6 +203,14 @@ struct Accumulator {
     nearest_expected_cpu_expected_closer: u64,
     nearest_expected_cpu_tied: u64,
     nearest_expected_beats_frontmost_for_expected: u64,
+    frontmost_base_texture_actual_distance_sum: f64,
+    frontmost_base_texture_actual_distance_count: u64,
+    frontmost_base_texture_expected_distance_sum: f64,
+    frontmost_base_texture_expected_distance_count: u64,
+    frontmost_base_texture_actual_closer: u64,
+    frontmost_base_texture_expected_closer: u64,
+    frontmost_base_texture_tied: u64,
+    frontmost_base_texture_beats_cpu_for_expected: u64,
     materials: BTreeMap<String, u64>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
@@ -223,6 +243,14 @@ struct MaterialAccumulator {
     nearest_expected_cpu_expected_closer: u64,
     nearest_expected_cpu_tied: u64,
     nearest_expected_beats_frontmost_for_expected: u64,
+    frontmost_base_texture_actual_distance_sum: f64,
+    frontmost_base_texture_actual_distance_count: u64,
+    frontmost_base_texture_expected_distance_sum: f64,
+    frontmost_base_texture_expected_distance_count: u64,
+    frontmost_base_texture_actual_closer: u64,
+    frontmost_base_texture_expected_closer: u64,
+    frontmost_base_texture_tied: u64,
+    frontmost_base_texture_beats_cpu_for_expected: u64,
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
 }
@@ -257,6 +285,15 @@ impl Accumulator {
         self.add_nearest_expected_distances(
             nearest_expected_actual_cpu,
             nearest_expected_expected_cpu,
+            expected_cpu,
+        );
+        let frontmost_base_texture_actual =
+            f64_at(hotspot, "/frontmost_base_texture_actual_rgb_distance");
+        let frontmost_base_texture_expected =
+            f64_at(hotspot, "/frontmost_base_texture_expected_rgb_distance");
+        self.add_frontmost_base_texture_distances(
+            frontmost_base_texture_actual,
+            frontmost_base_texture_expected,
             expected_cpu,
         );
 
@@ -305,6 +342,8 @@ impl Accumulator {
                     expected_cpu,
                     nearest_expected_actual_cpu,
                     nearest_expected_expected_cpu,
+                    frontmost_base_texture_actual,
+                    frontmost_base_texture_expected,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -326,6 +365,8 @@ impl Accumulator {
                     expected_cpu,
                     nearest_expected_actual_cpu,
                     nearest_expected_expected_cpu,
+                    frontmost_base_texture_actual,
+                    frontmost_base_texture_expected,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -399,6 +440,19 @@ impl Accumulator {
             nearest_expected_cpu_tied: self.nearest_expected_cpu_tied,
             nearest_expected_beats_frontmost_for_expected: self
                 .nearest_expected_beats_frontmost_for_expected,
+            mean_frontmost_base_texture_actual_rgb_distance: mean(
+                self.frontmost_base_texture_actual_distance_sum,
+                self.frontmost_base_texture_actual_distance_count,
+            ),
+            mean_frontmost_base_texture_expected_rgb_distance: mean(
+                self.frontmost_base_texture_expected_distance_sum,
+                self.frontmost_base_texture_expected_distance_count,
+            ),
+            frontmost_base_texture_actual_closer: self.frontmost_base_texture_actual_closer,
+            frontmost_base_texture_expected_closer: self.frontmost_base_texture_expected_closer,
+            frontmost_base_texture_tied: self.frontmost_base_texture_tied,
+            frontmost_base_texture_beats_cpu_for_expected: self
+                .frontmost_base_texture_beats_cpu_for_expected,
             material_counts: material_counts(self.materials),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
@@ -435,6 +489,37 @@ impl Accumulator {
             self.nearest_expected_beats_frontmost_for_expected += 1;
         }
     }
+
+    fn add_frontmost_base_texture_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+        cpu_expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.frontmost_base_texture_actual_distance_sum += distance;
+            self.frontmost_base_texture_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.frontmost_base_texture_expected_distance_sum += distance;
+            self.frontmost_base_texture_expected_distance_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.frontmost_base_texture_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.frontmost_base_texture_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.frontmost_base_texture_tied += 1,
+            None => {}
+        }
+        if expected_distance
+            .zip(cpu_expected_distance)
+            .is_some_and(|(texture, cpu)| texture < cpu)
+        {
+            self.frontmost_base_texture_beats_cpu_for_expected += 1;
+        }
+    }
 }
 
 impl MaterialAccumulator {
@@ -445,6 +530,8 @@ impl MaterialAccumulator {
         expected_cpu: Option<f64>,
         nearest_expected_actual_cpu: Option<f64>,
         nearest_expected_expected_cpu: Option<f64>,
+        frontmost_base_texture_actual: Option<f64>,
+        frontmost_base_texture_expected: Option<f64>,
         edge: Option<f64>,
         same_material_as_expected: bool,
         same_triangle_as_expected: bool,
@@ -470,6 +557,11 @@ impl MaterialAccumulator {
         self.add_nearest_expected_distances(
             nearest_expected_actual_cpu,
             nearest_expected_expected_cpu,
+            expected_cpu,
+        );
+        self.add_frontmost_base_texture_distances(
+            frontmost_base_texture_actual,
+            frontmost_base_texture_expected,
             expected_cpu,
         );
         if let Some(best) = best_sampling_mode(
@@ -537,6 +629,19 @@ impl MaterialAccumulator {
             nearest_expected_cpu_tied: self.nearest_expected_cpu_tied,
             nearest_expected_beats_frontmost_for_expected: self
                 .nearest_expected_beats_frontmost_for_expected,
+            mean_frontmost_base_texture_actual_rgb_distance: mean(
+                self.frontmost_base_texture_actual_distance_sum,
+                self.frontmost_base_texture_actual_distance_count,
+            ),
+            mean_frontmost_base_texture_expected_rgb_distance: mean(
+                self.frontmost_base_texture_expected_distance_sum,
+                self.frontmost_base_texture_expected_distance_count,
+            ),
+            frontmost_base_texture_actual_closer: self.frontmost_base_texture_actual_closer,
+            frontmost_base_texture_expected_closer: self.frontmost_base_texture_expected_closer,
+            frontmost_base_texture_tied: self.frontmost_base_texture_tied,
+            frontmost_base_texture_beats_cpu_for_expected: self
+                .frontmost_base_texture_beats_cpu_for_expected,
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
         }
@@ -570,6 +675,37 @@ impl MaterialAccumulator {
             .is_some_and(|(nearest, frontmost)| nearest < frontmost)
         {
             self.nearest_expected_beats_frontmost_for_expected += 1;
+        }
+    }
+
+    fn add_frontmost_base_texture_distances(
+        &mut self,
+        actual_distance: Option<f64>,
+        expected_distance: Option<f64>,
+        cpu_expected_distance: Option<f64>,
+    ) {
+        if let Some(distance) = actual_distance {
+            self.frontmost_base_texture_actual_distance_sum += distance;
+            self.frontmost_base_texture_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.frontmost_base_texture_expected_distance_sum += distance;
+            self.frontmost_base_texture_expected_distance_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.frontmost_base_texture_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.frontmost_base_texture_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.frontmost_base_texture_tied += 1,
+            None => {}
+        }
+        if expected_distance
+            .zip(cpu_expected_distance)
+            .is_some_and(|(texture, cpu)| texture < cpu)
+        {
+            self.frontmost_base_texture_beats_cpu_for_expected += 1;
         }
     }
 }
@@ -1035,6 +1171,15 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         bucket.nearest_expected_beats_frontmost_for_expected
     ));
     output.push_str(&format!(
+        "- Frontmost base texture closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; beats CPU expected `{}`\n",
+        bucket.frontmost_base_texture_actual_closer,
+        bucket.frontmost_base_texture_expected_closer,
+        bucket.frontmost_base_texture_tied,
+        fmt_opt(bucket.mean_frontmost_base_texture_actual_rgb_distance),
+        fmt_opt(bucket.mean_frontmost_base_texture_expected_rgb_distance),
+        bucket.frontmost_base_texture_beats_cpu_for_expected
+    ));
+    output.push_str(&format!(
         "- Top frontmost materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
@@ -1050,11 +1195,11 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Texture beats CPU | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
             material.actual_cpu_closer,
@@ -1068,6 +1213,12 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             fmt_opt(material.mean_nearest_expected_cpu_actual_rgb_distance),
             fmt_opt(material.mean_nearest_expected_cpu_expected_rgb_distance),
             material.nearest_expected_beats_frontmost_for_expected,
+            material.frontmost_base_texture_actual_closer,
+            material.frontmost_base_texture_expected_closer,
+            material.frontmost_base_texture_tied,
+            fmt_opt(material.mean_frontmost_base_texture_actual_rgb_distance),
+            fmt_opt(material.mean_frontmost_base_texture_expected_rgb_distance),
+            material.frontmost_base_texture_beats_cpu_for_expected,
             material.edge_distance_lte_050px,
             material.same_material_as_expected,
             material.same_triangle_as_expected,
@@ -1230,6 +1381,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.selection_material_buckets[0].count, 1);
     assert_eq!(report.selected.nearest_expected_cpu_expected_closer, 1);
     assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
+    assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
+    assert_eq!(report.selected.frontmost_base_texture_expected_closer, 0);
     assert!(markdown(&report).contains("Texture Sampling Parity Audit"));
     let baseline = serde_json::json!({
         "corrections": [
