@@ -180,6 +180,12 @@ wgpu selected residuals separate into `mtoon` (`24` rows, mean E-A `52.18`) and
 backpack color-accumulation track and `mtoon` as the body/plastic local
 material/fill track.
 
+The audit also emits `top_residuals_by_shading_model` in JSON and a matching
+Markdown section. Use those rows as stable pixel probes when changing renderer
+material code: `gltf_pbr` rows isolate the backpack/PBR path, while `mtoon`
+rows keep the body, arm, plastic, and bake surfaces from being mixed into the
+same evidence bucket.
+
 Expected-vs-actual audit Markdown:
 
 - [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)

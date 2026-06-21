@@ -64,6 +64,7 @@ struct AuditReport {
     carried_selection: BucketStats,
     new_selection: BucketStats,
     top_residuals: Vec<ResidualRow>,
+    top_residuals_by_shading_model: Vec<ResidualGroup>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -253,6 +254,7 @@ struct ResidualRow {
     selection_expected_rgb_distance: Option<f64>,
     actual_minus_selection_rgb_delta: Option<[f64; 3]>,
     expected_minus_selection_rgb_delta: Option<[f64; 3]>,
+    frontmost_shading_model: Option<String>,
     frontmost: Option<SurfaceLabel>,
     actual_match: Option<SurfaceLabel>,
     expected_match: Option<SurfaceLabel>,
@@ -270,6 +272,12 @@ struct ResidualRow {
     best_expected_sampling_rgb_distance: Option<f64>,
     edge_distance_pixels: Option<f64>,
     base_texture_local_rgb_gradient: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ResidualGroup {
+    key: String,
+    rows: Vec<ResidualRow>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1613,15 +1621,8 @@ fn audit(
             residuals.push(row);
         }
     }
-    residuals.sort_by(|left, right| {
-        let left_distance = left.cpu_expected_rgb_distance.unwrap_or(f64::INFINITY);
-        let right_distance = right.cpu_expected_rgb_distance.unwrap_or(f64::INFINITY);
-        right_distance
-            .partial_cmp(&left_distance)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.y.cmp(&right.y))
-            .then_with(|| left.x.cmp(&right.x))
-    });
+    sort_residuals(&mut residuals);
+    let top_residuals_by_shading_model = residual_groups_by_shading_model(&residuals, top);
     residuals.truncate(top);
 
     let manifest_count = u64::try_from(selected.len()).unwrap_or(u64::MAX);
@@ -1652,7 +1653,47 @@ fn audit(
         carried_selection: carried_acc.finish(),
         new_selection: new_acc.finish(),
         top_residuals: residuals,
+        top_residuals_by_shading_model,
     })
+}
+
+fn sort_residuals(residuals: &mut [ResidualRow]) {
+    residuals.sort_by(|left, right| {
+        let left_distance = left.cpu_expected_rgb_distance.unwrap_or(f64::INFINITY);
+        let right_distance = right.cpu_expected_rgb_distance.unwrap_or(f64::INFINITY);
+        right_distance
+            .partial_cmp(&left_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.y.cmp(&right.y))
+            .then_with(|| left.x.cmp(&right.x))
+    });
+}
+
+fn residual_groups_by_shading_model(residuals: &[ResidualRow], top: usize) -> Vec<ResidualGroup> {
+    let mut groups = BTreeMap::<String, Vec<ResidualRow>>::new();
+    for row in residuals {
+        let key = row
+            .frontmost_shading_model
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_owned();
+        let rows = groups.entry(key).or_default();
+        if rows.len() < top {
+            rows.push(row.clone());
+        }
+    }
+    let mut groups = groups
+        .into_iter()
+        .map(|(key, rows)| ResidualGroup { key, rows })
+        .collect::<Vec<_>>();
+    groups.sort_by(|left, right| {
+        right
+            .rows
+            .len()
+            .cmp(&left.rows.len())
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    groups
 }
 
 fn manifest_pixels(manifest: &Value) -> Result<HashSet<(u64, u64)>, Box<dyn Error>> {
@@ -1747,6 +1788,8 @@ fn residual_row(
         expected_minus_selection_rgb_delta: selection_rgba
             .zip(rgba_at(hotspot, "/expected"))
             .map(|(selection, expected)| signed_rgb_delta(expected, selection)),
+        frontmost_shading_model: str_at(hotspot, "/frontmost_visible/material_shading/model")
+            .map(ToOwned::to_owned),
         frontmost: surface_at(hotspot, "/frontmost_visible"),
         actual_match: surface_at(hotspot, "/nearest_visible_actual"),
         expected_match: surface_at(hotspot, "/nearest_visible_expected"),
@@ -2084,15 +2127,31 @@ fn markdown(report: &AuditReport) -> String {
     push_bucket_markdown(&mut output, "Missing Selection", &report.missing_selection);
     push_bucket_markdown(&mut output, "Carried Selection", &report.carried_selection);
     push_bucket_markdown(&mut output, "New Selection", &report.new_selection);
-    output.push_str("## Top Residuals\n\n");
-    output.push_str("| Pixel | Sel | Actual | Expected | E-A dist | E-A delta | Selected surface | Selected draw | Selected RGBA | Sel sample A/E | A-S / E-S | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
-    output.push_str("| --- | --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
-    for row in &report.top_residuals {
+    push_residual_rows_markdown(&mut output, "Top Residuals", &report.top_residuals);
+    if !report.top_residuals_by_shading_model.is_empty() {
+        output.push_str("## Top Residuals By Shading Model\n\n");
+        for group in &report.top_residuals_by_shading_model {
+            push_residual_rows_markdown(
+                &mut output,
+                &format!("Top Residuals: {}", group.key),
+                &group.rows,
+            );
+        }
+    }
+    output
+}
+
+fn push_residual_rows_markdown(output: &mut String, title: &str, rows: &[ResidualRow]) {
+    output.push_str(&format!("## {title}\n\n"));
+    output.push_str("| Pixel | Sel | Model | Actual | Expected | E-A dist | E-A delta | Selected surface | Selected draw | Selected RGBA | Sel sample A/E | A-S / E-S | Frontmost | Front CPU A/E | NearestExp CPU A/E | NearestExp RGBA | Best Sampling A/E | Edge | Gradient |\n");
+    output.push_str("| --- | --- | --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |\n");
+    for row in rows {
         output.push_str(&format!(
-            "| {},{} | {} | {} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
+            "| {},{} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {} / {} | {} | {} |\n",
             row.x,
             row.y,
             if row.selected { "yes" } else { "no" },
+            row.frontmost_shading_model.as_deref().unwrap_or("n/a"),
             fmt_rgba(row.actual),
             fmt_rgba(row.expected),
             fmt_opt(Some(row.expected_actual_rgb_distance)),
@@ -2116,7 +2175,7 @@ fn markdown(report: &AuditReport) -> String {
             fmt_opt(row.base_texture_local_rgb_gradient),
         ));
     }
-    output
+    output.push('\n');
 }
 
 fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) {
@@ -2591,6 +2650,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.all.actual_cpu_closer, 1);
     assert_eq!(report.selected.best_sampling_modes_for_expected[0].mode, "linear_top_left_half_texel");
     assert_eq!(report.selected.best_sampling_modes_for_actual[0].mode, "linear_bottom_left_half_texel");
+    assert_eq!(report.top_residuals_by_shading_model.len(), 2);
+    assert_eq!(report.top_residuals_by_shading_model[0].key, "gltf_pbr");
+    assert_eq!(report.top_residuals_by_shading_model[0].rows.len(), 1);
+    assert_eq!(report.top_residuals_by_shading_model[1].key, "mtoon");
+    assert_eq!(report.top_residuals_by_shading_model[1].rows.len(), 1);
     assert_eq!(report.all.material_buckets.len(), 2);
     assert_eq!(report.all.shading_model_counts[0].model, "gltf_pbr");
     assert_eq!(report.all.shading_model_counts[0].count, 1);
@@ -2696,6 +2760,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     let markdown = markdown(&report);
     assert!(markdown.contains("Texture Sampling Parity Audit"));
     assert!(markdown.contains("Frontmost shading-model buckets"));
+    assert!(markdown.contains("Top Residuals By Shading Model"));
+    assert!(markdown.contains("Top Residuals: mtoon"));
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
     assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));
