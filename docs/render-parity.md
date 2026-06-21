@@ -2788,6 +2788,19 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   this as evidence for a broader owner/fill/source-order model first, then
   address backend material sampling only where selected-pixel buckets isolate
   it.
+- Use the `map-render-hotspots.rs` coverage fields and
+  `join-owner-render-hotspots.rs` browser best-coverage counters before
+  changing renderer behavior around edge pixels. These diagnostics are
+  owner/fill-rule evidence and do not read expected/actual RGB when choosing
+  candidates. The current Seed-san flat32 gradient audit maps `64/64` top
+  pixels to a largest coverage candidate, with only `12/64` on the same
+  triangle and `38/64` on the same material as the center frontmost candidate;
+  all `64/64` center-frontmost candidates are within `1px` of an edge and the
+  depth-near-later diagnostic finds `0` candidates. The matching owner/render
+  join sees browser best-coverage for `64/64`, matching Rust expected-best in
+  `21/64`, while the structurally selected coverage sample is expected-closer
+  in `44/64`. That supports continuing with a fill/coverage ownership model
+  rather than switching defaults by PSNR or broad texture sampler policy.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or

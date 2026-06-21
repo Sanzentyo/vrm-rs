@@ -615,7 +615,31 @@ function capturePage(options) {
     const weights = barycentric(point, triangle[0], triangle[1], triangle[2])
       ?? barycentricWeights(point, triangle[0], triangle[1], triangle[2]);
     if (!weights) return null;
-    return { point, barycentric: weights, pointCount: points.length };
+    return {
+      point,
+      barycentric: weights,
+      pointCount: points.length,
+      areaPixels: polygonAreaPixels(points),
+    };
+  };
+
+  const polygonAreaPixels = (points) => {
+    if (points.length < 3) return 0.0;
+    const centroid = points.reduce(
+      (sum, current) => [sum[0] + current[0], sum[1] + current[1]],
+      [0, 0],
+    ).map((value) => value / points.length);
+    const ordered = points.slice().sort((left, right) => (
+      Math.atan2(left[1] - centroid[1], left[0] - centroid[0])
+      - Math.atan2(right[1] - centroid[1], right[0] - centroid[0])
+    ));
+    let twiceArea = 0.0;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const left = ordered[index];
+      const right = ordered[(index + 1) % ordered.length];
+      twiceArea += left[0] * right[1] - right[0] * left[1];
+    }
+    return 0.5 * Math.abs(twiceArea);
   };
 
   const materialAt = (mesh, materialIndex) => (
@@ -1041,6 +1065,7 @@ function capturePage(options) {
         if (match) {
           match.coverageBarycentric = coverage.barycentric;
           match.coveragePointCount = coverage.pointCount;
+          match.coverageAreaPixels = coverage.areaPixels;
           coverageMatches.push(match);
         }
       }

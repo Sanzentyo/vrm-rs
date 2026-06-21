@@ -260,6 +260,12 @@ struct HotspotSummary {
     expected_subpixel_coverage_max_cpu_base_color_rgb_distance: Option<f32>,
     actual_subpixel_coverage_improved_count: usize,
     expected_subpixel_coverage_improved_count: usize,
+    largest_coverage_visible_count: usize,
+    largest_coverage_same_material_count: usize,
+    largest_coverage_same_triangle_count: usize,
+    largest_coverage_mean_area_pixels: Option<f32>,
+    largest_coverage_max_area_pixels: Option<f32>,
+    largest_coverage_surface_transitions: Vec<SurfaceTransitionCount>,
     source_order_depth_epsilon: f32,
     depth_near_later_visible_count: usize,
     actual_depth_near_later_improved_count: usize,
@@ -400,6 +406,7 @@ struct Hotspot {
     subpixel_coverage_cpu_base_color_rgba: Option<[u8; 4]>,
     subpixel_coverage_cpu_base_color_actual_rgb_distance: Option<f32>,
     subpixel_coverage_cpu_base_color_expected_rgb_distance: Option<f32>,
+    largest_coverage_visible: Option<CoverageMatch>,
     candidates: Vec<HitCandidate>,
 }
 
@@ -409,6 +416,14 @@ struct SubpixelMatch {
     rgb_distance: f32,
     center_rgb_distance: Option<f32>,
     improvement: Option<f32>,
+    candidate: CandidateMatch,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CoverageMatch {
+    sample: [f32; 2],
+    coverage_area_pixels: f32,
+    coverage_point_count: usize,
     candidate: CandidateMatch,
 }
 
@@ -536,6 +551,13 @@ struct TriangleEdgeDistance {
     distance_pixels: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PixelTriangleIntersection {
+    point: [f32; 2],
+    area_pixels: f32,
+    point_count: usize,
+}
+
 fn main() {
     if let Err(error) = run(Options::parse_from(script_args())) {
         eprintln!("{error}");
@@ -642,6 +664,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 width,
                 height,
             );
+            let largest_coverage_visible = largest_coverage_match(&coverage_candidates);
             let best_subpixel_visible_actual = best_subpixel_match(
                 &subpixel_candidates,
                 delta.actual,
@@ -739,6 +762,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 subpixel_coverage_cpu_base_color_expected_rgb_distance:
                     subpixel_coverage_cpu_base_color_rgba
                         .map(|color| rgb_distance(color, delta.expected)),
+                largest_coverage_visible,
                 candidates,
             }
         })
@@ -801,6 +825,27 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     if edge_neighbors(&adjacency, [0, 1], 0) != Vec::<usize>::new() {
         return Err("boundary edge should not report neighbors".into());
     }
+    let full_pixel_intersection = pixel_triangle_intersection(
+        0,
+        0,
+        [-1.0, -1.0],
+        [3.0, -1.0],
+        [-1.0, 3.0],
+    )
+    .ok_or("large triangle should cover pixel")?;
+    assert_close(
+        full_pixel_intersection.area_pixels,
+        1.0,
+        "full pixel triangle intersection area",
+    )?;
+    let half_pixel_intersection =
+        pixel_triangle_intersection(0, 0, [0.0, 0.0], [1.0, 0.0], [0.0, 1.0])
+            .ok_or("half-pixel triangle should intersect pixel")?;
+    assert_close(
+        half_pixel_intersection.area_pixels,
+        0.5,
+        "half pixel triangle intersection area",
+    )?;
     let encoded = diagnostic_linear_uv_to_srgb_color([0.25, 0.5], 255);
     if diagnostic_linear_uv(encoded)
         .into_iter()
@@ -1380,6 +1425,46 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             |hotspot| hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance,
             |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
         ),
+        largest_coverage_visible_count: hotspots
+            .iter()
+            .filter(|hotspot| hotspot.largest_coverage_visible.is_some())
+            .count(),
+        largest_coverage_same_material_count: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_material(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot
+                        .largest_coverage_visible
+                        .as_ref()
+                        .map(|matched| &matched.candidate),
+                )
+            })
+            .count(),
+        largest_coverage_same_triangle_count: hotspots
+            .iter()
+            .filter(|hotspot| {
+                same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    hotspot
+                        .largest_coverage_visible
+                        .as_ref()
+                        .map(|matched| &matched.candidate),
+                )
+            })
+            .count(),
+        largest_coverage_mean_area_pixels: mean_largest_coverage_area(hotspots),
+        largest_coverage_max_area_pixels: max_largest_coverage_area(hotspots),
+        largest_coverage_surface_transitions: surface_pair_transition_counts(
+            hotspots,
+            |hotspot| hotspot.frontmost_visible.as_ref(),
+            |hotspot| {
+                hotspot
+                    .largest_coverage_visible
+                    .as_ref()
+                    .map(|matched| &matched.candidate)
+            },
+        ),
         source_order_depth_epsilon,
         depth_near_later_visible_count: hotspots
             .iter()
@@ -1606,6 +1691,33 @@ fn max_frontmost_rgb_distance(
     hotspots
         .iter()
         .filter_map(distance)
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn mean_largest_coverage_area(hotspots: &[Hotspot]) -> Option<f32> {
+    let (sum, count) = hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .largest_coverage_visible
+                .as_ref()
+                .map(|matched| matched.coverage_area_pixels)
+        })
+        .fold((0.0, 0usize), |(sum, count), area| {
+            (sum + area, count + 1)
+        });
+    (count > 0).then_some(sum / count as f32)
+}
+
+fn max_largest_coverage_area(hotspots: &[Hotspot]) -> Option<f32> {
+    hotspots
+        .iter()
+        .filter_map(|hotspot| {
+            hotspot
+                .largest_coverage_visible
+                .as_ref()
+                .map(|matched| matched.coverage_area_pixels)
+        })
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
 }
 
@@ -2442,6 +2554,8 @@ fn subpixel_frontmost_visible_candidates(
                     .map(|candidate| SubpixelCandidate {
                         sample,
                         candidate,
+                        coverage_area_pixels: None,
+                        coverage_point_count: None,
                         center_candidate: None,
                     })
             })
@@ -2486,13 +2600,14 @@ fn coverage_frontmost_visible_candidates(
                             height,
                         )?,
                     ];
-                    let point = pixel_triangle_intersection_point(
+                    let coverage = pixel_triangle_intersection(
                         x,
                         y,
                         vertices[0].screen,
                         vertices[1].screen,
                         vertices[2].screen,
                     )?;
+                    let point = coverage.point;
                     let sample = [point[0] - x as f32, point[1] - y as f32];
                     let candidate = hit_candidate_for_projected_triangle(
                         surface,
@@ -2519,6 +2634,8 @@ fn coverage_frontmost_visible_candidates(
                     candidate.visible_by_policy.then(|| SubpixelCandidate {
                         sample,
                         candidate: candidate_match(0, &candidate, 0.0),
+                        coverage_area_pixels: Some(coverage.area_pixels),
+                        coverage_point_count: Some(coverage.point_count),
                         center_candidate,
                     })
                 })
@@ -2531,7 +2648,42 @@ struct SubpixelCandidate {
     sample: [f32; 2],
     candidate: CandidateMatch,
     #[serde(skip_serializing_if = "Option::is_none")]
+    coverage_area_pixels: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage_point_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     center_candidate: Option<CandidateMatch>,
+}
+
+fn largest_coverage_match(candidates: &[SubpixelCandidate]) -> Option<CoverageMatch> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            Some((
+                candidate,
+                candidate.coverage_area_pixels?,
+                candidate.coverage_point_count?,
+            ))
+        })
+        .max_by(|(left, left_area, _), (right, right_area, _)| {
+            left_area
+                .partial_cmp(right_area)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    right
+                        .candidate
+                        .depth
+                        .partial_cmp(&left.candidate.depth)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| left.candidate.draw_index.cmp(&right.candidate.draw_index))
+        })
+        .map(|(candidate, coverage_area_pixels, coverage_point_count)| CoverageMatch {
+            sample: candidate.sample,
+            coverage_area_pixels,
+            coverage_point_count,
+            candidate: candidate.candidate.clone(),
+        })
 }
 
 fn best_subpixel_match(
@@ -2903,13 +3055,13 @@ fn barycentric_unclamped(
     Some([w0, w1, w2])
 }
 
-fn pixel_triangle_intersection_point(
+fn pixel_triangle_intersection(
     pixel_x: usize,
     pixel_y: usize,
     a: [f32; 2],
     b: [f32; 2],
     c: [f32; 2],
-) -> Option<[f32; 2]> {
+) -> Option<PixelTriangleIntersection> {
     let x = pixel_x as f32;
     let y = pixel_y as f32;
     let triangle = [a, b, c];
@@ -2938,11 +3090,18 @@ fn pixel_triangle_intersection_point(
         }
     }
 
-    (!points.is_empty()).then(|| {
-        let sum = points
-            .iter()
-            .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
-        [sum[0] / points.len() as f32, sum[1] / points.len() as f32]
+    if points.is_empty() {
+        return None;
+    }
+    let sum = points
+        .iter()
+        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
+    let point = [sum[0] / points.len() as f32, sum[1] / points.len() as f32];
+    let area_pixels = polygon_area_pixels(&points);
+    Some(PixelTriangleIntersection {
+        point,
+        area_pixels,
+        point_count: points.len(),
     })
 }
 
@@ -2956,6 +3115,32 @@ fn add_unique_point(points: &mut Vec<[f32; 2]>, point: [f32; 2]) {
         return;
     }
     points.push(point);
+}
+
+fn polygon_area_pixels(points: &[[f32; 2]]) -> f32 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+    let centroid = points
+        .iter()
+        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]])
+        .map(|value| value / points.len() as f32);
+    let mut ordered = points.to_vec();
+    ordered.sort_by(|left, right| {
+        let left_angle = (left[1] - centroid[1]).atan2(left[0] - centroid[0]);
+        let right_angle = (right[1] - centroid[1]).atan2(right[0] - centroid[0]);
+        left_angle
+            .partial_cmp(&right_angle)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let twice_area = ordered
+        .iter()
+        .zip(ordered.iter().cycle().skip(1))
+        .take(ordered.len())
+        .fold(0.0, |sum, (left, right)| {
+            sum + left[0] * right[1] - right[0] * left[1]
+        });
+    0.5 * twice_area.abs()
 }
 
 fn point_in_pixel(point: [f32; 2], x: f32, y: f32) -> bool {
