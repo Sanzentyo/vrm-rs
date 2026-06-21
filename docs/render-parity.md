@@ -153,34 +153,33 @@ recipes are convenience entry points. Use these first:
   first depth3 no-readback material-sampling check was byte-identical to the
   previous geometry-bound render, so the fix had to move into
   ownership/coverage rather than UV-only sampling. The wgpu capture now performs
-  that ownership step: geometry-bearing records are converted into one point
-  vertex per selected pixel and drawn after the normal pass with the same
-  material bind group, so the selected surface owns the pixel and material
-  evaluation runs from the recorded sample geometry without copying
-  `replacement_rgba`. The resolve vertex keeps the barycentric source world
-  position for shading, stores the target pixel clip position separately, and
-  carries raw-UV gradients computed from the source triangle; the WGSL uses
-  those gradients for owner/sample base, shade, shading-shift, normal, rim,
-  emissive, and occlusion texture lookups while ordinary triangle draws keep
-  implicit derivatives. On the compact depth3 base-color fixture this raises
-  the wgpu selected raw comparison to `64.3542 dB` with max selected channel
-  delta `1` and alpha mismatches `0`. The Bevy capture uses the same ownership
-  model rather
-  than a same-surface UV-offset heuristic: geometry-bearing records become
-  point primitives whose world position projects to the target pixel while UV,
-  normal, tangent, and color attributes are rebuilt from the recorded sample
+  that ownership step with the same one-pixel quad model as Bevy:
+  geometry-bearing records are converted into six triangle-list vertices per
+  selected pixel and drawn after the normal pass with the same material bind
+  group, so the selected surface owns the pixel and material evaluation runs
+  from the recorded sample geometry without copying `replacement_rgba`. The
+  resolve vertices carry pixel-corner clip/world positions plus raw-UV gradients
+  computed from the source triangle; the WGSL uses those gradients for
+  owner/sample base, shade, shading-shift, normal, rim, emissive, and occlusion
+  texture lookups while ordinary triangle draws keep implicit derivatives. On
+  the compact depth3 base-color fixture this raises the wgpu selected raw
+  comparison to `64.3542 dB` with max selected channel delta `1` and alpha
+  mismatches `0`. The Bevy capture uses the same ownership model rather than a
+  same-surface UV-offset heuristic: geometry-bearing records become one-pixel
+  TriangleList quads whose world positions project to the target pixel while
+  UV, normal, tangent, and color attributes are rebuilt from the recorded sample
   geometry. On the same compact depth3 base-color fixture this raises Bevy's
   selected raw comparison from the previous `31.1386 dB` floor to `55.9954 dB`
   with exact alpha, and all 64 manifest-selected pixels resolve within 1 LSB of
   the manifest sample color. Ash frame planning now follows the same ownership
-  model: geometry-bearing records become point-list resolve draws, projected to
-  the target pixel and routed through the same material descriptor set instead
-  of copying `replacement_rgba`. The first compact depth3 Ash device/readback
-  run with this path reaches selected `64.3542 dB` with max selected-channel
-  delta `1`, matching the wgpu selected floor for this diagnostic. Ash resolve
-  vertices now also carry raw-UV `dx/dy` gradients computed from the source
-  triangle in screen space, and the reference GLSL consumes them with
-  `textureGrad` for main/base, shade, shading-shift, normal, rim, emissive,
+  model: geometry-bearing records become one-pixel triangle-list resolve quads,
+  projected to the target pixel and routed through the same material descriptor
+  set instead of copying `replacement_rgba`. The first compact depth3 Ash
+  device/readback run with this path reaches selected `64.3542 dB` with max
+  selected-channel delta `1`, matching the wgpu selected floor for this
+  diagnostic. Ash resolve vertices also carry raw-UV `dx/dy` gradients computed
+  from the source triangle in screen space, and the reference GLSL consumes
+  them with `textureGrad` for main/base, shade, shading-shift, normal, rim, emissive,
   occlusion, and outline-width texture lookups. A shaded Ash smoke readback with
   the same manifest verifies that the explicit-gradient shader path runs and
   writes matching `.rgba.json` / `.imqraw` artifacts. Matcap and UV-animation
@@ -2914,16 +2913,18 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
 - Use
   `just render-parity-seed-base-color-flat32-render-resolve-expanded-readback`
   to feed those expanded manifests back through wgpu, release Bevy, and Ash
-  without readback replacement. The current A/B raises the selected gradient
-  metric from wgpu `30.6300 dB` to `32.7302 dB` and Bevy `28.2142 dB` to
-  `29.2196 dB`; Ash stays at `35.8902 dB`. Alpha remains exact for all three.
+  without readback replacement. After replacing the remaining wgpu/Ash
+  point-list resolve draws with one-pixel triangle-list quads, the current
+  expanded gradient metric is wgpu `36.63 dB`, Bevy `36.26 dB`, and Ash
+  `36.95 dB`. Alpha remains exact for all three.
   The expanded hotspot summaries are still edge-local and low-gradient
   (`64/64` frontmost-visible, `63/64` within `0.5px`, `0` local texture
   gradients `>= 32`), so expanded ownership helps but does not close the
   residual. The expanded texture audit refines the split: wgpu still has
-  `25/64` new residual pixels outside the expanded manifest, Bevy has `21/64`,
-  while Ash has `0/64`. Do not treat this as a mandate for RGB-distance
-  selection.
+  `25/64` current top residual pixels outside the expanded manifest, Bevy has
+  `21/64`, while Ash has `0/64`; wgpu/Ash also still have `0` selected samples
+  within `1.5` of the actual render output in the refreshed threshold buckets.
+  Do not treat this as a mandate for RGB-distance selection.
 - Use
   `just render-parity-seed-base-color-flat32-render-resolve-expanded2-readback`
   as a negative-control diagnostic for repeated source-derived frontier

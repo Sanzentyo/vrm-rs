@@ -1375,53 +1375,99 @@ fn owner_sample_resolve_vertices_for_primitive(
     records
         .iter()
         .filter(|record| record.geometry_flags != 0)
-        .filter_map(|record| owner_sample_resolve_vertex(primitive, record, options))
+        .flat_map(|record| owner_sample_resolve_vertices(primitive, record, options))
         .collect()
 }
 
-fn owner_sample_resolve_vertex(
+fn owner_sample_resolve_vertices(
     primitive: &DrawPrimitive,
     record: &WgpuOwnerSampleOverrideRecord,
     options: &CaptureOptions,
-) -> Option<Vertex> {
+) -> Vec<Vertex> {
+    let Some(corners) = owner_sample_pixel_quad(record.pixel, options) else {
+        return Vec::new();
+    };
     let indices = record.geometry_indices;
-    let [ia, ib, ic] = [
-        usize::try_from(indices[0]).ok()?,
-        usize::try_from(indices[1]).ok()?,
-        usize::try_from(indices[2]).ok()?,
-    ];
-    let a = *primitive.vertices.get(ia)?;
-    let b = *primitive.vertices.get(ib)?;
-    let c = *primitive.vertices.get(ic)?;
+    let (Ok(ia), Ok(ib), Ok(ic)) = (
+        usize::try_from(indices[0]),
+        usize::try_from(indices[1]),
+        usize::try_from(indices[2]),
+    ) else {
+        return Vec::new();
+    };
+    let (Some(a), Some(b), Some(c)) = (
+        primitive.vertices.get(ia).copied(),
+        primitive.vertices.get(ib).copied(),
+        primitive.vertices.get(ic).copied(),
+    ) else {
+        return Vec::new();
+    };
     let barycentric = [
         record.barycentric_depth[0],
         record.barycentric_depth[1],
         record.barycentric_depth[2],
     ];
-    let mut vertex = interpolate_vertex(a, b, c, barycentric);
-    let owner_sample_clip = owner_sample_pixel_ndc(record.pixel, options)?;
-    let [tex_coord_dx, tex_coord_dy] = owner_sample_uv_gradient(a, b, c, options)?;
-    vertex.tex_coord_clip = [
-        record.geometry_uvs[0],
-        record.geometry_uvs[1],
-        owner_sample_clip[0],
-        owner_sample_clip[1],
-    ];
-    vertex.tex_coord_grad = [
-        tex_coord_dx[0],
-        tex_coord_dx[1],
-        tex_coord_dy[0],
-        tex_coord_dy[1],
-    ];
-    vertex._padding = 0.0;
-    Some(vertex)
+    let sample_vertex = interpolate_vertex(a, b, c, barycentric);
+    let Some([tex_coord_dx, tex_coord_dy]) = owner_sample_uv_gradient(a, b, c, options) else {
+        return Vec::new();
+    };
+    corners
+        .into_iter()
+        .map(|corner| {
+            let mut vertex = sample_vertex;
+            vertex.position = corner.world;
+            vertex.tex_coord_clip = [
+                record.geometry_uvs[0],
+                record.geometry_uvs[1],
+                corner.clip[0],
+                corner.clip[1],
+            ];
+            vertex.tex_coord_grad = [
+                tex_coord_dx[0],
+                tex_coord_dx[1],
+                tex_coord_dy[0],
+                tex_coord_dy[1],
+            ];
+            vertex._padding = 0.0;
+            vertex
+        })
+        .collect()
 }
 
-fn owner_sample_pixel_ndc(pixel: [u32; 2], options: &CaptureOptions) -> Option<[f32; 2]> {
-    (pixel[0] < options.width && pixel[1] < options.height).then(|| {
-        let x = ((pixel[0] as f32 + 0.5) / options.width as f32) * 2.0 - 1.0;
-        let y = 1.0 - ((pixel[1] as f32 + 0.5) / options.height as f32) * 2.0;
-        [x, y]
+#[derive(Clone, Copy, Debug)]
+struct OwnerSamplePixelCorner {
+    clip: [f32; 2],
+    world: [f32; 3],
+}
+
+fn owner_sample_pixel_quad(
+    pixel: [u32; 2],
+    options: &CaptureOptions,
+) -> Option<[OwnerSamplePixelCorner; 6]> {
+    (pixel[0] < options.width && pixel[1] < options.height).then_some(())?;
+    let x = pixel[0] as f32;
+    let y = pixel[1] as f32;
+    let left = owner_sample_pixel_corner(x, y, options)?;
+    let right = owner_sample_pixel_corner(x + 1.0, y, options)?;
+    let bottom_left = owner_sample_pixel_corner(x, y + 1.0, options)?;
+    let bottom_right = owner_sample_pixel_corner(x + 1.0, y + 1.0, options)?;
+    Some([left, bottom_left, right, right, bottom_left, bottom_right])
+}
+
+fn owner_sample_pixel_corner(
+    screen_x: f32,
+    screen_y: f32,
+    options: &CaptureOptions,
+) -> Option<OwnerSamplePixelCorner> {
+    let clip = [
+        screen_x / options.width as f32 * 2.0 - 1.0,
+        1.0 - screen_y / options.height as f32 * 2.0,
+    ];
+    let world_clip = Vec4::new(clip[0], clip[1], 0.5, 1.0);
+    let world = diagnostic_view_projection(options).inverse() * world_clip;
+    (world.w.abs() > f32::EPSILON).then(|| OwnerSamplePixelCorner {
+        clip,
+        world: (world.truncate() / world.w).to_array(),
     })
 }
 
@@ -1824,7 +1870,7 @@ fn owner_sample_resolve_pipeline(
             buffers: &[Vertex::layout()],
         },
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::PointList,
+            topology: wgpu::PrimitiveTopology::TriangleList,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
             ..Default::default()
@@ -2556,15 +2602,22 @@ mod tests {
 
         let vertices = owner_sample_resolve_vertices_for_primitive(&primitive, &[record], &options);
 
-        assert_eq!(vertices.len(), 1);
-        assert_eq!(vertices[0].position, [0.25, 0.5, 0.0]);
+        assert_eq!(vertices.len(), 6);
         assert_eq!(&vertices[0].tex_coord_clip[0..2], &[0.7, 0.8]);
-        assert_eq!(&vertices[0].tex_coord_clip[2..4], &[-0.25, 0.5]);
+        assert_eq!(&vertices[0].tex_coord_clip[2..4], &[-0.5, 1.0]);
+        assert_eq!(&vertices[1].tex_coord_clip[2..4], &[-0.5, 0.0]);
+        assert_eq!(&vertices[2].tex_coord_clip[2..4], &[0.0, 1.0]);
+        assert_eq!(&vertices[5].tex_coord_clip[2..4], &[0.0, 0.0]);
+        let expected_corner = owner_sample_pixel_quad([1, 0], &options).unwrap()[0];
+        assert_eq!(vertices[0].position, expected_corner.world);
+        assert!(vertices.iter().all(|vertex| {
+            vertex.tex_coord_grad[0..2] != [0.0, 0.0] || vertex.tex_coord_grad[2..4] != [0.0, 0.0]
+        }));
         assert!(
-            vertices[0].tex_coord_grad[0..2] != [0.0, 0.0]
-                || vertices[0].tex_coord_grad[2..4] != [0.0, 0.0]
+            vertices
+                .iter()
+                .all(|vertex| vertex.color == [0.25, 0.25, 0.5, 1.0])
         );
-        assert_eq!(vertices[0].color, [0.25, 0.25, 0.5, 1.0]);
     }
 
     #[test]

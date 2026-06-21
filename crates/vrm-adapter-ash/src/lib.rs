@@ -1610,7 +1610,7 @@ fn ash_owner_sample_entry_matches_mesh_alias(
 
 fn ash_owner_sample_resolve_pipeline_key(source: AshPipelineKey) -> AshPipelineKey {
     AshPipelineKey {
-        topology: vk::PrimitiveTopology::POINT_LIST,
+        topology: vk::PrimitiveTopology::TRIANGLE_LIST,
         cull_mode: vk::CullModeFlags::empty(),
         depth_write_enable: false,
         depth_compare_op: vk::CompareOp::ALWAYS,
@@ -1628,49 +1628,84 @@ fn ash_owner_sample_resolve_vertices_for_primitive(
     records
         .iter()
         .filter(|record| record.geometry_flags != 0)
-        .filter_map(|record| ash_owner_sample_resolve_vertex(primitive, record, scene_options))
+        .flat_map(|record| ash_owner_sample_resolve_vertices(primitive, record, scene_options))
         .collect()
 }
 
-fn ash_owner_sample_resolve_vertex(
+fn ash_owner_sample_resolve_vertices(
     primitive: &AshVrmPrimitive,
     record: &AshOwnerSampleOverrideRecord,
     scene_options: AshSceneOptions,
-) -> Option<AshVrmVertex> {
+) -> Vec<AshVrmVertex> {
+    let Some(quad) = ash_owner_sample_pixel_quad_world(record.pixel, scene_options) else {
+        return Vec::new();
+    };
     let [ia, ib, ic] = [
-        usize::try_from(record.geometry_indices[0]).ok()?,
-        usize::try_from(record.geometry_indices[1]).ok()?,
-        usize::try_from(record.geometry_indices[2]).ok()?,
+        usize::try_from(record.geometry_indices[0]),
+        usize::try_from(record.geometry_indices[1]),
+        usize::try_from(record.geometry_indices[2]),
     ];
-    let a = *primitive.vertices.get(ia)?;
-    let b = *primitive.vertices.get(ib)?;
-    let c = *primitive.vertices.get(ic)?;
+    let (Ok(ia), Ok(ib), Ok(ic)) = (ia, ib, ic) else {
+        return Vec::new();
+    };
+    let (Some(a), Some(b), Some(c)) = (
+        primitive.vertices.get(ia).copied(),
+        primitive.vertices.get(ib).copied(),
+        primitive.vertices.get(ic).copied(),
+    ) else {
+        return Vec::new();
+    };
     let weights = [
         record.barycentric_depth[0],
         record.barycentric_depth[1],
         record.barycentric_depth[2],
     ];
-    let mut vertex = ash_interpolate_vertex(a, b, c, weights);
-    vertex.position = ash_owner_sample_pixel_world(record.pixel, scene_options)?;
-    vertex.tex_coord_0 = [record.geometry_uvs[0], record.geometry_uvs[1]];
-    let [tex_coord_0_dx, tex_coord_0_dy] = ash_owner_sample_uv_gradient(a, b, c, scene_options)?;
-    vertex.tex_coord_0_dx = tex_coord_0_dx;
-    vertex.tex_coord_0_dy = tex_coord_0_dy;
-    Some(vertex)
+    let sample_vertex = ash_interpolate_vertex(a, b, c, weights);
+    let Some([tex_coord_0_dx, tex_coord_0_dy]) =
+        ash_owner_sample_uv_gradient(a, b, c, scene_options)
+    else {
+        return Vec::new();
+    };
+    quad.into_iter()
+        .map(|position| {
+            let mut vertex = sample_vertex;
+            vertex.position = position;
+            vertex.tex_coord_0 = [record.geometry_uvs[0], record.geometry_uvs[1]];
+            vertex.tex_coord_0_dx = tex_coord_0_dx;
+            vertex.tex_coord_0_dy = tex_coord_0_dy;
+            vertex
+        })
+        .collect()
 }
 
-fn ash_owner_sample_pixel_world(
+fn ash_owner_sample_pixel_quad_world(
     pixel: [u32; 2],
+    scene_options: AshSceneOptions,
+) -> Option<[[f32; 3]; 6]> {
+    let size = scene_options.sanitized_screen_projection_size();
+    let x = pixel[0] as f32;
+    let y = pixel[1] as f32;
+    if !(x < size.width && y < size.height) {
+        return None;
+    }
+    let left = ash_owner_sample_screen_world(x, y, scene_options)?;
+    let right = ash_owner_sample_screen_world(x + 1.0, y, scene_options)?;
+    let bottom_left = ash_owner_sample_screen_world(x, y + 1.0, scene_options)?;
+    let bottom_right = ash_owner_sample_screen_world(x + 1.0, y + 1.0, scene_options)?;
+    Some([left, bottom_left, right, right, bottom_left, bottom_right])
+}
+
+fn ash_owner_sample_screen_world(
+    screen_x: f32,
+    screen_y: f32,
     scene_options: AshSceneOptions,
 ) -> Option<[f32; 3]> {
     let size = scene_options.sanitized_screen_projection_size();
-    let pixel_x = pixel[0] as f32;
-    let pixel_y = pixel[1] as f32;
-    if !(pixel_x + 0.5 < size.width && pixel_y + 0.5 < size.height) {
+    if !(screen_x >= 0.0 && screen_x <= size.width && screen_y >= 0.0 && screen_y <= size.height) {
         return None;
     }
-    let ndc_x = (pixel_x + 0.5) / size.width * 2.0 - 1.0;
-    let ndc_y = (pixel_y + 0.5) / size.height * 2.0 - 1.0;
+    let ndc_x = screen_x / size.width * 2.0 - 1.0;
+    let ndc_y = screen_y / size.height * 2.0 - 1.0;
     let clip = Vec4::new(ndc_x, ndc_y, 0.5, 1.0);
     let world = (scene_options.projection() * scene_options.view()).inverse() * clip;
     (world.w.abs() > f32::EPSILON).then(|| (world.truncate() / world.w).to_array())
@@ -4623,7 +4658,7 @@ mod tests {
         assert_eq!(renderer_frame.pipelines.len(), 2);
         assert_eq!(
             renderer_frame.pipelines[1].key.topology,
-            vk::PrimitiveTopology::POINT_LIST
+            vk::PrimitiveTopology::TRIANGLE_LIST
         );
         assert_eq!(
             renderer_frame.pipelines[1].key.depth_compare_op,
@@ -4631,7 +4666,7 @@ mod tests {
         );
         assert!(!renderer_frame.pipelines[1].key.depth_write_enable);
         assert_eq!(renderer_frame.draw_calls.len(), 2);
-        assert_eq!(renderer_frame.draw_calls[1].index_count, 1);
+        assert_eq!(renderer_frame.draw_calls[1].index_count, 6);
         let vertex_buffer =
             &renderer_frame.buffers[renderer_frame.draw_calls[1].vertex_buffer_index];
         let vertex = bytemuck::pod_read_unaligned::<AshVrmVertex>(
@@ -4642,7 +4677,7 @@ mod tests {
         assert_eq!(vertex.color_0, [0.2, 0.3, 0.5, 1.0]);
         assert_eq!(
             vertex.position,
-            ash_owner_sample_pixel_world([12, 34], scene_options).unwrap()
+            ash_owner_sample_pixel_quad_world([12, 34], scene_options).unwrap()[0]
         );
         let clip = scene_options.projection()
             * scene_options.view()
@@ -4654,8 +4689,8 @@ mod tests {
             );
         let ndc = clip.truncate() / clip.w;
         let size = scene_options.sanitized_screen_projection_size();
-        assert!(((ndc.x + 1.0) * 0.5 * size.width - 12.5).abs() < 0.001);
-        assert!(((ndc.y + 1.0) * 0.5 * size.height - 34.5).abs() < 0.001);
+        assert!(((ndc.x + 1.0) * 0.5 * size.width - 12.0).abs() < 0.001);
+        assert!(((ndc.y + 1.0) * 0.5 * size.height - 34.0).abs() < 0.001);
     }
 
     #[test]
