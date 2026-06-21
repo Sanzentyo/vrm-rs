@@ -185,6 +185,8 @@ Audit Markdown:
 
 現在の shared backend 診断では、`gltf_pbr` は Bevy/wgpu が `0.99`、Ash/wgpu が `2.92`、`mtoon` は三 renderer すべてが `1.0` 未満級の actual RGB distance に収まっています。さらに Backend Color Fit は全 backend/model で additive を選ぶため、次は三 renderer 共通の additive/fill 成分を調べます。
 
+`Material / Draw Color Fit` では、`gltf_pbr` の `backpack_nm node145/mesh4/prim9/base` が backend ごとに additive 優勢です。MToon 側は `eye node2/mesh2/prim1/base` が additive、`arm_mat node144/mesh3/prim0/base` は Bevy/wgpu で gain が僅差優勢に分かれます。次の実装対象は、この draw-key 単位の差を使って PBR backpack と MToon eye/arm を別々に合わせることです。
+
 ## 現時点の読み
 
 - `wgpu` と Ash は多くのセットでほぼ同じ傾向を示しており、backend transport だけではなく material/color/texture sampling 側の差分が主な候補です。

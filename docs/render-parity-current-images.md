@@ -213,6 +213,16 @@ work toward ambient/fill/light accumulation or material-local offsets, not a
 single backend-wide exposure/gain correction or a Bevy-only selected-sample
 story.
 
+The same join now reports `Material / Draw Color Fit` under each shading model.
+For `gltf_pbr`, all three backends isolate the same `backpack_nm
+node145/mesh4/prim9/base` draw as additive-dominant: Ash `+17.06,+19.12,+20.19`
+with error `5.48`, Bevy `+18.23,+20.46,+21.69` with error `3.98`, and wgpu
+`+18.50,+20.83,+22.25` with error `3.78`. For `mtoon`, the `eye
+node2/mesh2/prim1/base` buckets are also additive-dominant, while
+`arm_mat node144/mesh3/prim0/base` is close enough that Bevy/wgpu prefer gain.
+That makes the next implementation split concrete: debug backpack/PBR fill or
+ambient as one track, and MToon eye/arm material accumulation as another.
+
 Expected-vs-actual audit Markdown:
 
 - [`Seed-san.wgpu.expected-actual.md`](../target/texture-draw-audit/Seed-san.wgpu.expected-actual.md)

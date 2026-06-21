@@ -132,6 +132,7 @@ struct BackendModelSummary {
     mean_expected_actual_rgb_distance: Option<f64>,
     mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
     color_fit: ColorFitSummary,
+    material_draw_color_fits: Vec<MaterialDrawColorFitSummary>,
     materials: Vec<CountSummary>,
     draw_keys: Vec<CountSummary>,
 }
@@ -144,6 +145,16 @@ struct ColorFitSummary {
     additive_rgb_delta: Option<[f64; 3]>,
     additive_fit_mean_rgb_distance: Option<f64>,
     preferred_fit: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct MaterialDrawColorFitSummary {
+    material_name: String,
+    draw_key: String,
+    row_count: u64,
+    mean_expected_actual_rgb_distance: Option<f64>,
+    mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
+    color_fit: ColorFitSummary,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -358,9 +369,59 @@ fn backend_summary(backend: &str, rows: &[ResidualRow]) -> BackendModelSummary {
         mean_expected_actual_rgb_distance: mean(distance_sum, rows.len()),
         mean_expected_minus_actual_rgb_delta: mean_delta(delta_sum, rows.len()),
         color_fit: color_fit(rows),
+        material_draw_color_fits: material_draw_color_fits(rows),
         materials: count_summaries(materials),
         draw_keys: count_summaries(draw_keys),
     }
+}
+
+fn material_draw_color_fits(rows: &[ResidualRow]) -> Vec<MaterialDrawColorFitSummary> {
+    let mut groups = BTreeMap::<(String, String), Vec<ResidualRow>>::new();
+    for row in rows {
+        let Some(material) = material_name(row) else {
+            continue;
+        };
+        let Some(draw_key) = &row.selection_draw_key else {
+            continue;
+        };
+        groups
+            .entry((material, draw_key.clone()))
+            .or_default()
+            .push(row.clone());
+    }
+    let mut summaries = groups
+        .into_iter()
+        .map(|((material_name, draw_key), rows)| {
+            let mut distance_sum = 0.0;
+            let mut delta_sum = [0.0; 3];
+            for row in &rows {
+                distance_sum += row.expected_actual_rgb_distance;
+                add_delta(&mut delta_sum, row.expected_minus_actual_rgb_delta);
+            }
+            MaterialDrawColorFitSummary {
+                material_name,
+                draw_key,
+                row_count: rows.len().try_into().unwrap_or(u64::MAX),
+                mean_expected_actual_rgb_distance: mean(distance_sum, rows.len()),
+                mean_expected_minus_actual_rgb_delta: mean_delta(delta_sum, rows.len()),
+                color_fit: color_fit(&rows),
+            }
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .row_count
+            .cmp(&left.row_count)
+            .then_with(|| {
+                option_f64_desc(
+                    right.mean_expected_actual_rgb_distance,
+                    left.mean_expected_actual_rgb_distance,
+                )
+            })
+            .then_with(|| left.material_name.cmp(&right.material_name))
+            .then_with(|| left.draw_key.cmp(&right.draw_key))
+    });
+    summaries
 }
 
 fn color_fit(rows: &[ResidualRow]) -> ColorFitSummary {
@@ -676,6 +737,34 @@ fn markdown(report: &JoinReport) -> String {
             ));
         }
         output.push('\n');
+        if model
+            .backends
+            .iter()
+            .any(|backend| !backend.material_draw_color_fits.is_empty())
+        {
+            output.push_str("### Material / Draw Color Fit\n\n");
+            output.push_str("| Backend | Material | Draw key | Rows | Mean E-A | Mean E-A RGB | Preferred | Additive RGB | Additive error | Gain RGB | Gain error |\n");
+            output.push_str("| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
+            for backend in &model.backends {
+                for fit in backend.material_draw_color_fits.iter().take(8) {
+                    output.push_str(&format!(
+                        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                        backend.backend,
+                        fit.material_name,
+                        fit.draw_key,
+                        fit.row_count,
+                        fmt_opt(fit.mean_expected_actual_rgb_distance),
+                        fmt_opt_delta(fit.mean_expected_minus_actual_rgb_delta),
+                        fit.color_fit.preferred_fit,
+                        fmt_opt_delta(fit.color_fit.additive_rgb_delta),
+                        fmt_opt(fit.color_fit.additive_fit_mean_rgb_distance),
+                        fmt_opt_delta(fit.color_fit.least_squares_gain_rgb),
+                        fmt_opt(fit.color_fit.gain_fit_mean_rgb_distance),
+                    ));
+                }
+            }
+            output.push('\n');
+        }
         output.push_str("### Shared Backend Sample Following\n\n");
         output.push_str("| Backend | Shared rows | Sample exact rows | Sample exact ratio | Mean A-S | Mean E-S |\n");
         output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
@@ -883,6 +972,15 @@ fn fmt_opt_delta(delta: Option<[f64; 3]>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
+fn option_f64_desc(left: Option<f64>, right: Option<f64>) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.total_cmp(&right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
 fn write_file(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -963,11 +1061,20 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         .color_fit
         .gain_fit_mean_rgb_distance
         .is_some());
+    assert_eq!(
+        gltf.backends[0].material_draw_color_fits[0].material_name,
+        "backpack_nm"
+    );
+    assert_eq!(
+        gltf.backends[0].material_draw_color_fits[0].draw_key,
+        "node/mesh/prim/base"
+    );
     assert_eq!(gltf.pixels[0].x, 1);
     assert_eq!(gltf.pixels[0].rows.len(), 2);
     let markdown = markdown(&report);
     assert!(markdown.contains("Shading Model Residual Join"));
     assert!(markdown.contains("Backend Color Fit"));
+    assert!(markdown.contains("Material / Draw Color Fit"));
     assert!(markdown.contains("Shared Backend Sample Following"));
     assert!(markdown.contains("Backend Pair Agreement"));
     assert!(markdown.contains("Shared Direction Buckets"));

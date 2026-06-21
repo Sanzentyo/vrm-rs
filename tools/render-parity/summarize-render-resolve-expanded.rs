@@ -114,6 +114,7 @@ struct ShadingModelBackendSummary {
     mean_expected_actual_distance: f64,
     mean_expected_minus_actual_rgb_delta: [f64; 3],
     color_fit: Option<ShadingModelColorFitSummary>,
+    material_draw_color_fits: Vec<ShadingModelMaterialDrawColorFitSummary>,
     materials: String,
     draw_keys: String,
 }
@@ -126,6 +127,16 @@ struct ShadingModelColorFitSummary {
     least_squares_gain_rgb: Option<[f64; 3]>,
     gain_fit_mean_distance: Option<f64>,
     mean_expected_over_actual_rgb_ratio: Option<[f64; 3]>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelMaterialDrawColorFitSummary {
+    material_name: String,
+    draw_key: String,
+    row_count: u64,
+    mean_expected_actual_distance: Option<f64>,
+    mean_expected_minus_actual_rgb_delta: Option<[f64; 3]>,
+    color_fit: Option<ShadingModelColorFitSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -391,6 +402,43 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                 }
                 out.push('\n');
             }
+            if model
+                .backends
+                .iter()
+                .any(|backend| !backend.material_draw_color_fits.is_empty())
+            {
+                out.push_str("#### Material / Draw Color Fit\n\n");
+                out.push_str("| Backend | Material | Draw key | Rows | Mean E-A | Mean E-A RGB | Preferred | Additive RGB | Additive error | Gain RGB | Gain error |\n");
+                out.push_str("| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
+                for backend in &model.backends {
+                    for fit in backend.material_draw_color_fits.iter().take(8) {
+                        let color_fit = fit.color_fit.as_ref();
+                        out.push_str(&format!(
+                            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                            backend.backend,
+                            fit.material_name,
+                            fit.draw_key,
+                            fit.row_count,
+                            fmt_optional_f64(fit.mean_expected_actual_distance),
+                            fmt_optional_vec3(fit.mean_expected_minus_actual_rgb_delta),
+                            color_fit
+                                .map(|fit| fit.preferred_fit.as_str())
+                                .unwrap_or("n/a"),
+                            fmt_optional_vec3(color_fit.and_then(|fit| fit.additive_rgb_delta)),
+                            fmt_optional_f64(
+                                color_fit.and_then(|fit| fit.additive_fit_mean_distance)
+                            ),
+                            fmt_optional_vec3(
+                                color_fit.and_then(|fit| fit.least_squares_gain_rgb)
+                            ),
+                            fmt_optional_f64(
+                                color_fit.and_then(|fit| fit.gain_fit_mean_distance)
+                            ),
+                        ));
+                    }
+                }
+                out.push('\n');
+            }
             out.push_str(
                 "| Backend | Shared rows | Sample exact | Exact ratio | Mean A-S | Mean E-S |\n",
             );
@@ -490,9 +538,40 @@ fn shading_model_backend_summary(
             &["mean_expected_minus_actual_rgb_delta"],
         )?,
         color_fit: optional_color_fit(value)?,
+        material_draw_color_fits: optional_material_draw_color_fits(value)?,
         materials: key_count_list(value, &["materials"])?,
         draw_keys: key_count_list(value, &["draw_keys"])?,
     })
+}
+
+fn optional_material_draw_color_fits(
+    backend: &Value,
+) -> Result<Vec<ShadingModelMaterialDrawColorFitSummary>, Box<dyn Error>> {
+    let Some(entries) = optional_path(backend, &["material_draw_color_fits"]) else {
+        return Ok(Vec::new());
+    };
+    let entries = entries
+        .as_array()
+        .ok_or("material_draw_color_fits is not an array")?;
+    entries
+        .iter()
+        .map(|entry| {
+            Ok(ShadingModelMaterialDrawColorFitSummary {
+                material_name: get_str_path(entry, &["material_name"])?,
+                draw_key: get_str_path(entry, &["draw_key"])?,
+                row_count: get_u64_path(entry, &["row_count"])?,
+                mean_expected_actual_distance: optional_f64_path(
+                    entry,
+                    &["mean_expected_actual_rgb_distance"],
+                )?,
+                mean_expected_minus_actual_rgb_delta: optional_vec3_path(
+                    entry,
+                    &["mean_expected_minus_actual_rgb_delta"],
+                )?,
+                color_fit: optional_color_fit(entry)?,
+            })
+        })
+        .collect()
 }
 
 fn optional_color_fit(
@@ -763,6 +842,21 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                         "additive_fit_mean_rgb_distance": 1.0,
                         "preferred_fit": "additive"
                     },
+                    "material_draw_color_fits": [{
+                        "material_name": "backpack_nm",
+                        "draw_key": "node145/mesh4/prim9/base",
+                        "row_count": 2,
+                        "mean_expected_actual_rgb_distance": 4.5,
+                        "mean_expected_minus_actual_rgb_delta": [1.0, 2.0, 3.0],
+                        "color_fit": {
+                            "mean_expected_over_actual_rgb_ratio": [1.1, 1.2, 1.3],
+                            "least_squares_gain_rgb": [1.05, 1.10, 1.15],
+                            "gain_fit_mean_rgb_distance": 2.0,
+                            "additive_rgb_delta": [1.0, 2.0, 3.0],
+                            "additive_fit_mean_rgb_distance": 1.0,
+                            "preferred_fit": "additive"
+                        }
+                    }],
                     "materials": [{"key": "backpack_nm", "count": 2}],
                     "draw_keys": [{"key": "node145/mesh4/prim9/base", "count": 2}]
                 }],
@@ -821,9 +915,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | 42.5000 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
     assert!(markdown.contains("#### Backend Color Fit"));
+    assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(
         "| wgpu | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 | 1.10,1.20,1.30 |"
     ));
+    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | 4.5000 | 1.00,2.00,3.00 | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));
     fs::remove_dir_all(root)?;
     Ok(())

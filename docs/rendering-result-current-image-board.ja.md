@@ -169,7 +169,7 @@ Backend agreement:
 | `mtoon` | Ash / wgpu | 14 | 0.1429 | 0.0740 |
 | `mtoon` | Bevy / wgpu | 15 | 0.7892 | 0.3384 |
 
-現行 join では、`gltf_pbr` と `mtoon` のどちらも additive fit が gain fit より近いです。したがって、次の renderer parity 作業では「一括 exposure/gain」より、MToon/PBR の ambient/fill/light accumulation、texture sample ownership、material surface ごとの期待値を分けて詰めます。
+現行 join では、`gltf_pbr` と `mtoon` のどちらも additive fit が gain fit より近いです。さらに `Material / Draw Color Fit` では、`gltf_pbr` の `backpack_nm node145/mesh4/prim9/base` も draw-key 単位で additive が優勢です。MToon 側は `eye node2/mesh2/prim1/base` が additive、`arm_mat node144/mesh3/prim0/base` は Bevy/wgpu で gain が僅差優勢に分かれるため、次の renderer parity 作業では「一括 exposure/gain」より、MToon/PBR の ambient/fill/light accumulation、texture sample ownership、material surface ごとの期待値を分けて詰めます。
 
 ## 関連ドキュメント
 
