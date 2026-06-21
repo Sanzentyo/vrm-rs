@@ -552,11 +552,11 @@ cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70
 
 | Scope | Region coverage | Line coverage |
 | --- | ---: | ---: |
-| Workspace total | 79.39% | 81.26% |
-| `vrm-adapter-ash` | 72.12% | 74.77% |
-| `vrm-adapter-bevy` | 76.01% | 77.52% |
-| `vrm-adapter-wgpu` | 29.41% | 31.00% |
-| `vrm-adapter` | 74.62% | 80.97% |
+| Workspace total | 79.40% | 81.27% |
+| `vrm-adapter-ash` | 72.14% | 74.79% |
+| `vrm-adapter-bevy` | 76.02% | 77.53% |
+| `vrm-adapter-wgpu` | 29.47% | 31.06% |
+| `vrm-adapter` | 74.67% | 81.01% |
 | `vrm-core` | 75.32% | 79.53% |
 | `vrm-diagnostics` | 87.50% | 90.60% |
 | `vrm-io` | 88.34% | 87.32% |

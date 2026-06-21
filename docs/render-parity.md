@@ -2869,6 +2869,16 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   current wgpu smoke, use `backpack_nm` pixels `141,90` and `141,91`,
   `huku_bake` pixel `146,178`, and `body_nm` pixels `224,90` / `224,91` as the
   next focused material/color comparison set.
+- `summarize-focused-material-pixels.rs` turns that comparison set into a
+  concrete JSON/Markdown review by joining current hotspots with a regenerated
+  source-derived owner/sample manifest. On the current wgpu Seed-san slice,
+  those five center-selected samples are all within `1.0-1.4142` RGB distance
+  of the three-vrm expected pixels, while the existing Rust actual pixels are
+  about `100-272` away. Treat this as evidence that the focused rows are not a
+  broad material/color formula failure for the selected sample itself. The next
+  implementation check should verify render-resolve manifest freshness and
+  renderer-side application of these source-derived center selections before
+  changing global material/color accumulation.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are

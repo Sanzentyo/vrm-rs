@@ -643,6 +643,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/join-owner-render-hotspots.rs",
     "tools/render-parity/map-render-hotspots.rs",
     "tools/render-parity/merge-owner-sample-selection.rs",
+    "tools/render-parity/summarize-focused-material-pixels.rs",
     "tools/render-parity/summarize-owner-hotspots.rs",
     "tools/render-parity/summarize-owner-tail.rs",
     "tools/render-parity/summarize-render-hotspots.rs",

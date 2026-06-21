@@ -86,6 +86,10 @@ Raw reports:
 - [`Seed-san.bevy-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.bevy-vs-three-vrm.imqraw-rust.json)
 - [`Seed-san.ash-vs-three-vrm.imqraw-rust.json`](../.external-fixtures/render-parity-ash-current-base-uv-rerun/reports/Seed-san.ash-vs-three-vrm.imqraw-rust.json)
 
+Focused material-pixel report for the current Seed-san blocker:
+
+- [`Seed-san.wgpu-focused-material-pixels.gradient.md`](../.external-fixtures/render-parity-seed-base-color-flat32-render-resolve-readback/reports/Seed-san.wgpu-focused-material-pixels.gradient.md)
+
 ## Seed-san Current Diagnostic Images
 
 The `three-vrm` reference image for this diagnostic comes from the base-color outline-off capture, while the Rust images below are the current render-resolve readbacks. Ash currently has raw `.rgba.json` / `.imqraw` artifacts in this directory, but no PNG image in the local artifact set.
