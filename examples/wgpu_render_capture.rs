@@ -2459,6 +2459,7 @@ mod tests {
                     [64, 128, 255, 255],
                 ),
                 sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.25, 0.75]),
+                selection_source: None,
                 relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
                 sample_geometry: None,
             },
@@ -2468,6 +2469,7 @@ mod tests {
                     [8, 9, 10, 255],
                 ),
                 sample: vrm_adapter::RenderOwnerSampleKey::from_pair(surface.clone(), [0.4, 0.6]),
+                selection_source: None,
                 relation_to_expected: Some(vrm_adapter::RenderOwnerSurfaceRelation::SameSurface),
                 sample_geometry: Some(vrm_adapter::RenderOwnerSampleGeometry {
                     node: 9,
@@ -2488,6 +2490,7 @@ mod tests {
                     [255, 0, 0, 255],
                 ),
                 sample: vrm_adapter::RenderOwnerSampleKey::from_pair(unmatched, [0.5, 0.5]),
+                selection_source: None,
                 relation_to_expected: Some(
                     vrm_adapter::RenderOwnerSurfaceRelation::DifferentMaterial,
                 ),

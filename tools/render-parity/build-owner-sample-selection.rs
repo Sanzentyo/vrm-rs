@@ -107,6 +107,7 @@ struct SelectionManifestEntry {
     rgba: [u8; 4],
     surface: SelectionManifestSurface,
     sample: [f64; 2],
+    selection_source: &'static str,
     sample_geometry: SelectionManifestSampleGeometry,
 }
 
@@ -143,6 +144,17 @@ enum RecoverySource {
     WebglCoverage,
     DiagnosticCoverage,
     Subpixel,
+}
+
+impl RecoverySource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Center => "center",
+            Self::WebglCoverage => "webgl-coverage",
+            Self::DiagnosticCoverage => "diagnostic-coverage",
+            Self::Subpixel => "subpixel",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +301,7 @@ fn build_selection(
                 triangle: recovery.surface.triangle(),
             },
             sample: sample_key.sample().to_pair(),
+            selection_source: recovery.source.as_str(),
             sample_geometry: resolved_sample.geometry,
         });
         report.selection_count += 1;
@@ -690,6 +703,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(manifest.corrections[0].surface.material_name, "body");
     assert_eq!(manifest.corrections[0].surface.triangle, 7);
     assert_eq!(manifest.corrections[0].sample, [0.5, 0.5]);
+    assert_eq!(manifest.corrections[0].selection_source, "center");
     assert_eq!(manifest.corrections[0].sample_geometry.node, 0);
     assert_eq!(manifest.corrections[0].sample_geometry.mesh, 1);
     assert_eq!(manifest.corrections[0].sample_geometry.primitive, 2);
@@ -715,6 +729,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(default_report.rendered_owner_center_candidate_count, 1);
     assert_eq!(default_report.selection_count, 1);
     assert_eq!(default_manifest.corrections[0].sample, [0.5, 0.5]);
+    assert_eq!(default_manifest.corrections[0].selection_source, "center");
     assert_eq!(
         default_manifest.corrections[0].sample_geometry.barycentric,
         [0.4, 0.4, 0.2]
@@ -729,6 +744,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     )?;
     assert_eq!(recovered_report.rendered_owner_coverage_recovered_count, 1);
     assert_eq!(recovered_manifest.corrections[0].sample, [0.7, 0.5]);
+    assert_eq!(
+        recovered_manifest.corrections[0].selection_source,
+        "diagnostic-coverage"
+    );
 
     let coverage_owner = serde_json::from_str::<Value>(
         r#"{
@@ -806,6 +825,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(coverage_report.rendered_owner_coverage_recovered_count, 1);
     assert_eq!(coverage_report.rendered_owner_center_shading_geometry_count, 1);
     assert_eq!(coverage_manifest.corrections[0].sample, [0.25, 0.75]);
+    assert_eq!(
+        coverage_manifest.corrections[0].selection_source,
+        "webgl-coverage"
+    );
     assert_eq!(coverage_manifest.corrections[0].rgba, [200, 210, 220, 255]);
     assert_eq!(
         coverage_manifest.corrections[0].sample_geometry.barycentric,

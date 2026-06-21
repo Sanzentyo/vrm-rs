@@ -1645,6 +1645,7 @@ mod tests {
                         surface.clone(),
                         [0.25, 0.75],
                     ),
+                    selection_source: None,
                     relation_to_expected: Some(RenderOwnerSurfaceRelation::SameSurface),
                     sample_geometry: Some(owner_sample_geometry()),
                 }],

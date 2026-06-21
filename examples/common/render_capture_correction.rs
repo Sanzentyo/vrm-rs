@@ -70,6 +70,7 @@ fn entry_json(
         "pixel": entry.pixel.to_pair(),
         "sample": entry.sample.to_pair(),
         "rgba": entry.replacement_rgba,
+        "selectionSource": entry.selection_source.map(|source| source.as_str()),
         "relationToExpected": entry.relation_to_expected.map(|relation| relation.as_str()),
         "surface": surface_json(surface),
     });

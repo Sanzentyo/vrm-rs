@@ -735,6 +735,7 @@ impl From<&RenderOwnerSampleCorrectionDecision> for RenderRgba8Correction {
 pub struct RenderOwnerSampleCorrectionManifestEntry {
     pub correction: RenderRgba8Correction,
     pub sample: RenderOwnerSampleKey,
+    pub selection_source: Option<RenderOwnerSampleSelectionSource>,
     pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
     pub sample_geometry: Option<RenderOwnerSampleGeometry>,
 }
@@ -864,6 +865,7 @@ pub struct RenderOwnerSampleSurfaceOverride {
     pub pixel: RenderPixel,
     pub sample: RenderSamplePoint,
     pub replacement_rgba: [u8; 4],
+    pub selection_source: Option<RenderOwnerSampleSelectionSource>,
     pub relation_to_expected: Option<RenderOwnerSurfaceRelation>,
     pub sample_geometry: Option<RenderOwnerSampleGeometry>,
 }
@@ -874,6 +876,7 @@ impl From<&RenderOwnerSampleCorrectionManifestEntry> for RenderOwnerSampleSurfac
             pixel: entry.correction.pixel,
             sample: entry.sample.sample(),
             replacement_rgba: entry.correction.replacement_rgba,
+            selection_source: entry.selection_source,
             relation_to_expected: entry.relation_to_expected,
             sample_geometry: entry.sample_geometry.clone(),
         }
@@ -941,6 +944,35 @@ impl RenderOwnerSamplePass {
             Self::Base => "base",
             Self::Outline => "outline",
             Self::Other(label) => label,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RenderOwnerSampleSelectionSource {
+    Center,
+    WebglCoverage,
+    DiagnosticCoverage,
+    Subpixel,
+}
+
+impl RenderOwnerSampleSelectionSource {
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "center" => Some(Self::Center),
+            "webgl-coverage" => Some(Self::WebglCoverage),
+            "diagnostic-coverage" => Some(Self::DiagnosticCoverage),
+            "subpixel" => Some(Self::Subpixel),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Center => "center",
+            Self::WebglCoverage => "webgl-coverage",
+            Self::DiagnosticCoverage => "diagnostic-coverage",
+            Self::Subpixel => "subpixel",
         }
     }
 }
@@ -1173,6 +1205,8 @@ pub enum RenderRgba8CorrectionManifestError {
     InvalidSampleGeometryField { field: &'static str },
     #[error("correction.relation_to_expected is not a known relation: {value}")]
     InvalidRelation { value: String },
+    #[error("correction.selection_source is not a known selection source: {value}")]
+    InvalidSelectionSource { value: String },
     #[error("correction pixel {x},{y} appears more than once")]
     DuplicatePixel { x: u64, y: u64 },
 }
@@ -1247,12 +1281,24 @@ fn render_owner_sample_correction_manifest_entry_from_value(
             })
         })
         .transpose()?;
+    let selection_source = value
+        .get("selection_source")
+        .and_then(serde_json::Value::as_str)
+        .map(|label| {
+            RenderOwnerSampleSelectionSource::from_label(label).ok_or_else(|| {
+                RenderRgba8CorrectionManifestError::InvalidSelectionSource {
+                    value: label.to_owned(),
+                }
+            })
+        })
+        .transpose()?;
     Ok(RenderOwnerSampleCorrectionManifestEntry {
         correction: RenderRgba8Correction::new(
             RenderPixel::new(x, y),
             render_rgba8_manifest_channel_array(rgba)?,
         ),
         sample,
+        selection_source,
         relation_to_expected,
         sample_geometry: value
             .get("sample_geometry")
@@ -6041,6 +6087,7 @@ mod tests {
                         "depth": 0.42,
                         "pass": "base"
                     },
+                    "selection_source": "webgl-coverage",
                     "relation_to_expected": "same-surface"
                 }
             ]
@@ -6060,6 +6107,10 @@ mod tests {
         assert_eq!(
             entries[0].relation_to_expected,
             Some(RenderOwnerSurfaceRelation::SameSurface)
+        );
+        assert_eq!(
+            entries[0].selection_source,
+            Some(RenderOwnerSampleSelectionSource::WebglCoverage)
         );
         let sample_geometry = entries[0].sample_geometry.as_ref().unwrap();
         assert_eq!(sample_geometry.node, 0);
@@ -6130,6 +6181,10 @@ mod tests {
         assert_eq!(override_entries[0].pixel, RenderPixel::new(1, 1));
         assert_eq!(override_entries[0].sample.to_pair(), [0.7, 0.5]);
         assert_eq!(override_entries[0].replacement_rgba, [1, 2, 3, 255]);
+        assert_eq!(
+            override_entries[0].selection_source,
+            Some(RenderOwnerSampleSelectionSource::WebglCoverage)
+        );
         assert_eq!(
             override_entries[0].relation_to_expected,
             Some(RenderOwnerSurfaceRelation::SameSurface)
@@ -6331,6 +6386,24 @@ mod tests {
             RenderRgba8CorrectionManifestError::InvalidFieldName {
                 field: "relationToExpected",
                 expected: "relation_to_expected",
+            }
+        );
+        assert_eq!(
+            render_owner_sample_correction_manifest_entries_from_value(&serde_json::json!({
+                "corrections": [
+                    {
+                        "x": 0,
+                        "y": 0,
+                        "rgba": [0, 1, 2, 3],
+                        "surface": {"materialName": "body", "triangle": 1},
+                        "sample": [0.5, 0.5],
+                        "selection_source": "magic"
+                    }
+                ]
+            }))
+            .unwrap_err(),
+            RenderRgba8CorrectionManifestError::InvalidSelectionSource {
+                value: "magic".to_owned(),
             }
         );
         assert_eq!(

@@ -2846,6 +2846,13 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   order. The current Seed-san split is same `24`, nearest-after `23`,
   nearest-before `17`, so the next renderer change should not assume a simple
   later-draw override rule.
+- Owner/sample manifests now carry `selection_source`, and renderer metadata
+  preserves it as `selectionSource`. Use that field to split residual pixels
+  into center-owner versus WebGL coverage selections before changing renderer
+  behavior. A current wgpu render-resolve smoke manifest classifies `60`
+  entries as `center` and `4` as `webgl-coverage`; future expanded manifests
+  should be reviewed with the same source-derived grouping before any
+  source-order or color-space default changes.
 - Use the `map-render-hotspots.rs` coverage fields and
   `join-owner-render-hotspots.rs` browser best-coverage counters before
   changing renderer behavior around edge pixels. These diagnostics are
