@@ -4,6 +4,9 @@ Updated: 2026-06-21
 
 This page is a compact visual board for the render-parity artifacts that exist in this workspace right now. The images and raw comparison files live under `.external-fixtures/` and are intentionally not committed. Use [render-parity-image-comparison.md](render-parity-image-comparison.md) for the broader historical index.
 
+For a shorter side-by-side board focused only on the currently generated images,
+use [rendering-result-current-comparison.md](rendering-result-current-comparison.md).
+
 Reference images are rendered with `three-vrm`. Compared images are Rust renderers: `wgpu`, Bevy, and Ash. Numeric values below are read from the current `.imqraw` comparison reports.
 
 ## Current Artifact Sets
