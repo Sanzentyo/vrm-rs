@@ -32,7 +32,7 @@ use vrm_adapter::{
 use vrm_core::MaterialRef;
 use vrm_io::{
     transform_tex_coord_0, CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects,
-    GltfMaterialShadingOptions, GltfOutlineScale, GltfOutlineVertexSettings,
+    GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfOutlineScale, GltfOutlineVertexSettings,
     GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
 };
 
@@ -121,6 +121,7 @@ struct Surface {
     base_texture: Option<CpuRgba8Image>,
     base_color: [f32; 4],
     base_color_alpha: f32,
+    material_shading: MaterialShadingReport,
     pbr_fallback: bool,
     indices: Vec<u32>,
     edge_adjacency: BTreeMap<[u32; 2], Vec<usize>>,
@@ -486,6 +487,8 @@ struct CandidateMatch {
     base_uv: [f32; 2],
     raw_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    base_color_factor: [f32; 4],
+    material_shading: MaterialShadingReport,
     cpu_base_color_rgba: [u8; 4],
     base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
@@ -500,6 +503,20 @@ struct MaterialPolicyReport {
     depth_write: bool,
     blend: bool,
     alpha_cutoff: f32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct MaterialShadingReport {
+    model: &'static str,
+    base_color: [f32; 4],
+    shade_color: [f32; 4],
+    emissive: [f32; 3],
+    metallic: f32,
+    roughness: f32,
+    occlusion_strength: f32,
+    normal_scale: f32,
+    unlit: bool,
+    v0_compat_shade: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -526,6 +543,8 @@ struct HitCandidate {
     raw_uv: [f32; 2],
     base_uv: [f32; 2],
     base_texture_rgba: Option<[u8; 4]>,
+    base_color_factor: [f32; 4],
+    material_shading: MaterialShadingReport,
     cpu_base_color_rgba: [u8; 4],
     base_texture_sampling_rgba: Vec<TextureSamplingColor>,
     base_texture_local_rgb_gradient: Option<f32>,
@@ -2235,6 +2254,7 @@ fn build_surfaces(
                 GltfMaterialShadingOptions::default(),
                 expression_effects,
             );
+            let material_shading = material_shading_report(shading);
             let base_policy = capture_material_policy(loaded, primitive.material);
             let indices = primitive_indices(primitive.indices.as_slice(), vertices.len());
             surfaces.push(Surface {
@@ -2250,6 +2270,7 @@ fn build_surfaces(
                 base_texture: base_texture.clone(),
                 base_color: shading.base_color,
                 base_color_alpha: shading.base_color[3],
+                material_shading,
                 pbr_fallback: shading.pbr_fallback,
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
@@ -2302,6 +2323,18 @@ fn build_surfaces(
                 base_texture,
                 base_color: [0.0, 0.0, 0.0, 1.0],
                 base_color_alpha: 1.0,
+                material_shading: MaterialShadingReport {
+                    model: "outline",
+                    base_color: [0.0, 0.0, 0.0, 1.0],
+                    shade_color: [0.0, 0.0, 0.0, 1.0],
+                    emissive: [0.0, 0.0, 0.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    occlusion_strength: 0.0,
+                    normal_scale: 0.0,
+                    unlit: false,
+                    v0_compat_shade: false,
+                },
                 pbr_fallback: false,
                 edge_adjacency: edge_adjacency(&indices),
                 indices,
@@ -2318,6 +2351,28 @@ fn build_surfaces(
         surface.draw_index = draw_index;
     }
     Ok(surfaces)
+}
+
+fn material_shading_report(shading: GltfMaterialShadingPlan) -> MaterialShadingReport {
+    let model = if !shading.pbr_fallback {
+        "mtoon"
+    } else if shading.unlit {
+        "gltf_unlit"
+    } else {
+        "gltf_pbr"
+    };
+    MaterialShadingReport {
+        model,
+        base_color: shading.base_color,
+        shade_color: shading.shade_color,
+        emissive: shading.emissive,
+        metallic: shading.metallic,
+        roughness: shading.roughness,
+        occlusion_strength: shading.occlusion_strength,
+        normal_scale: shading.normal_scale,
+        unlit: shading.unlit,
+        v0_compat_shade: shading.v0_compat_shade,
+    }
 }
 
 fn candidates_for_pixel(
@@ -2775,6 +2830,8 @@ fn candidate_match(
         base_uv: candidate.base_uv,
         raw_uv: candidate.raw_uv,
         base_texture_rgba: candidate.base_texture_rgba,
+        base_color_factor: candidate.base_color_factor,
+        material_shading: candidate.material_shading,
         cpu_base_color_rgba: candidate.cpu_base_color_rgba,
         base_texture_sampling_rgba: candidate.base_texture_sampling_rgba.clone(),
         base_texture_local_rgb_gradient: candidate.base_texture_local_rgb_gradient,
@@ -2914,6 +2971,8 @@ fn hit_candidate_for_projected_triangle(
         raw_uv,
         base_uv,
         base_texture_rgba,
+        base_color_factor: surface.base_color,
+        material_shading: surface.material_shading,
         cpu_base_color_rgba,
         base_texture_sampling_rgba,
         base_texture_local_rgb_gradient,

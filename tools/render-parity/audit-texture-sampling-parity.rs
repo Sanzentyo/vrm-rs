@@ -98,6 +98,13 @@ struct BucketStats {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_manifest_sample_actual_rgb_distance: Option<f64>,
+    mean_manifest_sample_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
+    manifest_sample_actual_closer: u64,
+    manifest_sample_expected_closer: u64,
+    manifest_sample_tied: u64,
     mean_best_sampling_actual_rgb_distance: Option<f64>,
     mean_best_sampling_expected_rgb_distance: Option<f64>,
     best_sampling_actual_within_4: u64,
@@ -107,6 +114,7 @@ struct BucketStats {
     best_sampling_expected_within_8: u64,
     best_sampling_expected_within_16: u64,
     material_counts: Vec<MaterialCount>,
+    shading_model_counts: Vec<ShadingModelCount>,
     material_buckets: Vec<MaterialBucket>,
     selection_material_buckets: Vec<MaterialBucket>,
 }
@@ -121,6 +129,12 @@ struct ModeCount {
 #[derive(Clone, Debug, Serialize)]
 struct MaterialCount {
     material_name: String,
+    count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShadingModelCount {
+    model: String,
     count: u64,
 }
 
@@ -150,6 +164,13 @@ struct MaterialBucket {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    mean_manifest_sample_actual_rgb_distance: Option<f64>,
+    mean_manifest_sample_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_manifest_sample_rgb_delta: Option<[f64; 3]>,
+    manifest_sample_actual_closer: u64,
+    manifest_sample_expected_closer: u64,
+    manifest_sample_tied: u64,
     mean_best_sampling_actual_rgb_distance: Option<f64>,
     mean_best_sampling_expected_rgb_distance: Option<f64>,
     best_sampling_actual_within_4: u64,
@@ -158,6 +179,7 @@ struct MaterialBucket {
     best_sampling_expected_within_4: u64,
     best_sampling_expected_within_8: u64,
     best_sampling_expected_within_16: u64,
+    shading_model_counts: Vec<ShadingModelCount>,
     best_sampling_modes_for_actual: Vec<ModeCount>,
     best_sampling_modes_for_expected: Vec<ModeCount>,
 }
@@ -235,6 +257,17 @@ struct Accumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    manifest_sample_actual_distance_sum: f64,
+    manifest_sample_actual_distance_count: u64,
+    manifest_sample_expected_distance_sum: f64,
+    manifest_sample_expected_distance_count: u64,
+    actual_minus_manifest_sample_delta_sum: [f64; 3],
+    actual_minus_manifest_sample_delta_count: u64,
+    expected_minus_manifest_sample_delta_sum: [f64; 3],
+    expected_minus_manifest_sample_delta_count: u64,
+    manifest_sample_actual_closer: u64,
+    manifest_sample_expected_closer: u64,
+    manifest_sample_tied: u64,
     best_sampling_actual_distance_sum: f64,
     best_sampling_actual_distance_count: u64,
     best_sampling_expected_distance_sum: f64,
@@ -246,6 +279,7 @@ struct Accumulator {
     best_sampling_expected_within_8: u64,
     best_sampling_expected_within_16: u64,
     materials: BTreeMap<String, u64>,
+    shading_models: BTreeMap<String, u64>,
     material_buckets: BTreeMap<String, MaterialAccumulator>,
     selection_material_buckets: BTreeMap<String, MaterialAccumulator>,
 }
@@ -289,6 +323,17 @@ struct MaterialAccumulator {
     frontmost_base_texture_expected_closer: u64,
     frontmost_base_texture_tied: u64,
     frontmost_base_texture_beats_cpu_for_expected: u64,
+    manifest_sample_actual_distance_sum: f64,
+    manifest_sample_actual_distance_count: u64,
+    manifest_sample_expected_distance_sum: f64,
+    manifest_sample_expected_distance_count: u64,
+    actual_minus_manifest_sample_delta_sum: [f64; 3],
+    actual_minus_manifest_sample_delta_count: u64,
+    expected_minus_manifest_sample_delta_sum: [f64; 3],
+    expected_minus_manifest_sample_delta_count: u64,
+    manifest_sample_actual_closer: u64,
+    manifest_sample_expected_closer: u64,
+    manifest_sample_tied: u64,
     best_sampling_actual_distance_sum: f64,
     best_sampling_actual_distance_count: u64,
     best_sampling_expected_distance_sum: f64,
@@ -299,12 +344,18 @@ struct MaterialAccumulator {
     best_sampling_expected_within_4: u64,
     best_sampling_expected_within_8: u64,
     best_sampling_expected_within_16: u64,
+    shading_models: BTreeMap<String, u64>,
     actual_modes: BTreeMap<String, ModeAccumulator>,
     expected_modes: BTreeMap<String, ModeAccumulator>,
 }
 
 impl Accumulator {
-    fn add(&mut self, hotspot: &Value, selection_surface: Option<&SurfaceLabel>) {
+    fn add(
+        &mut self,
+        hotspot: &Value,
+        selection_surface: Option<&SurfaceLabel>,
+        selection_rgba: Option<[u8; 4]>,
+    ) {
         self.count += 1;
 
         let actual_cpu = f64_at(hotspot, "/frontmost_cpu_base_color_actual_rgb_distance");
@@ -349,6 +400,7 @@ impl Accumulator {
         let expected_minus_texture =
             signed_rgb_delta_at(hotspot, "/expected", "/frontmost_base_texture_rgba");
         self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
+        self.add_manifest_sample(selection_rgba, rgba_at(hotspot, "/actual"), rgba_at(hotspot, "/expected"));
 
         let edge = f64_at(hotspot, "/frontmost_visible/edge_distance_pixels");
         if let Some(edge) = edge {
@@ -362,6 +414,10 @@ impl Accumulator {
         let frontmost = surface_at(hotspot, "/frontmost_visible");
         let actual = surface_at(hotspot, "/nearest_visible_actual");
         let expected = surface_at(hotspot, "/nearest_visible_expected");
+        let shading_model = str_at(hotspot, "/frontmost_visible/material_shading/model");
+        if let Some(model) = shading_model {
+            *self.shading_models.entry(model.to_owned()).or_default() += 1;
+        }
         if same_material(frontmost.as_ref(), actual.as_ref()) {
             self.same_material_as_actual += 1;
         }
@@ -399,6 +455,8 @@ impl Accumulator {
                     frontmost_base_texture_expected,
                     actual_minus_texture,
                     expected_minus_texture,
+                    shading_model,
+                    selection_rgba,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -424,6 +482,8 @@ impl Accumulator {
                     frontmost_base_texture_expected,
                     actual_minus_texture,
                     expected_minus_texture,
+                    shading_model,
+                    selection_rgba,
                     edge,
                     same_material_as_expected,
                     same_triangle_as_expected,
@@ -511,6 +571,25 @@ impl Accumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_manifest_sample_actual_rgb_distance: mean(
+                self.manifest_sample_actual_distance_sum,
+                self.manifest_sample_actual_distance_count,
+            ),
+            mean_manifest_sample_expected_rgb_distance: mean(
+                self.manifest_sample_expected_distance_sum,
+                self.manifest_sample_expected_distance_count,
+            ),
+            mean_actual_minus_manifest_sample_rgb_delta: mean_rgb_delta(
+                self.actual_minus_manifest_sample_delta_sum,
+                self.actual_minus_manifest_sample_delta_count,
+            ),
+            mean_expected_minus_manifest_sample_rgb_delta: mean_rgb_delta(
+                self.expected_minus_manifest_sample_delta_sum,
+                self.expected_minus_manifest_sample_delta_count,
+            ),
+            manifest_sample_actual_closer: self.manifest_sample_actual_closer,
+            manifest_sample_expected_closer: self.manifest_sample_expected_closer,
+            manifest_sample_tied: self.manifest_sample_tied,
             mean_best_sampling_actual_rgb_distance: mean(
                 self.best_sampling_actual_distance_sum,
                 self.best_sampling_actual_distance_count,
@@ -526,6 +605,7 @@ impl Accumulator {
             best_sampling_expected_within_8: self.best_sampling_expected_within_8,
             best_sampling_expected_within_16: self.best_sampling_expected_within_16,
             material_counts: material_counts(self.materials),
+            shading_model_counts: shading_model_counts(self.shading_models),
             material_buckets: material_buckets(self.material_buckets),
             selection_material_buckets: material_buckets(self.selection_material_buckets),
         }
@@ -543,6 +623,50 @@ impl Accumulator {
         if let Some(delta) = expected_minus_texture {
             add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
             self.expected_minus_texture_delta_count += 1;
+        }
+    }
+
+    fn add_manifest_sample(
+        &mut self,
+        manifest_rgba: Option<[u8; 4]>,
+        actual: Option<[u8; 4]>,
+        expected: Option<[u8; 4]>,
+    ) {
+        let Some(manifest_rgba) = manifest_rgba else {
+            return;
+        };
+        let actual_distance = actual.map(|actual| rgb_distance(manifest_rgba, actual));
+        let expected_distance = expected.map(|expected| rgb_distance(manifest_rgba, expected));
+        if let Some(distance) = actual_distance {
+            self.manifest_sample_actual_distance_sum += distance;
+            self.manifest_sample_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.manifest_sample_expected_distance_sum += distance;
+            self.manifest_sample_expected_distance_count += 1;
+        }
+        if let Some(actual) = actual {
+            add_rgb_delta(
+                &mut self.actual_minus_manifest_sample_delta_sum,
+                signed_rgb_delta(actual, manifest_rgba),
+            );
+            self.actual_minus_manifest_sample_delta_count += 1;
+        }
+        if let Some(expected) = expected {
+            add_rgb_delta(
+                &mut self.expected_minus_manifest_sample_delta_sum,
+                signed_rgb_delta(expected, manifest_rgba),
+            );
+            self.expected_minus_manifest_sample_delta_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.manifest_sample_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.manifest_sample_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.manifest_sample_tied += 1,
+            None => {}
         }
     }
 
@@ -642,6 +766,8 @@ impl MaterialAccumulator {
         frontmost_base_texture_expected: Option<f64>,
         actual_minus_texture: Option<[f64; 3]>,
         expected_minus_texture: Option<[f64; 3]>,
+        shading_model: Option<&str>,
+        selection_rgba: Option<[u8; 4]>,
         edge: Option<f64>,
         same_material_as_expected: bool,
         same_triangle_as_expected: bool,
@@ -675,6 +801,10 @@ impl MaterialAccumulator {
             expected_cpu,
         );
         self.add_frontmost_base_texture_deltas(actual_minus_texture, expected_minus_texture);
+        if let Some(model) = shading_model {
+            *self.shading_models.entry(model.to_owned()).or_default() += 1;
+        }
+        self.add_manifest_sample(selection_rgba, rgba_at(hotspot, "/actual"), rgba_at(hotspot, "/expected"));
         let best_actual_sampling = best_sampling_mode(
             hotspot,
             "/frontmost_texture_sampling_variants",
@@ -750,6 +880,25 @@ impl MaterialAccumulator {
             frontmost_base_texture_tied: self.frontmost_base_texture_tied,
             frontmost_base_texture_beats_cpu_for_expected: self
                 .frontmost_base_texture_beats_cpu_for_expected,
+            mean_manifest_sample_actual_rgb_distance: mean(
+                self.manifest_sample_actual_distance_sum,
+                self.manifest_sample_actual_distance_count,
+            ),
+            mean_manifest_sample_expected_rgb_distance: mean(
+                self.manifest_sample_expected_distance_sum,
+                self.manifest_sample_expected_distance_count,
+            ),
+            mean_actual_minus_manifest_sample_rgb_delta: mean_rgb_delta(
+                self.actual_minus_manifest_sample_delta_sum,
+                self.actual_minus_manifest_sample_delta_count,
+            ),
+            mean_expected_minus_manifest_sample_rgb_delta: mean_rgb_delta(
+                self.expected_minus_manifest_sample_delta_sum,
+                self.expected_minus_manifest_sample_delta_count,
+            ),
+            manifest_sample_actual_closer: self.manifest_sample_actual_closer,
+            manifest_sample_expected_closer: self.manifest_sample_expected_closer,
+            manifest_sample_tied: self.manifest_sample_tied,
             mean_best_sampling_actual_rgb_distance: mean(
                 self.best_sampling_actual_distance_sum,
                 self.best_sampling_actual_distance_count,
@@ -764,6 +913,7 @@ impl MaterialAccumulator {
             best_sampling_expected_within_4: self.best_sampling_expected_within_4,
             best_sampling_expected_within_8: self.best_sampling_expected_within_8,
             best_sampling_expected_within_16: self.best_sampling_expected_within_16,
+            shading_model_counts: shading_model_counts(self.shading_models),
             best_sampling_modes_for_actual: mode_counts(self.actual_modes),
             best_sampling_modes_for_expected: mode_counts(self.expected_modes),
         }
@@ -781,6 +931,50 @@ impl MaterialAccumulator {
         if let Some(delta) = expected_minus_texture {
             add_rgb_delta(&mut self.expected_minus_texture_delta_sum, delta);
             self.expected_minus_texture_delta_count += 1;
+        }
+    }
+
+    fn add_manifest_sample(
+        &mut self,
+        manifest_rgba: Option<[u8; 4]>,
+        actual: Option<[u8; 4]>,
+        expected: Option<[u8; 4]>,
+    ) {
+        let Some(manifest_rgba) = manifest_rgba else {
+            return;
+        };
+        let actual_distance = actual.map(|actual| rgb_distance(manifest_rgba, actual));
+        let expected_distance = expected.map(|expected| rgb_distance(manifest_rgba, expected));
+        if let Some(distance) = actual_distance {
+            self.manifest_sample_actual_distance_sum += distance;
+            self.manifest_sample_actual_distance_count += 1;
+        }
+        if let Some(distance) = expected_distance {
+            self.manifest_sample_expected_distance_sum += distance;
+            self.manifest_sample_expected_distance_count += 1;
+        }
+        if let Some(actual) = actual {
+            add_rgb_delta(
+                &mut self.actual_minus_manifest_sample_delta_sum,
+                signed_rgb_delta(actual, manifest_rgba),
+            );
+            self.actual_minus_manifest_sample_delta_count += 1;
+        }
+        if let Some(expected) = expected {
+            add_rgb_delta(
+                &mut self.expected_minus_manifest_sample_delta_sum,
+                signed_rgb_delta(expected, manifest_rgba),
+            );
+            self.expected_minus_manifest_sample_delta_count += 1;
+        }
+        match actual_distance
+            .zip(expected_distance)
+            .and_then(compare_f64)
+        {
+            Some(std::cmp::Ordering::Less) => self.manifest_sample_actual_closer += 1,
+            Some(std::cmp::Ordering::Greater) => self.manifest_sample_expected_closer += 1,
+            Some(std::cmp::Ordering::Equal) => self.manifest_sample_tied += 1,
+            None => {}
         }
     }
 
@@ -956,6 +1150,7 @@ fn audit(
         .map(manifest_surfaces)
         .transpose()?
         .unwrap_or_default();
+    let selected_rgba = manifest.map(manifest_rgba).transpose()?.unwrap_or_default();
     let baseline_selected = baseline_manifest
         .map(manifest_pixels)
         .transpose()?
@@ -976,16 +1171,17 @@ fn audit(
         let is_carried = !baseline_selected.is_empty() && baseline_selected.contains(&pixel);
         let is_new = !baseline_selected.is_empty() && is_selected && !is_carried;
         let selection_surface = selected_surfaces.get(&pixel);
-        all.add(hotspot, selection_surface);
+        let selection_rgba = selected_rgba.get(&pixel).copied();
+        all.add(hotspot, selection_surface, selection_rgba);
         if is_selected {
-            selected_acc.add(hotspot, selection_surface);
+            selected_acc.add(hotspot, selection_surface, selection_rgba);
             if is_carried {
-                carried_acc.add(hotspot, selection_surface);
+                carried_acc.add(hotspot, selection_surface, selection_rgba);
             } else if is_new {
-                new_acc.add(hotspot, selection_surface);
+                new_acc.add(hotspot, selection_surface, selection_rgba);
             }
         } else {
-            missing_acc.add(hotspot, None);
+            missing_acc.add(hotspot, None, None);
         }
         if let Some(row) = residual_row(hotspot, is_selected) {
             residuals.push(row);
@@ -1049,6 +1245,17 @@ fn manifest_surfaces(manifest: &Value) -> Result<HashMap<(u64, u64), SurfaceLabe
     Ok(corrections
         .iter()
         .filter_map(|correction| Some((pixel_key(correction)?, surface_at(correction, "/surface")?)))
+        .collect())
+}
+
+fn manifest_rgba(manifest: &Value) -> Result<HashMap<(u64, u64), [u8; 4]>, Box<dyn Error>> {
+    let corrections = manifest
+        .get("corrections")
+        .and_then(Value::as_array)
+        .ok_or("manifest corrections must be an array")?;
+    Ok(corrections
+        .iter()
+        .filter_map(|correction| Some((pixel_key(correction)?, rgba_at(correction, "/rgba")?)))
         .collect())
 }
 
@@ -1213,6 +1420,10 @@ fn f64_at(value: &Value, pointer: &str) -> Option<f64> {
     value.pointer(pointer)?.as_f64()
 }
 
+fn str_at<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
+    value.pointer(pointer)?.as_str()
+}
+
 fn compare_f64((left, right): (f64, f64)) -> Option<std::cmp::Ordering> {
     left.partial_cmp(&right)
 }
@@ -1257,6 +1468,20 @@ fn material_counts(materials: BTreeMap<String, u64>) -> Vec<MaterialCount> {
             .count
             .cmp(&left.count)
             .then_with(|| left.material_name.cmp(&right.material_name))
+    });
+    values
+}
+
+fn shading_model_counts(models: BTreeMap<String, u64>) -> Vec<ShadingModelCount> {
+    let mut values = models
+        .into_iter()
+        .map(|(model, count)| ShadingModelCount { model, count })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.model.cmp(&right.model))
     });
     values
 }
@@ -1385,6 +1610,16 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         fmt_opt_rgb_delta(bucket.mean_expected_minus_texture_rgb_delta)
     ));
     output.push_str(&format!(
+        "- Manifest sample closer actual/expected/tie: `{}` / `{}` / `{}`; mean A/E `{}` / `{}`; mean A-M / E-M `{}` / `{}`\n",
+        bucket.manifest_sample_actual_closer,
+        bucket.manifest_sample_expected_closer,
+        bucket.manifest_sample_tied,
+        fmt_opt(bucket.mean_manifest_sample_actual_rgb_distance),
+        fmt_opt(bucket.mean_manifest_sample_expected_rgb_distance),
+        fmt_opt_rgb_delta(bucket.mean_actual_minus_manifest_sample_rgb_delta),
+        fmt_opt_rgb_delta(bucket.mean_expected_minus_manifest_sample_rgb_delta)
+    ));
+    output.push_str(&format!(
         "- Best texture sampling mean A/E: `{}` / `{}`; within4 A/E `{}` / `{}`; within8 A/E `{}` / `{}`; within16 A/E `{}` / `{}`\n",
         fmt_opt(bucket.mean_best_sampling_actual_rgb_distance),
         fmt_opt(bucket.mean_best_sampling_expected_rgb_distance),
@@ -1399,6 +1634,10 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
         "- Top frontmost materials: `{}`\n\n",
         fmt_materials(&bucket.material_counts)
     ));
+    output.push_str(&format!(
+        "- Frontmost shading models: `{}`\n\n",
+        fmt_shading_models(&bucket.shading_model_counts)
+    ));
     push_material_bucket_markdown(output, "Frontmost material buckets", &bucket.material_buckets);
     if !bucket.selection_material_buckets.is_empty() {
         push_material_bucket_markdown(
@@ -1411,13 +1650,14 @@ fn push_bucket_markdown(output: &mut String, title: &str, bucket: &BucketStats) 
 
 fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[MaterialBucket]) {
     output.push_str(&format!("### {title}\n\n"));
-    output.push_str("| Material | Count | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
-    output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
+    output.push_str("| Material | Count | Models | CPU A/E/T | Mean CPU A/E | NExp CPU A/E/T | Mean NExp A/E | NExp beats front | Texture A/E/T | Mean Texture A/E | Mean A-T / E-T | Manifest A/E/T | Mean Manifest A/E | Mean A-M / E-M | Texture beats CPU | Best sample mean A/E | Best sample <=8 A/E | Edge <=0.50px | Same expected mat/tri | Best modes A/E |\n");
+    output.push_str("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for material in materials.iter().take(8) {
         output.push_str(&format!(
-            "| {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
+            "| {} | {} | {} | {}/{}/{} | {} / {} | {}/{}/{} | {} / {} | {} | {}/{}/{} | {} / {} | {} / {} | {}/{}/{} | {} / {} | {} / {} | {} | {} / {} | {} / {} | {} | {}/{} | {} / {} |\n",
             material.material_name,
             material.count,
+            fmt_shading_models(&material.shading_model_counts),
             material.actual_cpu_closer,
             material.expected_cpu_closer,
             material.cpu_tied,
@@ -1436,6 +1676,13 @@ fn push_material_bucket_markdown(output: &mut String, title: &str, materials: &[
             fmt_opt(material.mean_frontmost_base_texture_expected_rgb_distance),
             fmt_opt_rgb_delta(material.mean_actual_minus_texture_rgb_delta),
             fmt_opt_rgb_delta(material.mean_expected_minus_texture_rgb_delta),
+            material.manifest_sample_actual_closer,
+            material.manifest_sample_expected_closer,
+            material.manifest_sample_tied,
+            fmt_opt(material.mean_manifest_sample_actual_rgb_distance),
+            fmt_opt(material.mean_manifest_sample_expected_rgb_distance),
+            fmt_opt_rgb_delta(material.mean_actual_minus_manifest_sample_rgb_delta),
+            fmt_opt_rgb_delta(material.mean_expected_minus_manifest_sample_rgb_delta),
             material.frontmost_base_texture_beats_cpu_for_expected,
             fmt_opt(material.mean_best_sampling_actual_rgb_distance),
             fmt_opt(material.mean_best_sampling_expected_rgb_distance),
@@ -1465,6 +1712,15 @@ fn fmt_materials(materials: &[MaterialCount]) -> String {
         .iter()
         .take(6)
         .map(|material| format!("{}:{}", material.material_name, material.count))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn fmt_shading_models(models: &[ShadingModelCount]) -> String {
+    models
+        .iter()
+        .take(4)
+        .map(|model| format!("{}:{}", model.model, model.count))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -1507,6 +1763,16 @@ fn display_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+fn assert_close(actual: Option<f64>, expected: f64) {
+    let Some(actual) = actual else {
+        panic!("expected Some({expected}), got None");
+    };
+    assert!(
+        (actual - expected).abs() < 0.0001,
+        "expected {expected}, got {actual}"
+    );
+}
+
 fn self_test() -> Result<(), Box<dyn Error>> {
     let hotspots = serde_json::json!({
         "hotspots": [
@@ -1522,6 +1788,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "frontmost_visible": {
                     "material_name": "body",
                     "triangle": 7,
+                    "material_shading": {"model": "mtoon"},
                     "edge_distance_pixels": 0.2,
                     "base_texture_local_rgb_gradient": 3.0
                 },
@@ -1557,6 +1824,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "frontmost_visible": {
                     "material_name": "hair",
                     "triangle": 1,
+                    "material_shading": {"model": "gltf_pbr"},
                     "edge_distance_pixels": 1.5
                 },
                 "nearest_visible_actual": {"material_name": "hair", "triangle": 1},
@@ -1600,8 +1868,13 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.best_sampling_modes_for_expected[0].mode, "linear_top_left_half_texel");
     assert_eq!(report.selected.best_sampling_modes_for_actual[0].mode, "linear_bottom_left_half_texel");
     assert_eq!(report.all.material_buckets.len(), 2);
+    assert_eq!(report.all.shading_model_counts[0].model, "gltf_pbr");
+    assert_eq!(report.all.shading_model_counts[0].count, 1);
+    assert_eq!(report.all.shading_model_counts[1].model, "mtoon");
+    assert_eq!(report.all.shading_model_counts[1].count, 1);
     assert_eq!(report.all.material_buckets[0].material_name, "body");
     assert_eq!(report.all.material_buckets[0].expected_cpu_closer, 1);
+    assert_eq!(report.all.material_buckets[0].shading_model_counts[0].model, "mtoon");
     assert_eq!(report.selected.selection_material_buckets.len(), 1);
     assert_eq!(
         report.selected.selection_material_buckets[0].material_name,
@@ -1612,6 +1885,15 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
     assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
     assert_eq!(report.selected.frontmost_base_texture_expected_closer, 0);
+    assert_eq!(report.selected.manifest_sample_expected_closer, 1);
+    assert_close(
+        report.selected.mean_manifest_sample_actual_rgb_distance,
+        rgb_distance([12, 10, 10, 255], [100, 100, 100, 255]),
+    );
+    assert_close(
+        report.selected.mean_manifest_sample_expected_rgb_distance,
+        rgb_distance([12, 10, 10, 255], [10, 10, 10, 255]),
+    );
     assert_eq!(
         report.selected.mean_actual_minus_texture_rgb_delta,
         Some([88.0, 90.0, 90.0])

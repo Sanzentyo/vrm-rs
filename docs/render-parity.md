@@ -2926,6 +2926,21 @@ edges, real-model screen-coordinate outline coverage, and higher thresholds.
   color/light/output accumulation target. `body_nm` stays in the fill/UV bucket
   because expected-minus-texture is lower than actual-minus-texture and the
   existing expected-near sampling rows remain measurable.
+- The texture audit now also carries shading-model counts from the hotspot
+  mapper and compares actual/expected pixels against the manifest-selected
+  sample RGBA. The current expanded2 selected split is wgpu `mtoon:32,
+  gltf_pbr:19`, Bevy `mtoon:32, gltf_pbr:19`, and Ash `mtoon:41,
+  gltf_pbr:23`. `backpack_nm` is `gltf_pbr` in all three backends, not MToon;
+  `huku_bake`, `body_nm`, `arm_mat`, and `arm_plastic` are the MToon rows.
+  Manifest-sample distances make the backend split sharper: Bevy selected
+  samples are actual-closer for `51/51` pixels with mean manifest A/E distance
+  `0.6346 / 94.8525`, so the current Bevy residual is mostly a mismatch between
+  the selected sample and three-vrm expected color. wgpu is `33/18/0` at
+  `76.6863 / 81.9697`, and Ash is `45/19/0` at `71.9358 / 79.7302`, so those
+  still have selected-sample color-output differences layered on top. Keep the
+  next color work split by shading model: glTF/PBR fallback for `backpack_nm`,
+  and local fill/triangle ownership for the MToon `body_nm`/plastic rows that
+  already have expected-near sampling candidates.
 - Deepen real-model runtime/material breadth now that isolated MToon
   light/color, angled-normal ramp, tangentless normal-map, MToon
   occlusion-ignore, and VRM0 compat shade guards are covered by generated or
