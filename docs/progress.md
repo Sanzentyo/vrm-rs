@@ -2,6 +2,21 @@
 
 ## 2026-06-21
 
+- Added browser-projected base-color joins to the current render-resolve
+  expanded summary. `summarize-render-resolve-expanded.rs` now accepts repeated
+  `--base-color-owner-join renderer=path` inputs and carries three-vrm
+  `projectedBaseColorSrgb` / texture-as-linear candidates into both JSON and
+  Markdown. `just
+  render-parity-seed-base-color-flat32-render-resolve-expanded-summary` now
+  regenerates owner-id and base-color browser hotspot projections for wgpu,
+  Bevy, and Ash residual pixels before writing the summary. On the current
+  Seed-san expanded artifacts the join covers `64/64` pixels for every backend;
+  owner and browser base frontmost materials match `64/64`, surfaces match
+  `58/64`, and the owner-surface base/texture-as-linear distances are wgpu
+  `69.0102 / 64.2145`, Bevy `68.0154 / 65.3374`, and Ash `80.1585 / 60.2440`.
+  This keeps the next fix focused on matching three-vrm's actual base-color
+  texture/color-space evaluation at the selected WebGL surfaces instead of
+  adding another PSNR-driven owner-sample knob.
 - Added a generated MToon branch-parity guard where `VRMC_materials_mtoon` and
   `KHR_materials_unlit` are both present on the same material. The source-like
   MToon light fixture now has 13 visible swatches and the `Justfile` swatch

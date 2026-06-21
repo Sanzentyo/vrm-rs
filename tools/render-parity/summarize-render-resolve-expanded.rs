@@ -38,6 +38,8 @@ struct Options {
     metric_key: String,
     #[arg(long)]
     shading_model_join: Option<PathBuf>,
+    #[arg(long, value_name = "RENDERER=PATH")]
+    base_color_owner_join: Vec<String>,
     #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
@@ -52,6 +54,7 @@ struct ExpandedSummary {
     metric_key: String,
     renderers: Vec<RendererSummary>,
     shading_model_join: Option<ShadingModelJoinSummary>,
+    base_color_owner_joins: Vec<BaseColorOwnerJoinSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -176,6 +179,48 @@ struct ShadingModelBackendPairSummary {
     mean_expected_actual_gap_delta: f64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct BaseColorOwnerJoinSummary {
+    renderer: String,
+    path: String,
+    joined_count: u64,
+    missing_base_color_count: u64,
+    rendered_owner_count: u64,
+    owner_matches_base_frontmost_material: u64,
+    owner_matches_base_frontmost_surface: u64,
+    mean_owner_surface_base_color_rendered_distance: Option<f64>,
+    mean_owner_surface_texture_as_linear_rendered_distance: Option<f64>,
+    owner_to_base_frontmost_materials: String,
+    frontmost_to_nearest_rendered_base_color_materials: String,
+    frontmost_to_nearest_rendered_base_color_draw_order: String,
+    owner_material_buckets: Vec<BaseColorOwnerMaterialBucketSummary>,
+    top_owner_surface_color_deltas: Vec<BaseColorOwnerDeltaSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BaseColorOwnerMaterialBucketSummary {
+    material_name: String,
+    count: u64,
+    mean_base_color_rendered_distance: Option<f64>,
+    mean_texture_as_linear_rendered_distance: Option<f64>,
+    frontmost_material_matches: u64,
+    frontmost_surface_matches: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BaseColorOwnerDeltaSummary {
+    x: u64,
+    y: u64,
+    owner_material: Option<String>,
+    base_frontmost_material: Option<String>,
+    nearest_rendered_base_color_material: Option<String>,
+    draw_delta: Option<i64>,
+    projected_base_color: Option<[u64; 4]>,
+    projected_texture_as_linear_color: Option<[u64; 4]>,
+    base_color_rendered_distance: Option<f64>,
+    texture_as_linear_rendered_distance: Option<f64>,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
     if options.self_test {
@@ -254,6 +299,7 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
             .as_deref()
             .map(shading_model_join_summary)
             .transpose()?,
+        base_color_owner_joins: base_color_owner_join_summaries(&options.base_color_owner_join)?,
     })
 }
 
@@ -521,7 +567,213 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             out.push('\n');
         }
     }
+    if !summary.base_color_owner_joins.is_empty() {
+        out.push_str("## Browser Projected Base-Color Joins\n\n");
+        for join in &summary.base_color_owner_joins {
+            out.push_str(&format!("### `{}`\n\n", join.renderer));
+            out.push_str(&format!("- Join: `{}`\n", join.path));
+            out.push_str(&format!(
+                "- Joined/missing/rendered-owner: `{}` / `{}` / `{}`\n",
+                join.joined_count, join.missing_base_color_count, join.rendered_owner_count
+            ));
+            out.push_str(&format!(
+                "- Owner matches base frontmost material/surface: `{}` / `{}`\n",
+                join.owner_matches_base_frontmost_material,
+                join.owner_matches_base_frontmost_surface
+            ));
+            out.push_str(&format!(
+                "- Mean owner-surface base/texture-as-linear distance: `{}` / `{}`\n",
+                fmt_optional_f64(join.mean_owner_surface_base_color_rendered_distance),
+                fmt_optional_f64(join.mean_owner_surface_texture_as_linear_rendered_distance)
+            ));
+            out.push_str(&format!(
+                "- Owner to base frontmost materials: `{}`\n",
+                join.owner_to_base_frontmost_materials
+            ));
+            out.push_str(&format!(
+                "- Frontmost to nearest rendered base-color materials: `{}`\n",
+                join.frontmost_to_nearest_rendered_base_color_materials
+            ));
+            out.push_str(&format!(
+                "- Frontmost to nearest rendered base-color draw order: `{}`\n\n",
+                join.frontmost_to_nearest_rendered_base_color_draw_order
+            ));
+            out.push_str("| Material | Count | Front material/surface matches | Mean base / linear distance |\n");
+            out.push_str("| --- | ---: | ---: | ---: |\n");
+            for bucket in join.owner_material_buckets.iter().take(8) {
+                out.push_str(&format!(
+                    "| {} | {} | {} / {} | {} / {} |\n",
+                    bucket.material_name,
+                    bucket.count,
+                    bucket.frontmost_material_matches,
+                    bucket.frontmost_surface_matches,
+                    fmt_optional_f64(bucket.mean_base_color_rendered_distance),
+                    fmt_optional_f64(bucket.mean_texture_as_linear_rendered_distance)
+                ));
+            }
+            out.push('\n');
+            out.push_str("| Pixel | Owner | Base frontmost | Nearest rendered base | Draw delta | Projected base / linear | Distance base / linear |\n");
+            out.push_str("| --- | --- | --- | --- | ---: | ---: | ---: |\n");
+            for delta in join.top_owner_surface_color_deltas.iter().take(8) {
+                out.push_str(&format!(
+                    "| {},{} | {} | {} | {} | {} | {} / {} | {} / {} |\n",
+                    delta.x,
+                    delta.y,
+                    delta.owner_material.as_deref().unwrap_or("n/a"),
+                    delta.base_frontmost_material.as_deref().unwrap_or("n/a"),
+                    delta
+                        .nearest_rendered_base_color_material
+                        .as_deref()
+                        .unwrap_or("n/a"),
+                    delta
+                        .draw_delta
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_owned()),
+                    fmt_optional_rgba(delta.projected_base_color),
+                    fmt_optional_rgba(delta.projected_texture_as_linear_color),
+                    fmt_optional_f64(delta.base_color_rendered_distance),
+                    fmt_optional_f64(delta.texture_as_linear_rendered_distance)
+                ));
+            }
+            out.push('\n');
+        }
+    }
     out
+}
+
+fn base_color_owner_join_summaries(
+    joins: &[String],
+) -> Result<Vec<BaseColorOwnerJoinSummary>, Box<dyn Error>> {
+    joins
+        .iter()
+        .map(|join| {
+            let (renderer, path) = join
+                .split_once('=')
+                .ok_or_else(|| format!("--base-color-owner-join must be RENDERER=PATH: {join}"))?;
+            base_color_owner_join_summary(renderer, Path::new(path))
+        })
+        .collect()
+}
+
+fn base_color_owner_join_summary(
+    renderer: &str,
+    path: &Path,
+) -> Result<BaseColorOwnerJoinSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    Ok(BaseColorOwnerJoinSummary {
+        renderer: renderer.to_owned(),
+        path: path.display().to_string(),
+        joined_count: get_u64_path(&value, &["joined_count"])?,
+        missing_base_color_count: get_u64_path(&value, &["missing_base_color_count"])?,
+        rendered_owner_count: get_u64_path(&value, &["rendered_owner_count"])?,
+        owner_matches_base_frontmost_material: get_u64_path(
+            &value,
+            &["owner_matches_base_frontmost_material"],
+        )?,
+        owner_matches_base_frontmost_surface: get_u64_path(
+            &value,
+            &["owner_matches_base_frontmost_surface"],
+        )?,
+        mean_owner_surface_base_color_rendered_distance: optional_f64_path(
+            &value,
+            &["mean_owner_surface_base_color_rendered_rgb_distance"],
+        )?,
+        mean_owner_surface_texture_as_linear_rendered_distance: optional_f64_path(
+            &value,
+            &["mean_owner_surface_texture_as_linear_rendered_rgb_distance"],
+        )?,
+        owner_to_base_frontmost_materials: count_map_summary(
+            &value,
+            &["owner_to_base_frontmost_materials"],
+        )?,
+        frontmost_to_nearest_rendered_base_color_materials: count_map_summary(
+            &value,
+            &["frontmost_to_nearest_rendered_base_color_materials"],
+        )?,
+        frontmost_to_nearest_rendered_base_color_draw_order: count_map_summary(
+            &value,
+            &["frontmost_to_nearest_rendered_base_color_draw_order"],
+        )?,
+        owner_material_buckets: base_color_owner_material_buckets(&value, 8)?,
+        top_owner_surface_color_deltas: base_color_owner_deltas(&value, 8)?,
+    })
+}
+
+fn base_color_owner_material_buckets(
+    value: &Value,
+    limit: usize,
+) -> Result<Vec<BaseColorOwnerMaterialBucketSummary>, Box<dyn Error>> {
+    let buckets = get_path(value, &["owner_material_buckets"])?
+        .as_array()
+        .ok_or("owner_material_buckets is not an array")?;
+    buckets
+        .iter()
+        .take(limit)
+        .map(|bucket| {
+            Ok(BaseColorOwnerMaterialBucketSummary {
+                material_name: get_str_path(bucket, &["material_name"])?,
+                count: get_u64_path(bucket, &["count"])?,
+                mean_base_color_rendered_distance: optional_f64_path(
+                    bucket,
+                    &["mean_base_color_rendered_rgb_distance"],
+                )?,
+                mean_texture_as_linear_rendered_distance: optional_f64_path(
+                    bucket,
+                    &["mean_texture_as_linear_rendered_rgb_distance"],
+                )?,
+                frontmost_material_matches: get_u64_path(
+                    bucket,
+                    &["frontmost_material_matches"],
+                )?,
+                frontmost_surface_matches: get_u64_path(bucket, &["frontmost_surface_matches"])?,
+            })
+        })
+        .collect()
+}
+
+fn base_color_owner_deltas(
+    value: &Value,
+    limit: usize,
+) -> Result<Vec<BaseColorOwnerDeltaSummary>, Box<dyn Error>> {
+    let deltas = get_path(value, &["top_owner_surface_color_deltas"])?
+        .as_array()
+        .ok_or("top_owner_surface_color_deltas is not an array")?;
+    deltas
+        .iter()
+        .take(limit)
+        .map(|delta| {
+            Ok(BaseColorOwnerDeltaSummary {
+                x: get_u64_path(delta, &["x"])?,
+                y: get_u64_path(delta, &["y"])?,
+                owner_material: optional_surface_material(delta, &["owner_surface"])?,
+                base_frontmost_material: optional_surface_material(delta, &["base_frontmost"])?,
+                nearest_rendered_base_color_material: optional_surface_material(
+                    delta,
+                    &["nearest_rendered_base_color"],
+                )?,
+                draw_delta: optional_i64_path(
+                    delta,
+                    &["frontmost_to_nearest_rendered_base_color_draw_delta"],
+                )?,
+                projected_base_color: optional_rgba_path(
+                    delta,
+                    &["base_frontmost_projected_color"],
+                )?,
+                projected_texture_as_linear_color: optional_rgba_path(
+                    delta,
+                    &["base_frontmost_texture_as_linear_color"],
+                )?,
+                base_color_rendered_distance: optional_f64_path(
+                    delta,
+                    &["base_color_rendered_rgb_distance"],
+                )?,
+                texture_as_linear_rendered_distance: optional_f64_path(
+                    delta,
+                    &["texture_as_linear_rendered_rgb_distance"],
+                )?,
+            })
+        })
+        .collect()
 }
 
 fn shading_model_join_summary(path: &Path) -> Result<ShadingModelJoinSummary, Box<dyn Error>> {
@@ -728,6 +980,33 @@ fn key_count_list(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>
     Ok(labels.join(", "))
 }
 
+fn count_map_summary(value: &Value, path: &[&str]) -> Result<String, Box<dyn Error>> {
+    let Some(object) = optional_path(value, path) else {
+        return Ok(String::new());
+    };
+    let object = object
+        .as_object()
+        .ok_or_else(|| format!("JSON path {} is not an object", path.join(".")))?;
+    let mut entries = object
+        .iter()
+        .map(|(key, count)| {
+            Ok((
+                key.clone(),
+                count
+                    .as_u64()
+                    .ok_or_else(|| format!("JSON path {}.{key} is not an unsigned integer", path.join(".")))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    Ok(entries
+        .into_iter()
+        .take(6)
+        .map(|(key, count)| format!("{key}:{count}"))
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
 fn read_json(path: &Path) -> Result<Value, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&text)?)
@@ -803,6 +1082,19 @@ fn optional_f64_path(value: &Value, path: &[&str]) -> Result<Option<f64>, Box<dy
         .ok_or_else(|| format!("JSON path {} is not a number", path.join(".")).into())
 }
 
+fn optional_i64_path(value: &Value, path: &[&str]) -> Result<Option<i64>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_i64()
+        .map(Some)
+        .ok_or_else(|| format!("JSON path {} is not an integer", path.join(".")).into())
+}
+
 fn optional_f64_path_alias(
     value: &Value,
     primary_path: &[&str],
@@ -838,6 +1130,45 @@ fn optional_vec3_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 3]>, 
             .as_f64()
             .ok_or_else(|| format!("JSON path {}[2] is not a number", path.join(".")))?,
     ]))
+}
+
+fn optional_rgba_path(value: &Value, path: &[&str]) -> Result<Option<[u64; 4]>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let array = value
+        .as_array()
+        .ok_or_else(|| format!("JSON path {} is not an array", path.join(".")))?;
+    if array.len() != 4 {
+        return Err(format!("JSON path {} does not have length 4", path.join(".")).into());
+    }
+    Ok(Some([
+        array[0]
+            .as_u64()
+            .ok_or_else(|| format!("JSON path {}[0] is not an unsigned integer", path.join(".")))?,
+        array[1]
+            .as_u64()
+            .ok_or_else(|| format!("JSON path {}[1] is not an unsigned integer", path.join(".")))?,
+        array[2]
+            .as_u64()
+            .ok_or_else(|| format!("JSON path {}[2] is not an unsigned integer", path.join(".")))?,
+        array[3]
+            .as_u64()
+            .ok_or_else(|| format!("JSON path {}[3] is not an unsigned integer", path.join(".")))?,
+    ]))
+}
+
+fn optional_surface_material(value: &Value, path: &[&str]) -> Result<Option<String>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(get_str_path(value, &["material_name"])?))
 }
 
 fn optional_vec4_path(value: &Value, path: &[&str]) -> Result<Option<[f64; 4]>, Box<dyn Error>> {
@@ -913,6 +1244,12 @@ fn fmt_optional_vec4(value: Option<[f64; 4]>) -> String {
                 value[0], value[1], value[2], value[3]
             )
         })
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_rgba(value: Option<[u64; 4]>) -> String {
+    value
+        .map(|value| format!("{},{},{},{}", value[0], value[1], value[2], value[3]))
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
@@ -1037,6 +1374,42 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
+    let base_color_owner_join_path = root.join("Seed-san.owner-base-color-hotspots.json");
+    fs::write(
+        &base_color_owner_join_path,
+        r#"{
+            "joined_count": 2,
+            "missing_base_color_count": 0,
+            "rendered_owner_count": 2,
+            "owner_matches_base_frontmost_material": 1,
+            "owner_matches_base_frontmost_surface": 1,
+            "mean_owner_surface_base_color_rendered_rgb_distance": 12.5,
+            "mean_owner_surface_texture_as_linear_rendered_rgb_distance": 4.5,
+            "owner_to_base_frontmost_materials": {"backpack_nm -> backpack_nm": 1, "eye -> face": 1},
+            "frontmost_to_nearest_rendered_base_color_materials": {"backpack_nm -> arm_plastic": 1},
+            "frontmost_to_nearest_rendered_base_color_draw_order": {"nearest-after": 1, "same": 1},
+            "owner_material_buckets": [{
+                "material_name": "backpack_nm",
+                "count": 1,
+                "mean_base_color_rendered_rgb_distance": 12.5,
+                "mean_texture_as_linear_rendered_rgb_distance": 4.5,
+                "frontmost_material_matches": 1,
+                "frontmost_surface_matches": 1
+            }],
+            "top_owner_surface_color_deltas": [{
+                "x": 106,
+                "y": 131,
+                "owner_surface": {"material_name": "backpack_nm", "triangle": 4},
+                "base_frontmost": {"material_name": "backpack_nm", "triangle": 4},
+                "nearest_rendered_base_color": {"material_name": "arm_plastic", "triangle": 9},
+                "frontmost_to_nearest_rendered_base_color_draw_delta": 2,
+                "base_frontmost_projected_color": [112, 115, 119, 255],
+                "base_frontmost_texture_as_linear_color": [90, 92, 95, 255],
+                "base_color_rendered_rgb_distance": 12.5,
+                "texture_as_linear_rendered_rgb_distance": 4.5
+            }]
+        }"#,
+    )?;
     let options = Options {
         self_test: false,
         reports_dir: Some(root.clone()),
@@ -1045,6 +1418,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         renderer: vec!["wgpu".to_string()],
         metric_key: "rgbSharedNonblackGradientInterior1px".to_string(),
         shading_model_join: Some(join_path),
+        base_color_owner_join: vec![format!(
+            "wgpu={}",
+            base_color_owner_join_path.display()
+        )],
         json_out: None,
         markdown_out: None,
     };
@@ -1074,6 +1451,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     let summary_json = serde_json::to_string(&summary)?;
     assert!(summary_json.contains(r#""preferred_fit":"additive""#));
     assert!(summary_json.contains(r#""material_draw_shading_inputs""#));
+    assert!(summary_json.contains(r#""base_color_owner_joins""#));
+    assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
     assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
     assert!(markdown.contains("| wgpu | 42.5000 |"));
@@ -1086,6 +1465,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | 4.5000 | 1.00,2.00,3.00 | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 |"));
     assert!(markdown.contains("#### Material / Draw Shading Inputs"));
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | gltf_pbr:2 | 1.00,0.50,0.25,1.00 |"));
+    assert!(markdown.contains("## Browser Projected Base-Color Joins"));
+    assert!(markdown.contains("| 106,131 | backpack_nm | backpack_nm | arm_plastic | 2 | 112,115,119,255 / 90,92,95,255 | 12.5000 / 4.5000 |"));
     assert!(markdown.contains("| ash / wgpu | 2 | 0.5000 | 0.2500 |"));
     fs::remove_dir_all(root)?;
     Ok(())
