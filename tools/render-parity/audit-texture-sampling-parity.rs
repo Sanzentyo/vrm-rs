@@ -63,6 +63,7 @@ struct AuditReport {
     missing_selection: BucketStats,
     carried_selection: BucketStats,
     new_selection: BucketStats,
+    recommended_probes: Vec<ProbeRecommendation>,
     top_residuals: Vec<ResidualRow>,
     top_residuals_by_shading_model: Vec<ResidualGroup>,
 }
@@ -236,6 +237,25 @@ struct SelectionMaterialDrawBucket {
     material_name: String,
     draw_key: String,
     stats: MaterialBucket,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ProbeRecommendation {
+    material_name: String,
+    draw_key: String,
+    count: u64,
+    classification: &'static str,
+    action: &'static str,
+    mean_expected_actual_rgb_distance: Option<f64>,
+    mean_manifest_actual_rgb_distance: Option<f64>,
+    mean_manifest_expected_rgb_distance: Option<f64>,
+    mean_actual_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    mean_expected_minus_manifest_rgb_delta: Option<[f64; 3]>,
+    manifest_sample_actual_within_1_5: u64,
+    manifest_sample_expected_within_1_5: u64,
+    manifest_sample_actual_near_expected_far: u64,
+    manifest_sample_actual_far_expected_near: u64,
+    manifest_sample_both_far: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1632,6 +1652,20 @@ fn audit(
     } else {
         selected_acc.count
     };
+    let missing_selection_count = if selected.is_empty() {
+        0
+    } else {
+        missing_acc.count
+    };
+    let carried_selection_count = carried_acc.count;
+    let new_selection_count = new_acc.count;
+    let all_stats = all.finish();
+    let selected_stats = selected_acc.finish();
+    let missing_selection_stats = missing_acc.finish();
+    let carried_selection_stats = carried_acc.finish();
+    let new_selection_stats = new_acc.finish();
+    let recommended_probes =
+        recommended_probes(&selected_stats.selection_material_draw_buckets, top);
     Ok(AuditReport {
         hotspots: display_path(hotspots_path),
         manifest: manifest_path.map(display_path),
@@ -1640,18 +1674,15 @@ fn audit(
         manifest_count,
         baseline_manifest_count,
         selected_count,
-        missing_selection_count: if selected.is_empty() {
-            0
-        } else {
-            missing_acc.count
-        },
-        carried_selection_count: carried_acc.count,
-        new_selection_count: new_acc.count,
-        all: all.finish(),
-        selected: selected_acc.finish(),
-        missing_selection: missing_acc.finish(),
-        carried_selection: carried_acc.finish(),
-        new_selection: new_acc.finish(),
+        missing_selection_count,
+        carried_selection_count,
+        new_selection_count,
+        all: all_stats,
+        selected: selected_stats,
+        missing_selection: missing_selection_stats,
+        carried_selection: carried_selection_stats,
+        new_selection: new_selection_stats,
+        recommended_probes,
         top_residuals: residuals,
         top_residuals_by_shading_model,
     })
@@ -2102,6 +2133,120 @@ fn material_draw_buckets(
     values
 }
 
+fn recommended_probes(
+    buckets: &[SelectionMaterialDrawBucket],
+    top: usize,
+) -> Vec<ProbeRecommendation> {
+    let mut probes = buckets
+        .iter()
+        .filter(|bucket| bucket.stats.count > 0)
+        .map(|bucket| {
+            let classification = probe_classification(&bucket.stats);
+            ProbeRecommendation {
+                material_name: bucket.material_name.clone(),
+                draw_key: bucket.draw_key.clone(),
+                count: bucket.stats.count,
+                classification,
+                action: probe_action(classification),
+                mean_expected_actual_rgb_distance: bucket.stats.mean_expected_actual_rgb_distance,
+                mean_manifest_actual_rgb_distance: bucket
+                    .stats
+                    .mean_manifest_sample_actual_rgb_distance,
+                mean_manifest_expected_rgb_distance: bucket
+                    .stats
+                    .mean_manifest_sample_expected_rgb_distance,
+                mean_actual_minus_manifest_rgb_delta: bucket
+                    .stats
+                    .mean_actual_minus_manifest_sample_rgb_delta,
+                mean_expected_minus_manifest_rgb_delta: bucket
+                    .stats
+                    .mean_expected_minus_manifest_sample_rgb_delta,
+                manifest_sample_actual_within_1_5: bucket
+                    .stats
+                    .manifest_sample_actual_within_1_5,
+                manifest_sample_expected_within_1_5: bucket
+                    .stats
+                    .manifest_sample_expected_within_1_5,
+                manifest_sample_actual_near_expected_far: bucket
+                    .stats
+                    .manifest_sample_actual_near_expected_far,
+                manifest_sample_actual_far_expected_near: bucket
+                    .stats
+                    .manifest_sample_actual_far_expected_near,
+                manifest_sample_both_far: bucket.stats.manifest_sample_both_far,
+            }
+        })
+        .collect::<Vec<_>>();
+    probes.sort_by(|left, right| {
+        probe_priority(right)
+            .cmp(&probe_priority(left))
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| {
+                expected_manifest_gap(right).total_cmp(&expected_manifest_gap(left))
+            })
+            .then_with(|| left.material_name.cmp(&right.material_name))
+            .then_with(|| left.draw_key.cmp(&right.draw_key))
+    });
+    probes.truncate(top);
+    probes
+}
+
+fn probe_classification(stats: &MaterialBucket) -> &'static str {
+    let majority = stats.count / 2 + 1;
+    if stats.manifest_sample_actual_near_expected_far >= majority {
+        "renderer_matches_selected_sample_expected_far"
+    } else if stats.manifest_sample_both_far >= majority {
+        "selected_sample_and_renderer_both_far"
+    } else if stats.manifest_sample_expected_within_1_5 >= majority
+        || stats.manifest_sample_expected_closer > stats.manifest_sample_actual_closer
+    {
+        "selected_sample_matches_three_vrm"
+    } else if stats.manifest_sample_actual_within_1_5 >= majority
+        || stats.manifest_sample_actual_closer > stats.manifest_sample_expected_closer
+    {
+        "renderer_closer_to_selected_sample"
+    } else {
+        "mixed"
+    }
+}
+
+fn probe_action(classification: &str) -> &'static str {
+    match classification {
+        "renderer_matches_selected_sample_expected_far" => {
+            "audit material/color evaluation at this selected surface"
+        }
+        "selected_sample_and_renderer_both_far" => {
+            "audit resolve draw binding or selected-surface material inputs"
+        }
+        "selected_sample_matches_three_vrm" => {
+            "audit whether the backend adopts this selected surface before shading"
+        }
+        "renderer_closer_to_selected_sample" => {
+            "compare backend output formula against three-vrm for this material"
+        }
+        _ => "split rows by pixel and inspect owner/fill plus color inputs",
+    }
+}
+
+fn probe_priority(probe: &ProbeRecommendation) -> u8 {
+    match probe.classification {
+        "renderer_matches_selected_sample_expected_far" => 5,
+        "selected_sample_and_renderer_both_far" => 4,
+        "renderer_closer_to_selected_sample" => 3,
+        "selected_sample_matches_three_vrm" => 2,
+        _ => 1,
+    }
+}
+
+fn expected_manifest_gap(probe: &ProbeRecommendation) -> f64 {
+    probe
+        .mean_manifest_expected_rgb_distance
+        .unwrap_or(f64::NEG_INFINITY)
+        - probe
+            .mean_manifest_actual_rgb_distance
+            .unwrap_or(f64::NEG_INFINITY)
+}
+
 fn markdown(report: &AuditReport) -> String {
     let mut output = String::new();
     output.push_str("# Texture Sampling Parity Audit\n\n");
@@ -2122,6 +2267,7 @@ fn markdown(report: &AuditReport) -> String {
         report.carried_selection_count,
         report.new_selection_count
     ));
+    push_probe_recommendations_markdown(&mut output, &report.recommended_probes);
     push_bucket_markdown(&mut output, "All", &report.all);
     push_bucket_markdown(&mut output, "Selected", &report.selected);
     push_bucket_markdown(&mut output, "Missing Selection", &report.missing_selection);
@@ -2139,6 +2285,36 @@ fn markdown(report: &AuditReport) -> String {
         }
     }
     output
+}
+
+fn push_probe_recommendations_markdown(output: &mut String, probes: &[ProbeRecommendation]) {
+    if probes.is_empty() {
+        return;
+    }
+    output.push_str("## Recommended Material Probes\n\n");
+    output.push_str("| Material | Draw key | Count | Class | Action | Mean E-A | Mean manifest A/E | Mean A-M / E-M | <=1.5 A/E | near/far A/E/both |\n");
+    output.push_str("| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
+    for probe in probes.iter().take(12) {
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} / {} | {} / {} | {}/{} | {}/{}/{} |\n",
+            probe.material_name,
+            probe.draw_key,
+            probe.count,
+            probe.classification,
+            probe.action,
+            fmt_opt(probe.mean_expected_actual_rgb_distance),
+            fmt_opt(probe.mean_manifest_actual_rgb_distance),
+            fmt_opt(probe.mean_manifest_expected_rgb_distance),
+            fmt_opt_rgb_delta(probe.mean_actual_minus_manifest_rgb_delta),
+            fmt_opt_rgb_delta(probe.mean_expected_minus_manifest_rgb_delta),
+            probe.manifest_sample_actual_within_1_5,
+            probe.manifest_sample_expected_within_1_5,
+            probe.manifest_sample_actual_near_expected_far,
+            probe.manifest_sample_actual_far_expected_near,
+            probe.manifest_sample_both_far,
+        ));
+    }
+    output.push('\n');
 }
 
 fn push_residual_rows_markdown(output: &mut String, title: &str, rows: &[ResidualRow]) {
@@ -2695,6 +2871,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         report.selected.selection_material_draw_buckets[0].stats.count,
         1
     );
+    assert_eq!(report.recommended_probes.len(), 1);
+    assert_eq!(report.recommended_probes[0].material_name, "selected_body");
+    assert_eq!(
+        report.recommended_probes[0].classification,
+        "selected_sample_matches_three_vrm"
+    );
     assert_eq!(report.selected.nearest_expected_cpu_expected_closer, 1);
     assert_eq!(report.selected.nearest_expected_beats_frontmost_for_expected, 1);
     assert_eq!(report.selected.frontmost_base_texture_actual_closer, 0);
@@ -2762,6 +2944,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("Frontmost shading-model buckets"));
     assert!(markdown.contains("Top Residuals By Shading Model"));
     assert!(markdown.contains("Top Residuals: mtoon"));
+    assert!(markdown.contains("Recommended Material Probes"));
+    assert!(markdown.contains("selected_sample_matches_three_vrm"));
     assert!(markdown.contains("Manifest-selected material+draw buckets"));
     assert!(markdown.contains("Selected draw"));
     assert!(markdown.contains("node145/mesh4/prim1/base"));

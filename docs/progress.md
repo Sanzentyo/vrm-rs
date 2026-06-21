@@ -17,6 +17,18 @@
   parses those exact fields, its self-test asserts the summary JSON does not
   contain `color_fit: null`, and the regenerated real summary artifact keeps
   additive/gain fit values in JSON as well as Markdown.
+- Added material-probe recommendations to
+  `tools/render-parity/audit-texture-sampling-parity.rs`. The audit now emits a
+  `recommended_probes` JSON array and a Markdown table derived only from
+  manifest/sample distances, not PSNR-selected replacement colors. Re-running
+  the existing expanded Seed-san readback artifacts classifies `backpack_nm`,
+  `eye`, `arm_mat`, `huku_bake`, and `arm_plastic` as
+  `selected_sample_and_renderer_both_far` for the main backends, while
+  `body_nm` is `selected_sample_matches_three_vrm` on wgpu/Bevy and `mixed` on
+  Ash. That split keeps the next parity work grounded: `backpack_nm`/eye-style
+  rows need selected-surface material or resolve input inspection, whereas
+  `body_nm` should first check whether the backend is truly adopting the
+  browser-selected surface before shading.
 - Strengthened the generated glTF/PBR fallback guard toward the real
   `backpack_nm` blocker. The former broad normal-map swatch is now
   `pbr-backpack-like`, combining a mipped base texture, normal texture,
