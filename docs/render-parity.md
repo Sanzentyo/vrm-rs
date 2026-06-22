@@ -59,25 +59,44 @@ recipes are convenience entry points. Use these first:
   just render-parity-acceptance-environments .external-fixtures/env-a/acceptance-repeat-summary.json .external-fixtures/env-b/acceptance-repeat-summary.json '--summary .external-fixtures/env-c/acceptance-repeat-summary.json'
   ```
 
+  This summary-path form uses the same aggregation gate as the bundle intake
+  commands below, but it does not validate the transfer bundle envelope.
 - `just render-parity-acceptance-bundles`: validate portable evidence bundle
-  directories gathered from multiple runner environments. This is the preferred
-  entry point after each runner has exported `just render-parity-acceptance-bundle`
-  output, because the validator also checks `bundle-manifest.json`, copied file
-  byte counts, required summary/run evidence files, and
+  directories gathered from multiple runner environments. Use this explicit
+  path form for partial or ad-hoc intake when the returned bundles are not
+  under one parent directory. The validator checks `bundle-manifest.json`,
+  copied file byte counts, required summary/run evidence files, and
   source/environment/run-count/comparison-count/numeric metadata before reading
-  the embedded summary. Do not mix `--summary` and `--bundle` in one validation
-  run; bundle validation is the stronger transfer-integrity path:
+  the embedded summary. Do not mix `--summary` with `--bundle` or
+  `--bundle-root` in one validation run; bundle validation is the stronger
+  transfer-integrity path:
 
   ```powershell
   just render-parity-acceptance-bundles .external-fixtures/env-a-bundle .external-fixtures/env-b-bundle
   just render-parity-acceptance-bundles .external-fixtures/env-a-bundle .external-fixtures/env-b-bundle '--bundle .external-fixtures/env-c-bundle'
   ```
 
-  The underlying Rust script requires at least two distinct GPU/driver
-  environment signatures derived from `environmentLock`, the same source lock,
-  the same reference-clean acceptance lane config, the same fixture signatures,
-  the same comparison set, at least three runs per environment,
-  `rgb-visible >= 34 dB`, and exact alpha mismatch / alpha-delta parity.
+- `just render-parity-acceptance-bundle-root`: recursively discover portable
+  evidence bundles under one returned-bundle root directory and validate all of
+  them. This is the default recommended intake command once multiple GPU/driver
+  runners have sent back bundle directories. The root may be one bundle by
+  itself, or a parent containing child bundles; if it has both a root
+  `bundle-manifest.json` and nested bundle manifests, the validator rejects it
+  instead of silently ignoring children. Discovery is recursive, so stale or
+  unrelated bundle trees under the same parent are included; duplicate real
+  paths are deduplicated by canonical path. A symlink is accepted when it points
+  at the bundle root itself, but symlinked parent directories are not recursed:
+
+  ```powershell
+  just render-parity-acceptance-bundle-root .external-fixtures/render-parity-acceptance-returned
+  ```
+
+  All three intake commands use the same aggregation validator. They require at
+  least two distinct GPU/driver environment signatures derived from
+  `environmentLock`, the same source lock, the same reference-clean acceptance
+  lane config, the same fixture signatures, the same comparison set, at least
+  three runs per environment, `rgb-visible >= 34 dB`, and exact alpha mismatch /
+  alpha-delta parity.
 
 ## Current Local Acceptance Evidence
 
@@ -114,8 +133,9 @@ For that hardening task, each additional machine should run
 `.external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json`
 external. The runner can then run `just render-parity-acceptance-bundle` and
 transfer only the generated bundle directory instead of the full image-heavy
-artifact tree. Bring those bundles back under separate external directories and
-run `just render-parity-acceptance-bundles` against the bundle directories to produce
+artifact tree. Bring those returned bundles back as sibling directories under
+one external parent directory, then run `just render-parity-acceptance-bundle-root`
+against that parent to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression

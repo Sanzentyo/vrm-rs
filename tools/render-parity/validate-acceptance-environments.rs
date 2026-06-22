@@ -27,6 +27,8 @@ struct Options {
     summary: Vec<PathBuf>,
     #[arg(long)]
     bundle: Vec<PathBuf>,
+    #[arg(long)]
+    bundle_root: Vec<PathBuf>,
     #[arg(long, default_value_t = 2)]
     min_environments: usize,
     #[arg(long, default_value_t = 3)]
@@ -58,23 +60,28 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     if options.self_test {
         return run_self_test();
     }
-    if !options.summary.is_empty() && !options.bundle.is_empty() {
-        return Err("do not mix --summary and --bundle inputs in one validation run".into());
+    if !options.summary.is_empty()
+        && (!options.bundle.is_empty() || !options.bundle_root.is_empty())
+    {
+        return Err(
+            "do not mix --summary with --bundle or --bundle-root inputs in one validation run"
+                .into(),
+        );
     }
+    let bundle_dirs = unique_bundle_dirs(discover_bundle_inputs(&options)?)?;
     let mut summaries = options
         .summary
         .iter()
         .map(|path| read_summary(path))
         .collect::<Result<Vec<_>, _>>()?;
     summaries.extend(
-        options
-            .bundle
+        bundle_dirs
             .iter()
             .map(|path| read_bundle_summary(path))
             .collect::<Result<Vec<_>, _>>()?,
     );
     if summaries.is_empty() {
-        return Err("provide at least one --summary or --bundle".into());
+        return Err("provide at least one --summary, --bundle, or --bundle-root".into());
     }
     let report = validate_summaries(&summaries, &options)?;
     if let Some(path) = options.json_out.as_ref() {
@@ -94,6 +101,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     let options = Options {
         summary: Vec::new(),
         bundle: Vec::new(),
+        bundle_root: Vec::new(),
         min_environments: 2,
         min_runs_per_environment: 3,
         expected_comparisons: 2,
@@ -170,8 +178,42 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         self_test: false,
         ..bundle_options
     })?;
+    run(Options {
+        bundle: vec![
+            bundle_root.join("env-a"),
+            bundle_root.join("env-a"),
+            bundle_root.join("env-b"),
+        ],
+        self_test: false,
+        ..options.clone()
+    })?;
 
-    let mixed_options = Options {
+    let nested_root = bundle_root.join("returned");
+    write_test_bundle(
+        &nested_root.join("gpu-a").join("acceptance-bundle"),
+        &test_summary("root-env-a", "Adapter A"),
+    )?;
+    write_test_bundle(
+        &nested_root.join("gpu-b").join("acceptance-bundle"),
+        &test_summary("root-env-b", "Adapter B"),
+    )?;
+    let discovered = discover_bundle_dirs(&nested_root)?;
+    if discovered.len() != 2 {
+        return Err(format!("expected 2 discovered bundles, got {}", discovered.len()).into());
+    }
+    run(Options {
+        bundle_root: vec![nested_root.clone()],
+        self_test: false,
+        ..options.clone()
+    })?;
+    run(Options {
+        bundle_root: vec![nested_root.join("gpu-a").join("acceptance-bundle")],
+        min_environments: 1,
+        self_test: false,
+        ..options.clone()
+    })?;
+
+    let summary_and_bundle_options = Options {
         summary: vec![bundle_root
             .join("env-a")
             .join("acceptance-repeat-summary.json")],
@@ -179,8 +221,36 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         self_test: false,
         ..options.clone()
     };
-    if run(mixed_options).is_ok() {
+    if run(summary_and_bundle_options).is_ok() {
         return Err("mixed summary and bundle inputs should be rejected".into());
+    }
+
+    let mixed_options = Options {
+        summary: vec![bundle_root
+            .join("env-a")
+            .join("acceptance-repeat-summary.json")],
+        bundle_root: vec![nested_root],
+        self_test: false,
+        ..options.clone()
+    };
+    if run(mixed_options).is_ok() {
+        return Err("mixed summary and bundle-root inputs should be rejected".into());
+    }
+
+    let empty_root = bundle_root.join("empty-root");
+    fs::create_dir_all(&empty_root)?;
+    if discover_bundle_dirs(&empty_root).is_ok() {
+        return Err("empty bundle root should be rejected".into());
+    }
+
+    let shadow_root = bundle_root.join("shadow-root");
+    write_test_bundle(&shadow_root, &test_summary("shadow-env-a", "Adapter A"))?;
+    write_test_bundle(
+        &shadow_root.join("nested").join("acceptance-bundle"),
+        &test_summary("shadow-env-b", "Adapter B"),
+    )?;
+    if discover_bundle_dirs(&shadow_root).is_ok() {
+        return Err("bundle root with both root and nested manifests should be rejected".into());
     }
 
     let mut bad_manifest = read_json(&bundle_root.join("env-a").join("bundle-manifest.json"))?;
@@ -226,6 +296,92 @@ fn read_summary(path: &Path) -> Result<Value, Box<dyn Error>> {
     let mut summary = serde_json::from_str::<Value>(&text)?;
     summary["_summaryPath"] = Value::String(display_path(path));
     Ok(summary)
+}
+
+fn discover_bundle_inputs(options: &Options) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut bundles = options.bundle.clone();
+    for root in &options.bundle_root {
+        bundles.extend(discover_bundle_dirs(root)?);
+    }
+    Ok(bundles)
+}
+
+fn discover_bundle_dirs(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let root_is_bundle = root.join("bundle-manifest.json").is_file();
+    let mut bundles = Vec::new();
+    collect_child_bundle_dirs(root, &mut bundles)?;
+    if root_is_bundle && !bundles.is_empty() {
+        return Err(format!(
+            "{} contains both a root bundle-manifest.json and nested bundle manifests; pass the bundle directory itself or a parent containing only child bundles",
+            display_path(root)
+        )
+        .into());
+    }
+    if root_is_bundle {
+        return Ok(vec![root.to_path_buf()]);
+    }
+    if bundles.is_empty() {
+        return Err(format!(
+            "no acceptance evidence bundle-manifest.json files found under {}",
+            display_path(root)
+        )
+        .into());
+    }
+    bundles.sort_by_key(|path| display_path(path));
+    Ok(bundles)
+}
+
+fn collect_child_bundle_dirs(
+    root: &Path,
+    bundles: &mut Vec<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            if entry.path().join("bundle-manifest.json").is_file() {
+                bundles.push(entry.path());
+            }
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_bundle_dirs(&entry.path(), bundles)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_bundle_dirs(root: &Path, bundles: &mut Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
+    if root.join("bundle-manifest.json").is_file() {
+        bundles.push(root.to_path_buf());
+        return Ok(());
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            if entry.path().join("bundle-manifest.json").is_file() {
+                bundles.push(entry.path());
+            }
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_bundle_dirs(&entry.path(), bundles)?;
+        }
+    }
+    Ok(())
+}
+
+fn unique_bundle_dirs(bundle_dirs: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for bundle_dir in bundle_dirs {
+        let canonical = bundle_dir.canonicalize()?;
+        if seen.insert(canonical.display().to_string()) {
+            unique.push(bundle_dir);
+        }
+    }
+    Ok(unique)
 }
 
 fn read_bundle_summary(bundle_dir: &Path) -> Result<Value, Box<dyn Error>> {
