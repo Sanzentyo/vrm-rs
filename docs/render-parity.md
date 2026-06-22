@@ -20,6 +20,13 @@ recipes are convenience entry points. Use these first:
   provisional `rgb-visible >= 34 dB` floor. This is the lane to repeat for
   final evidence; the threshold is still provisional until the Seed-san/local
   residuals and calibration report are closed.
+- `just render-parity-acceptance-repeat`: runs the same reference-clean
+  acceptance lane three times into
+  `.external-fixtures/render-parity-acceptance-repeat/run-*/`, then validates
+  that all three manifests have matching source-lock metadata, matching fixture
+  SHA-256/byte-size signatures, matching comparison sets, and passing
+  wgpu/Bevy/Ash summaries. It writes `acceptance-repeat-summary.json` and
+  `acceptance-repeat-summary.md` next to the run directories.
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
   `--render-run-mode diagnostic`; pass `acceptance` as the final `run_mode`
@@ -1689,6 +1696,17 @@ existing artifact set, run:
 ```powershell
 cargo +nightly -Zscript tools/render-parity/validate-review-manifest.rs `
   --manifest .external-fixtures/render-parity/review-manifest.json
+```
+
+To re-check repeated acceptance evidence, run:
+
+```powershell
+cargo +nightly -Zscript tools/render-parity/validate-acceptance-repeat.rs `
+  --manifest .external-fixtures/render-parity-acceptance-repeat/run-1/review-manifest.json `
+  --manifest .external-fixtures/render-parity-acceptance-repeat/run-2/review-manifest.json `
+  --manifest .external-fixtures/render-parity-acceptance-repeat/run-3/review-manifest.json `
+  --json-out .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json `
+  --markdown-out .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.md
 ```
 
 The `just render-parity-validate MANIFEST` wrapper runs the same audit. The
