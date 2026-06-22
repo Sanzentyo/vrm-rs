@@ -114,6 +114,10 @@ render-parity-acceptance-signoff summary=".external-fixtures/render-parity-accep
 render-parity-acceptance-signoff-strict reviewer visual_notes summary=".external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json" markdown_out=".external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md":
     cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ summary }}" --markdown-out "{{ markdown_out }}" --visual-review-state accepted --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --require-visual-accepted
 
+# Export the small acceptance-repeat evidence files for transfer from a GPU/driver runner.
+render-parity-acceptance-bundle acceptance_root=".external-fixtures/render-parity-acceptance-repeat" out_dir=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false":
+    cargo +nightly -Zscript tools/render-parity/export-acceptance-evidence-bundle.rs --acceptance-root "{{ acceptance_root }}" --out-dir "{{ out_dir }}" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --apply
+
 # Validate acceptance-repeat summaries collected from at least two distinct runner environments.
 render-parity-acceptance-environments summary_a summary_b extra_summaries="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --summary "{{ summary_a }}" --summary "{{ summary_b }}" {{ extra_summaries }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"

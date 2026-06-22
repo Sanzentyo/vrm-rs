@@ -777,6 +777,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/export-acceptance-evidence-bundle.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/generate-acceptance-signoff.rs",
             "--self-test",
         ],
@@ -831,6 +840,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/compare-imqraw.rs",
     "tools/render-parity/compare-owner-id-images.rs",
     "tools/render-parity/compare-swatch-colors.rs",
+    "tools/render-parity/export-acceptance-evidence-bundle.rs",
     "tools/render-parity/extract-owner-tail-fixture.rs",
     "tools/render-parity/generate-dense-ownership-fixture.rs",
     "tools/render-parity/generate-front-face-cull-fixture.rs",

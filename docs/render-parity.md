@@ -39,6 +39,16 @@ recipes are convenience entry points. Use these first:
   require accepted visual-review metadata, including a reviewer and note. This
   is the final local command for turning a numeric calibration draft into a
   signed-off artifact.
+- `just render-parity-acceptance-bundle`: copy the small, portable
+  acceptance-repeat evidence files into
+  `.external-fixtures/render-parity-acceptance-bundle/` after a runner finishes
+  `just render-parity-acceptance-repeat`. The bundle includes
+  `acceptance-repeat-summary.{json,md}`, `acceptance-signoff.md` when present,
+  per-run `review-manifest.json` / `summary.md`, and `bundle-manifest.json`
+  with source/environment/numeric metadata plus byte counts. Pass
+  `include_visual_contact_sheets=true` only when the runner produced local
+  contact sheets and diff contact sheets that should travel with the otherwise
+  small evidence bundle.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -88,8 +98,11 @@ remaining acceptance hardening task.
 For that hardening task, each additional machine should run
 `just render-parity-acceptance-repeat` from the same pushed commit and keep its
 `.external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json`
-external. Bring those JSON summaries back under separate external directories
-and run `just render-parity-acceptance-environments` to produce
+external. The runner can then run `just render-parity-acceptance-bundle` and
+transfer only the generated bundle directory instead of the full image-heavy
+artifact tree. Bring those bundles back under separate external directories and
+run `just render-parity-acceptance-environments` against each bundle's
+`acceptance-repeat-summary.json` to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression

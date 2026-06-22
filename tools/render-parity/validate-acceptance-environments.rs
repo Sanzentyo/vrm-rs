@@ -88,7 +88,10 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         markdown_out: None,
         self_test: true,
     };
-    let summaries = vec![test_summary("env-a", "Adapter A"), test_summary("env-b", "Adapter B")];
+    let summaries = vec![
+        test_summary("env-a", "Adapter A"),
+        test_summary("env-b", "Adapter B"),
+    ];
     let report = validate_summaries(&summaries, &options)?;
     let markdown = markdown_summary(&report)?;
     for needle in [
@@ -252,7 +255,11 @@ fn validate_summary_shape(summary: &Value, options: &Options) -> Result<(), Box<
     {
         return Err("sourceLock.threeVrmGitHead must match expectedThreeVrmCommit".into());
     }
-    validate_environment_lock(required_object_value(summary, "environmentLock", "summary")?)?;
+    validate_environment_lock(required_object_value(
+        summary,
+        "environmentLock",
+        "summary",
+    )?)?;
     validate_lane_config(required_object_value(summary, "laneConfig", "summary")?)?;
     required_array(summary, "fixtures")?;
     let comparisons = required_array(summary, "comparisons")?;
@@ -359,10 +366,10 @@ fn collect_comparison_aggregates(
 ) -> Result<(), Box<dyn Error>> {
     for comparison in required_array(summary, "comparisons")? {
         let name = required_string(comparison, "name")?.to_owned();
-        aggregates
-            .entry(name)
-            .or_default()
-            .push(comparison, required_string(summary, "_summaryPath").unwrap_or("<in-memory>"))?;
+        aggregates.entry(name).or_default().push(
+            comparison,
+            required_string(summary, "_summaryPath").unwrap_or("<in-memory>"),
+        )?;
     }
     Ok(())
 }
@@ -401,7 +408,9 @@ impl MultiEnvAggregate {
             self.min_selected_psnr = psnr;
             self.worst_psnr_summary = summary_path.to_owned();
         }
-        self.max_channel_delta = self.max_channel_delta.max(required_u64(comparison, "maxChannelDelta")?);
+        self.max_channel_delta = self
+            .max_channel_delta
+            .max(required_u64(comparison, "maxChannelDelta")?);
         self.max_alpha_mismatches = self
             .max_alpha_mismatches
             .max(required_u64(comparison, "maxAlphaMismatches")?);
@@ -417,7 +426,9 @@ fn min_comparison_f64(summary: &Value, field: &str) -> Result<f64, Box<dyn Error
     required_array(summary, "comparisons")?
         .iter()
         .map(|comparison| required_metric_f64(comparison, field))
-        .try_fold(f64::INFINITY, |acc, value| value.map(|value| acc.min(value)))
+        .try_fold(f64::INFINITY, |acc, value| {
+            value.map(|value| acc.min(value))
+        })
 }
 
 fn max_comparison_u64(summary: &Value, field: &str) -> Result<u64, Box<dyn Error>> {
@@ -457,7 +468,10 @@ fn markdown_summary(report: &Value) -> Result<String, Box<dyn Error>> {
             required_f64(environment, "minSelectedPsnr")?,
             required_u64(environment, "maxAlphaMismatches")?,
             required_u64(environment, "maxAlphaDelta")?,
-            compact_json(lock.get("gpuAdapters").ok_or("environmentLock.gpuAdapters is missing")?)?
+            compact_json(
+                lock.get("gpuAdapters")
+                    .ok_or("environmentLock.gpuAdapters is missing")?
+            )?
         ));
     }
 
