@@ -376,6 +376,12 @@ struct OwnerRenderPbrTermOutputSummary {
     mean_diffuse_lobe_rgb_distance: Option<f64>,
     specular_lobe_sample_count: u64,
     mean_specular_lobe_rgb_distance: Option<f64>,
+    brdf_lambert_sample_count: u64,
+    mean_brdf_lambert_rgb_distance: Option<f64>,
+    direct_irradiance_sample_count: u64,
+    mean_direct_irradiance_rgb_distance: Option<f64>,
+    ambient_irradiance_sample_count: u64,
+    mean_ambient_irradiance_rgb_distance: Option<f64>,
     mean_direct_rgb_distance: Option<f64>,
     mean_ambient_rgb_distance: Option<f64>,
     mean_total_rgb_distance: Option<f64>,
@@ -859,18 +865,30 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             ));
         }
         out.push('\n');
-        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal | Tangent wgpu normal | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Browser fit direct/ambient actual | Browser fit direct/ambient expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Rust fit direct/ambient actual | Rust fit direct/ambient expected | Output RGB |\n");
+        out.push_str("| Renderer | Pair | Count | Normal sources | BRDF Lambert | Direct irradiance | Ambient irradiance | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal | Tangent wgpu normal | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Browser fit direct/ambient actual | Browser fit direct/ambient expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Rust fit direct/ambient actual | Rust fit direct/ambient expected | Output RGB |\n");
         out.push_str(
-            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
         );
         for join in &summary.owner_render_joins {
             for row in &join.pbr_term_outputs {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     join.renderer,
                     row.pair,
                     row.count,
                     fmt_counts_inline(&row.normal_source_pairs),
+                    fmt_optional_f64_with_count(
+                        row.mean_brdf_lambert_rgb_distance,
+                        row.brdf_lambert_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_direct_irradiance_rgb_distance,
+                        row.direct_irradiance_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_ambient_irradiance_rgb_distance,
+                        row.ambient_irradiance_sample_count,
+                    ),
                     fmt_optional_f64_with_count(
                         row.mean_diffuse_lobe_rgb_distance,
                         row.diffuse_lobe_sample_count,
@@ -1996,6 +2014,30 @@ fn owner_render_pbr_term_output(
         mean_specular_lobe_rgb_distance: optional_f64_path(
             value,
             &["mean_specular_lobe_rgb_distance"],
+        )?,
+        brdf_lambert_sample_count: optional_u64_path(value, &["brdf_lambert_sample_count"])?
+            .unwrap_or(0),
+        mean_brdf_lambert_rgb_distance: optional_f64_path(
+            value,
+            &["mean_brdf_lambert_rgb_distance"],
+        )?,
+        direct_irradiance_sample_count: optional_u64_path(
+            value,
+            &["direct_irradiance_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_direct_irradiance_rgb_distance: optional_f64_path(
+            value,
+            &["mean_direct_irradiance_rgb_distance"],
+        )?,
+        ambient_irradiance_sample_count: optional_u64_path(
+            value,
+            &["ambient_irradiance_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_ambient_irradiance_rgb_distance: optional_f64_path(
+            value,
+            &["mean_ambient_irradiance_rgb_distance"],
         )?,
         mean_direct_rgb_distance: optional_f64_path(value, &["mean_direct_rgb_distance"])?,
         mean_ambient_rgb_distance: optional_f64_path(value, &["mean_ambient_rgb_distance"])?,
@@ -3323,6 +3365,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "mean_diffuse_lobe_rgb_distance": 0.0012,
                 "specular_lobe_sample_count": 2,
                 "mean_specular_lobe_rgb_distance": 0.0034,
+                "brdf_lambert_sample_count": 2,
+                "mean_brdf_lambert_rgb_distance": 0.0002,
+                "direct_irradiance_sample_count": 2,
+                "mean_direct_irradiance_rgb_distance": 0.0003,
+                "ambient_irradiance_sample_count": 2,
+                "mean_ambient_irradiance_rgb_distance": 0.0004,
                 "mean_direct_rgb_distance": 0.0047,
                 "mean_ambient_rgb_distance": 0.0001,
                 "mean_total_rgb_distance": 0.0048,
@@ -3660,6 +3708,22 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         2
     );
     assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].brdf_lambert_sample_count,
+        2
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_brdf_lambert_rgb_distance,
+        Some(0.0002)
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_direct_irradiance_rgb_distance,
+        Some(0.0003)
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_ambient_irradiance_rgb_distance,
+        Some(0.0004)
+    );
+    assert_eq!(
         summary.owner_render_joins[0].pbr_term_outputs[0].mean_output_rgb_distance,
         Some(52.9)
     );
@@ -3806,6 +3870,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary_json.contains(r#""warnings":["omitted 2 zero-count PBR term output bucket(s)"]"#)
     );
     assert!(summary_json.contains(r#""mean_shading_normal_three_js_distance""#));
+    assert!(summary_json.contains(r#""mean_brdf_lambert_rgb_distance":0.0002"#));
+    assert!(summary_json.contains(r#""mean_direct_irradiance_rgb_distance":0.0003"#));
     assert!(summary_json.contains(r#""mean_shading_normal_three_js_rust_space_distance":0.02"#));
     assert!(summary_json.contains(r#""mean_tangent_space_normal_three_js_distance":0.001"#));
     assert!(summary_json.contains(r#""mean_tangent_space_normal_wgpu_compat_distance":0.002"#));
@@ -3832,7 +3898,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | 8 | 8 | 6 | 7 | 6 | 8 | 6 |"));
     assert!(markdown.contains("wgpu: omitted 2 zero-count PBR term output bucket(s)"));
     assert!(markdown.contains("legacy: no PBR term output objects found"));
-    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 0.0010 (n=2) | 0.0020 (n=2) | 8.0000/3.0000 (n=2) | 0/2/0 | 1.20,1.30,1.40 / 0.80,0.70,0.60 (n=2) | 1.00,2.00,3.00 / 4.00,5.00,6.00 (n=2, det=0.2500) | 1.10,2.10,3.10 / 4.10,5.10,6.10 (n=2, det=0.2500) | 7.0000/4.0000 (n=2) | 0/2/0 | 1.10,1.20,1.30 / 0.70,0.60,0.50 (n=2) | 0.90,1.90,2.90 / 3.90,4.90,5.90 (n=2, det=0.5000) | 0.80,1.80,2.80 / 3.80,4.80,5.80 (n=2, det=0.5000) | 52.9000 |"));
+    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0002 (n=2) | 0.0003 (n=2) | 0.0004 (n=2) | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 0.0010 (n=2) | 0.0020 (n=2) | 8.0000/3.0000 (n=2) | 0/2/0 | 1.20,1.30,1.40 / 0.80,0.70,0.60 (n=2) | 1.00,2.00,3.00 / 4.00,5.00,6.00 (n=2, det=0.2500) | 1.10,2.10,3.10 / 4.10,5.10,6.10 (n=2, det=0.2500) | 7.0000/4.0000 (n=2) | 0/2/0 | 1.10,1.20,1.30 / 0.70,0.60,0.50 (n=2) | 0.90,1.90,2.90 / 3.90,4.90,5.90 (n=2, det=0.5000) | 0.80,1.80,2.80 / 3.80,4.80,5.80 (n=2, det=0.5000) | 52.9000 |"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(

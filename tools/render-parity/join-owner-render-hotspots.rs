@@ -103,6 +103,12 @@ struct PbrTermOutputSummary {
     mean_diffuse_lobe_rgb_distance: Option<f64>,
     specular_lobe_sample_count: u64,
     mean_specular_lobe_rgb_distance: Option<f64>,
+    brdf_lambert_sample_count: u64,
+    mean_brdf_lambert_rgb_distance: Option<f64>,
+    direct_irradiance_sample_count: u64,
+    mean_direct_irradiance_rgb_distance: Option<f64>,
+    ambient_irradiance_sample_count: u64,
+    mean_ambient_irradiance_rgb_distance: Option<f64>,
     mean_direct_rgb_distance: Option<f64>,
     mean_ambient_rgb_distance: Option<f64>,
     mean_total_rgb_distance: Option<f64>,
@@ -155,6 +161,9 @@ struct PbrTermOutputAccumulator {
     count: u64,
     diffuse_lobe_distance: MeanAccumulator,
     specular_lobe_distance: MeanAccumulator,
+    brdf_lambert_distance: MeanAccumulator,
+    direct_irradiance_distance: MeanAccumulator,
+    ambient_irradiance_distance: MeanAccumulator,
     direct_distance_sum: f64,
     ambient_distance_sum: f64,
     total_distance_sum: f64,
@@ -227,6 +236,9 @@ struct DirectAmbientChannelFit {
 #[derive(Clone, Debug)]
 struct PbrTermSample {
     normal_source: Option<String>,
+    brdf_lambert_rgb: Option<[f64; 3]>,
+    direct_irradiance_rgb: Option<[f64; 3]>,
+    ambient_irradiance_rgb: Option<[f64; 3]>,
     diffuse_lobe_rgb: Option<[f64; 3]>,
     specular_lobe_rgb: Option<[f64; 3]>,
     direct_rgb: [f64; 3],
@@ -835,6 +847,12 @@ impl PbrTermOutputAccumulator {
             .observe_pair(browser.diffuse_lobe_rgb, rust.diffuse_lobe_rgb);
         self.specular_lobe_distance
             .observe_pair(browser.specular_lobe_rgb, rust.specular_lobe_rgb);
+        self.brdf_lambert_distance
+            .observe_pair(browser.brdf_lambert_rgb, rust.brdf_lambert_rgb);
+        self.direct_irradiance_distance
+            .observe_pair(browser.direct_irradiance_rgb, rust.direct_irradiance_rgb);
+        self.ambient_irradiance_distance
+            .observe_pair(browser.ambient_irradiance_rgb, rust.ambient_irradiance_rgb);
         self.direct_distance_sum += vec3_distance(browser.direct_rgb, rust.direct_rgb);
         self.ambient_distance_sum += vec3_distance(browser.ambient_rgb, rust.ambient_rgb);
         self.total_distance_sum += vec3_distance(
@@ -908,6 +926,12 @@ impl PbrTermOutputAccumulator {
             mean_diffuse_lobe_rgb_distance: self.diffuse_lobe_distance.mean(),
             specular_lobe_sample_count: self.specular_lobe_distance.count,
             mean_specular_lobe_rgb_distance: self.specular_lobe_distance.mean(),
+            brdf_lambert_sample_count: self.brdf_lambert_distance.count,
+            mean_brdf_lambert_rgb_distance: self.brdf_lambert_distance.mean(),
+            direct_irradiance_sample_count: self.direct_irradiance_distance.count,
+            mean_direct_irradiance_rgb_distance: self.direct_irradiance_distance.mean(),
+            ambient_irradiance_sample_count: self.ambient_irradiance_distance.count,
+            mean_ambient_irradiance_rgb_distance: self.ambient_irradiance_distance.mean(),
             mean_direct_rgb_distance: Some(self.direct_distance_sum / count),
             mean_ambient_rgb_distance: Some(self.ambient_distance_sum / count),
             mean_total_rgb_distance: Some(self.total_distance_sum / count),
@@ -1260,6 +1284,9 @@ fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
         normal_source: value_string_path(terms, "normalSource"),
+        brdf_lambert_rgb: value_vec3_path(terms, "brdfLambertRgb"),
+        direct_irradiance_rgb: value_vec3_path(terms, "directIrradianceRgb"),
+        ambient_irradiance_rgb: value_vec3_path(terms, "ambientIrradianceRgb"),
         diffuse_lobe_rgb: value_vec3_path(terms, "diffuseLobeRgb"),
         specular_lobe_rgb: value_vec3_path(terms, "specularLobeRgb"),
         direct_rgb: value_vec3_path(terms, "directRgb")?,
@@ -1277,6 +1304,9 @@ fn rust_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
         normal_source: value_string_path(terms, "normal_source"),
+        brdf_lambert_rgb: value_vec3_path(terms, "brdf_lambert_rgb"),
+        direct_irradiance_rgb: value_vec3_path(terms, "direct_irradiance_rgb"),
+        ambient_irradiance_rgb: value_vec3_path(terms, "ambient_irradiance_rgb"),
         diffuse_lobe_rgb: value_vec3_path(terms, "diffuse_lobe_rgb"),
         specular_lobe_rgb: value_vec3_path(terms, "specular_lobe_rgb"),
         direct_rgb: value_vec3_path(terms, "direct_rgb")?,
@@ -1423,7 +1453,7 @@ fn browser_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         return "n/a".to_owned();
     }
     format!(
-        "model={} nL/nV={}/{} normal={} uv={} tex={} base-uv={} base-tex={} geom={} shade3={} shade-wgpu={} tan3={} tan-wgpu={} diff={} spec={} direct={} amb={} total={} m/r={}/{} f90={} rough-used={}",
+        "model={} nL/nV={}/{} normal={} uv={} tex={} base-uv={} base-tex={} geom={} shade3={} shade-wgpu={} tan3={} tan-wgpu={} brdf={} dir-irr={} amb-irr={} diff={} spec={} direct={} amb={} total={} m/r={}/{} f90={} rough-used={}",
         string_path(terms, "model"),
         fmt_opt_f64(value_f64_path(terms, "nDotL")),
         fmt_opt_f64(value_f64_path(terms, "nDotV")),
@@ -1437,6 +1467,9 @@ fn browser_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         fmt_vec3(value_vec3_path(terms, "shadingNormalWgpuCompat")),
         fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalThreeJs")),
         fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalWgpuCompat")),
+        fmt_vec3(value_vec3_path(terms, "brdfLambertRgb")),
+        fmt_vec3(value_vec3_path(terms, "directIrradianceRgb")),
+        fmt_vec3(value_vec3_path(terms, "ambientIrradianceRgb")),
         fmt_vec3(value_vec3_path(terms, "diffuseLobeRgb")),
         fmt_vec3(value_vec3_path(terms, "specularLobeRgb")),
         fmt_vec3(value_vec3_path(terms, "directRgb")),
@@ -1457,7 +1490,7 @@ fn rust_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         return "n/a".to_owned();
     }
     format!(
-        "nL/nV={}/{} normal={} uv={} tex={} geom={} shade={} tan3={} tan-wgpu={} diff={} spec={} direct={} amb={} total={}",
+        "nL/nV={}/{} normal={} uv={} tex={} geom={} shade={} tan3={} tan-wgpu={} brdf={} dir-irr={} amb-irr={} diff={} spec={} direct={} amb={} total={}",
         fmt_opt_f64(value_f64_path(terms, "n_dot_l")),
         fmt_opt_f64(value_f64_path(terms, "n_dot_v")),
         string_path(terms, "normal_source"),
@@ -1470,6 +1503,9 @@ fn rust_pbr_terms_summary(value: &Value, pointer: &str) -> String {
             terms,
             "tangent_space_normal_wgpu_compat",
         )),
+        fmt_vec3(value_vec3_path(terms, "brdf_lambert_rgb")),
+        fmt_vec3(value_vec3_path(terms, "direct_irradiance_rgb")),
+        fmt_vec3(value_vec3_path(terms, "ambient_irradiance_rgb")),
         fmt_vec3(value_vec3_path(terms, "diffuse_lobe_rgb")),
         fmt_vec3(value_vec3_path(terms, "specular_lobe_rgb")),
         fmt_vec3(value_vec3_path(terms, "direct_rgb")),
@@ -1630,8 +1666,8 @@ fn markdown_report(report: &JoinReport) -> String {
     output.push_str(
         "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Browser fit direct/ambient actual | Browser fit direct/ambient expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Rust fit direct/ambient actual | Rust fit direct/ambient expected | Output RGB dist |\n");
-    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | BRDF Lambert dist | Direct irradiance dist | Ambient irradiance dist | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Browser fit direct/ambient actual | Browser fit direct/ambient expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Rust fit direct/ambient actual | Rust fit direct/ambient expected | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1697,10 +1733,22 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
         fmt_counts_inline(&summary.normal_source_pairs),
+        fmt_mean_with_count(
+            summary.mean_brdf_lambert_rgb_distance,
+            summary.brdf_lambert_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_direct_irradiance_rgb_distance,
+            summary.direct_irradiance_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_ambient_irradiance_rgb_distance,
+            summary.ambient_irradiance_sample_count,
+        ),
         fmt_mean_with_count(
             summary.mean_diffuse_lobe_rgb_distance,
             summary.diffuse_lobe_sample_count,
@@ -1929,6 +1977,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     basis_accumulator.observe(
         Some(PbrTermSample {
             normal_source: Some("browser_geometric".to_owned()),
+            brdf_lambert_rgb: Some([0.0, 0.0, 0.0]),
+            direct_irradiance_rgb: Some([0.0, 0.0, 0.0]),
+            ambient_irradiance_rgb: Some([0.0, 0.0, 0.0]),
             diffuse_lobe_rgb: Some([0.0, 0.0, 0.0]),
             specular_lobe_rgb: Some([0.0, 0.0, 0.0]),
             direct_rgb: [0.0, 0.0, 0.0],
@@ -1942,6 +1993,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         }),
         Some(PbrTermSample {
             normal_source: Some("rust_shade".to_owned()),
+            brdf_lambert_rgb: Some([0.0, 0.0, 0.0]),
+            direct_irradiance_rgb: Some([0.0, 0.0, 0.0]),
+            ambient_irradiance_rgb: Some([0.0, 0.0, 0.0]),
             diffuse_lobe_rgb: Some([0.0, 0.0, 0.0]),
             specular_lobe_rgb: Some([0.0, 0.0, 0.0]),
             direct_rgb: [0.0, 0.0, 0.0],
@@ -1995,7 +2049,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                                 "shadingNormalThreeJs": [0.0, 0.0, 1.0],
                                 "shadingNormalWgpuCompat": [0.1, 0.0, 0.995],
                                 "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
-                                "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0]
+                                "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0],
+                                "brdfLambertRgb": [0.05, 0.047, 0.047],
+                                "directIrradianceRgb": [2.2, 2.2, 2.2],
+                                "ambientIrradianceRgb": [0.1, 0.1, 0.1]
                             }
                         }
                     },
@@ -2016,7 +2073,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "shadingNormalThreeJs": [0.0, 0.0, 1.0],
                             "shadingNormalWgpuCompat": [0.1, 0.0, 0.995],
                             "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
-                            "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0]
+                            "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0],
+                            "brdfLambertRgb": [0.047, 0.045, 0.045],
+                            "directIrradianceRgb": [2.2, 2.2, 2.2],
+                            "ambientIrradianceRgb": [0.1, 0.1, 0.1]
                         }
                     }
                 }
@@ -2046,7 +2106,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "direct_plus_ambient_rgb": [0.19, 0.18, 0.18],
                             "shading_normal": [0.1, 0.0, 0.995],
                             "tangent_space_normal_three_js": [0.0, -0.03, 1.0],
-                            "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0]
+                            "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0],
+                            "brdf_lambert_rgb": [0.047, 0.045, 0.045],
+                            "direct_irradiance_rgb": [2.2, 2.2, 2.2],
+                            "ambient_irradiance_rgb": [0.1, 0.1, 0.1]
                         }
                     }
                 },
@@ -2125,6 +2188,18 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .pbr_best_to_expected_term_output
         .mean_specular_lobe_rgb_distance
         .is_some_and(|distance| (distance - 0.01).abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_brdf_lambert_rgb_distance
+        .is_some_and(|distance| (distance - 0.004123105625617661).abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_direct_irradiance_rgb_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_ambient_irradiance_rgb_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
     assert!(report
         .pbr_best_to_expected_term_output
         .mean_direct_rgb_distance
@@ -2234,7 +2309,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser fit direct/ambient actual"));
     assert!(markdown.contains("singular (n=1"));
     assert!(markdown.contains(
-        "| Browser best -> Rust expected-best | 1 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
+        "| Browser best -> Rust expected-best | 1 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 1 | 0.0041 (n=1) | 0.0000 (n=1) | 0.0000 (n=1) | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
     ));
     let legacy_browser = serde_json::json!({
         "terms": {
@@ -2296,7 +2371,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "specularF90": 1.0,
             "roughnessUsed": 0.657,
             "metalness": 0.0,
-            "roughness": 0.657
+            "roughness": 0.657,
+            "brdfLambertRgb": [0.050, 0.047, 0.047],
+            "directIrradianceRgb": [2.20, 2.20, 2.20],
+            "ambientIrradianceRgb": [0.10, 0.10, 0.10]
         },
         "rust": {
             "pbr_terms": {
@@ -2311,6 +2389,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0],
                 "diffuse_lobe_rgb": [0.16, 0.15, 0.15],
                 "specular_lobe_rgb": [0.02, 0.02, 0.02],
+                "brdf_lambert_rgb": [0.050, 0.047, 0.047],
+                "direct_irradiance_rgb": [2.20, 2.20, 2.20],
+                "ambient_irradiance_rgb": [0.10, 0.10, 0.10],
                 "direct_rgb": [0.18, 0.17, 0.17],
                 "ambient_rgb": [0.01, 0.01, 0.01],
                 "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
@@ -2321,10 +2402,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .contains("shade-wgpu=0.100,0.100,0.990"));
     assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
         .contains("direct=0.190,0.180,0.180"));
+    assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
+        .contains("brdf=0.050,0.047,0.047"));
     assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms").contains("f90=1.0000"));
     assert!(
         rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms").contains("total=0.190,0.180,0.180")
     );
+    assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
+        .contains("dir-irr=2.200,2.200,2.200"));
     assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
         .contains("tan-wgpu=0.000,0.030,1.000"));
     Ok(())

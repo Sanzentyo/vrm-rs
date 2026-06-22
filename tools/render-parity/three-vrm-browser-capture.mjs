@@ -795,7 +795,9 @@ function capturePage(options) {
     const fresnelFactor = (1.0 - vDotH) ** 5;
     const fresnel = specularColor.map((value) => value + (specularF90 - value) * fresnelFactor);
     const diffuseColor = scale3(diffuseLinearRgb, 1.0 - metallic);
-    const diffuseLobe = multiply3(scale3(diffuseColor, nDotL / pi), lightColor);
+    const brdfLambert = scale3(diffuseColor, 1.0 / pi);
+    const directIrradiance = scale3(lightColor, nDotL);
+    const diffuseLobe = multiply3(brdfLambert, directIrradiance);
     const specularLobe = multiply3(scale3(fresnel, distribution * visibility * nDotL), lightColor);
     return {
       nDotL,
@@ -807,6 +809,8 @@ function capturePage(options) {
       visibility,
       fresnel,
       diffuseColor,
+      brdfLambertRgb: brdfLambert,
+      directIrradianceRgb: directIrradiance,
       diffuseLobeRgb: diffuseLobe,
       specularLobeRgb: specularLobe,
       directRgb: add3(diffuseLobe, specularLobe),
@@ -847,10 +851,8 @@ function capturePage(options) {
       ambient?.color?.isColor ? ambient.color.toArray() : [1.0, 1.0, 1.0],
       ambient?.intensity ?? 0.0,
     );
-    const ambientRgb = multiply3(
-      scale3(diffuseTerms.diffuseLinearRgb, (1.0 - metallic) / Math.PI),
-      ambientLightColor,
-    );
+    const brdfLambertRgb = scale3(scale3(diffuseTerms.diffuseLinearRgb, 1.0 - metallic), 1.0 / Math.PI);
+    const ambientRgb = multiply3(brdfLambertRgb, ambientLightColor);
     return {
       model: material.type,
       worldPosition,
@@ -885,6 +887,9 @@ function capturePage(options) {
       visibility: directTerms?.visibility ?? null,
       fresnel: directTerms?.fresnel ?? null,
       diffuseColor: directTerms?.diffuseColor ?? null,
+      brdfLambertRgb: directTerms?.brdfLambertRgb ?? brdfLambertRgb,
+      directIrradianceRgb: directTerms?.directIrradianceRgb ?? null,
+      ambientIrradianceRgb: ambientLightColor,
       diffuseLobeRgb: directTerms?.diffuseLobeRgb ?? null,
       specularLobeRgb: directTerms?.specularLobeRgb ?? null,
       directRgb: directTerms?.directRgb ?? null,

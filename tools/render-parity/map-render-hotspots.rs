@@ -32,8 +32,8 @@ use vrm_adapter::{
 use vrm_core::MaterialRef;
 use vrm_io::{
     transform_tex_coord_0, CpuRgba8Image, GltfAlphaMode, GltfExpressionRenderEffects,
-    GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfOutlineScale, GltfOutlineVertexSettings,
-    GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
+    GltfMaterialShadingOptions, GltfMaterialShadingPlan, GltfOutlineScale,
+    GltfOutlineVertexSettings, GltfTransformedVertex, LoadedVrm, Rgba8SamplingOrigin,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -515,6 +515,9 @@ struct PbrTermReport {
     n_dot_h: f32,
     v_dot_h: f32,
     diffuse_linear_rgb: [f32; 3],
+    brdf_lambert_rgb: [f32; 3],
+    direct_irradiance_rgb: [f32; 3],
+    ambient_irradiance_rgb: [f32; 3],
     diffuse_lobe_rgb: [f32; 3],
     specular_lobe_rgb: [f32; 3],
     direct_rgb: [f32; 3],
@@ -673,10 +676,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 nearest_sample_visible_frontmost_candidate_match(&candidates);
             let nearest_sample_any_frontmost =
                 nearest_sample_any_frontmost_candidate_match(&candidates);
-            let frontmost_base_uv_srgb =
-                frontmost_visible.as_ref().map(|frontmost| {
-                    diagnostic_linear_uv_to_srgb_color(frontmost.base_uv, delta.actual[3])
-                });
+            let frontmost_base_uv_srgb = frontmost_visible.as_ref().map(|frontmost| {
+                diagnostic_linear_uv_to_srgb_color(frontmost.base_uv, delta.actual[3])
+            });
             let frontmost_base_texture_rgba = frontmost_visible
                 .as_ref()
                 .and_then(|frontmost| frontmost.base_texture_rgba);
@@ -695,8 +697,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let depth_near_later_cpu_base_color_rgba = depth_near_later_visible
                 .as_ref()
                 .map(|candidate| candidate.cpu_base_color_rgba);
-            let frontmost_texture_sampling_variants =
-                texture_sampling_distances(frontmost_visible.as_ref(), delta.actual, delta.expected);
+            let frontmost_texture_sampling_variants = texture_sampling_distances(
+                frontmost_visible.as_ref(),
+                delta.actual,
+                delta.expected,
+            );
             let nearest_sample_visible_texture_sampling_variants = texture_sampling_distances(
                 nearest_sample_visible_frontmost.as_ref(),
                 delta.actual,
@@ -725,14 +730,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let best_subpixel_visible_actual = best_subpixel_match(
                 &subpixel_candidates,
                 delta.actual,
-                frontmost_cpu_base_color_rgba
-                    .map(|color| rgb_distance(color, delta.actual)),
+                frontmost_cpu_base_color_rgba.map(|color| rgb_distance(color, delta.actual)),
             );
             let best_subpixel_visible_expected = best_subpixel_match(
                 &subpixel_candidates,
                 delta.expected,
-                frontmost_cpu_base_color_rgba
-                    .map(|color| rgb_distance(color, delta.expected)),
+                frontmost_cpu_base_color_rgba.map(|color| rgb_distance(color, delta.expected)),
             );
             let subpixel_coverage_cpu_base_color_rgba =
                 subpixel_coverage_cpu_base_color(&subpixel_candidates);
@@ -805,7 +808,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     depth_near_later_cpu_base_color_rgba
                         .map(|color| rgb_distance(color, delta.expected)),
                 depth_near_later_cpu_base_color_actual_rgb_distance:
-                    depth_near_later_cpu_base_color_rgba.map(|color| rgb_distance(color, delta.actual)),
+                    depth_near_later_cpu_base_color_rgba
+                        .map(|color| rgb_distance(color, delta.actual)),
                 frontmost_texture_sampling_variants,
                 nearest_sample_visible_texture_sampling_variants,
                 subpixel_visible_candidates: subpixel_candidates,
@@ -882,14 +886,9 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     if edge_neighbors(&adjacency, [0, 1], 0) != Vec::<usize>::new() {
         return Err("boundary edge should not report neighbors".into());
     }
-    let full_pixel_intersection = pixel_triangle_intersection(
-        0,
-        0,
-        [-1.0, -1.0],
-        [3.0, -1.0],
-        [-1.0, 3.0],
-    )
-    .ok_or("large triangle should cover pixel")?;
+    let full_pixel_intersection =
+        pixel_triangle_intersection(0, 0, [-1.0, -1.0], [3.0, -1.0], [-1.0, 3.0])
+            .ok_or("large triangle should cover pixel")?;
     assert_close(
         full_pixel_intersection.area_pixels,
         1.0,
@@ -1007,7 +1006,9 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
         alpha_policy_rejected_candidate_count: hotspots
             .iter()
             .flat_map(|hotspot| hotspot.candidates.iter())
-            .filter(|candidate| candidate.visible_by_cull_policy && !candidate.visible_by_alpha_policy)
+            .filter(|candidate| {
+                candidate.visible_by_cull_policy && !candidate.visible_by_alpha_policy
+            })
             .count(),
         actual_frontmost_any_triangle_matches: hotspots
             .iter()
@@ -1160,22 +1161,22 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             hotspots,
             |hotspot| hotspot.frontmost_base_texture_expected_rgb_distance,
         ),
-        actual_nearest_sample_visible_mean_base_texture_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_base_texture_actual_rgb_distance
-            }),
-        expected_nearest_sample_visible_mean_base_texture_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
-            }),
+        actual_nearest_sample_visible_mean_base_texture_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_base_texture_actual_rgb_distance,
+        ),
+        expected_nearest_sample_visible_mean_base_texture_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_base_texture_expected_rgb_distance,
+        ),
         actual_nearest_sample_visible_max_base_texture_rgb_distance: max_frontmost_rgb_distance(
             hotspots,
             |hotspot| hotspot.nearest_sample_visible_base_texture_actual_rgb_distance,
         ),
-        expected_nearest_sample_visible_max_base_texture_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_base_texture_expected_rgb_distance
-            }),
+        expected_nearest_sample_visible_max_base_texture_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_base_texture_expected_rgb_distance,
+        ),
         actual_missing_center_nearest_visible_mean_base_texture_rgb_distance:
             mean_missing_center_nearest_rgb_distance(hotspots, |hotspot| {
                 hotspot.nearest_sample_visible_base_texture_actual_rgb_distance
@@ -1208,38 +1209,38 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             hotspots,
             |hotspot| hotspot.frontmost_cpu_base_color_expected_rgb_distance,
         ),
-        actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance
-            }),
+        actual_nearest_sample_visible_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance,
+        ),
         expected_nearest_sample_visible_mean_cpu_base_color_rgb_distance:
             mean_frontmost_rgb_distance(hotspots, |hotspot| {
                 hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance
             }),
-        actual_nearest_sample_visible_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance
-            }),
-        expected_nearest_sample_visible_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance
-            }),
-        actual_strict_frontmost_mean_cpu_base_color_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.strict_frontmost_cpu_base_color_actual_rgb_distance
-            }),
-        expected_strict_frontmost_mean_cpu_base_color_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.strict_frontmost_cpu_base_color_expected_rgb_distance
-            }),
-        actual_strict_frontmost_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.strict_frontmost_cpu_base_color_actual_rgb_distance
-            }),
-        expected_strict_frontmost_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.strict_frontmost_cpu_base_color_expected_rgb_distance
-            }),
+        actual_nearest_sample_visible_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_nearest_sample_visible_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.nearest_sample_visible_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_strict_frontmost_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.strict_frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_strict_frontmost_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.strict_frontmost_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_strict_frontmost_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.strict_frontmost_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_strict_frontmost_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.strict_frontmost_cpu_base_color_expected_rgb_distance,
+        ),
         actual_strict_frontmost_improved_count: strict_frontmost_improved_count(
             hotspots,
             |hotspot| hotspot.strict_frontmost_cpu_base_color_actual_rgb_distance,
@@ -1274,13 +1275,15 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             |hotspot| hotspot.strict_frontmost_visible.as_ref(),
         ),
         frontmost_texture_sampling_variants: texture_sampling_variant_summary(
-            hotspots.iter().flat_map(|hotspot| {
-                hotspot.frontmost_texture_sampling_variants.iter()
-            }),
+            hotspots
+                .iter()
+                .flat_map(|hotspot| hotspot.frontmost_texture_sampling_variants.iter()),
         ),
         nearest_sample_visible_texture_sampling_variants: texture_sampling_variant_summary(
             hotspots.iter().flat_map(|hotspot| {
-                hotspot.nearest_sample_visible_texture_sampling_variants.iter()
+                hotspot
+                    .nearest_sample_visible_texture_sampling_variants
+                    .iter()
             }),
         ),
         frontmost_mean_base_texture_local_rgb_gradient: mean_frontmost_texture_gradient(hotspots),
@@ -1381,14 +1384,12 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             .iter()
             .filter(|hotspot| hotspot.best_subpixel_visible_expected.is_some())
             .count(),
-        actual_best_subpixel_improved_count: subpixel_improved_count(
-            hotspots,
-            |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
-        ),
-        expected_best_subpixel_improved_count: subpixel_improved_count(
-            hotspots,
-            |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
-        ),
+        actual_best_subpixel_improved_count: subpixel_improved_count(hotspots, |hotspot| {
+            hotspot.best_subpixel_visible_actual.as_ref()
+        }),
+        expected_best_subpixel_improved_count: subpixel_improved_count(hotspots, |hotspot| {
+            hotspot.best_subpixel_visible_expected.as_ref()
+        }),
         actual_best_subpixel_mean_cpu_base_color_rgb_distance: mean_subpixel_distance(
             hotspots,
             |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
@@ -1438,15 +1439,13 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
         ),
         actual_best_subpixel_improved_different_triangle_count:
-            subpixel_improved_different_triangle_count(
-                hotspots,
-                |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
-            ),
+            subpixel_improved_different_triangle_count(hotspots, |hotspot| {
+                hotspot.best_subpixel_visible_actual.as_ref()
+            }),
         expected_best_subpixel_improved_different_triangle_count:
-            subpixel_improved_different_triangle_count(
-                hotspots,
-                |hotspot| hotspot.best_subpixel_visible_expected.as_ref(),
-            ),
+            subpixel_improved_different_triangle_count(hotspots, |hotspot| {
+                hotspot.best_subpixel_visible_expected.as_ref()
+            }),
         actual_best_subpixel_mean_sample_distance_from_center: mean_subpixel_sample_distance(
             hotspots,
             |hotspot| hotspot.best_subpixel_visible_actual.as_ref(),
@@ -1489,22 +1488,22 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             .iter()
             .filter(|hotspot| hotspot.subpixel_coverage_cpu_base_color_rgba.is_some())
             .count(),
-        actual_subpixel_coverage_mean_cpu_base_color_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance
-            }),
-        expected_subpixel_coverage_mean_cpu_base_color_rgb_distance:
-            mean_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance
-            }),
-        actual_subpixel_coverage_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance
-            }),
-        expected_subpixel_coverage_max_cpu_base_color_rgb_distance:
-            max_frontmost_rgb_distance(hotspots, |hotspot| {
-                hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance
-            }),
+        actual_subpixel_coverage_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_subpixel_coverage_mean_cpu_base_color_rgb_distance: mean_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance,
+        ),
+        actual_subpixel_coverage_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance,
+        ),
+        expected_subpixel_coverage_max_cpu_base_color_rgb_distance: max_frontmost_rgb_distance(
+            hotspots,
+            |hotspot| hotspot.subpixel_coverage_cpu_base_color_expected_rgb_distance,
+        ),
         actual_subpixel_coverage_improved_count: strict_frontmost_improved_count(
             hotspots,
             |hotspot| hotspot.subpixel_coverage_cpu_base_color_actual_rgb_distance,
@@ -1578,12 +1577,11 @@ fn summarize_hotspots(hotspots: &[Hotspot], source_order_depth_epsilon: f32) -> 
             hotspots,
             |hotspot| hotspot.depth_near_later_cpu_base_color_expected_rgb_distance,
         ),
-        actual_depth_near_later_mean_cpu_base_color_improvement:
-            depth_near_later_mean_improvement(
-                hotspots,
-                |hotspot| hotspot.depth_near_later_cpu_base_color_actual_rgb_distance,
-                |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
-            ),
+        actual_depth_near_later_mean_cpu_base_color_improvement: depth_near_later_mean_improvement(
+            hotspots,
+            |hotspot| hotspot.depth_near_later_cpu_base_color_actual_rgb_distance,
+            |hotspot| hotspot.frontmost_cpu_base_color_actual_rgb_distance,
+        ),
         expected_depth_near_later_mean_cpu_base_color_improvement:
             depth_near_later_mean_improvement(
                 hotspots,
@@ -1793,9 +1791,7 @@ fn mean_largest_coverage_area(hotspots: &[Hotspot]) -> Option<f32> {
                 .as_ref()
                 .map(|matched| matched.coverage_area_pixels)
         })
-        .fold((0.0, 0usize), |(sum, count), area| {
-            (sum + area, count + 1)
-        });
+        .fold((0.0, 0usize), |(sum, count), area| (sum + area, count + 1));
     (count > 0).then_some(sum / count as f32)
 }
 
@@ -1914,7 +1910,11 @@ fn subpixel_improved_count(
     hotspots
         .iter()
         .filter_map(subpixel)
-        .filter(|matched| matched.improvement.is_some_and(|improvement| improvement > 0.0))
+        .filter(|matched| {
+            matched
+                .improvement
+                .is_some_and(|improvement| improvement > 0.0)
+        })
         .count()
 }
 
@@ -1928,8 +1928,13 @@ fn subpixel_improved_same_triangle_count(
             let Some(matched) = subpixel(hotspot) else {
                 return false;
             };
-            matched.improvement.is_some_and(|improvement| improvement > 0.0)
-                && same_surface_triangle(hotspot.frontmost_visible.as_ref(), Some(&matched.candidate))
+            matched
+                .improvement
+                .is_some_and(|improvement| improvement > 0.0)
+                && same_surface_triangle(
+                    hotspot.frontmost_visible.as_ref(),
+                    Some(&matched.candidate),
+                )
         })
         .count()
 }
@@ -1944,7 +1949,9 @@ fn subpixel_improved_different_triangle_count(
             let Some(matched) = subpixel(hotspot) else {
                 return false;
             };
-            matched.improvement.is_some_and(|improvement| improvement > 0.0)
+            matched
+                .improvement
+                .is_some_and(|improvement| improvement > 0.0)
                 && !same_surface_triangle(
                     hotspot.frontmost_visible.as_ref(),
                     Some(&matched.candidate),
@@ -1984,14 +1991,15 @@ fn mean_subpixel_sample_distance(
     hotspots: &[Hotspot],
     subpixel: impl Fn(&Hotspot) -> Option<&SubpixelMatch>,
 ) -> Option<f32> {
-    let (sum, count) = hotspots
-        .iter()
-        .filter_map(subpixel)
-        .fold((0.0, 0usize), |(sum, count), matched| {
-            let dx = matched.sample[0] - 0.5;
-            let dy = matched.sample[1] - 0.5;
-            (sum + (dx * dx + dy * dy).sqrt(), count + 1)
-        });
+    let (sum, count) =
+        hotspots
+            .iter()
+            .filter_map(subpixel)
+            .fold((0.0, 0usize), |(sum, count), matched| {
+                let dx = matched.sample[0] - 0.5;
+                let dy = matched.sample[1] - 0.5;
+                (sum + (dx * dx + dy * dy).sqrt(), count + 1)
+            });
     (count > 0).then_some(sum / count as f32)
 }
 
@@ -2016,12 +2024,14 @@ fn depth_near_later_mean_improvement(
     depth_near_distance: impl Fn(&Hotspot) -> Option<f32>,
     frontmost_distance: impl Fn(&Hotspot) -> Option<f32>,
 ) -> Option<f32> {
-    let (sum, count) = hotspots.iter().fold((0.0, 0usize), |(sum, count), hotspot| {
-        match (depth_near_distance(hotspot), frontmost_distance(hotspot)) {
-            (Some(depth_near), Some(frontmost)) => (sum + (frontmost - depth_near), count + 1),
-            _ => (sum, count),
-        }
-    });
+    let (sum, count) = hotspots
+        .iter()
+        .fold((0.0, 0usize), |(sum, count), hotspot| {
+            match (depth_near_distance(hotspot), frontmost_distance(hotspot)) {
+                (Some(depth_near), Some(frontmost)) => (sum + (frontmost - depth_near), count + 1),
+                _ => (sum, count),
+            }
+        });
     (count > 0).then_some(sum / count as f32)
 }
 
@@ -2599,14 +2609,12 @@ fn depth_near_later_visible_candidate_match(
             )
         })
         .max_by(|left, right| {
-            left.draw_index
-                .cmp(&right.draw_index)
-                .then_with(|| {
-                    (right.depth - frontmost.depth)
-                        .abs()
-                        .partial_cmp(&(left.depth - frontmost.depth).abs())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            left.draw_index.cmp(&right.draw_index).then_with(|| {
+                (right.depth - frontmost.depth)
+                    .abs()
+                    .partial_cmp(&(left.depth - frontmost.depth).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         })
 }
 
@@ -2696,14 +2704,13 @@ fn subpixel_frontmost_visible_candidates(
                         )
                     })
                     .collect::<Vec<_>>();
-                frontmost_visible_candidate_match(&candidates)
-                    .map(|candidate| SubpixelCandidate {
-                        sample,
-                        candidate,
-                        coverage_area_pixels: None,
-                        coverage_point_count: None,
-                        center_candidate: None,
-                    })
+                frontmost_visible_candidate_match(&candidates).map(|candidate| SubpixelCandidate {
+                    sample,
+                    candidate,
+                    coverage_area_pixels: None,
+                    coverage_point_count: None,
+                    center_candidate: None,
+                })
             })
         })
         .collect()
@@ -2827,12 +2834,14 @@ fn largest_coverage_match(candidates: &[SubpixelCandidate]) -> Option<CoverageMa
                 })
                 .then_with(|| left.candidate.draw_index.cmp(&right.candidate.draw_index))
         })
-        .map(|(candidate, coverage_area_pixels, coverage_point_count)| CoverageMatch {
-            sample: candidate.sample,
-            coverage_area_pixels,
-            coverage_point_count,
-            candidate: candidate.candidate.clone(),
-        })
+        .map(
+            |(candidate, coverage_area_pixels, coverage_point_count)| CoverageMatch {
+                sample: candidate.sample,
+                coverage_area_pixels,
+                coverage_point_count,
+                candidate: candidate.candidate.clone(),
+            },
+        )
 }
 
 fn best_subpixel_match(
@@ -2870,18 +2879,20 @@ fn best_subpixel_match(
 }
 
 fn subpixel_coverage_cpu_base_color(candidates: &[SubpixelCandidate]) -> Option<[u8; 4]> {
-    let (sum, count) = candidates.iter().fold(([0u32; 4], 0u32), |(sum, count), candidate| {
-        let color = candidate.candidate.cpu_base_color_rgba;
-        (
-            [
-                sum[0] + u32::from(color[0]),
-                sum[1] + u32::from(color[1]),
-                sum[2] + u32::from(color[2]),
-                sum[3] + u32::from(color[3]),
-            ],
-            count + 1,
-        )
-    });
+    let (sum, count) = candidates
+        .iter()
+        .fold(([0u32; 4], 0u32), |(sum, count), candidate| {
+            let color = candidate.candidate.cpu_base_color_rgba;
+            (
+                [
+                    sum[0] + u32::from(color[0]),
+                    sum[1] + u32::from(color[1]),
+                    sum[2] + u32::from(color[2]),
+                    sum[3] + u32::from(color[3]),
+                ],
+                count + 1,
+            )
+        });
     (count > 0).then(|| {
         sum.map(|channel| {
             u8::try_from((channel + count / 2) / count).expect("averaged u8 channel fits in u8")
@@ -2952,10 +2963,10 @@ fn surface_candidates(
             let [ia, ib, ic] = [indices[0], indices[1], indices[2]];
             let vertices = [
                 project(
-                surface.vertices.get(ia as usize)?,
-                view_projection,
-                width,
-                height,
+                    surface.vertices.get(ia as usize)?,
+                    view_projection,
+                    width,
+                    height,
                 )?,
                 project(
                     surface.vertices.get(ib as usize)?,
@@ -3032,9 +3043,11 @@ fn hit_candidate_for_projected_triangle(
     } else {
         [1.0, 1.0, 1.0, 1.0]
     };
-    let cpu_base_color_rgba =
-        multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
-            .map(quantize_unorm8);
+    let cpu_base_color_rgba = multiply_rgba(
+        multiply_rgba(surface.base_color, vertex_color),
+        texture_color,
+    )
+    .map(quantize_unorm8);
     let pbr_texture_color = if surface.pbr_fallback {
         [
             srgb_to_linear_channel(texture_color[0]),
@@ -3045,9 +3058,15 @@ fn hit_candidate_for_projected_triangle(
     } else {
         texture_color
     };
-    let diffuse_linear =
-        multiply_rgba(multiply_rgba(surface.base_color, vertex_color), pbr_texture_color);
-    let vertex_alpha = if surface.pbr_fallback { vertex_color[3] } else { 1.0 };
+    let diffuse_linear = multiply_rgba(
+        multiply_rgba(surface.base_color, vertex_color),
+        pbr_texture_color,
+    );
+    let vertex_alpha = if surface.pbr_fallback {
+        vertex_color[3]
+    } else {
+        1.0
+    };
     let texture_alpha = texture_color[3];
     let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
     let signed_area = signed_area(a.screen, b.screen, c.screen);
@@ -3074,13 +3093,8 @@ fn hit_candidate_for_projected_triangle(
         [a.world_tangent, b.world_tangent, c.world_tangent],
         [a.reciprocal_w, b.reciprocal_w, c.reciprocal_w],
     );
-    let normal_sample = pbr_normal_sample(
-        surface,
-        raw_uv,
-        world_normal,
-        world_tangent,
-        front_facing,
-    );
+    let normal_sample =
+        pbr_normal_sample(surface, raw_uv, world_normal, world_tangent, front_facing);
     let pbr_terms = pbr_term_report(
         surface.material_shading,
         [diffuse_linear[0], diffuse_linear[1], diffuse_linear[2]],
@@ -3300,9 +3314,9 @@ fn pixel_triangle_intersection(
     if points.is_empty() {
         return None;
     }
-    let sum = points
-        .iter()
-        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
+    let sum = points.iter().fold([0.0, 0.0], |sum, point| {
+        [sum[0] + point[0], sum[1] + point[1]]
+    });
     let point = [sum[0] / points.len() as f32, sum[1] / points.len() as f32];
     let area_pixels = polygon_area_pixels(&points);
     Some(PixelTriangleIntersection {
@@ -3330,7 +3344,9 @@ fn polygon_area_pixels(points: &[[f32; 2]]) -> f32 {
     }
     let centroid = points
         .iter()
-        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]])
+        .fold([0.0, 0.0], |sum, point| {
+            [sum[0] + point[0], sum[1] + point[1]]
+        })
         .map(|value| value / points.len() as f32);
     let mut ordered = points.to_vec();
     ordered.sort_by(|left, right| {
@@ -3357,12 +3373,7 @@ fn point_in_pixel(point: [f32; 2], x: f32, y: f32) -> bool {
         && point[1] <= y + 1.0 + 1.0e-4
 }
 
-fn segment_intersection(
-    a: [f32; 2],
-    b: [f32; 2],
-    c: [f32; 2],
-    d: [f32; 2],
-) -> Option<[f32; 2]> {
+fn segment_intersection(a: [f32; 2], b: [f32; 2], c: [f32; 2], d: [f32; 2]) -> Option<[f32; 2]> {
     let r = [b[0] - a[0], b[1] - a[1]];
     let s = [d[0] - c[0], d[1] - c[1]];
     let denominator = r[0] * s[1] - r[1] * s[0];
@@ -3506,7 +3517,9 @@ fn interpolate_perspective_correct_vec3(
     ];
     let denominator = weights[0] + weights[1] + weights[2];
     if denominator.abs() <= f32::EPSILON {
-        return values[0] * barycentric[0] + values[1] * barycentric[1] + values[2] * barycentric[2];
+        return values[0] * barycentric[0]
+            + values[1] * barycentric[1]
+            + values[2] * barycentric[2];
     }
     (values[0] * weights[0] + values[1] * weights[1] + values[2] * weights[2]) / denominator
 }
@@ -3523,7 +3536,9 @@ fn interpolate_perspective_correct_vec4(
     ];
     let denominator = weights[0] + weights[1] + weights[2];
     if denominator.abs() <= f32::EPSILON {
-        return values[0] * barycentric[0] + values[1] * barycentric[1] + values[2] * barycentric[2];
+        return values[0] * barycentric[0]
+            + values[1] * barycentric[1]
+            + values[2] * barycentric[2];
     }
     (values[0] * weights[0] + values[1] * weights[1] + values[2] * weights[2]) / denominator
 }
@@ -3639,7 +3654,11 @@ fn normal_mapped_shading_normal(
     front_facing: bool,
     cull_enabled: bool,
 ) -> Vec3 {
-    let face_sign = if front_facing || cull_enabled { 1.0 } else { -1.0 };
+    let face_sign = if front_facing || cull_enabled {
+        1.0
+    } else {
+        -1.0
+    };
     let geometric_normal = geometric_normal.normalize_or_zero();
     let tangent = world_tangent.truncate().normalize_or_zero() * face_sign;
     if geometric_normal.length_squared() <= 1.0e-10 || tangent.length_squared() <= 1.0e-10 {
@@ -3647,7 +3666,9 @@ fn normal_mapped_shading_normal(
     }
     let handedness = if world_tangent.w < 0.0 { -1.0 } else { 1.0 };
     let bitangent = (geometric_normal.cross(tangent) * handedness).normalize_or_zero() * face_sign;
-    (tangent * tangent_normal.x + bitangent * tangent_normal.y + geometric_normal * tangent_normal.z)
+    (tangent * tangent_normal.x
+        + bitangent * tangent_normal.y
+        + geometric_normal * tangent_normal.z)
         .normalize_or_zero()
 }
 
@@ -3670,8 +3691,10 @@ fn pbr_term_report(
             shading.metallic,
             shading.roughness,
         );
-        let ambient =
-            Vec3::from_array(diffuse) * (1.0 - shading.metallic) * 0.03183098882436752;
+        let brdf_lambert =
+            Vec3::from_array(diffuse) * (1.0 - shading.metallic) / std::f32::consts::PI;
+        let ambient_irradiance = Vec3::splat(0.1);
+        let ambient = brdf_lambert * ambient_irradiance;
         PbrTermReport {
             normal_source: normal_sample.source,
             geometric_normal: normal_sample.geometric_normal.to_array(),
@@ -3691,6 +3714,9 @@ fn pbr_term_report(
             n_dot_h: terms.n_dot_h,
             v_dot_h: terms.v_dot_h,
             diffuse_linear_rgb: diffuse,
+            brdf_lambert_rgb: brdf_lambert.to_array(),
+            direct_irradiance_rgb: terms.direct_irradiance.to_array(),
+            ambient_irradiance_rgb: ambient_irradiance.to_array(),
             diffuse_lobe_rgb: terms.diffuse_lobe.to_array(),
             specular_lobe_rgb: terms.specular_lobe.to_array(),
             direct_rgb: terms.direct.to_array(),
@@ -3708,6 +3734,7 @@ struct PbrDirectTerms {
     v_dot_h: f32,
     diffuse_lobe: Vec3,
     specular_lobe: Vec3,
+    direct_irradiance: Vec3,
     direct: Vec3,
 }
 
@@ -3742,14 +3769,16 @@ fn pbr_direct_terms(
     let fresnel = f0 + (Vec3::splat(f90) - f0) * (1.0 - v_dot_h).powi(5);
     let specular_lobe = distribution * visibility * fresnel;
     let diffuse_lobe = diffuse * (1.0 - metallic) / pi;
-    let direct = (diffuse_lobe + specular_lobe) * pi * n_dot_l;
+    let direct_irradiance = Vec3::splat(pi * n_dot_l);
+    let direct = (diffuse_lobe + specular_lobe) * direct_irradiance;
     PbrDirectTerms {
         n_dot_l,
         n_dot_v,
         n_dot_h,
         v_dot_h,
-        diffuse_lobe: diffuse_lobe * pi * n_dot_l,
-        specular_lobe: specular_lobe * pi * n_dot_l,
+        diffuse_lobe: diffuse_lobe * direct_irradiance,
+        specular_lobe: specular_lobe * direct_irradiance,
+        direct_irradiance,
         direct,
     }
 }
@@ -3910,12 +3939,7 @@ fn signed_area(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
-fn triangle_edge_distance_pixels(
-    point: [f32; 2],
-    a: [f32; 2],
-    b: [f32; 2],
-    c: [f32; 2],
-) -> f32 {
+fn triangle_edge_distance_pixels(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     nearest_triangle_edge(point, a, b, c).distance_pixels
 }
 
@@ -3959,8 +3983,8 @@ fn point_to_segment_distance(point: [f32; 2], start: [f32; 2], end: [f32; 2]) ->
         return ((point[0] - start[0]).powi(2) + (point[1] - start[1]).powi(2)).sqrt();
     }
     let relative = [point[0] - start[0], point[1] - start[1]];
-    let t = ((relative[0] * segment[0] + relative[1] * segment[1]) / length_squared)
-        .clamp(0.0, 1.0);
+    let t =
+        ((relative[0] * segment[0] + relative[1] * segment[1]) / length_squared).clamp(0.0, 1.0);
     let closest = [start[0] + segment[0] * t, start[1] + segment[1] * t];
     ((point[0] - closest[0]).powi(2) + (point[1] - closest[1]).powi(2)).sqrt()
 }
