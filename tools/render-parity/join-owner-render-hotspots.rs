@@ -117,6 +117,18 @@ struct PbrTermOutputSummary {
     tangent_space_normal_wgpu_compat_sample_count: u64,
     mean_tangent_space_normal_wgpu_compat_distance: Option<f64>,
     normal_source_pairs: BTreeMap<String, u64>,
+    browser_total_srgb_sample_count: u64,
+    mean_browser_total_srgb_actual_distance: Option<f64>,
+    mean_browser_total_srgb_expected_distance: Option<f64>,
+    browser_total_srgb_actual_closer: u64,
+    browser_total_srgb_expected_closer: u64,
+    browser_total_srgb_tied: u64,
+    rust_total_srgb_sample_count: u64,
+    mean_rust_total_srgb_actual_distance: Option<f64>,
+    mean_rust_total_srgb_expected_distance: Option<f64>,
+    rust_total_srgb_actual_closer: u64,
+    rust_total_srgb_expected_closer: u64,
+    rust_total_srgb_tied: u64,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -134,6 +146,8 @@ struct PbrTermOutputAccumulator {
     tangent_space_normal_three_js_distance: MeanAccumulator,
     tangent_space_normal_wgpu_compat_distance: MeanAccumulator,
     normal_source_pairs: BTreeMap<String, u64>,
+    browser_total_srgb_projection: ColorProjectionAccumulator,
+    rust_total_srgb_projection: ColorProjectionAccumulator,
     output_distance_sum: f64,
 }
 
@@ -141,6 +155,16 @@ struct PbrTermOutputAccumulator {
 struct MeanAccumulator {
     count: u64,
     sum: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ColorProjectionAccumulator {
+    count: u64,
+    actual_distance_sum: f64,
+    expected_distance_sum: f64,
+    actual_closer: u64,
+    expected_closer: u64,
+    tied: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -566,6 +590,8 @@ fn join_reports(
                 ),
                 rust_pbr_terms(rust_hotspot, "/frontmost_visible/pbr_terms"),
                 actual_expected_rgb_distance,
+                actual_rgba,
+                expected_rgba,
             );
         }
         if same_surface(browser_best.as_ref(), rust_expected.as_ref()) {
@@ -579,6 +605,8 @@ fn join_reports(
                     "/best_subpixel_visible_expected/candidate/pbr_terms",
                 ),
                 actual_expected_rgb_distance,
+                actual_rgba,
+                expected_rgba,
             );
         }
         if same_surface(browser_best_coverage.as_ref(), rust_frontmost.as_ref()) {
@@ -589,6 +617,8 @@ fn join_reports(
                 ),
                 rust_pbr_terms(rust_hotspot, "/frontmost_visible/pbr_terms"),
                 actual_expected_rgb_distance,
+                actual_rgba,
+                expected_rgba,
             );
         }
         if same_surface(browser_best_coverage.as_ref(), rust_expected.as_ref()) {
@@ -602,6 +632,8 @@ fn join_reports(
                     "/best_subpixel_visible_expected/candidate/pbr_terms",
                 ),
                 actual_expected_rgb_distance,
+                actual_rgba,
+                expected_rgba,
             );
         }
 
@@ -734,6 +766,8 @@ impl PbrTermOutputAccumulator {
         browser: Option<PbrTermSample>,
         rust: Option<PbrTermSample>,
         output_distance: Option<f64>,
+        actual_rgba: Option<[u64; 4]>,
+        expected_rgba: Option<[u64; 4]>,
     ) {
         let (Some(browser), Some(rust), Some(output_distance)) = (browser, rust, output_distance)
         else {
@@ -775,6 +809,16 @@ impl PbrTermOutputAccumulator {
             .normal_source_pairs
             .entry(format!("{browser_source} -> {rust_source}"))
             .or_insert(0) += 1;
+        self.browser_total_srgb_projection.observe(
+            linear_rgb_to_srgb8_rgba(browser.direct_plus_ambient_rgb),
+            actual_rgba,
+            expected_rgba,
+        );
+        self.rust_total_srgb_projection.observe(
+            linear_rgb_to_srgb8_rgba(rust.direct_plus_ambient_rgb),
+            actual_rgba,
+            expected_rgba,
+        );
         self.output_distance_sum += output_distance;
     }
 
@@ -816,6 +860,22 @@ impl PbrTermOutputAccumulator {
                 .tangent_space_normal_wgpu_compat_distance
                 .mean(),
             normal_source_pairs: self.normal_source_pairs,
+            browser_total_srgb_sample_count: self.browser_total_srgb_projection.count,
+            mean_browser_total_srgb_actual_distance: self
+                .browser_total_srgb_projection
+                .mean_actual(),
+            mean_browser_total_srgb_expected_distance: self
+                .browser_total_srgb_projection
+                .mean_expected(),
+            browser_total_srgb_actual_closer: self.browser_total_srgb_projection.actual_closer,
+            browser_total_srgb_expected_closer: self.browser_total_srgb_projection.expected_closer,
+            browser_total_srgb_tied: self.browser_total_srgb_projection.tied,
+            rust_total_srgb_sample_count: self.rust_total_srgb_projection.count,
+            mean_rust_total_srgb_actual_distance: self.rust_total_srgb_projection.mean_actual(),
+            mean_rust_total_srgb_expected_distance: self.rust_total_srgb_projection.mean_expected(),
+            rust_total_srgb_actual_closer: self.rust_total_srgb_projection.actual_closer,
+            rust_total_srgb_expected_closer: self.rust_total_srgb_projection.expected_closer,
+            rust_total_srgb_tied: self.rust_total_srgb_projection.tied,
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
         }
     }
@@ -836,6 +896,62 @@ impl MeanAccumulator {
     fn mean(self) -> Option<f64> {
         (self.count > 0).then_some(self.sum / self.count as f64)
     }
+}
+
+impl ColorProjectionAccumulator {
+    fn observe(
+        &mut self,
+        projected: [u64; 4],
+        actual: Option<[u64; 4]>,
+        expected: Option<[u64; 4]>,
+    ) {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return;
+        };
+        let actual_distance = rgb_distance_u64(projected, actual);
+        let expected_distance = rgb_distance_u64(projected, expected);
+        self.count += 1;
+        self.actual_distance_sum += actual_distance;
+        self.expected_distance_sum += expected_distance;
+        match actual_distance
+            .partial_cmp(&expected_distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+        {
+            std::cmp::Ordering::Less => self.actual_closer += 1,
+            std::cmp::Ordering::Greater => self.expected_closer += 1,
+            std::cmp::Ordering::Equal => self.tied += 1,
+        }
+    }
+
+    fn mean_actual(&self) -> Option<f64> {
+        (self.count > 0).then_some(self.actual_distance_sum / self.count as f64)
+    }
+
+    fn mean_expected(&self) -> Option<f64> {
+        (self.count > 0).then_some(self.expected_distance_sum / self.count as f64)
+    }
+}
+
+fn linear_rgb_to_srgb8_rgba(rgb: [f64; 3]) -> [u64; 4] {
+    [
+        quantize_unorm8(linear_to_srgb_channel(rgb[0])) as u64,
+        quantize_unorm8(linear_to_srgb_channel(rgb[1])) as u64,
+        quantize_unorm8(linear_to_srgb_channel(rgb[2])) as u64,
+        255,
+    ]
+}
+
+fn linear_to_srgb_channel(value: f64) -> f64 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.003_130_8 {
+        12.92 * value
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn quantize_unorm8(value: f64) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
@@ -1212,8 +1328,8 @@ fn markdown_report(report: &JoinReport) -> String {
     output.push_str(
         "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Output RGB dist |\n");
-    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1279,7 +1395,7 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
         fmt_counts_inline(&summary.normal_source_pairs),
@@ -1313,6 +1429,26 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
         fmt_mean_with_count(
             summary.mean_tangent_space_normal_wgpu_compat_distance,
             summary.tangent_space_normal_wgpu_compat_sample_count,
+        ),
+        fmt_projection_distances(
+            summary.mean_browser_total_srgb_actual_distance,
+            summary.mean_browser_total_srgb_expected_distance,
+            summary.browser_total_srgb_sample_count,
+        ),
+        fmt_closer_counts(
+            summary.browser_total_srgb_actual_closer,
+            summary.browser_total_srgb_expected_closer,
+            summary.browser_total_srgb_tied,
+        ),
+        fmt_projection_distances(
+            summary.mean_rust_total_srgb_actual_distance,
+            summary.mean_rust_total_srgb_expected_distance,
+            summary.rust_total_srgb_sample_count,
+        ),
+        fmt_closer_counts(
+            summary.rust_total_srgb_actual_closer,
+            summary.rust_total_srgb_expected_closer,
+            summary.rust_total_srgb_tied,
         ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
@@ -1371,6 +1507,17 @@ fn fmt_mean_with_count(value: Option<f64>, count: u64) -> String {
         || "n/a (n=0)".to_owned(),
         |value| format!("{value:.4} (n={count})"),
     )
+}
+
+fn fmt_projection_distances(actual: Option<f64>, expected: Option<f64>, count: u64) -> String {
+    match (actual, expected) {
+        (Some(actual), Some(expected)) => format!("{actual:.4}/{expected:.4} (n={count})"),
+        _ => format!("n/a/n/a (n={count})"),
+    }
+}
+
+fn fmt_closer_counts(actual: u64, expected: u64, tied: u64) -> String {
+    format!("{actual}/{expected}/{tied}")
 }
 
 fn fmt_opt_u64(value: Option<u64>) -> String {
@@ -1434,6 +1581,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             tangent_space_normal_wgpu_compat: Some([0.0, 0.03, 1.0]),
         }),
         Some(0.0),
+        Some([0, 0, 0, 255]),
+        Some([255, 255, 255, 255]),
     );
     let basis_summary = basis_accumulator.into_summary();
     assert!(basis_summary
@@ -1618,6 +1767,36 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .pbr_best_to_expected_term_output
         .mean_tangent_space_normal_wgpu_compat_distance
         .is_some_and(|distance| distance.abs() < 1e-12));
+    assert_eq!(
+        report
+            .pbr_best_to_expected_term_output
+            .browser_total_srgb_sample_count,
+        1
+    );
+    assert_eq!(
+        report
+            .pbr_best_to_expected_term_output
+            .browser_total_srgb_expected_closer,
+        1
+    );
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_browser_total_srgb_actual_distance
+        .zip(
+            report
+                .pbr_best_to_expected_term_output
+                .mean_browser_total_srgb_expected_distance
+        )
+        .is_some_and(|(actual, expected)| actual > expected));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_rust_total_srgb_actual_distance
+        .zip(
+            report
+                .pbr_best_to_expected_term_output
+                .mean_rust_total_srgb_expected_distance
+        )
+        .is_some_and(|(actual, expected)| actual > expected));
     assert!(report
         .pbr_best_to_expected_term_output
         .mean_shading_normal_three_js_distance
@@ -1679,6 +1858,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         browser_pbr_terms(&legacy_browser, "/terms"),
         rust_pbr_terms(&legacy_rust, "/terms"),
         Some(12.0),
+        None,
+        None,
     );
     let legacy_summary = legacy_accumulator.into_summary();
     assert_eq!(legacy_summary.count, 1);
@@ -1690,6 +1871,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(legacy_summary
         .mean_tangent_space_normal_three_js_distance
         .is_none());
+    assert_eq!(legacy_summary.browser_total_srgb_sample_count, 0);
     assert!(legacy_summary
         .mean_direct_rgb_distance
         .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));

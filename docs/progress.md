@@ -31,6 +31,19 @@
   output RGB distances (`42.2301`, `45.7153`, `32.2958`), so the current
   evidence points away from tangent-space normal decode as the primary
   remaining color parity blocker on that comparable subset.
+- Added final-color projection diagnostics to the owner/render PBR join. The
+  join now converts Browser and Rust `direct + ambient` PBR totals from linear
+  RGB to sRGB8 and reports their mean distance to the actual Rust pixel and the
+  expected three-vrm pixel, plus actual/expected/tied closer counts. On the
+  refreshed Seed-san Browser-best to Rust-frontmost subset, the projected PBR
+  totals are closer to the actual Rust output than to three-vrm expected for
+  most rows: wgpu Browser `100.51/122.41` with closer counts `17/3/0`, Bevy
+  `98.92/114.05` with `17/5/0`, and Ash `102.84/133.39` with `21/0/0`
+  (`actual/expected` mean distances and `actual/expected/tied` counts). Rust
+  PBR totals show the same shape. This narrows the next parity target toward
+  three-vrm final material/light accumulation or post-PBR shading behavior,
+  rather than Rust sample ownership, decoded tangent normals, or raw PBR term
+  arithmetic on the comparable rows.
 - Wired the owner/render PBR term join into the top-level expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--owner-render-join RENDERER=PATH` inputs and emits an
