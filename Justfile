@@ -126,6 +126,11 @@ render-parity-acceptance-bundle-strict acceptance_root=".external-fixtures/rende
 render-parity-acceptance-runner-strict reviewer visual_notes three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm" out_root=".external-fixtures/render-parity-acceptance-repeat" bundle_out=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false" browser_ready_timeout_ms="60000":
     cargo +nightly -Zscript tools/render-parity/run-strict-acceptance-runner.rs --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --accept-visual-review --three-vrm-root "{{ three_vrm_root }}" --background "{{ background }}" --light-accumulation "{{ light_accumulation }}" --out-root "{{ out_root }}" --bundle-out "{{ bundle_out }}" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --browser-ready-timeout-ms "{{ browser_ready_timeout_ms }}" --apply
 
+# Validate that the local strict bundle is fresh for the current checkout, then run the one-environment strict intake smoke.
+render-parity-acceptance-current-bundle bundle=".external-fixtures/render-parity-acceptance-bundle" out_root=".external-fixtures/render-parity-acceptance-environments":
+    cargo +nightly -Zscript tools/render-parity/validate-current-acceptance-bundle.rs --bundle "{{ bundle }}"
+    cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle }}" --min-environments 1 --require-accepted-signoff --json-out "{{ out_root }}/local-strict-smoke.json" --markdown-out "{{ out_root }}/local-strict-smoke.md"
+
 # Validate acceptance-repeat summaries collected from at least two distinct runner environments.
 render-parity-acceptance-environments summary_a summary_b extra_summaries="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --summary "{{ summary_a }}" --summary "{{ summary_b }}" {{ extra_summaries }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"

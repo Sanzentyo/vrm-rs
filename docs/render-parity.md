@@ -63,6 +63,11 @@ recipes are convenience entry points. Use these first:
   `--min-environments 1 --require-accepted-signoff` intake smoke. Use this only
   when the runner is actually taking responsibility for visual review; the
   underlying Rust script defaults to dry-run unless `--apply` is supplied.
+- `just render-parity-acceptance-current-bundle`: validate that the local
+  strict bundle's recorded vrm-rs HEAD is the current clean checkout, then run
+  the same one-environment strict intake smoke. This is a quick freshness check
+  before handing the local bundle to another machine or comparing it with
+  returned bundles.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -136,7 +141,9 @@ three repeated acceptance runs, and the accepted visual-review notes generated
 with `--require-visual-accepted --require-current-source`. If the signoff's
 vrm-rs HEAD differs from `git rev-parse HEAD`, rerun
 `just render-parity-acceptance-repeat` and regenerate the strict signoff before
-using it as current evidence.
+using it as current evidence. Run `just render-parity-acceptance-current-bundle`
+after strict bundle export to check that freshness and the one-environment
+strict intake path together.
 
 Numeric status for the six-fixture wgpu/Bevy/Ash acceptance set is stable: all
 `18` comparisons pass over `3` runs, the minimum selected PSNR is Seed-san Bevy
