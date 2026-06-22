@@ -68,6 +68,11 @@ recipes are convenience entry points. Use these first:
   the same one-environment strict intake smoke. This is a quick freshness check
   before handing the local bundle to another machine or comparing it with
   returned bundles.
+- `just render-parity-acceptance-handoff`: generate
+  `.external-fixtures/render-parity-acceptance-handoff/handoff.{md,json}` for
+  an external GPU/driver runner. The handoff records the exact vrm-rs HEAD,
+  repository URL, expected three-vrm commit, fixture-preparation command,
+  strict runner command, and final returned-bundle intake command.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -165,12 +170,16 @@ gradient-interior pixels. This supports keeping the accepted local threshold at
 remaining acceptance hardening task.
 
 For that hardening task, each additional machine should run
-`just render-parity-acceptance-runner-strict "<reviewer>" "<visual notes>"`
-from the same pushed commit after the runner has the review context needed to
-stand behind the visual notes. This wraps the repeat, strict signoff, strict
-bundle export, and local one-environment smoke. The manual sequence remains
-available as `just render-parity-acceptance-repeat`, inspection of the generated
-visual review pages, `just render-parity-acceptance-signoff-strict`, and
+`just render-parity-acceptance-handoff` on the main machine and use the
+generated handoff Markdown as the source-locked runner instruction. The handoff
+directs the runner to check out the exact commit, prepare external fixtures
+with `cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures`, and
+then run `just render-parity-acceptance-runner-strict "<reviewer>"
+"<visual notes>"` after the runner has the review context needed to stand
+behind the visual notes. This wraps the repeat, strict signoff, strict bundle
+export, and local one-environment smoke. The manual sequence remains available
+as `just render-parity-acceptance-repeat`, inspection of the generated visual
+review pages, `just render-parity-acceptance-signoff-strict`, and
 `just render-parity-acceptance-bundle-strict`. The returned strict bundle is
 small enough to transfer instead of the full image-heavy artifact tree. Bring
 those returned bundles back as sibling directories under one external parent

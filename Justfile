@@ -131,6 +131,10 @@ render-parity-acceptance-current-bundle bundle=".external-fixtures/render-parity
     cargo +nightly -Zscript tools/render-parity/validate-current-acceptance-bundle.rs --bundle "{{ bundle }}"
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle }}" --min-environments 1 --require-accepted-signoff --json-out "{{ out_root }}/local-strict-smoke.json" --markdown-out "{{ out_root }}/local-strict-smoke.md"
 
+# Generate a source-locked Markdown/JSON handoff for an external strict acceptance runner.
+render-parity-acceptance-handoff out_root=".external-fixtures/render-parity-acceptance-handoff" reviewer="<runner reviewer>" visual_notes="Reviewed generated visual review pages and accepted only local edge/outline/text-boundary residuals covered by PSNR and zero-alpha acceptance.":
+    cargo +nightly -Zscript tools/render-parity/generate-acceptance-handoff.rs --out-root "{{ out_root }}" --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --apply
+
 # Validate acceptance-repeat summaries collected from at least two distinct runner environments.
 render-parity-acceptance-environments summary_a summary_b extra_summaries="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --summary "{{ summary_a }}" --summary "{{ summary_b }}" {{ extra_summaries }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
