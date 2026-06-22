@@ -186,6 +186,8 @@ fn validate_repeated_manifests(
     }
 
     Ok(serde_json::json!({
+        "runMode": "acceptance",
+        "referenceClean": true,
         "runCount": manifests.len(),
         "runs": runs,
         "sourceLock": baseline_source_lock,

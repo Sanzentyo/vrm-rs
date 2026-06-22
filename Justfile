@@ -104,6 +104,15 @@ render-parity-acceptance-repeat three_vrm_root=".external-fixtures/three-vrm" ba
     just render-parity-acceptance "{{ three_vrm_root }}" "{{ background }}" "{{ light_accumulation }}" "{{ out_root }}/run-2" "{{ browser_ready_timeout_ms }}"
     just render-parity-acceptance "{{ three_vrm_root }}" "{{ background }}" "{{ light_accumulation }}" "{{ out_root }}/run-3" "{{ browser_ready_timeout_ms }}"
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-repeat.rs --manifest "{{ out_root }}/run-1/review-manifest.json" --manifest "{{ out_root }}/run-2/review-manifest.json" --manifest "{{ out_root }}/run-3/review-manifest.json" --json-out "{{ out_root }}/acceptance-repeat-summary.json" --markdown-out "{{ out_root }}/acceptance-repeat-summary.md"
+    cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ out_root }}/acceptance-repeat-summary.json" --markdown-out "{{ out_root }}/acceptance-signoff.md"
+
+# Generate or refresh the threshold calibration and visual-review signoff draft for repeated acceptance evidence.
+render-parity-acceptance-signoff summary=".external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json" markdown_out=".external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md" visual_review_state="pending" reviewer="" visual_notes="":
+    cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ summary }}" --markdown-out "{{ markdown_out }}" --visual-review-state "{{ visual_review_state }}" --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}"
+
+# Require accepted visual review metadata while regenerating the final acceptance signoff.
+render-parity-acceptance-signoff-strict reviewer visual_notes summary=".external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json" markdown_out=".external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md":
+    cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ summary }}" --markdown-out "{{ markdown_out }}" --visual-review-state accepted --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --require-visual-accepted
 
 # Regenerate the same real sample sweep with a model-body RGB metric that ignores opaque-black background pixels and one-pixel silhouette edges.
 render-parity-samples-nonblack three_vrm_root=".external-fixtures/three-vrm" light_accumulation="three-vrm" run_mode="diagnostic":

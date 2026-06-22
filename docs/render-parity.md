@@ -28,8 +28,17 @@ recipes are convenience entry points. Use these first:
   wgpu/Bevy/Ash summaries. The recipe also raises the three-vrm browser
   readiness timeout to `60000ms` and records that value in the manifest lane
   config so slow reference startup is explicit. It writes
-  `acceptance-repeat-summary.json` and `acceptance-repeat-summary.md` next to
-  the run directories.
+  `acceptance-repeat-summary.json`, `acceptance-repeat-summary.md`, and
+  `acceptance-signoff.md` next to the run directories.
+- `just render-parity-acceptance-signoff`: regenerate only the threshold
+  calibration and visual-review signoff draft from an existing
+  `acceptance-repeat-summary.json`. Use `visual_review_state=accepted` plus a
+  reviewer and note only after inspecting the linked `visual-review.html` files
+  and diff heatmaps.
+- `just render-parity-acceptance-signoff-strict`: regenerate the same file but
+  require accepted visual-review metadata, including a reviewer and note. This
+  is the final local command for turning a numeric calibration draft into a
+  signed-off artifact.
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
   `--render-run-mode diagnostic`; pass `acceptance` as the final `run_mode`
@@ -1710,6 +1719,24 @@ cargo +nightly -Zscript tools/render-parity/validate-acceptance-repeat.rs `
   --manifest .external-fixtures/render-parity-acceptance-repeat/run-3/review-manifest.json `
   --json-out .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json `
   --markdown-out .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.md
+```
+
+To regenerate the threshold calibration and visual-review signoff draft, run:
+
+```powershell
+cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs `
+  --summary .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json `
+  --markdown-out .external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md
+```
+
+For final accepted signoff, use the strict recipe after visual inspection:
+
+```powershell
+just render-parity-acceptance-signoff-strict `
+  "Reviewer Name" `
+  "Accepted after inspecting all run visual-review pages and diff heatmaps." `
+  .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json `
+  .external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md
 ```
 
 The `just render-parity-validate MANIFEST` wrapper runs the same audit. The
