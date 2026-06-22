@@ -45,6 +45,8 @@ fn script_args() -> impl Iterator<Item = OsString> {
     after_help = "Examples:\n  cargo +nightly -Zscript tools/ci/local-ci.rs\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity"
 )]
 struct Options {
+    #[arg(long, hide = true)]
+    self_test: bool,
     #[arg(long)]
     external_fixtures: bool,
     #[arg(long)]
@@ -145,6 +147,8 @@ struct Options {
     render_normal_map_scale: f32,
     #[arg(long, value_enum, default_value_t = RenderDiagnosticMode::Shaded)]
     render_diagnostic_mode: RenderDiagnosticMode,
+    #[arg(long, value_enum, default_value_t = RenderRunMode::Diagnostic)]
+    render_run_mode: RenderRunMode,
     #[arg(long, value_enum, default_value_t = RenderOwnerIdPhaseOrderPolicy::DrawIndex)]
     render_owner_id_phase_order_policy: RenderOwnerIdPhaseOrderPolicy,
     #[arg(long, value_enum, default_value_t = RenderOwnerIdColorSource::VertexColor)]
@@ -203,6 +207,23 @@ enum RenderNormalMapMode {
 enum RenderFrontFace {
     Ccw,
     Cw,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RenderRunMode {
+    Acceptance,
+    Diagnostic,
+    Experiment,
+}
+
+impl RenderRunMode {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Acceptance => "acceptance",
+            Self::Diagnostic => "diagnostic",
+            Self::Experiment => "experiment",
+        }
+    }
 }
 
 impl RenderFrontFace {
@@ -336,6 +357,10 @@ impl RenderBackground {
 }
 
 fn run(options: Options) -> Result<(), String> {
+    if options.self_test {
+        return run_self_test();
+    }
+
     ensure_no_github_actions_workflows()?;
 
     if !options.skip_core {
@@ -380,6 +405,7 @@ fn run(options: Options) -> Result<(), String> {
     }
 
     if options.render_parity {
+        validate_render_run_mode(&options)?;
         run_render_parity_ci(&options)?;
     } else if options.render_ash_readback {
         return Err("--render-ash-readback requires --render-parity".to_owned());
@@ -388,6 +414,115 @@ fn run(options: Options) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn run_self_test() -> Result<(), String> {
+    let acceptance = Options::parse_from([
+        "local-ci",
+        "--render-parity",
+        "--render-run-mode",
+        "acceptance",
+        "--skip-core",
+        "--skip-coverage",
+    ]);
+    validate_render_run_mode(&acceptance)
+        .map_err(|err| format!("acceptance default render options should be valid: {err}"))?;
+    if !render_reference_clean(&acceptance) {
+        return Err("acceptance render runs must be marked reference-clean".to_owned());
+    }
+
+    let mut diagnostic_override = acceptance.clone();
+    diagnostic_override.render_disable_outlines = true;
+    let err = validate_render_run_mode(&diagnostic_override)
+        .expect_err("acceptance must reject outline-disable diagnostics");
+    if !err.contains("--render-disable-outlines") {
+        return Err(format!(
+            "acceptance rejection should name --render-disable-outlines, got: {err}"
+        ));
+    }
+
+    let mut diagnostic = diagnostic_override;
+    diagnostic.render_run_mode = RenderRunMode::Diagnostic;
+    validate_render_run_mode(&diagnostic)
+        .map_err(|err| format!("diagnostic mode should allow render overrides: {err}"))?;
+    if render_reference_clean(&diagnostic) {
+        return Err("diagnostic render runs must not be marked reference-clean".to_owned());
+    }
+
+    Ok(())
+}
+
+fn validate_render_run_mode(options: &Options) -> Result<(), String> {
+    if options.render_run_mode != RenderRunMode::Acceptance {
+        return Ok(());
+    }
+
+    let mut forbidden = Vec::new();
+    if options.render_disable_outlines {
+        forbidden.push("--render-disable-outlines".to_owned());
+    }
+    if non_default_f32(options.render_outline_width_scale, 1.0) {
+        forbidden.push(format!(
+            "--render-outline-width-scale {}",
+            options.render_outline_width_scale
+        ));
+    }
+    if options.render_disable_normal_maps {
+        forbidden.push("--render-disable-normal-maps".to_owned());
+    }
+    if options.render_disable_texture_mips {
+        forbidden.push("--render-disable-texture-mips".to_owned());
+    }
+    if options.render_force_nearest_textures {
+        forbidden.push("--render-force-nearest-textures".to_owned());
+    }
+    if options.render_normal_map_mode != RenderNormalMapMode::GeneratedTangents {
+        forbidden.push(format!(
+            "--render-normal-map-mode {}",
+            options.render_normal_map_mode.as_cli_value()
+        ));
+    }
+    if non_default_f32(options.render_normal_map_scale, 1.0) {
+        forbidden.push(format!(
+            "--render-normal-map-scale {}",
+            options.render_normal_map_scale
+        ));
+    }
+    if options.render_diagnostic_mode != RenderDiagnosticMode::Shaded {
+        forbidden.push(format!(
+            "--render-diagnostic-mode {}",
+            options.render_diagnostic_mode.as_cli_value()
+        ));
+    }
+    if non_default_f32(options.render_screen_jitter_x, 0.0) {
+        forbidden.push(format!(
+            "--render-screen-jitter-x {}",
+            options.render_screen_jitter_x
+        ));
+    }
+    if non_default_f32(options.render_screen_jitter_y, 0.0) {
+        forbidden.push(format!(
+            "--render-screen-jitter-y {}",
+            options.render_screen_jitter_y
+        ));
+    }
+
+    if forbidden.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "--render-run-mode acceptance forbids diagnostic/experiment render overrides: {}",
+            forbidden.join(", ")
+        ))
+    }
+}
+
+fn render_reference_clean(options: &Options) -> bool {
+    options.render_run_mode == RenderRunMode::Acceptance
+}
+
+fn non_default_f32(actual: f32, expected: f32) -> bool {
+    (actual - expected).abs() > f32::EPSILON
 }
 
 fn run_example_smokes() -> Result<(), String> {
@@ -514,6 +649,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
     for script in RENDER_TOOL_HELP_SCRIPTS {
         run_cargo_script(script, ["--help"])?;
     }
+    run_self_test()?;
     run_cmd(
         "cargo",
         [
@@ -2010,6 +2146,8 @@ fn render_summary_markdown(
         artifacts: path(&options.render_parity_dir),
         visual_review: path(&options.render_parity_dir.join("visual-review.html")),
         numeric_gate: "direct .imqraw via tools/render-parity/compare-imqraw.rs".to_owned(),
+        run_mode: options.render_run_mode.as_cli_value().to_owned(),
+        reference_clean: render_reference_clean(options),
         metric: options.render_psnr_metric.as_cli_value().to_owned(),
         background: options.render_background.as_cli_value().to_owned(),
         mtoon_light_accumulation: options
@@ -2083,6 +2221,8 @@ fn render_review_manifest_value(
         "summary": path(&options.render_parity_dir.join("summary.md")),
         "visualReview": path(&options.render_parity_dir.join("visual-review.html")),
         "numericGate": "direct .imqraw via tools/render-parity/compare-imqraw.rs",
+        "runMode": options.render_run_mode.as_cli_value(),
+        "referenceClean": render_reference_clean(options),
         "metric": options.render_psnr_metric.as_cli_value(),
         "background": options.render_background.as_cli_value(),
         "mtoonLightAccumulation": options.render_mtoon_light_accumulation.as_cli_value(),
@@ -2166,6 +2306,8 @@ struct RenderSummaryMeta {
     artifacts: String,
     visual_review: String,
     numeric_gate: String,
+    run_mode: String,
+    reference_clean: bool,
     metric: String,
     background: String,
     mtoon_light_accumulation: String,
@@ -2198,10 +2340,12 @@ fn render_summary_markdown_from_rows(
         "Generated by `cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity`.\n\n",
     );
     output.push_str(&format!(
-        "- Artifacts: `{}`\n- Visual review: `{}`\n- Numeric gate: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Diagnostic mode: `{}`\n- Owner-id phase-order policy: `{}`\n- Owner-id color source: `{}`\n- Front face: `{}`\n- Normal map mode: `{}`, scale `{:.4}`\n- Texture mips disabled: `{}`\n- Texture filtering forced nearest: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
+        "- Artifacts: `{}`\n- Visual review: `{}`\n- Numeric gate: `{}`\n- Run mode: `{}`\n- Reference clean: `{}`\n- Metric: `{}`\n- Background: `{}`\n- MToon light accumulation: `{}`\n- Diagnostic mode: `{}`\n- Owner-id phase-order policy: `{}`\n- Owner-id color source: `{}`\n- Front face: `{}`\n- Normal map mode: `{}`, scale `{:.4}`\n- Texture mips disabled: `{}`\n- Texture filtering forced nearest: `{}`\n- Alpha mismatch tolerance: `{}` pixels, channel tolerance `{}`\n\n",
         meta.artifacts,
         meta.visual_review,
         meta.numeric_gate,
+        meta.run_mode,
+        meta.reference_clean,
         meta.metric,
         meta.background,
         meta.mtoon_light_accumulation,

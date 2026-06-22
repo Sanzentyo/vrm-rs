@@ -61,6 +61,8 @@ fn validate_manifest(
     require_existing_path(manifest, base_dir, "visualReview")?;
     require_existing_path(manifest, base_dir, "artifacts")?;
     require_string(manifest, "numericGate")?;
+    require_string(manifest, "runMode")?;
+    require_bool(manifest, "referenceClean")?;
     require_string(manifest, "metric")?;
 
     let fixtures = manifest
@@ -396,6 +398,13 @@ fn require_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, Box<dyn 
         .get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{field} must be a string").into())
+}
+
+fn require_bool(value: &Value, field: &str) -> Result<bool, Box<dyn Error>> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{field} must be a boolean").into())
 }
 
 fn require_existing_path(
