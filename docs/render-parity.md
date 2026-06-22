@@ -68,6 +68,13 @@ recipes are convenience entry points. Use these first:
   the same one-environment strict intake smoke. This is a quick freshness check
   before handing the local bundle to another machine or comparing it with
   returned bundles.
+- `just render-parity-acceptance-stage-local-bundle`: copy the current
+  machine's strict accepted bundle into
+  `.external-fixtures/render-parity-acceptance-returned/local/acceptance-bundle/`
+  and run the same one-environment strict smoke through the returned-bundle
+  root. This prepares the final intake parent with the local environment as
+  one sibling; add at least one returned bundle from a distinct GPU/driver
+  environment beside it before running the final strict root command.
 - `just render-parity-goal-readiness`: summarize the current source and
   external-only evidence against the full thread goal. It checks the clean
   current HEAD, optional public GitHub visibility, VRMA parity surfaces,
@@ -196,6 +203,10 @@ parent for staging, or
 `just render-parity-acceptance-bundle-root-strict` for final accepted visual
 review evidence, to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
+The local machine can be staged into the same returned-bundle parent with
+`just render-parity-acceptance-stage-local-bundle`; after that, each external
+runner bundle should be added as another sibling directory under
+`.external-fixtures/render-parity-acceptance-returned/`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
