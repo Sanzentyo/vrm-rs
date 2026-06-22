@@ -51,6 +51,11 @@ recipes are convenience entry points. Use these first:
   `include_visual_contact_sheets=true` only when the runner produced local
   contact sheets and diff contact sheets that should travel with the otherwise
   small evidence bundle.
+- `just render-parity-acceptance-bundle-strict`: export the same portable
+  bundle, but first require an accepted current-source
+  `acceptance-signoff.md`. Use this after running
+  `just render-parity-acceptance-signoff-strict`; it prevents a runner from
+  returning a draft or unreviewed bundle as final evidence.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -147,13 +152,14 @@ gradient-interior pixels. This supports keeping the accepted local threshold at
 remaining acceptance hardening task.
 
 For that hardening task, each additional machine should run
-`just render-parity-acceptance-repeat` from the same pushed commit and keep its
-`.external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json`
-external. The runner can then run `just render-parity-acceptance-bundle` and
-transfer only the generated bundle directory instead of the full image-heavy
-artifact tree. Bring those returned bundles back as sibling directories under
-one external parent directory, then run `just render-parity-acceptance-bundle-root`
-against that parent for staging, or
+`just render-parity-acceptance-repeat` from the same pushed commit, inspect the
+generated visual review pages, then run
+`just render-parity-acceptance-signoff-strict` and
+`just render-parity-acceptance-bundle-strict`. The returned strict bundle is
+small enough to transfer instead of the full image-heavy artifact tree. Bring
+those returned bundles back as sibling directories under one external parent
+directory, then run `just render-parity-acceptance-bundle-root` against that
+parent for staging, or
 `just render-parity-acceptance-bundle-root-strict` for final accepted visual
 review evidence, to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.

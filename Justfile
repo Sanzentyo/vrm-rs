@@ -118,6 +118,10 @@ render-parity-acceptance-signoff-strict reviewer visual_notes summary=".external
 render-parity-acceptance-bundle acceptance_root=".external-fixtures/render-parity-acceptance-repeat" out_dir=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false":
     cargo +nightly -Zscript tools/render-parity/export-acceptance-evidence-bundle.rs --acceptance-root "{{ acceptance_root }}" --out-dir "{{ out_dir }}" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --apply
 
+# Export only after the runner has generated an accepted current-source visual-review signoff.
+render-parity-acceptance-bundle-strict acceptance_root=".external-fixtures/render-parity-acceptance-repeat" out_dir=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false":
+    cargo +nightly -Zscript tools/render-parity/export-acceptance-evidence-bundle.rs --acceptance-root "{{ acceptance_root }}" --out-dir "{{ out_dir }}" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --require-accepted-signoff --apply
+
 # Validate acceptance-repeat summaries collected from at least two distinct runner environments.
 render-parity-acceptance-environments summary_a summary_b extra_summaries="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --summary "{{ summary_a }}" --summary "{{ summary_b }}" {{ extra_summaries }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"

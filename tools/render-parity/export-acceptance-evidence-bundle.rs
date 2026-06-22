@@ -35,6 +35,8 @@ struct Options {
     #[arg(long)]
     include_visual_contact_sheets: bool,
     #[arg(long)]
+    require_accepted_signoff: bool,
+    #[arg(long)]
     apply: bool,
     #[arg(long, hide = true)]
     self_test: bool,
@@ -54,6 +56,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let bundle = build_bundle_plan(
         &options.acceptance_root,
         options.include_visual_contact_sheets,
+        options.require_accepted_signoff,
     )?;
     if options.apply {
         write_bundle(&bundle, &options.out_dir)?;
@@ -84,13 +87,16 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         test_summary_text(),
     )?;
     fs::write(root.join("acceptance-repeat-summary.md"), "# summary\n")?;
-    fs::write(root.join("acceptance-signoff.md"), "# signoff\n")?;
+    fs::write(
+        root.join("acceptance-signoff.md"),
+        test_accepted_signoff_text("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    )?;
     for run in ["run-1", "run-2", "run-3"] {
         fs::write(root.join(run).join("review-manifest.json"), "{}\n")?;
         fs::write(root.join(run).join("summary.md"), "# run\n")?;
     }
 
-    let plan = build_bundle_plan(&root, false)?;
+    let plan = build_bundle_plan(&root, false, false)?;
     if plan.files.len() != 9 {
         return Err(format!(
             "expected 9 files in self-test plan, got {}",
@@ -124,16 +130,40 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         ),
     )?;
     fs::remove_file(without_signoff.join("acceptance-signoff.md"))?;
-    let without_signoff_plan = build_bundle_plan(&without_signoff, false)?;
+    let without_signoff_plan = build_bundle_plan(&without_signoff, false, false)?;
     if without_signoff_plan.files.len() != 8 {
         return Err("signoff should be optional in bundle plan".into());
+    }
+    if build_bundle_plan(&without_signoff, false, true).is_ok() {
+        return Err("missing signoff should be rejected when strict export is requested".into());
+    }
+
+    fs::write(root.join("acceptance-signoff.md"), "# signoff\n")?;
+    if build_bundle_plan(&root, false, true).is_ok() {
+        return Err("draft signoff should be rejected when strict export is requested".into());
+    }
+    fs::write(
+        root.join("acceptance-signoff.md"),
+        test_accepted_signoff_text("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    )?;
+    let strict_plan = build_bundle_plan(&root, false, true)?;
+    if !strict_plan.require_accepted_signoff {
+        return Err("strict bundle plan should record accepted signoff requirement".into());
+    }
+    let strict_manifest = bundle_manifest(&strict_plan, &out)?;
+    if strict_manifest
+        .get("acceptedSignoffRequired")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err("strict bundle manifest should record acceptedSignoffRequired=true".into());
     }
 
     fs::write(
         root.join("run-1").join("visual-contact-sheet.png"),
         [137, 80, 78, 71],
     )?;
-    let visual_plan = build_bundle_plan(&root, true)?;
+    let visual_plan = build_bundle_plan(&root, true, false)?;
     if visual_plan.files.len() != 10 {
         return Err("visual contact sheets should be included when requested".into());
     }
@@ -144,7 +174,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         root.join("acceptance-repeat-summary.json"),
         serde_json::to_string(&bad_summary)?,
     )?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("summary runCount mismatch should be rejected".into());
     }
     fs::write(
@@ -158,7 +188,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         root.join("acceptance-repeat-summary.json"),
         serde_json::to_string(&artifact_mismatch)?,
     )?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("runs[].artifacts mismatch should be rejected".into());
     }
     fs::write(
@@ -167,7 +197,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     )?;
 
     fs::remove_dir_all(root.join("run-3"))?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("missing run directory should be rejected".into());
     }
     fs::create_dir_all(root.join("run-3"))?;
@@ -180,7 +210,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         root.join("acceptance-repeat-summary.json"),
         serde_json::to_string(&bad_environment)?,
     )?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("bad environmentLock should be rejected".into());
     }
     fs::write(
@@ -194,7 +224,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         root.join("acceptance-repeat-summary.json"),
         serde_json::to_string(&bad_lane)?,
     )?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("bad laneConfig should be rejected".into());
     }
     fs::write(
@@ -208,7 +238,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         root.join("acceptance-repeat-summary.json"),
         serde_json::to_string(&bad_comparison_runs)?,
     )?;
-    if build_bundle_plan(&root, false).is_ok() {
+    if build_bundle_plan(&root, false, false).is_ok() {
         return Err("comparison run mismatch should be rejected".into());
     }
     if write_bundle(&plan, &root).is_ok() {
@@ -233,6 +263,7 @@ struct BundlePlan {
     acceptance_root: PathBuf,
     summary: Value,
     files: Vec<BundleFile>,
+    require_accepted_signoff: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -245,6 +276,7 @@ struct BundleFile {
 fn build_bundle_plan(
     acceptance_root: &Path,
     include_visual_contact_sheets: bool,
+    require_accepted_signoff: bool,
 ) -> Result<BundlePlan, Box<dyn Error>> {
     let summary_path = acceptance_root.join("acceptance-repeat-summary.json");
     let summary = read_json(&summary_path)?;
@@ -266,6 +298,9 @@ fn build_bundle_plan(
         acceptance_root,
         Path::new("acceptance-signoff.md"),
     )?;
+    if require_accepted_signoff {
+        validate_accepted_signoff(acceptance_root, &summary)?;
+    }
     let run_count = required_u64(&summary, "runCount")?;
     let runs = required_array(&summary, "runs")?;
     for run_number in 1..=run_count {
@@ -298,6 +333,7 @@ fn build_bundle_plan(
         acceptance_root: acceptance_root.to_path_buf(),
         summary,
         files,
+        require_accepted_signoff,
     })
 }
 
@@ -350,6 +386,43 @@ fn validate_summary(summary: &Value) -> Result<(), Box<dyn Error>> {
         required_u64(comparison, "maxChannelDelta")?;
         required_u64(comparison, "maxAlphaMismatches")?;
         required_u64(comparison, "maxAlphaDelta")?;
+    }
+    Ok(())
+}
+
+fn validate_accepted_signoff(
+    acceptance_root: &Path,
+    summary: &Value,
+) -> Result<(), Box<dyn Error>> {
+    let path = acceptance_root.join("acceptance-signoff.md");
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("accepted signoff is missing: {}: {err}", display_path(&path)))?;
+    let source_lock = required_object_value(summary, "sourceLock", "summary")?;
+    let vrm_rs_head = required_string(source_lock, "vrmRsGitHead")?;
+    let three_vrm_head = required_string(source_lock, "threeVrmGitHead")?;
+    for needle in [
+        format!("- vrm-rs HEAD: `{vrm_rs_head}`"),
+        "- current-source gate: `required`".to_owned(),
+        format!("- three-vrm HEAD: `{three_vrm_head}`"),
+        "- numeric gate: pass".to_owned(),
+        "- visual review: accepted".to_owned(),
+        "- signoff status: complete".to_owned(),
+    ] {
+        if !text.contains(&needle) {
+            return Err(format!(
+                "accepted signoff {} is missing required line {needle:?}",
+                display_path(&path)
+            )
+            .into());
+        }
+    }
+    let reviewer_prefix = "- reviewer: `";
+    let reviewer_line = text
+        .lines()
+        .find(|line| line.starts_with(reviewer_prefix))
+        .ok_or("accepted signoff must record a reviewer")?;
+    if reviewer_line == "- reviewer: ``" {
+        return Err("accepted signoff reviewer must not be empty".into());
     }
     Ok(())
 }
@@ -553,6 +626,7 @@ fn bundle_manifest(plan: &BundlePlan, out_dir: &Path) -> Result<Value, Box<dyn E
         "bundleFormat": "vrm-rs.render-parity.acceptance-evidence.v1",
         "acceptanceRoot": display_path(&plan.acceptance_root),
         "bundleRoot": display_path(out_dir),
+        "acceptedSignoffRequired": plan.require_accepted_signoff,
         "sourceLock": required_object(&plan.summary, "sourceLock", "summary")?,
         "environmentLock": required_object(&plan.summary, "environmentLock", "summary")?,
         "runCount": required_u64(&plan.summary, "runCount")?,
@@ -700,6 +774,22 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn test_accepted_signoff_text(vrm_rs_head: &str) -> String {
+    format!(
+        "\
+# Render Parity Acceptance Signoff
+
+- vrm-rs HEAD: `{vrm_rs_head}`
+- current-source gate: `required`
+- three-vrm HEAD: `9d125586f6d7da094b0ac5f204cebf19586f2397`
+- numeric gate: pass
+- visual review: accepted
+- signoff status: complete
+- reviewer: `self-test`
+"
+    )
 }
 
 fn test_summary_text() -> String {
