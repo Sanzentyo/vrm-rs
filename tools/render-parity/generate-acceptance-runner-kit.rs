@@ -43,6 +43,7 @@ struct HandoffMeta {
     preflight_command: String,
     capture_command: String,
     finalize_command: String,
+    import_command: String,
     intake_command: String,
 }
 
@@ -109,6 +110,10 @@ fn planned_files(
             contents: return_layout(meta).into_bytes(),
         },
         PlannedFile {
+            path: out_root.join("import-command.txt"),
+            contents: format!("{}\n", meta.import_command).into_bytes(),
+        },
+        PlannedFile {
             path: out_root.join("intake-command.txt"),
             contents: format!("{}\n", meta.intake_command).into_bytes(),
         },
@@ -129,6 +134,7 @@ fn read_handoff_meta(path: &Path) -> Result<HandoffMeta, Box<dyn Error>> {
         preflight_command: required_string(&value, "preflightCommand")?.to_owned(),
         capture_command: required_string(&value, "captureCommand")?.to_owned(),
         finalize_command: required_string(&value, "finalizeCommand")?.to_owned(),
+        import_command: required_string(&value, "returnedBundleImportCommand")?.to_owned(),
         intake_command: required_string(&value, "returnedBundleIntakeCommand")?.to_owned(),
     })
 }
@@ -149,7 +155,8 @@ fn kit_readme(meta: &HandoffMeta) -> String {
          4. Inspect the generated visual-review pages, contact sheets, and diff heatmaps.\n\
          5. Finalize only after that review:\n\n\
          ```powershell\n{finalize}\n```\n\n\
-         6. Return `.external-fixtures/render-parity-acceptance-bundle/` to the main machine.\n",
+         6. Return `.external-fixtures/render-parity-acceptance-bundle/` to the main machine.\n\n\
+         On the main machine, use `import-command.txt` for each returned bundle, then use `intake-command.txt` for the final multi-environment strict gate.\n",
         repo = meta.repo_url,
         head = meta.vrm_rs_head,
         three = meta.three_vrm_head,
@@ -162,7 +169,9 @@ fn kit_readme(meta: &HandoffMeta) -> String {
 fn return_layout(meta: &HandoffMeta) -> String {
     format!(
         "# Returned Bundle Layout\n\n\
-         Put each returned strict bundle under a distinct sibling directory:\n\n\
+         Import each returned strict bundle with a distinct label:\n\n\
+         ```powershell\n{import}\n```\n\n\
+         This command validates the returned bundle, copies it into the sibling layout below, and runs a one-environment strict smoke:\n\n\
          ```text\n\
          .external-fixtures/render-parity-acceptance-returned/\n\
            local/acceptance-bundle/\n\
@@ -171,6 +180,7 @@ fn return_layout(meta: &HandoffMeta) -> String {
          Then run final strict intake:\n\n\
          ```powershell\n{intake}\n```\n\n\
          The final intake must see at least two distinct GPU/driver environment signatures.\n",
+        import = meta.import_command,
         intake = meta.intake_command,
     )
 }
@@ -208,13 +218,14 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "preflightCommand": "just render-parity-acceptance-runner-preflight aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "captureCommand": "just render-parity-acceptance-runner-capture",
             "finalizeCommand": "just render-parity-acceptance-runner-finalize-strict Codex note",
+            "returnedBundleImportCommand": "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>",
             "returnedBundleIntakeCommand": "just render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned"
         }))?,
     )?;
     let meta = read_handoff_meta(&handoff_root.join("handoff.json"))?;
     let files = planned_files(&handoff_root, &out_root, &meta)?;
-    if files.len() != 5 {
-        return Err(format!("expected 5 planned files, got {}", files.len()).into());
+    if files.len() != 6 {
+        return Err(format!("expected 6 planned files, got {}", files.len()).into());
     }
     let readme = String::from_utf8(
         files
@@ -228,6 +239,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "render-parity-acceptance-runner-preflight",
         "render-parity-acceptance-runner-finalize-strict",
+        "import-command.txt",
     ] {
         if !readme.contains(needle) {
             return Err(format!("README missing {needle:?}").into());

@@ -132,6 +132,7 @@ fn handoff_json(handoff: &Handoff) -> Value {
         "finalizeCommand": finalize_command(handoff),
         "strictRunnerCommand": strict_runner_command(handoff),
         "preparationCommands": preparation_commands(handoff),
+        "returnedBundleImportCommand": import_command(),
         "returnedBundleIntakeCommand": "just render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned",
     })
 }
@@ -167,7 +168,9 @@ fn handoff_markdown(handoff: &Handoff) -> String {
          If a runner deliberately wants the older one-command path, the equivalent command is:\n\n\
          ```powershell\n{strict_runner}\n```\n\n\
          ## Intake On The Main Machine\n\n\
-         Copy each returned strict bundle as a sibling under `.external-fixtures/render-parity-acceptance-returned/`, then run:\n\n\
+         Import each returned strict bundle with a distinct label:\n\n\
+         ```powershell\n{import}\n```\n\n\
+         This validates the returned bundle, copies it under `.external-fixtures/render-parity-acceptance-returned/<label>/acceptance-bundle/`, and runs a one-environment strict smoke. After importing the local bundle and at least one bundle from a distinct GPU/driver environment, run final strict intake:\n\n\
          ```powershell\njust render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned\n```\n",
         repo = handoff.repo_url,
         head = handoff.expected_head,
@@ -177,6 +180,7 @@ fn handoff_markdown(handoff: &Handoff) -> String {
         capture = capture_command(),
         finalize = finalize_command(handoff),
         strict_runner = strict_runner_command(handoff),
+        import = import_command(),
     )
 }
 
@@ -219,6 +223,10 @@ fn finalize_command(handoff: &Handoff) -> String {
         shell_quote(&handoff.reviewer),
         shell_quote(&handoff.visual_notes)
     )
+}
+
+fn import_command() -> &'static str {
+    "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>"
 }
 
 fn current_git_head() -> Result<String, Box<dyn Error>> {
@@ -330,6 +338,11 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     {
         return Err("handoff JSON finalize command is missing".into());
     }
+    if json.get("returnedBundleImportCommand").and_then(Value::as_str)
+        != Some("just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>")
+    {
+        return Err("handoff JSON returned bundle import command is missing".into());
+    }
     let markdown = handoff_markdown(&handoff);
     for needle in [
         "git checkout --detach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -338,6 +351,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         "just render-parity-acceptance-runner-capture",
         "just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"",
         "just render-parity-acceptance-runner-strict Codex \"Accepted local residuals\"",
+        "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>",
         "just render-parity-acceptance-bundle-root-strict",
     ] {
         if !markdown.contains(needle) {

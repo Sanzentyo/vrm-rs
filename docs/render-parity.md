@@ -110,8 +110,8 @@ recipes are convenience entry points. Use these first:
   small external-only kit under
   `.external-fixtures/render-parity-acceptance-runner-kit/`. The kit contains
   `README.md`, `handoff.{md,json}`, `RETURN_BUNDLE_LAYOUT.md`, and
-  `intake-command.txt`; it intentionally contains no fixture binaries,
-  generated images, or golden files.
+  `import-command.txt` / `intake-command.txt`; it intentionally contains no
+  fixture binaries, generated images, or golden files.
 - `just render-parity-acceptance-runner-preflight <expected-head>`: check a
   prepared external runner checkout before the long capture starts. It verifies
   Rust nightly, `just`, Node/npm, `glslangValidator`, the exact repo HEAD,

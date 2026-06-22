@@ -2,6 +2,12 @@
 
 ## 2026-06-23
 
+- Updated the source-locked acceptance handoff and runner kit generators to
+  include the returned-bundle import command as first-class evidence intake
+  guidance. The generated kit now carries `import-command.txt` beside
+  `intake-command.txt`, so external strict bundles can be validated and staged
+  through `just render-parity-acceptance-import-bundle <bundle> <label>` before
+  the final multi-environment strict root gate.
 - Added `tools/render-parity/import-acceptance-bundle.rs` and
   `just render-parity-acceptance-import-bundle` so returned strict acceptance
   bundles can be validated, copied into
