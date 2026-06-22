@@ -123,12 +123,18 @@ struct PbrTermOutputSummary {
     browser_total_srgb_actual_closer: u64,
     browser_total_srgb_expected_closer: u64,
     browser_total_srgb_tied: u64,
+    browser_total_gain_sample_count: u64,
+    mean_browser_actual_over_total_rgb: Option<[f64; 3]>,
+    mean_browser_expected_over_total_rgb: Option<[f64; 3]>,
     rust_total_srgb_sample_count: u64,
     mean_rust_total_srgb_actual_distance: Option<f64>,
     mean_rust_total_srgb_expected_distance: Option<f64>,
     rust_total_srgb_actual_closer: u64,
     rust_total_srgb_expected_closer: u64,
     rust_total_srgb_tied: u64,
+    rust_total_gain_sample_count: u64,
+    mean_rust_actual_over_total_rgb: Option<[f64; 3]>,
+    mean_rust_expected_over_total_rgb: Option<[f64; 3]>,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -147,7 +153,9 @@ struct PbrTermOutputAccumulator {
     tangent_space_normal_wgpu_compat_distance: MeanAccumulator,
     normal_source_pairs: BTreeMap<String, u64>,
     browser_total_srgb_projection: ColorProjectionAccumulator,
+    browser_total_gain: TotalGainAccumulator,
     rust_total_srgb_projection: ColorProjectionAccumulator,
+    rust_total_gain: TotalGainAccumulator,
     output_distance_sum: f64,
 }
 
@@ -165,6 +173,13 @@ struct ColorProjectionAccumulator {
     actual_closer: u64,
     expected_closer: u64,
     tied: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TotalGainAccumulator {
+    count: u64,
+    actual_over_total_sum: [f64; 3],
+    expected_over_total_sum: [f64; 3],
 }
 
 #[derive(Clone, Debug)]
@@ -814,11 +829,18 @@ impl PbrTermOutputAccumulator {
             actual_rgba,
             expected_rgba,
         );
+        self.browser_total_gain.observe(
+            browser.direct_plus_ambient_rgb,
+            actual_rgba,
+            expected_rgba,
+        );
         self.rust_total_srgb_projection.observe(
             linear_rgb_to_srgb8_rgba(rust.direct_plus_ambient_rgb),
             actual_rgba,
             expected_rgba,
         );
+        self.rust_total_gain
+            .observe(rust.direct_plus_ambient_rgb, actual_rgba, expected_rgba);
         self.output_distance_sum += output_distance;
     }
 
@@ -870,12 +892,18 @@ impl PbrTermOutputAccumulator {
             browser_total_srgb_actual_closer: self.browser_total_srgb_projection.actual_closer,
             browser_total_srgb_expected_closer: self.browser_total_srgb_projection.expected_closer,
             browser_total_srgb_tied: self.browser_total_srgb_projection.tied,
+            browser_total_gain_sample_count: self.browser_total_gain.count,
+            mean_browser_actual_over_total_rgb: self.browser_total_gain.mean_actual(),
+            mean_browser_expected_over_total_rgb: self.browser_total_gain.mean_expected(),
             rust_total_srgb_sample_count: self.rust_total_srgb_projection.count,
             mean_rust_total_srgb_actual_distance: self.rust_total_srgb_projection.mean_actual(),
             mean_rust_total_srgb_expected_distance: self.rust_total_srgb_projection.mean_expected(),
             rust_total_srgb_actual_closer: self.rust_total_srgb_projection.actual_closer,
             rust_total_srgb_expected_closer: self.rust_total_srgb_projection.expected_closer,
             rust_total_srgb_tied: self.rust_total_srgb_projection.tied,
+            rust_total_gain_sample_count: self.rust_total_gain.count,
+            mean_rust_actual_over_total_rgb: self.rust_total_gain.mean_actual(),
+            mean_rust_expected_over_total_rgb: self.rust_total_gain.mean_expected(),
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
         }
     }
@@ -932,6 +960,52 @@ impl ColorProjectionAccumulator {
     }
 }
 
+impl TotalGainAccumulator {
+    fn observe(
+        &mut self,
+        total_linear_rgb: [f64; 3],
+        actual: Option<[u64; 4]>,
+        expected: Option<[u64; 4]>,
+    ) {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return;
+        };
+        if total_linear_rgb
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 1.0e-6)
+        {
+            return;
+        }
+        let actual_linear = rgba_u64_to_linear_rgb(actual);
+        let expected_linear = rgba_u64_to_linear_rgb(expected);
+        self.count += 1;
+        for channel in 0..3 {
+            self.actual_over_total_sum[channel] +=
+                actual_linear[channel] / total_linear_rgb[channel];
+            self.expected_over_total_sum[channel] +=
+                expected_linear[channel] / total_linear_rgb[channel];
+        }
+    }
+
+    fn mean_actual(&self) -> Option<[f64; 3]> {
+        self.mean(self.actual_over_total_sum)
+    }
+
+    fn mean_expected(&self) -> Option<[f64; 3]> {
+        self.mean(self.expected_over_total_sum)
+    }
+
+    fn mean(&self, sum: [f64; 3]) -> Option<[f64; 3]> {
+        (self.count > 0).then(|| {
+            [
+                sum[0] / self.count as f64,
+                sum[1] / self.count as f64,
+                sum[2] / self.count as f64,
+            ]
+        })
+    }
+}
+
 fn linear_rgb_to_srgb8_rgba(rgb: [f64; 3]) -> [u64; 4] {
     [
         quantize_unorm8(linear_to_srgb_channel(rgb[0])) as u64,
@@ -941,12 +1015,29 @@ fn linear_rgb_to_srgb8_rgba(rgb: [f64; 3]) -> [u64; 4] {
     ]
 }
 
+fn rgba_u64_to_linear_rgb(rgba: [u64; 4]) -> [f64; 3] {
+    [
+        srgb_to_linear_channel((rgba[0].min(255) as f64) / 255.0),
+        srgb_to_linear_channel((rgba[1].min(255) as f64) / 255.0),
+        srgb_to_linear_channel((rgba[2].min(255) as f64) / 255.0),
+    ]
+}
+
 fn linear_to_srgb_channel(value: f64) -> f64 {
     let value = value.clamp(0.0, 1.0);
     if value <= 0.003_130_8 {
         12.92 * value
     } else {
         1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn srgb_to_linear_channel(value: f64) -> f64 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.040_45 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
     }
 }
 
@@ -1328,8 +1419,8 @@ fn markdown_report(report: &JoinReport) -> String {
     output.push_str(
         "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Output RGB dist |\n");
-    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1395,7 +1486,7 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
         fmt_counts_inline(&summary.normal_source_pairs),
@@ -1440,6 +1531,11 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
             summary.browser_total_srgb_expected_closer,
             summary.browser_total_srgb_tied,
         ),
+        fmt_gain_pair(
+            summary.mean_browser_actual_over_total_rgb,
+            summary.mean_browser_expected_over_total_rgb,
+            summary.browser_total_gain_sample_count,
+        ),
         fmt_projection_distances(
             summary.mean_rust_total_srgb_actual_distance,
             summary.mean_rust_total_srgb_expected_distance,
@@ -1449,6 +1545,11 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
             summary.rust_total_srgb_actual_closer,
             summary.rust_total_srgb_expected_closer,
             summary.rust_total_srgb_tied,
+        ),
+        fmt_gain_pair(
+            summary.mean_rust_actual_over_total_rgb,
+            summary.mean_rust_expected_over_total_rgb,
+            summary.rust_total_gain_sample_count,
         ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
@@ -1518,6 +1619,19 @@ fn fmt_projection_distances(actual: Option<f64>, expected: Option<f64>, count: u
 
 fn fmt_closer_counts(actual: u64, expected: u64, tied: u64) -> String {
     format!("{actual}/{expected}/{tied}")
+}
+
+fn fmt_gain_pair(actual: Option<[f64; 3]>, expected: Option<[f64; 3]>, count: u64) -> String {
+    match (actual, expected) {
+        (Some(actual), Some(expected)) => {
+            format!(
+                "{} / {} (n={count})",
+                fmt_vec3(Some(actual)),
+                fmt_vec3(Some(expected))
+            )
+        }
+        _ => format!("n/a / n/a (n={count})"),
+    }
 }
 
 fn fmt_opt_u64(value: Option<u64>) -> String {

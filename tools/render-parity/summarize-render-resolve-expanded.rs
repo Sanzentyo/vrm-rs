@@ -396,12 +396,18 @@ struct OwnerRenderPbrTermOutputSummary {
     browser_total_srgb_actual_closer: u64,
     browser_total_srgb_expected_closer: u64,
     browser_total_srgb_tied: u64,
+    browser_total_gain_sample_count: u64,
+    mean_browser_actual_over_total_rgb: Option<[f64; 3]>,
+    mean_browser_expected_over_total_rgb: Option<[f64; 3]>,
     rust_total_srgb_sample_count: u64,
     mean_rust_total_srgb_actual_distance: Option<f64>,
     mean_rust_total_srgb_expected_distance: Option<f64>,
     rust_total_srgb_actual_closer: u64,
     rust_total_srgb_expected_closer: u64,
     rust_total_srgb_tied: u64,
+    rust_total_gain_sample_count: u64,
+    mean_rust_actual_over_total_rgb: Option<[f64; 3]>,
+    mean_rust_expected_over_total_rgb: Option<[f64; 3]>,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -841,14 +847,14 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             ));
         }
         out.push('\n');
-        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal | Tangent wgpu normal | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Output RGB |\n");
+        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal | Tangent wgpu normal | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Output RGB |\n");
         out.push_str(
-            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
         );
         for join in &summary.owner_render_joins {
             for row in &join.pbr_term_outputs {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     join.renderer,
                     row.pair,
                     row.count,
@@ -894,6 +900,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                         row.browser_total_srgb_expected_closer,
                         row.browser_total_srgb_tied,
                     ),
+                    fmt_gain_pair(
+                        row.mean_browser_actual_over_total_rgb,
+                        row.mean_browser_expected_over_total_rgb,
+                        row.browser_total_gain_sample_count,
+                    ),
                     fmt_projection_distances(
                         row.mean_rust_total_srgb_actual_distance,
                         row.mean_rust_total_srgb_expected_distance,
@@ -903,6 +914,11 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                         row.rust_total_srgb_actual_closer,
                         row.rust_total_srgb_expected_closer,
                         row.rust_total_srgb_tied,
+                    ),
+                    fmt_gain_pair(
+                        row.mean_rust_actual_over_total_rgb,
+                        row.mean_rust_expected_over_total_rgb,
+                        row.rust_total_gain_sample_count,
                     ),
                     fmt_optional_pbr_distance(row.mean_output_rgb_distance),
                 ));
@@ -2019,6 +2035,19 @@ fn owner_render_pbr_term_output(
         .unwrap_or(0),
         browser_total_srgb_tied: optional_u64_path(value, &["browser_total_srgb_tied"])?
             .unwrap_or(0),
+        browser_total_gain_sample_count: optional_u64_path(
+            value,
+            &["browser_total_gain_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_browser_actual_over_total_rgb: optional_vec3_path(
+            value,
+            &["mean_browser_actual_over_total_rgb"],
+        )?,
+        mean_browser_expected_over_total_rgb: optional_vec3_path(
+            value,
+            &["mean_browser_expected_over_total_rgb"],
+        )?,
         rust_total_srgb_sample_count: optional_u64_path(value, &["rust_total_srgb_sample_count"])?
             .unwrap_or(0),
         mean_rust_total_srgb_actual_distance: optional_f64_path(
@@ -2040,6 +2069,16 @@ fn owner_render_pbr_term_output(
         )?
         .unwrap_or(0),
         rust_total_srgb_tied: optional_u64_path(value, &["rust_total_srgb_tied"])?.unwrap_or(0),
+        rust_total_gain_sample_count: optional_u64_path(value, &["rust_total_gain_sample_count"])?
+            .unwrap_or(0),
+        mean_rust_actual_over_total_rgb: optional_vec3_path(
+            value,
+            &["mean_rust_actual_over_total_rgb"],
+        )?,
+        mean_rust_expected_over_total_rgb: optional_vec3_path(
+            value,
+            &["mean_rust_expected_over_total_rgb"],
+        )?,
         mean_output_rgb_distance: optional_f64_path(value, &["mean_output_rgb_distance"])?,
     })
 }
@@ -2876,6 +2915,15 @@ fn fmt_closer_counts(actual: u64, expected: u64, tied: u64) -> String {
     format!("{actual}/{expected}/{tied}")
 }
 
+fn fmt_gain_pair(actual: Option<[f64; 3]>, expected: Option<[f64; 3]>, count: u64) -> String {
+    match (actual, expected) {
+        (Some(actual), Some(expected)) => {
+            format!("{} / {} (n={count})", fmt_vec3(actual), fmt_vec3(expected))
+        }
+        _ => format!("n/a / n/a (n={count})"),
+    }
+}
+
 fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
     value.map(fmt_vec3).unwrap_or_else(|| "n/a".to_owned())
 }
@@ -3193,12 +3241,18 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "browser_total_srgb_actual_closer": 0,
                 "browser_total_srgb_expected_closer": 2,
                 "browser_total_srgb_tied": 0,
+                "browser_total_gain_sample_count": 2,
+                "mean_browser_actual_over_total_rgb": [1.2, 1.3, 1.4],
+                "mean_browser_expected_over_total_rgb": [0.8, 0.7, 0.6],
                 "rust_total_srgb_sample_count": 2,
                 "mean_rust_total_srgb_actual_distance": 7.0,
                 "mean_rust_total_srgb_expected_distance": 4.0,
                 "rust_total_srgb_actual_closer": 0,
                 "rust_total_srgb_expected_closer": 2,
                 "rust_total_srgb_tied": 0,
+                "rust_total_gain_sample_count": 2,
+                "mean_rust_actual_over_total_rgb": [1.1, 1.2, 1.3],
+                "mean_rust_expected_over_total_rgb": [0.7, 0.6, 0.5],
                 "mean_output_rgb_distance": 52.9
             },
             "pbr_best_to_expected_term_output": {
@@ -3515,6 +3569,14 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary.owner_render_joins[0].pbr_term_outputs[0].mean_rust_total_srgb_expected_distance,
         Some(4.0)
     );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_browser_expected_over_total_rgb,
+        Some([0.8, 0.7, 0.6])
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_rust_actual_over_total_rgb,
+        Some([1.1, 1.2, 1.3])
+    );
     assert_eq!(summary.owner_render_joins[0].joined_count, Some(8));
     assert_eq!(
         summary.owner_render_joins[0].rendered_owner_matches_rust_frontmost,
@@ -3608,6 +3670,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""mean_tangent_space_normal_wgpu_compat_distance":0.002"#));
     assert!(summary_json.contains(r#""mean_browser_total_srgb_actual_distance":8.0"#));
     assert!(summary_json.contains(r#""browser_total_srgb_expected_closer":2"#));
+    assert!(summary_json.contains(r#""mean_browser_expected_over_total_rgb":[0.8,0.7,0.6]"#));
     assert!(summary_json.contains(
         r#""normal_source_pairs":{"normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space":2}"#
     ));
@@ -3624,7 +3687,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | 8 | 8 | 6 | 7 | 6 | 8 | 6 |"));
     assert!(markdown.contains("wgpu: omitted 2 zero-count PBR term output bucket(s)"));
     assert!(markdown.contains("legacy: no PBR term output objects found"));
-    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 0.0010 (n=2) | 0.0020 (n=2) | 8.0000/3.0000 (n=2) | 0/2/0 | 7.0000/4.0000 (n=2) | 0/2/0 | 52.9000 |"));
+    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 0.0010 (n=2) | 0.0020 (n=2) | 8.0000/3.0000 (n=2) | 0/2/0 | 1.20,1.30,1.40 / 0.80,0.70,0.60 (n=2) | 7.0000/4.0000 (n=2) | 0/2/0 | 1.10,1.20,1.30 / 0.70,0.60,0.50 (n=2) | 52.9000 |"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(

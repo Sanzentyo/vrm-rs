@@ -34,16 +34,21 @@
 - Added final-color projection diagnostics to the owner/render PBR join. The
   join now converts Browser and Rust `direct + ambient` PBR totals from linear
   RGB to sRGB8 and reports their mean distance to the actual Rust pixel and the
-  expected three-vrm pixel, plus actual/expected/tied closer counts. On the
-  refreshed Seed-san Browser-best to Rust-frontmost subset, the projected PBR
-  totals are closer to the actual Rust output than to three-vrm expected for
-  most rows: wgpu Browser `100.51/122.41` with closer counts `17/3/0`, Bevy
-  `98.92/114.05` with `17/5/0`, and Ash `102.84/133.39` with `21/0/0`
-  (`actual/expected` mean distances and `actual/expected/tied` counts). Rust
-  PBR totals show the same shape. This narrows the next parity target toward
-  three-vrm final material/light accumulation or post-PBR shading behavior,
-  rather than Rust sample ownership, decoded tangent normals, or raw PBR term
-  arithmetic on the comparable rows.
+  expected three-vrm pixel, plus actual/expected/tied closer counts. It also
+  reports the per-channel linear RGB gain required to map those PBR totals to
+  actual and expected pixels. On the refreshed Seed-san Browser-best to
+  Rust-frontmost subset, the projected PBR totals are closer to the actual Rust
+  output than to three-vrm expected for most rows: wgpu Browser
+  `100.51/122.41` with closer counts `17/3/0`, Bevy `98.92/114.05` with
+  `17/5/0`, and Ash `102.84/133.39` with `21/0/0` (`actual/expected` mean
+  distances and `actual/expected/tied` counts). The required Browser-total
+  gains are wgpu actual `66.54,80.36,81.74` vs expected
+  `91.26,107.79,108.81`, Bevy actual `61.26,73.77,75.48` vs expected
+  `83.05,98.09,99.02`, and Ash actual `73.51,85.15,86.75` vs expected
+  `106.49,126.54,128.28`; Rust PBR totals show the same shape. This narrows
+  the next parity target toward final material/light accumulation or post-PBR
+  shading gain behavior, rather than Rust sample ownership, decoded tangent
+  normals, or raw PBR term arithmetic on the comparable rows.
 - Wired the owner/render PBR term join into the top-level expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--owner-render-join RENDERER=PATH` inputs and emits an
