@@ -175,6 +175,10 @@ fn audit_goal_readiness(options: &Options, head: &str, repo_url: &str) -> AuditR
     let mut checks = Vec::new();
     checks.push(check_clean_worktree(options.allow_dirty));
     checks.push(check_public_repo(repo_url, options.require_public_repo));
+    checks.push(check_vrma_parity_surface());
+    checks.push(check_non_bevy_adapter_surface());
+    checks.push(check_wgpu_ash_material_examples());
+    checks.push(check_external_fixture_local_ci());
     checks.push(check_local_bundle(&options.local_bundle, head));
     checks.push(check_handoff(&options.handoff, head, repo_url));
     checks.push(check_environment_summary(
@@ -242,6 +246,147 @@ fn check_public_repo(repo_url: &str, require_public_repo: bool) -> Check {
         ),
         Err(error) => fail("public_github_repository", format!("failed to run gh: {error}")),
     }
+}
+
+fn check_vrma_parity_surface() -> Check {
+    let required_paths = [
+        Path::new("examples/headless_vrma_animation.rs"),
+        Path::new("examples/bevy_vrma_viewer.rs"),
+        Path::new("crates/vrm-adapter-wgpu/examples/vrma_viewer.rs"),
+        Path::new("docs/vrma-fixture-discovery.md"),
+    ];
+    if let Some(path) = required_paths.iter().find(|path| !path.exists()) {
+        return missing(
+            "vrma_parity_surface",
+            format!("missing required VRMA parity surface {}", display_path(path)),
+        );
+    }
+    match read_to_string(Path::new("tools/ci/local-ci.rs")) {
+        Ok(ci) => {
+            let needles = [
+                "headless_vrma_animation",
+                "bevy_vrma_viewer",
+                "vrma_viewer",
+                "--external-fixtures",
+            ];
+            if let Some(needle) = needles.iter().find(|needle| !ci.contains(*needle)) {
+                return fail(
+                    "vrma_parity_surface",
+                    format!("tools/ci/local-ci.rs does not mention {needle:?}"),
+                );
+            }
+            pass(
+                "vrma_parity_surface",
+                "headless, Bevy, and wgpu VRMA examples exist and are covered by local CI smokes",
+            )
+        }
+        Err(error) => fail("vrma_parity_surface", error.to_string()),
+    }
+}
+
+fn check_non_bevy_adapter_surface() -> Check {
+    let required_paths = [
+        Path::new("examples/custom_engine_adapter.rs"),
+        Path::new("crates/vrm-adapter-wgpu/src/lib.rs"),
+        Path::new("crates/vrm-adapter-ash/src/lib.rs"),
+    ];
+    if let Some(path) = required_paths.iter().find(|path| !path.exists()) {
+        return missing(
+            "non_bevy_engine_adapters",
+            format!("missing adapter evidence {}", display_path(path)),
+        );
+    }
+    match read_to_string(Path::new("tools/ci/local-ci.rs")) {
+        Ok(ci) if ci.contains("custom_engine_adapter") => pass(
+            "non_bevy_engine_adapters",
+            "custom engine example plus wgpu/ash adapter crates are present and checked by local CI",
+        ),
+        Ok(_) => fail(
+            "non_bevy_engine_adapters",
+            "tools/ci/local-ci.rs does not run custom_engine_adapter",
+        ),
+        Err(error) => fail("non_bevy_engine_adapters", error.to_string()),
+    }
+}
+
+fn check_wgpu_ash_material_examples() -> Check {
+    let required_paths = [
+        Path::new("examples/wgpu_mtoon_pipeline_materialization.rs"),
+        Path::new("examples/ash_mtoon_pipeline_materialization.rs"),
+        Path::new("examples/mtoon_renderer_skeletons.rs"),
+        Path::new("crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl"),
+        Path::new("crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl"),
+    ];
+    if let Some(path) = required_paths.iter().find(|path| !path.exists()) {
+        return missing(
+            "wgpu_ash_material_pipeline_examples",
+            format!("missing material pipeline evidence {}", display_path(path)),
+        );
+    }
+    match read_to_string(Path::new("tools/ci/local-ci.rs")) {
+        Ok(ci) => {
+            let needles = [
+                "wgpu_mtoon_pipeline_materialization",
+                "ash_mtoon_pipeline_materialization",
+                "mtoon_renderer_skeletons",
+            ];
+            if let Some(needle) = needles.iter().find(|needle| !ci.contains(*needle)) {
+                return fail(
+                    "wgpu_ash_material_pipeline_examples",
+                    format!("tools/ci/local-ci.rs does not run {needle:?}"),
+                );
+            }
+            pass(
+                "wgpu_ash_material_pipeline_examples",
+                "wgpu/ash MToon materialization examples and Ash shader handoff are present and checked",
+            )
+        }
+        Err(error) => fail("wgpu_ash_material_pipeline_examples", error.to_string()),
+    }
+}
+
+fn check_external_fixture_local_ci() -> Check {
+    if github_actions_workflows_present() {
+        return fail(
+            "optional_external_fixture_local_ci",
+            ".github/workflows contains workflow files, but this repository should use local Rust CI",
+        );
+    }
+    let required_paths = [
+        Path::new("tools/ci/local-ci.rs"),
+        Path::new("Justfile"),
+        Path::new("docs/render-parity.md"),
+    ];
+    if let Some(path) = required_paths.iter().find(|path| !path.exists()) {
+        return missing(
+            "optional_external_fixture_local_ci",
+            format!("missing local CI evidence {}", display_path(path)),
+        );
+    }
+    let ci = match read_to_string(Path::new("tools/ci/local-ci.rs")) {
+        Ok(ci) => ci,
+        Err(error) => return fail("optional_external_fixture_local_ci", error.to_string()),
+    };
+    let justfile = match read_to_string(Path::new("Justfile")) {
+        Ok(justfile) => justfile,
+        Err(error) => return fail("optional_external_fixture_local_ci", error.to_string()),
+    };
+    if !ci.contains("--external-fixtures") {
+        return fail(
+            "optional_external_fixture_local_ci",
+            "tools/ci/local-ci.rs does not expose --external-fixtures",
+        );
+    }
+    if !justfile.contains("ci-external:") {
+        return fail(
+            "optional_external_fixture_local_ci",
+            "Justfile does not expose ci-external",
+        );
+    }
+    pass(
+        "optional_external_fixture_local_ci",
+        "local Rust CI exposes external fixtures and no GitHub Actions workflows are present",
+    )
 }
 
 fn check_local_bundle(bundle: &Path, head: &str) -> Check {
@@ -434,6 +579,29 @@ fn read_json(path: &Path) -> Result<Value, Box<dyn Error>> {
     serde_json::from_str(&text).map_err(|error| format!("{}: {error}", display_path(path)).into())
 }
 
+fn read_to_string(path: &Path) -> Result<String, Box<dyn Error>> {
+    fs::read_to_string(path).map_err(|error| format!("{}: {error}", display_path(path)).into())
+}
+
+fn github_actions_workflows_present() -> bool {
+    let workflows = Path::new(".github").join("workflows");
+    fs::read_dir(workflows)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .any(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("yml")
+                            || extension.eq_ignore_ascii_case("yaml")
+                    })
+        })
+}
+
 fn write_json(path: &Path, value: &Value) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -581,11 +749,42 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "sourceLock": {"vrmRsGitHead": head}
         }),
     )?;
+    fs::create_dir_all(root.join("examples"))?;
+    fs::create_dir_all(root.join("crates/vrm-adapter-wgpu/examples"))?;
+    fs::create_dir_all(root.join("crates/vrm-adapter-wgpu/src"))?;
+    fs::create_dir_all(root.join("crates/vrm-adapter-ash/src"))?;
+    fs::create_dir_all(root.join("crates/vrm-adapter-ash/shaders"))?;
+    fs::create_dir_all(root.join("docs"))?;
+    fs::create_dir_all(root.join("tools/ci"))?;
+    for path in [
+        "examples/headless_vrma_animation.rs",
+        "examples/bevy_vrma_viewer.rs",
+        "examples/custom_engine_adapter.rs",
+        "examples/wgpu_mtoon_pipeline_materialization.rs",
+        "examples/ash_mtoon_pipeline_materialization.rs",
+        "examples/mtoon_renderer_skeletons.rs",
+        "crates/vrm-adapter-wgpu/examples/vrma_viewer.rs",
+        "crates/vrm-adapter-wgpu/src/lib.rs",
+        "crates/vrm-adapter-ash/src/lib.rs",
+        "crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl",
+        "crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl",
+        "docs/vrma-fixture-discovery.md",
+        "docs/render-parity.md",
+    ] {
+        fs::write(root.join(path), "")?;
+    }
+    fs::write(
+        root.join("tools/ci/local-ci.rs"),
+        "headless_vrma_animation bevy_vrma_viewer vrma_viewer --external-fixtures custom_engine_adapter wgpu_mtoon_pipeline_materialization ash_mtoon_pipeline_materialization mtoon_renderer_skeletons",
+    )?;
+    fs::write(root.join("Justfile"), "ci-external:\n")?;
 
+    let original_dir = std::env::current_dir()?;
+    std::env::set_current_dir(&root)?;
     let options = Options {
-        local_bundle: bundle,
-        handoff,
-        environment_summary: env_summary,
+        local_bundle: PathBuf::from("bundle"),
+        handoff: PathBuf::from("handoff.json"),
+        environment_summary: PathBuf::from("environment-summary.json"),
         min_environments: 2,
         expected_comparisons: 2,
         require_public_repo: false,
@@ -596,11 +795,8 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         markdown_out: None,
         self_test: false,
     };
-    let report = audit_goal_readiness(
-        &options,
-        head,
-        "https://github.com/Sanzentyo/vrm-rs.git",
-    );
+    let report = audit_goal_readiness(&options, head, "https://github.com/Sanzentyo/vrm-rs.git");
+    std::env::set_current_dir(original_dir)?;
     if !report.is_complete() {
         return Err(format!("expected complete self-test report: {}", report.to_markdown()).into());
     }
@@ -608,6 +804,10 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     for needle in [
         "Render Parity Goal Readiness",
         "current_strict_acceptance_bundle",
+        "vrma_parity_surface",
+        "non_bevy_engine_adapters",
+        "wgpu_ash_material_pipeline_examples",
+        "optional_external_fixture_local_ci",
         "multi_environment_strict_acceptance",
         "complete: `true`",
     ] {
