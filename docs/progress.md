@@ -2,6 +2,14 @@
 
 ## 2026-06-23
 
+- Extended `tools/render-parity/import-acceptance-bundle.rs` so returned
+  strict evidence can arrive either as a bundle directory or as a `.zip`.
+  Zip imports are dry-run safe, locate the unique `bundle-manifest.json` root,
+  reject non-enclosed entries through the `zip` crate path API, unpack only the
+  selected bundle subtree into `target/`, and then reuse the same strict bundle
+  and returned-root validators. Handoff and runner-kit text now advertise
+  `<returned-bundle-path-or-zip>` so external runner returns can be archived
+  without manual staging.
 - Updated the source-locked acceptance handoff and runner kit generators to
   include the returned-bundle import command as first-class evidence intake
   guidance. The generated kit now carries `import-command.txt` beside

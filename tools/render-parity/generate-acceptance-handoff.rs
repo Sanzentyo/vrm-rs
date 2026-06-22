@@ -170,7 +170,7 @@ fn handoff_markdown(handoff: &Handoff) -> String {
          ## Intake On The Main Machine\n\n\
          Import each returned strict bundle with a distinct label:\n\n\
          ```powershell\n{import}\n```\n\n\
-         This validates the returned bundle, copies it under `.external-fixtures/render-parity-acceptance-returned/<label>/acceptance-bundle/`, and runs a one-environment strict smoke. After importing the local bundle and at least one bundle from a distinct GPU/driver environment, run final strict intake:\n\n\
+         This validates the returned bundle directory or `.zip`, copies it under `.external-fixtures/render-parity-acceptance-returned/<label>/acceptance-bundle/`, and runs a one-environment strict smoke. After importing the local bundle and at least one bundle from a distinct GPU/driver environment, run final strict intake:\n\n\
          ```powershell\njust render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned\n```\n",
         repo = handoff.repo_url,
         head = handoff.expected_head,
@@ -226,7 +226,7 @@ fn finalize_command(handoff: &Handoff) -> String {
 }
 
 fn import_command() -> &'static str {
-    "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>"
+    "just render-parity-acceptance-import-bundle <returned-bundle-path-or-zip> <runner-label>"
 }
 
 fn current_git_head() -> Result<String, Box<dyn Error>> {
@@ -339,7 +339,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         return Err("handoff JSON finalize command is missing".into());
     }
     if json.get("returnedBundleImportCommand").and_then(Value::as_str)
-        != Some("just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>")
+        != Some("just render-parity-acceptance-import-bundle <returned-bundle-path-or-zip> <runner-label>")
     {
         return Err("handoff JSON returned bundle import command is missing".into());
     }
@@ -351,7 +351,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         "just render-parity-acceptance-runner-capture",
         "just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"",
         "just render-parity-acceptance-runner-strict Codex \"Accepted local residuals\"",
-        "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>",
+        "just render-parity-acceptance-import-bundle <returned-bundle-path-or-zip> <runner-label>",
         "just render-parity-acceptance-bundle-root-strict",
     ] {
         if !markdown.contains(needle) {

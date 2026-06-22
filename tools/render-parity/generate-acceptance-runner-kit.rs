@@ -171,7 +171,7 @@ fn return_layout(meta: &HandoffMeta) -> String {
         "# Returned Bundle Layout\n\n\
          Import each returned strict bundle with a distinct label:\n\n\
          ```powershell\n{import}\n```\n\n\
-         This command validates the returned bundle, copies it into the sibling layout below, and runs a one-environment strict smoke:\n\n\
+         This command validates the returned bundle directory or `.zip`, copies it into the sibling layout below, and runs a one-environment strict smoke:\n\n\
          ```text\n\
          .external-fixtures/render-parity-acceptance-returned/\n\
            local/acceptance-bundle/\n\
@@ -218,7 +218,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "preflightCommand": "just render-parity-acceptance-runner-preflight aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "captureCommand": "just render-parity-acceptance-runner-capture",
             "finalizeCommand": "just render-parity-acceptance-runner-finalize-strict Codex note",
-            "returnedBundleImportCommand": "just render-parity-acceptance-import-bundle <returned-bundle-path> <runner-label>",
+            "returnedBundleImportCommand": "just render-parity-acceptance-import-bundle <returned-bundle-path-or-zip> <runner-label>",
             "returnedBundleIntakeCommand": "just render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned"
         }))?,
     )?;
