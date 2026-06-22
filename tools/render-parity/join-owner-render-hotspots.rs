@@ -126,6 +126,12 @@ struct PbrTermOutputSummary {
     browser_total_gain_sample_count: u64,
     mean_browser_actual_over_total_rgb: Option<[f64; 3]>,
     mean_browser_expected_over_total_rgb: Option<[f64; 3]>,
+    browser_light_fit_sample_count: u64,
+    browser_actual_direct_scale_rgb: Option<[f64; 3]>,
+    browser_actual_ambient_scale_rgb: Option<[f64; 3]>,
+    browser_expected_direct_scale_rgb: Option<[f64; 3]>,
+    browser_expected_ambient_scale_rgb: Option<[f64; 3]>,
+    browser_light_fit_min_normalized_determinant: Option<f64>,
     rust_total_srgb_sample_count: u64,
     mean_rust_total_srgb_actual_distance: Option<f64>,
     mean_rust_total_srgb_expected_distance: Option<f64>,
@@ -135,6 +141,12 @@ struct PbrTermOutputSummary {
     rust_total_gain_sample_count: u64,
     mean_rust_actual_over_total_rgb: Option<[f64; 3]>,
     mean_rust_expected_over_total_rgb: Option<[f64; 3]>,
+    rust_light_fit_sample_count: u64,
+    rust_actual_direct_scale_rgb: Option<[f64; 3]>,
+    rust_actual_ambient_scale_rgb: Option<[f64; 3]>,
+    rust_expected_direct_scale_rgb: Option<[f64; 3]>,
+    rust_expected_ambient_scale_rgb: Option<[f64; 3]>,
+    rust_light_fit_min_normalized_determinant: Option<f64>,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -154,8 +166,10 @@ struct PbrTermOutputAccumulator {
     normal_source_pairs: BTreeMap<String, u64>,
     browser_total_srgb_projection: ColorProjectionAccumulator,
     browser_total_gain: TotalGainAccumulator,
+    browser_light_fit: LightFitAccumulator,
     rust_total_srgb_projection: ColorProjectionAccumulator,
     rust_total_gain: TotalGainAccumulator,
+    rust_light_fit: LightFitAccumulator,
     output_distance_sum: f64,
 }
 
@@ -180,6 +194,34 @@ struct TotalGainAccumulator {
     count: u64,
     actual_over_total_sum: [f64; 3],
     expected_over_total_sum: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DirectAmbientFit {
+    direct_scale_rgb: [f64; 3],
+    ambient_scale_rgb: [f64; 3],
+}
+
+#[derive(Clone, Debug, Default)]
+struct LightFitAccumulator {
+    count: u64,
+    actual: DirectAmbientFitAccumulator,
+    expected: DirectAmbientFitAccumulator,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DirectAmbientFitAccumulator {
+    count: u64,
+    channels: [DirectAmbientChannelFit; 3],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DirectAmbientChannelFit {
+    direct_direct: f64,
+    direct_ambient: f64,
+    ambient_ambient: f64,
+    direct_target: f64,
+    ambient_target: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -834,6 +876,12 @@ impl PbrTermOutputAccumulator {
             actual_rgba,
             expected_rgba,
         );
+        self.browser_light_fit.observe(
+            browser.direct_rgb,
+            browser.ambient_rgb,
+            actual_rgba,
+            expected_rgba,
+        );
         self.rust_total_srgb_projection.observe(
             linear_rgb_to_srgb8_rgba(rust.direct_plus_ambient_rgb),
             actual_rgba,
@@ -841,6 +889,12 @@ impl PbrTermOutputAccumulator {
         );
         self.rust_total_gain
             .observe(rust.direct_plus_ambient_rgb, actual_rgba, expected_rgba);
+        self.rust_light_fit.observe(
+            rust.direct_rgb,
+            rust.ambient_rgb,
+            actual_rgba,
+            expected_rgba,
+        );
         self.output_distance_sum += output_distance;
     }
 
@@ -895,6 +949,26 @@ impl PbrTermOutputAccumulator {
             browser_total_gain_sample_count: self.browser_total_gain.count,
             mean_browser_actual_over_total_rgb: self.browser_total_gain.mean_actual(),
             mean_browser_expected_over_total_rgb: self.browser_total_gain.mean_expected(),
+            browser_light_fit_sample_count: self.browser_light_fit.count,
+            browser_actual_direct_scale_rgb: self
+                .browser_light_fit
+                .actual_fit()
+                .map(|fit| fit.direct_scale_rgb),
+            browser_actual_ambient_scale_rgb: self
+                .browser_light_fit
+                .actual_fit()
+                .map(|fit| fit.ambient_scale_rgb),
+            browser_expected_direct_scale_rgb: self
+                .browser_light_fit
+                .expected_fit()
+                .map(|fit| fit.direct_scale_rgb),
+            browser_expected_ambient_scale_rgb: self
+                .browser_light_fit
+                .expected_fit()
+                .map(|fit| fit.ambient_scale_rgb),
+            browser_light_fit_min_normalized_determinant: self
+                .browser_light_fit
+                .min_normalized_determinant(),
             rust_total_srgb_sample_count: self.rust_total_srgb_projection.count,
             mean_rust_total_srgb_actual_distance: self.rust_total_srgb_projection.mean_actual(),
             mean_rust_total_srgb_expected_distance: self.rust_total_srgb_projection.mean_expected(),
@@ -904,6 +978,26 @@ impl PbrTermOutputAccumulator {
             rust_total_gain_sample_count: self.rust_total_gain.count,
             mean_rust_actual_over_total_rgb: self.rust_total_gain.mean_actual(),
             mean_rust_expected_over_total_rgb: self.rust_total_gain.mean_expected(),
+            rust_light_fit_sample_count: self.rust_light_fit.count,
+            rust_actual_direct_scale_rgb: self
+                .rust_light_fit
+                .actual_fit()
+                .map(|fit| fit.direct_scale_rgb),
+            rust_actual_ambient_scale_rgb: self
+                .rust_light_fit
+                .actual_fit()
+                .map(|fit| fit.ambient_scale_rgb),
+            rust_expected_direct_scale_rgb: self
+                .rust_light_fit
+                .expected_fit()
+                .map(|fit| fit.direct_scale_rgb),
+            rust_expected_ambient_scale_rgb: self
+                .rust_light_fit
+                .expected_fit()
+                .map(|fit| fit.ambient_scale_rgb),
+            rust_light_fit_min_normalized_determinant: self
+                .rust_light_fit
+                .min_normalized_determinant(),
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
         }
     }
@@ -1003,6 +1097,123 @@ impl TotalGainAccumulator {
                 sum[2] / self.count as f64,
             ]
         })
+    }
+}
+
+impl LightFitAccumulator {
+    fn observe(
+        &mut self,
+        direct_rgb: [f64; 3],
+        ambient_rgb: [f64; 3],
+        actual: Option<[u64; 4]>,
+        expected: Option<[u64; 4]>,
+    ) {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return;
+        };
+        if direct_rgb
+            .iter()
+            .chain(ambient_rgb.iter())
+            .any(|value| !value.is_finite())
+        {
+            return;
+        }
+        self.count += 1;
+        self.actual
+            .observe(direct_rgb, ambient_rgb, rgba_u64_to_linear_rgb(actual));
+        self.expected
+            .observe(direct_rgb, ambient_rgb, rgba_u64_to_linear_rgb(expected));
+    }
+
+    fn actual_fit(&self) -> Option<DirectAmbientFit> {
+        self.actual.fit()
+    }
+
+    fn expected_fit(&self) -> Option<DirectAmbientFit> {
+        self.expected.fit()
+    }
+
+    fn min_normalized_determinant(&self) -> Option<f64> {
+        self.actual.min_normalized_determinant()
+    }
+}
+
+impl DirectAmbientFitAccumulator {
+    fn observe(&mut self, direct_rgb: [f64; 3], ambient_rgb: [f64; 3], target_rgb: [f64; 3]) {
+        if direct_rgb
+            .iter()
+            .chain(ambient_rgb.iter())
+            .chain(target_rgb.iter())
+            .any(|value| !value.is_finite())
+        {
+            return;
+        }
+        self.count += 1;
+        for channel in 0..3 {
+            self.channels[channel].observe(
+                direct_rgb[channel],
+                ambient_rgb[channel],
+                target_rgb[channel],
+            );
+        }
+    }
+
+    fn fit(&self) -> Option<DirectAmbientFit> {
+        let mut direct_scale_rgb = [0.0; 3];
+        let mut ambient_scale_rgb = [0.0; 3];
+        for channel in 0..3 {
+            let (direct_scale, ambient_scale) = self.channels[channel].fit()?;
+            direct_scale_rgb[channel] = direct_scale;
+            ambient_scale_rgb[channel] = ambient_scale;
+        }
+        Some(DirectAmbientFit {
+            direct_scale_rgb,
+            ambient_scale_rgb,
+        })
+    }
+
+    fn min_normalized_determinant(&self) -> Option<f64> {
+        (self.count > 0).then(|| {
+            self.channels
+                .iter()
+                .map(DirectAmbientChannelFit::normalized_determinant)
+                .fold(f64::INFINITY, f64::min)
+        })
+    }
+}
+
+impl DirectAmbientChannelFit {
+    fn observe(&mut self, direct: f64, ambient: f64, target: f64) {
+        self.direct_direct += direct * direct;
+        self.direct_ambient += direct * ambient;
+        self.ambient_ambient += ambient * ambient;
+        self.direct_target += direct * target;
+        self.ambient_target += ambient * target;
+    }
+
+    fn fit(&self) -> Option<(f64, f64)> {
+        let determinant =
+            self.direct_direct * self.ambient_ambient - self.direct_ambient * self.direct_ambient;
+        if determinant.abs() <= 1.0e-12 {
+            return None;
+        }
+        let direct_scale = (self.direct_target * self.ambient_ambient
+            - self.ambient_target * self.direct_ambient)
+            / determinant;
+        let ambient_scale = (self.direct_direct * self.ambient_target
+            - self.direct_ambient * self.direct_target)
+            / determinant;
+        Some((direct_scale, ambient_scale))
+    }
+
+    fn normalized_determinant(&self) -> f64 {
+        let scale = self.direct_direct * self.ambient_ambient;
+        if scale <= 1.0e-24 {
+            return 0.0;
+        }
+        let determinant =
+            self.direct_direct * self.ambient_ambient - self.direct_ambient * self.direct_ambient;
+        (determinant.abs() / scale).clamp(0.0, 1.0)
     }
 }
 
@@ -1419,8 +1630,8 @@ fn markdown_report(report: &JoinReport) -> String {
     output.push_str(
         "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Output RGB dist |\n");
-    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Browser total sRGB -> actual/expected | Browser total closer A/E/T | Browser gain actual/expected | Browser fit direct/ambient actual | Browser fit direct/ambient expected | Rust total sRGB -> actual/expected | Rust total closer A/E/T | Rust gain actual/expected | Rust fit direct/ambient actual | Rust fit direct/ambient expected | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1486,7 +1697,7 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
         fmt_counts_inline(&summary.normal_source_pairs),
@@ -1536,6 +1747,18 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
             summary.mean_browser_expected_over_total_rgb,
             summary.browser_total_gain_sample_count,
         ),
+        fmt_fit_pair(
+            summary.browser_actual_direct_scale_rgb,
+            summary.browser_actual_ambient_scale_rgb,
+            summary.browser_light_fit_sample_count,
+            summary.browser_light_fit_min_normalized_determinant,
+        ),
+        fmt_fit_pair(
+            summary.browser_expected_direct_scale_rgb,
+            summary.browser_expected_ambient_scale_rgb,
+            summary.browser_light_fit_sample_count,
+            summary.browser_light_fit_min_normalized_determinant,
+        ),
         fmt_projection_distances(
             summary.mean_rust_total_srgb_actual_distance,
             summary.mean_rust_total_srgb_expected_distance,
@@ -1550,6 +1773,18 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
             summary.mean_rust_actual_over_total_rgb,
             summary.mean_rust_expected_over_total_rgb,
             summary.rust_total_gain_sample_count,
+        ),
+        fmt_fit_pair(
+            summary.rust_actual_direct_scale_rgb,
+            summary.rust_actual_ambient_scale_rgb,
+            summary.rust_light_fit_sample_count,
+            summary.rust_light_fit_min_normalized_determinant,
+        ),
+        fmt_fit_pair(
+            summary.rust_expected_direct_scale_rgb,
+            summary.rust_expected_ambient_scale_rgb,
+            summary.rust_light_fit_sample_count,
+            summary.rust_light_fit_min_normalized_determinant,
         ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
@@ -1634,6 +1869,30 @@ fn fmt_gain_pair(actual: Option<[f64; 3]>, expected: Option<[f64; 3]>, count: u6
     }
 }
 
+fn fmt_fit_pair(
+    direct: Option<[f64; 3]>,
+    ambient: Option<[f64; 3]>,
+    count: u64,
+    min_normalized_determinant: Option<f64>,
+) -> String {
+    if count == 0 {
+        return "n/a".to_owned();
+    }
+    let determinant = min_normalized_determinant
+        .map(|value| format!(", det={value:.4}"))
+        .unwrap_or_default();
+    match (direct, ambient) {
+        (Some(direct), Some(ambient)) => format!(
+            "{} / {} (n={}{})",
+            fmt_vec3(Some(direct)),
+            fmt_vec3(Some(ambient)),
+            count,
+            determinant
+        ),
+        _ => format!("singular (n={count}{determinant})"),
+    }
+}
+
 fn fmt_opt_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "n/a".to_owned(), |value| value.to_string())
 }
@@ -1705,6 +1964,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(basis_summary
         .mean_shading_normal_three_js_rust_space_distance
         .is_some_and(|distance| distance.abs() < 1e-12));
+    let mut light_fit = DirectAmbientFitAccumulator::default();
+    light_fit.observe([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [2.0, 3.0, 4.0]);
+    light_fit.observe([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [5.0, 6.0, 7.0]);
+    let light_fit = light_fit
+        .fit()
+        .ok_or("self-test direct/ambient light fit was singular")?;
+    assert_eq!(light_fit.direct_scale_rgb, [2.0, 3.0, 4.0]);
+    assert_eq!(light_fit.ambient_scale_rgb, [5.0, 6.0, 7.0]);
     let owner = serde_json::from_str::<Value>(
         r#"{
             "reference": {"renderer": {"diagnosticHotspots": {"top": [{
@@ -1911,6 +2178,20 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 .mean_rust_total_srgb_expected_distance
         )
         .is_some_and(|(actual, expected)| actual > expected));
+    assert_eq!(
+        report
+            .pbr_best_to_expected_term_output
+            .browser_light_fit_sample_count,
+        1
+    );
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .browser_actual_direct_scale_rgb
+        .is_none());
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .rust_expected_ambient_scale_rgb
+        .is_none());
     assert!(report
         .pbr_best_to_expected_term_output
         .mean_shading_normal_three_js_distance
@@ -1950,6 +2231,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser 3js normal raw -> Rust shade"));
     assert!(markdown.contains("Browser 3js normal Rust-space -> Rust shade"));
     assert!(markdown.contains("Tangent wgpu normal dist"));
+    assert!(markdown.contains("Browser fit direct/ambient actual"));
+    assert!(markdown.contains("singular (n=1"));
     assert!(markdown.contains(
         "| Browser best -> Rust expected-best | 1 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
     ));
@@ -1986,6 +2269,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .mean_tangent_space_normal_three_js_distance
         .is_none());
     assert_eq!(legacy_summary.browser_total_srgb_sample_count, 0);
+    assert_eq!(legacy_summary.browser_light_fit_sample_count, 0);
     assert!(legacy_summary
         .mean_direct_rgb_distance
         .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));
