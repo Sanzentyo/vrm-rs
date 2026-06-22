@@ -39,6 +39,21 @@ recipes are convenience entry points. Use these first:
   require accepted visual-review metadata, including a reviewer and note. This
   is the final local command for turning a numeric calibration draft into a
   signed-off artifact.
+- `just render-parity-acceptance-environments`: validate acceptance-repeat
+  summaries gathered from multiple runner environments. Pass at least two
+  summary paths, and put any additional summaries in the optional third
+  parameter as repeated `--summary` arguments, for example:
+
+  ```powershell
+  just render-parity-acceptance-environments .external-fixtures/env-a/acceptance-repeat-summary.json .external-fixtures/env-b/acceptance-repeat-summary.json
+  just render-parity-acceptance-environments .external-fixtures/env-a/acceptance-repeat-summary.json .external-fixtures/env-b/acceptance-repeat-summary.json '--summary .external-fixtures/env-c/acceptance-repeat-summary.json'
+  ```
+
+  The underlying Rust script requires at least two distinct GPU/driver
+  environment signatures derived from `environmentLock`, the same source lock,
+  the same reference-clean acceptance lane config, the same fixture signatures,
+  the same comparison set, at least three runs per environment,
+  `rgb-visible >= 34 dB`, and exact alpha mismatch / alpha-delta parity.
 
 ## Current Local Acceptance Evidence
 
@@ -69,6 +84,13 @@ the shared nonblack 3px edge band, `13` coverage-only pixels, and `8`
 gradient-interior pixels. This supports keeping the accepted local threshold at
 `rgb-visible >= 34 dB` while leaving broader multi-GPU repeat evidence as the
 remaining acceptance hardening task.
+
+For that hardening task, each additional machine should run
+`just render-parity-acceptance-repeat` from the same pushed commit and keep its
+`.external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json`
+external. Bring those JSON summaries back under separate external directories
+and run `just render-parity-acceptance-environments` to produce
+`.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
