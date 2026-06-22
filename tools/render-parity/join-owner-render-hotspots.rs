@@ -110,6 +110,9 @@ struct PbrTermOutputSummary {
     mean_shading_normal_three_js_distance: Option<f64>,
     shading_normal_wgpu_compat_sample_count: u64,
     mean_shading_normal_wgpu_compat_distance: Option<f64>,
+    shading_normal_three_js_rust_space_sample_count: u64,
+    mean_shading_normal_three_js_rust_space_distance: Option<f64>,
+    normal_source_pairs: BTreeMap<String, u64>,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -123,6 +126,8 @@ struct PbrTermOutputAccumulator {
     total_distance_sum: f64,
     shading_normal_three_js_distance: MeanAccumulator,
     shading_normal_wgpu_compat_distance: MeanAccumulator,
+    shading_normal_three_js_rust_space_distance: MeanAccumulator,
+    normal_source_pairs: BTreeMap<String, u64>,
     output_distance_sum: f64,
 }
 
@@ -132,8 +137,9 @@ struct MeanAccumulator {
     sum: f64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct PbrTermSample {
+    normal_source: Option<String>,
     diffuse_lobe_rgb: Option<[f64; 3]>,
     specular_lobe_rgb: Option<[f64; 3]>,
     direct_rgb: [f64; 3],
@@ -740,6 +746,19 @@ impl PbrTermOutputAccumulator {
             .observe_pair(browser.shading_normal_three_js, rust.shading_normal);
         self.shading_normal_wgpu_compat_distance
             .observe_pair(browser.shading_normal_wgpu_compat, rust.shading_normal);
+        self.shading_normal_three_js_rust_space_distance
+            .observe_pair(
+                browser
+                    .shading_normal_three_js
+                    .map(browser_normal_to_rust_space),
+                rust.shading_normal,
+            );
+        let browser_source = browser.normal_source.as_deref().unwrap_or("n/a");
+        let rust_source = rust.normal_source.as_deref().unwrap_or("n/a");
+        *self
+            .normal_source_pairs
+            .entry(format!("{browser_source} -> {rust_source}"))
+            .or_insert(0) += 1;
         self.output_distance_sum += output_distance;
     }
 
@@ -762,9 +781,20 @@ impl PbrTermOutputAccumulator {
             mean_shading_normal_wgpu_compat_distance: self
                 .shading_normal_wgpu_compat_distance
                 .mean(),
+            shading_normal_three_js_rust_space_sample_count: self
+                .shading_normal_three_js_rust_space_distance
+                .count,
+            mean_shading_normal_three_js_rust_space_distance: self
+                .shading_normal_three_js_rust_space_distance
+                .mean(),
+            normal_source_pairs: self.normal_source_pairs,
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
         }
     }
+}
+
+fn browser_normal_to_rust_space(normal: [f64; 3]) -> [f64; 3] {
+    [-normal[0], normal[1], -normal[2]]
 }
 
 impl MeanAccumulator {
@@ -783,6 +813,7 @@ impl MeanAccumulator {
 fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
+        normal_source: value_string_path(terms, "normalSource"),
         diffuse_lobe_rgb: value_vec3_path(terms, "diffuseLobeRgb"),
         specular_lobe_rgb: value_vec3_path(terms, "specularLobeRgb"),
         direct_rgb: value_vec3_path(terms, "directRgb")?,
@@ -797,6 +828,7 @@ fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
 fn rust_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
+        normal_source: value_string_path(terms, "normal_source"),
         diffuse_lobe_rgb: value_vec3_path(terms, "diffuse_lobe_rgb"),
         specular_lobe_rgb: value_vec3_path(terms, "specular_lobe_rgb"),
         direct_rgb: value_vec3_path(terms, "direct_rgb")?,
@@ -1005,6 +1037,10 @@ fn value_f64_path(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
 
+fn value_string_path(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
 fn value_vec2_path(value: &Value, key: &str) -> Option<[f64; 2]> {
     let values = value.get(key)?.as_array()?;
     Some([values.first()?.as_f64()?, values.get(1)?.as_f64()?])
@@ -1139,10 +1175,10 @@ fn markdown_report(report: &JoinReport) -> String {
     );
     output.push_str("## Same-Surface PBR Term vs Output Residual\n\n");
     output.push_str(
-        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; read lobe/direct distances together with the normal columns because Browser terms are emitted from the browser/three.js diagnostic convention while Rust terms use the current Rust shading-normal convention.\n\n",
+        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Read the normal source-pair column before treating the basis-adjusted distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal -> Rust shade | Browser wgpu normal -> Rust shade | Output RGB dist |\n");
-    output.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1208,9 +1244,10 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
+        fmt_counts_inline(&summary.normal_source_pairs),
         fmt_mean_with_count(
             summary.mean_diffuse_lobe_rgb_distance,
             summary.diffuse_lobe_sample_count,
@@ -1229,6 +1266,10 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
         fmt_mean_with_count(
             summary.mean_shading_normal_wgpu_compat_distance,
             summary.shading_normal_wgpu_compat_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_shading_normal_three_js_rust_space_distance,
+            summary.shading_normal_three_js_rust_space_sample_count,
         ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
@@ -1293,6 +1334,17 @@ fn fmt_opt_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "n/a".to_owned(), |value| value.to_string())
 }
 
+fn fmt_counts_inline(counts: &BTreeMap<String, u64>) -> String {
+    if counts.is_empty() {
+        return "n/a".to_owned();
+    }
+    counts
+        .iter()
+        .map(|(key, count)| format!("{key}: {count}"))
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
 fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -1306,6 +1358,43 @@ fn display_path(path: &Path) -> String {
 }
 
 fn self_test() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        browser_normal_to_rust_space([0.3, 0.1, 0.94]),
+        [-0.3, 0.1, -0.94]
+    );
+    let mut basis_accumulator = PbrTermOutputAccumulator::default();
+    basis_accumulator.observe(
+        Some(PbrTermSample {
+            normal_source: Some("browser_geometric".to_owned()),
+            diffuse_lobe_rgb: Some([0.0, 0.0, 0.0]),
+            specular_lobe_rgb: Some([0.0, 0.0, 0.0]),
+            direct_rgb: [0.0, 0.0, 0.0],
+            ambient_rgb: [0.0, 0.0, 0.0],
+            direct_plus_ambient_rgb: [0.0, 0.0, 0.0],
+            shading_normal_three_js: Some([0.0, 0.0, 1.0]),
+            shading_normal_wgpu_compat: None,
+            shading_normal: None,
+        }),
+        Some(PbrTermSample {
+            normal_source: Some("rust_shade".to_owned()),
+            diffuse_lobe_rgb: Some([0.0, 0.0, 0.0]),
+            specular_lobe_rgb: Some([0.0, 0.0, 0.0]),
+            direct_rgb: [0.0, 0.0, 0.0],
+            ambient_rgb: [0.0, 0.0, 0.0],
+            direct_plus_ambient_rgb: [0.0, 0.0, 0.0],
+            shading_normal_three_js: None,
+            shading_normal_wgpu_compat: None,
+            shading_normal: Some([0.0, 0.0, -1.0]),
+        }),
+        Some(0.0),
+    );
+    let basis_summary = basis_accumulator.into_summary();
+    assert!(basis_summary
+        .mean_shading_normal_three_js_distance
+        .is_some_and(|distance| (distance - 2.0).abs() < 1e-12));
+    assert!(basis_summary
+        .mean_shading_normal_three_js_rust_space_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
     let owner = serde_json::from_str::<Value>(
         r#"{
             "reference": {"renderer": {"diagnosticHotspots": {"top": [{
@@ -1320,6 +1409,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "materialName": "body:vrm-rs-owner-id-diagnostic",
                             "triangle": 7,
                             "browserPbrTerms": {
+                                "normalSource": "normal_map_sampled_missing_tangent_or_normal",
                                 "diffuseLobeRgb": [0.16, 0.15, 0.15],
                                 "specularLobeRgb": [0.03, 0.03, 0.03],
                                 "directRgb": [0.19, 0.18, 0.18],
@@ -1338,6 +1428,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                         "materialName": "body:vrm-rs-owner-id-diagnostic",
                         "triangle": 7,
                         "browserPbrTerms": {
+                            "normalSource": "normal_map_sampled_missing_tangent_or_normal",
                             "diffuseLobeRgb": [0.15, 0.14, 0.14],
                             "specularLobeRgb": [0.03, 0.03, 0.02],
                             "directRgb": [0.18, 0.17, 0.17],
@@ -1366,6 +1457,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                         "material_name": "body",
                         "triangle": 7,
                         "pbr_terms": {
+                            "normal_source": "normal_map_tangent_space",
                             "diffuse_lobe_rgb": [0.15, 0.14, 0.14],
                             "specular_lobe_rgb": [0.03, 0.03, 0.02],
                             "direct_rgb": [0.18, 0.17, 0.17],
@@ -1454,6 +1546,13 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .pbr_best_to_expected_term_output
         .mean_direct_rgb_distance
         .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));
+    assert_eq!(
+        report
+            .pbr_best_to_expected_term_output
+            .normal_source_pairs
+            .get("normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space"),
+        Some(&1)
+    );
     assert!(report
         .pbr_best_to_expected_term_output
         .mean_shading_normal_wgpu_compat_distance
@@ -1494,9 +1593,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser Best Surface Relations"));
     assert!(markdown.contains("Same-Surface PBR Term vs Output Residual"));
     assert!(markdown.contains("Diffuse lobe dist"));
-    assert!(markdown.contains("Browser 3js normal -> Rust shade"));
+    assert!(markdown.contains("Browser 3js normal raw -> Rust shade"));
+    assert!(markdown.contains("Browser 3js normal Rust-space -> Rust shade"));
     assert!(markdown.contains(
-        "| Browser best -> Rust expected-best | 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
+        "| Browser best -> Rust expected-best | 1 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
     ));
     let legacy_browser = serde_json::json!({
         "terms": {

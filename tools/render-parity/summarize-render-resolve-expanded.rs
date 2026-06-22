@@ -14,6 +14,7 @@ serde_json = "1.0.150"
 use clap::Parser;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -382,6 +383,9 @@ struct OwnerRenderPbrTermOutputSummary {
     mean_shading_normal_three_js_distance: Option<f64>,
     shading_normal_wgpu_compat_sample_count: u64,
     mean_shading_normal_wgpu_compat_distance: Option<f64>,
+    shading_normal_three_js_rust_space_sample_count: u64,
+    mean_shading_normal_three_js_rust_space_distance: Option<f64>,
+    normal_source_pairs: BTreeMap<String, u64>,
     mean_output_rgb_distance: Option<f64>,
 }
 
@@ -788,7 +792,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
     }
     if !summary.owner_render_joins.is_empty() {
         out.push_str("\n## Owner/Render PBR Term Joins\n\n");
-        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Normal columns compare Browser diagnostic normals against the current Rust shading normal, so they are coordinate/convention diagnostics rather than final lighting verdicts.\n\n");
+        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Raw normal columns keep each side's world-space convention; the Rust-space normal column maps only Browser three.js normals through `[-x, y, -z]` and leaves Rust shading normals as captured. Read the normal source-pair column before treating the basis-adjusted distance as a like-for-like normal-map comparison.\n\n");
         let warnings = summary
             .owner_render_joins
             .iter()
@@ -821,17 +825,18 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             ));
         }
         out.push('\n');
-        out.push_str("| Renderer | Pair | Count | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal -> Rust shade | Browser wgpu normal -> Rust shade | Output RGB |\n");
+        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Output RGB |\n");
         out.push_str(
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
         );
         for join in &summary.owner_render_joins {
             for row in &join.pbr_term_outputs {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     join.renderer,
                     row.pair,
                     row.count,
+                    fmt_counts_inline(&row.normal_source_pairs),
                     fmt_optional_f64_with_count(
                         row.mean_diffuse_lobe_rgb_distance,
                         row.diffuse_lobe_sample_count,
@@ -850,6 +855,10 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                     fmt_optional_f64_with_count(
                         row.mean_shading_normal_wgpu_compat_distance,
                         row.shading_normal_wgpu_compat_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_shading_normal_three_js_rust_space_distance,
+                        row.shading_normal_three_js_rust_space_sample_count,
                     ),
                     fmt_optional_pbr_distance(row.mean_output_rgb_distance),
                 ));
@@ -1913,6 +1922,16 @@ fn owner_render_pbr_term_output(
             value,
             &["mean_shading_normal_wgpu_compat_distance"],
         )?,
+        shading_normal_three_js_rust_space_sample_count: optional_u64_path(
+            value,
+            &["shading_normal_three_js_rust_space_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_shading_normal_three_js_rust_space_distance: optional_f64_path(
+            value,
+            &["mean_shading_normal_three_js_rust_space_distance"],
+        )?,
+        normal_source_pairs: optional_u64_map_path(value, &["normal_source_pairs"])?,
         mean_output_rgb_distance: optional_f64_path(value, &["mean_output_rgb_distance"])?,
     })
 }
@@ -2472,6 +2491,33 @@ fn optional_u64_path(value: &Value, path: &[&str]) -> Result<Option<u64>, Box<dy
         .ok_or_else(|| format!("JSON path {} is not an unsigned integer", path.join(".")).into())
 }
 
+fn optional_u64_map_path(
+    value: &Value,
+    path: &[&str],
+) -> Result<BTreeMap<String, u64>, Box<dyn Error>> {
+    let Some(value) = optional_path(value, path) else {
+        return Ok(BTreeMap::new());
+    };
+    if value.is_null() {
+        return Ok(BTreeMap::new());
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("JSON path {} is not an object", path.join(".")))?;
+    object
+        .iter()
+        .map(|(key, value)| {
+            let count = value.as_u64().ok_or_else(|| {
+                format!(
+                    "JSON path {}.{key} is not an unsigned integer",
+                    path.join(".")
+                )
+            })?;
+            Ok((key.clone(), count))
+        })
+        .collect()
+}
+
 fn optional_bool_path(value: &Value, path: &[&str]) -> Result<Option<bool>, Box<dyn Error>> {
     let Some(value) = optional_path(value, path) else {
         return Ok(None);
@@ -2688,6 +2734,17 @@ fn fmt_optional_pbr_distance(value: Option<f64>) -> String {
             }
         })
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_counts_inline(counts: &BTreeMap<String, u64>) -> String {
+    if counts.is_empty() {
+        return "n/a".to_owned();
+    }
+    counts
+        .iter()
+        .map(|(key, count)| format!("{key}: {count}"))
+        .collect::<Vec<_>>()
+        .join("<br>")
 }
 
 fn fmt_optional_f64_with_count(value: Option<f64>, count: u64) -> String {
@@ -2998,6 +3055,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "mean_shading_normal_three_js_distance": 1.51,
                 "shading_normal_wgpu_compat_sample_count": 2,
                 "mean_shading_normal_wgpu_compat_distance": 1.50,
+                "shading_normal_three_js_rust_space_sample_count": 2,
+                "mean_shading_normal_three_js_rust_space_distance": 0.02,
+                "normal_source_pairs": {
+                    "normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space": 2
+                },
                 "mean_output_rgb_distance": 52.9
             },
             "pbr_best_to_expected_term_output": {
@@ -3297,6 +3359,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary.owner_render_joins[0].rendered_owner_matches_rust_frontmost,
         Some(6)
     );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0]
+            .normal_source_pairs
+            .get("normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space"),
+        Some(&2)
+    );
     assert_eq!(summary.owner_render_joins[0].pbr_term_outputs.len(), 2);
     assert_eq!(
         summary.owner_render_joins[0].warnings[0],
@@ -3374,6 +3442,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary_json.contains(r#""warnings":["omitted 2 zero-count PBR term output bucket(s)"]"#)
     );
     assert!(summary_json.contains(r#""mean_shading_normal_three_js_distance""#));
+    assert!(summary_json.contains(r#""mean_shading_normal_three_js_rust_space_distance":0.02"#));
+    assert!(summary_json.contains(
+        r#""normal_source_pairs":{"normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space":2}"#
+    ));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
     assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
@@ -3387,7 +3459,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | 8 | 8 | 6 | 7 | 6 | 8 | 6 |"));
     assert!(markdown.contains("wgpu: omitted 2 zero-count PBR term output bucket(s)"));
     assert!(markdown.contains("legacy: no PBR term output objects found"));
-    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 52.9000 |"));
+    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 52.9000 |"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(

@@ -2,6 +2,25 @@
 
 ## 2026-06-22
 
+- Added coordinate-aware normal residuals to the owner/render PBR join and the
+  expanded render-resolve summary. `join-owner-render-hotspots.rs` still keeps
+  the raw Browser-vs-Rust normal distances for audit, but now also reports
+  Browser three.js normals mapped into Rust space through `[-x, y, -z]` before
+  comparing them with Rust `shading_normal`. The report now also records normal
+  source pairs so this is not mistaken for a full tangent-space normal-map
+  proof: in the refreshed Seed-san Browser-best to Rust-frontmost subset,
+  Browser reports `normal_map_sampled_missing_tangent_or_normal` while Rust
+  reports `normal_map_tangent_space`. After regenerating the expanded
+  owner/render joins and summary, raw normal distance remains large (wgpu
+  `1.5712`, Bevy `1.5886`, Ash `1.5607`), while the Browser three.js Rust-space
+  basis diagnostic drops to wgpu `0.0263`, Bevy `0.0262`, and Ash `0.0291`.
+  Combined with tiny total PBR term distances (`0.0008`, `0.0007`, `0.0005`)
+  but large output RGB distances (`42.2301`, `45.7153`, `32.2958`), this says
+  the raw world-basis mismatch does not explain the output gap for those
+  comparable PBR rows. The remaining real-model parity work should focus on
+  final color/sample-output behavior and the non-PBR-comparable residual rows;
+  exact browser TBN-mapped normal parity still needs a fixture/report where
+  both sides expose matching tangent-space shading normals.
 - Wired the owner/render PBR term join into the top-level expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--owner-render-join RENDERER=PATH` inputs and emits an
@@ -19,11 +38,13 @@
   `0.0007` / `<0.0001` / `0.0008` / `42.2301` over `20` rows, Bevy `0.0003` /
   `0.0005` / `0.0007` / `<0.0001` / `0.0007` / `45.7153` over `22` rows, and
   Ash `0.0003` / `0.0002` / `0.0005` / `<0.0001` / `0.0005` / `32.2958` over
-  `21` rows. The same rows still show large normal-coordinate distances around
-  `1.56` and large final pixel distances, so the next parity pass should treat
+  `21` rows. At this point the same rows still showed large raw
+  normal-coordinate distances around `1.56` and large final pixel distances;
+  the follow-up coordinate-aware normal residual above narrows that normal
+  signal to a basis-convention diagnostic. The next parity pass should treat
   this as a focused expanded-residual signal: PBR diffuse/direct terms agree
-  closely on the comparable subset in the refreshed artifacts, while
-  normal/convention and final color-output behavior remain larger blockers.
+  closely on the comparable subset in the refreshed artifacts, while final
+  color-output behavior remains the larger blocker.
   The aggregate Markdown keeps per-column `n` values for lobe and normal
   diagnostics; in this refreshed Browser-best to Rust-frontmost row they match
   the quoted row counts. Output RGB is explicitly the rendered
