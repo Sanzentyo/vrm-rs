@@ -858,6 +858,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/import-acceptance-bundle.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/preflight-acceptance-runner.rs",
             "--self-test",
         ],
@@ -924,6 +933,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/inspect-imqraw-deltas.rs",
     "tools/render-parity/inspect-pbr-material.rs",
     "tools/render-parity/inspect-mtoon-fixtures.rs",
+    "tools/render-parity/import-acceptance-bundle.rs",
     "tools/render-parity/join-owner-render-hotspots.rs",
     "tools/render-parity/join-shading-model-residuals.rs",
     "tools/render-parity/map-render-hotspots.rs",

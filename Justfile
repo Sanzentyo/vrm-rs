@@ -147,6 +147,10 @@ render-parity-acceptance-stage-local-bundle acceptance_root=".external-fixtures/
     cargo +nightly -Zscript tools/render-parity/export-acceptance-evidence-bundle.rs --acceptance-root "{{ acceptance_root }}" --out-dir "{{ returned_root }}/{{ label }}/acceptance-bundle" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --require-accepted-signoff --apply
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle-root "{{ returned_root }}" --min-environments 1 --require-accepted-signoff --json-out "{{ out_root }}/staged-local-smoke.json" --markdown-out "{{ out_root }}/staged-local-smoke.md"
 
+# Import a returned strict bundle as one sibling under the returned-bundle root.
+render-parity-acceptance-import-bundle bundle label returned_root=".external-fixtures/render-parity-acceptance-returned" out_root=".external-fixtures/render-parity-acceptance-environments" replace="false":
+    cargo +nightly -Zscript tools/render-parity/import-acceptance-bundle.rs --bundle "{{ bundle }}" --label "{{ label }}" --returned-root "{{ returned_root }}" --out-root "{{ out_root }}" {{ if replace == "true" { "--replace" } else { "" } }} --apply
+
 # Summarize current evidence against the full render-parity goal without marking it complete.
 render-parity-goal-readiness require_public_repo="false" local_bundle=".external-fixtures/render-parity-acceptance-bundle" handoff=".external-fixtures/render-parity-acceptance-handoff/handoff.json" environment_summary=".external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.json":
     cargo +nightly -Zscript tools/render-parity/audit-goal-readiness.rs --local-bundle "{{ local_bundle }}" --handoff "{{ handoff }}" --environment-summary "{{ environment_summary }}" {{ if require_public_repo == "true" { "--require-public-repo" } else { "" } }}

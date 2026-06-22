@@ -85,6 +85,13 @@ recipes are convenience entry points. Use these first:
   root. This prepares the final intake parent with the local environment as
   one sibling; add at least one returned bundle from a distinct GPU/driver
   environment beside it before running the final strict root command.
+- `just render-parity-acceptance-import-bundle <bundle> <label>`: validate and
+  copy one returned strict bundle into
+  `.external-fixtures/render-parity-acceptance-returned/<label>/acceptance-bundle/`,
+  then run a one-environment strict returned-root smoke. Labels are restricted
+  to ASCII letters, digits, `_`, and `-` so returned bundles cannot escape the
+  intended external-fixture root. Pass `replace=true` only when deliberately
+  refreshing an existing runner label.
 - `just render-parity-goal-readiness`: summarize the current source and
   external-only evidence against the full thread goal. It checks the clean
   current HEAD, optional public GitHub visibility, VRMA parity surfaces,
@@ -236,7 +243,9 @@ review evidence, to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 The local machine can be staged into the same returned-bundle parent with
 `just render-parity-acceptance-stage-local-bundle`; after that, each external
-runner bundle should be added as another sibling directory under
+runner bundle can be imported with
+`just render-parity-acceptance-import-bundle <returned-bundle-path> <label>`, or
+added manually as another sibling directory under
 `.external-fixtures/render-parity-acceptance-returned/`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression

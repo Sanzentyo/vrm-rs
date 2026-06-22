@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-06-23
+
+- Added `tools/render-parity/import-acceptance-bundle.rs` and
+  `just render-parity-acceptance-import-bundle` so returned strict acceptance
+  bundles can be validated, copied into
+  `.external-fixtures/render-parity-acceptance-returned/<label>/acceptance-bundle/`,
+  and smoke-validated through the returned-root intake without manual directory
+  staging. The importer remains dry-run by default, requires `--apply` for
+  writes, rejects path-like labels, supports deliberate `--replace`, and is
+  covered by a self-test wired into the local Rust CI render-tool checks.
+
 ## 2026-06-22
 
 - Added coordinate-aware normal residuals to the owner/render PBR join and the
