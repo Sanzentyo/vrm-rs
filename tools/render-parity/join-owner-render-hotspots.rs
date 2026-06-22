@@ -19,8 +19,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter::{
-    RenderOwnerSampleKey, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation, RenderSamplePoint,
-    normalize_owner_diagnostic_material_name, rgb_distance_u8,
+    normalize_owner_diagnostic_material_name, rgb_distance_u8, RenderOwnerSampleKey,
+    RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation, RenderSamplePoint,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -99,26 +99,49 @@ struct JoinReport {
 #[derive(Clone, Debug, Default, Serialize)]
 struct PbrTermOutputSummary {
     count: u64,
+    diffuse_lobe_sample_count: u64,
+    mean_diffuse_lobe_rgb_distance: Option<f64>,
+    specular_lobe_sample_count: u64,
+    mean_specular_lobe_rgb_distance: Option<f64>,
     mean_direct_rgb_distance: Option<f64>,
     mean_ambient_rgb_distance: Option<f64>,
     mean_total_rgb_distance: Option<f64>,
+    shading_normal_three_js_sample_count: u64,
+    mean_shading_normal_three_js_distance: Option<f64>,
+    shading_normal_wgpu_compat_sample_count: u64,
+    mean_shading_normal_wgpu_compat_distance: Option<f64>,
     mean_output_rgb_distance: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct PbrTermOutputAccumulator {
     count: u64,
+    diffuse_lobe_distance: MeanAccumulator,
+    specular_lobe_distance: MeanAccumulator,
     direct_distance_sum: f64,
     ambient_distance_sum: f64,
     total_distance_sum: f64,
+    shading_normal_three_js_distance: MeanAccumulator,
+    shading_normal_wgpu_compat_distance: MeanAccumulator,
     output_distance_sum: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MeanAccumulator {
+    count: u64,
+    sum: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct PbrTermSample {
+    diffuse_lobe_rgb: Option<[f64; 3]>,
+    specular_lobe_rgb: Option<[f64; 3]>,
     direct_rgb: [f64; 3],
     ambient_rgb: [f64; 3],
     direct_plus_ambient_rgb: [f64; 3],
+    shading_normal_three_js: Option<[f64; 3]>,
+    shading_normal_wgpu_compat: Option<[f64; 3]>,
+    shading_normal: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,8 +202,14 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         self_test()?;
         return Ok(());
     }
-    let owner_path = options.owner_hotspots.as_ref().ok_or("missing --owner-hotspots")?;
-    let rust_path = options.rust_hotspots.as_ref().ok_or("missing --rust-hotspots")?;
+    let owner_path = options
+        .owner_hotspots
+        .as_ref()
+        .ok_or("missing --owner-hotspots")?;
+    let rust_path = options
+        .rust_hotspots
+        .as_ref()
+        .ok_or("missing --rust-hotspots")?;
     let owner = serde_json::from_str::<Value>(&fs::read_to_string(owner_path)?)?;
     let rust = serde_json::from_str::<Value>(&fs::read_to_string(rust_path)?)?;
     let report = join_reports(owner_path, rust_path, &owner, &rust, options.top)?;
@@ -287,12 +316,16 @@ fn join_reports(
         report.joined_count += 1;
 
         let rendered = owner_surface(owner_hotspot);
-        let browser_best = surface_at(owner_hotspot, "/renderedOwnerRecovery/bestSubpixel/candidate");
-        let browser_best_coverage =
-            surface_at(owner_hotspot, "/renderedOwnerRecovery/bestCoverage/candidate");
+        let browser_best = surface_at(
+            owner_hotspot,
+            "/renderedOwnerRecovery/bestSubpixel/candidate",
+        );
+        let browser_best_coverage = surface_at(
+            owner_hotspot,
+            "/renderedOwnerRecovery/bestCoverage/candidate",
+        );
         let rust_frontmost = surface_at(rust_hotspot, "/frontmost_visible");
-        let rust_expected =
-            surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
+        let rust_expected = surface_at(rust_hotspot, "/best_subpixel_visible_expected/candidate");
         let rust_actual = surface_at(rust_hotspot, "/best_subpixel_visible_actual/candidate");
         let browser_best_sample =
             number_pair(owner_hotspot.pointer("/renderedOwnerRecovery/bestSubpixel/sampleCenter"));
@@ -303,10 +336,14 @@ fn join_reports(
         let actual_expected_rgb_distance = actual_rgba
             .zip(expected_rgba)
             .map(|(actual, expected)| rgb_distance_u64(actual, expected));
-        let browser_best_coverage_area =
-            f64_at(owner_hotspot, "/renderedOwnerRecovery/bestCoverage/coverageAreaPixels");
-        let browser_best_coverage_point_count =
-            u64_at(owner_hotspot, "/renderedOwnerRecovery/bestCoverage/coveragePointCount");
+        let browser_best_coverage_area = f64_at(
+            owner_hotspot,
+            "/renderedOwnerRecovery/bestCoverage/coverageAreaPixels",
+        );
+        let browser_best_coverage_point_count = u64_at(
+            owner_hotspot,
+            "/renderedOwnerRecovery/bestCoverage/coveragePointCount",
+        );
         let browser_best_sample_color = browser_best
             .as_ref()
             .zip(browser_best_sample)
@@ -342,7 +379,9 @@ fn join_reports(
                 .unwrap_or(std::cmp::Ordering::Equal)
             {
                 std::cmp::Ordering::Less => report.browser_best_sample_actual_color_closer += 1,
-                std::cmp::Ordering::Greater => report.browser_best_sample_expected_color_closer += 1,
+                std::cmp::Ordering::Greater => {
+                    report.browser_best_sample_expected_color_closer += 1
+                }
                 std::cmp::Ordering::Equal => report.browser_best_sample_color_tied += 1,
             }
             match actual
@@ -380,9 +419,7 @@ fn join_reports(
                 std::cmp::Ordering::Greater => {
                     report.browser_best_coverage_sample_expected_color_closer += 1
                 }
-                std::cmp::Ordering::Equal => {
-                    report.browser_best_coverage_sample_color_tied += 1
-                }
+                std::cmp::Ordering::Equal => report.browser_best_coverage_sample_color_tied += 1,
             }
             match actual
                 .partial_cmp(&expected)
@@ -457,7 +494,11 @@ fn join_reports(
             browser_best_coverage.as_ref(),
             rust_actual.as_ref(),
         );
-        bump_pair(&mut report.rendered_to_rust_frontmost, rendered.as_ref(), rust_frontmost.as_ref());
+        bump_pair(
+            &mut report.rendered_to_rust_frontmost,
+            rendered.as_ref(),
+            rust_frontmost.as_ref(),
+        );
         bump_pair(
             &mut report.rendered_to_rust_expected_best_subpixel,
             rendered.as_ref(),
@@ -632,7 +673,11 @@ fn join_reports(
     Ok(report)
 }
 
-fn add_match_counts(count: &mut u64, left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) {
+fn add_match_counts(
+    count: &mut u64,
+    left: Option<&SurfaceSummary>,
+    right: Option<&SurfaceSummary>,
+) {
     if left.zip(right).is_some_and(|(left, right)| left == right) {
         *count += 1;
     }
@@ -652,7 +697,9 @@ fn bump_relation(
     left: Option<&SurfaceSummary>,
     right: Option<&SurfaceSummary>,
 ) {
-    *counts.entry(relation_label(left, right).to_owned()).or_default() += 1;
+    *counts
+        .entry(relation_label(left, right).to_owned())
+        .or_default() += 1;
 }
 
 fn relation_label(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) -> &'static str {
@@ -679,12 +726,20 @@ impl PbrTermOutputAccumulator {
             return;
         };
         self.count += 1;
+        self.diffuse_lobe_distance
+            .observe_pair(browser.diffuse_lobe_rgb, rust.diffuse_lobe_rgb);
+        self.specular_lobe_distance
+            .observe_pair(browser.specular_lobe_rgb, rust.specular_lobe_rgb);
         self.direct_distance_sum += vec3_distance(browser.direct_rgb, rust.direct_rgb);
         self.ambient_distance_sum += vec3_distance(browser.ambient_rgb, rust.ambient_rgb);
         self.total_distance_sum += vec3_distance(
             browser.direct_plus_ambient_rgb,
             rust.direct_plus_ambient_rgb,
         );
+        self.shading_normal_three_js_distance
+            .observe_pair(browser.shading_normal_three_js, rust.shading_normal);
+        self.shading_normal_wgpu_compat_distance
+            .observe_pair(browser.shading_normal_wgpu_compat, rust.shading_normal);
         self.output_distance_sum += output_distance;
     }
 
@@ -694,29 +749,62 @@ impl PbrTermOutputAccumulator {
         };
         PbrTermOutputSummary {
             count: self.count,
+            diffuse_lobe_sample_count: self.diffuse_lobe_distance.count,
+            mean_diffuse_lobe_rgb_distance: self.diffuse_lobe_distance.mean(),
+            specular_lobe_sample_count: self.specular_lobe_distance.count,
+            mean_specular_lobe_rgb_distance: self.specular_lobe_distance.mean(),
             mean_direct_rgb_distance: Some(self.direct_distance_sum / count),
             mean_ambient_rgb_distance: Some(self.ambient_distance_sum / count),
             mean_total_rgb_distance: Some(self.total_distance_sum / count),
+            shading_normal_three_js_sample_count: self.shading_normal_three_js_distance.count,
+            mean_shading_normal_three_js_distance: self.shading_normal_three_js_distance.mean(),
+            shading_normal_wgpu_compat_sample_count: self.shading_normal_wgpu_compat_distance.count,
+            mean_shading_normal_wgpu_compat_distance: self
+                .shading_normal_wgpu_compat_distance
+                .mean(),
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
         }
+    }
+}
+
+impl MeanAccumulator {
+    fn observe_pair(&mut self, left: Option<[f64; 3]>, right: Option<[f64; 3]>) {
+        if let (Some(left), Some(right)) = (left, right) {
+            self.count += 1;
+            self.sum += vec3_distance(left, right);
+        }
+    }
+
+    fn mean(self) -> Option<f64> {
+        (self.count > 0).then_some(self.sum / self.count as f64)
     }
 }
 
 fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
+        diffuse_lobe_rgb: value_vec3_path(terms, "diffuseLobeRgb"),
+        specular_lobe_rgb: value_vec3_path(terms, "specularLobeRgb"),
         direct_rgb: value_vec3_path(terms, "directRgb")?,
         ambient_rgb: value_vec3_path(terms, "ambientRgb")?,
         direct_plus_ambient_rgb: value_vec3_path(terms, "directPlusAmbientRgb")?,
+        shading_normal_three_js: value_vec3_path(terms, "shadingNormalThreeJs"),
+        shading_normal_wgpu_compat: value_vec3_path(terms, "shadingNormalWgpuCompat"),
+        shading_normal: None,
     })
 }
 
 fn rust_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
     let terms = value.pointer(pointer)?;
     Some(PbrTermSample {
+        diffuse_lobe_rgb: value_vec3_path(terms, "diffuse_lobe_rgb"),
+        specular_lobe_rgb: value_vec3_path(terms, "specular_lobe_rgb"),
         direct_rgb: value_vec3_path(terms, "direct_rgb")?,
         ambient_rgb: value_vec3_path(terms, "ambient_rgb")?,
         direct_plus_ambient_rgb: value_vec3_path(terms, "direct_plus_ambient_rgb")?,
+        shading_normal_three_js: None,
+        shading_normal_wgpu_compat: None,
+        shading_normal: value_vec3_path(terms, "shading_normal"),
     })
 }
 
@@ -762,7 +850,9 @@ fn rust_color_for_owner_sample(
 ) -> Option<[u64; 4]> {
     ["coverage_visible_candidates", "subpixel_visible_candidates"]
         .iter()
-        .find_map(|array_name| rust_color_for_owner_sample_in_array(rust_hotspot, array_name, sample_key))
+        .find_map(|array_name| {
+            rust_color_for_owner_sample_in_array(rust_hotspot, array_name, sample_key)
+        })
 }
 
 fn rust_color_for_owner_sample_in_array(
@@ -1029,9 +1119,8 @@ fn markdown_report(report: &JoinReport) -> String {
         &mut output,
         &report.browser_best_coverage_expected_closer_to_expected_relation,
     );
-    output.push_str(
-        "Browser best coverage colors closer to actual, grouped by actual relation:\n\n",
-    );
+    output
+        .push_str("Browser best coverage colors closer to actual, grouped by actual relation:\n\n");
     write_counts(
         &mut output,
         &report.browser_best_coverage_actual_closer_to_actual_relation,
@@ -1050,10 +1139,10 @@ fn markdown_report(report: &JoinReport) -> String {
     );
     output.push_str("## Same-Surface PBR Term vs Output Residual\n\n");
     output.push_str(
-        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel.\n\n",
+        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; read lobe/direct distances together with the normal columns because Browser terms are emitted from the browser/three.js diagnostic convention while Rust terms use the current Rust shading-normal convention.\n\n",
     );
-    output.push_str("| Pair | Count | Direct term dist | Ambient term dist | Total term dist | Output RGB dist |\n");
-    output.push_str("|---|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal -> Rust shade | Browser wgpu normal -> Rust shade | Output RGB dist |\n");
+    output.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1119,12 +1208,28 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
+        fmt_mean_with_count(
+            summary.mean_diffuse_lobe_rgb_distance,
+            summary.diffuse_lobe_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_specular_lobe_rgb_distance,
+            summary.specular_lobe_sample_count,
+        ),
         fmt_opt_f64(summary.mean_direct_rgb_distance),
         fmt_opt_f64(summary.mean_ambient_rgb_distance),
         fmt_opt_f64(summary.mean_total_rgb_distance),
+        fmt_mean_with_count(
+            summary.mean_shading_normal_three_js_distance,
+            summary.shading_normal_three_js_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_shading_normal_wgpu_compat_distance,
+            summary.shading_normal_wgpu_compat_sample_count,
+        ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
 }
@@ -1177,6 +1282,13 @@ fn fmt_opt_f64(value: Option<f64>) -> String {
     value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
 }
 
+fn fmt_mean_with_count(value: Option<f64>, count: u64) -> String {
+    value.map_or_else(
+        || "n/a (n=0)".to_owned(),
+        |value| format!("{value:.4} (n={count})"),
+    )
+}
+
 fn fmt_opt_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "n/a".to_owned(), |value| value.to_string())
 }
@@ -1208,9 +1320,13 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "materialName": "body:vrm-rs-owner-id-diagnostic",
                             "triangle": 7,
                             "browserPbrTerms": {
+                                "diffuseLobeRgb": [0.16, 0.15, 0.15],
+                                "specularLobeRgb": [0.03, 0.03, 0.03],
                                 "directRgb": [0.19, 0.18, 0.18],
                                 "ambientRgb": [0.01, 0.01, 0.01],
-                                "directPlusAmbientRgb": [0.20, 0.19, 0.19]
+                                "directPlusAmbientRgb": [0.20, 0.19, 0.19],
+                                "shadingNormalThreeJs": [0.0, 0.0, 1.0],
+                                "shadingNormalWgpuCompat": [0.1, 0.0, 0.995]
                             }
                         }
                     },
@@ -1219,15 +1335,19 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                         "coverageAreaPixels": 0.375,
                         "coveragePointCount": 4,
                         "candidate": {
-                            "materialName": "body:vrm-rs-owner-id-diagnostic",
-                            "triangle": 7,
-                            "browserPbrTerms": {
-                                "directRgb": [0.18, 0.17, 0.17],
-                                "ambientRgb": [0.01, 0.01, 0.01],
-                                "directPlusAmbientRgb": [0.19, 0.18, 0.18]
-                            }
+                        "materialName": "body:vrm-rs-owner-id-diagnostic",
+                        "triangle": 7,
+                        "browserPbrTerms": {
+                            "diffuseLobeRgb": [0.15, 0.14, 0.14],
+                            "specularLobeRgb": [0.03, 0.03, 0.02],
+                            "directRgb": [0.18, 0.17, 0.17],
+                            "ambientRgb": [0.01, 0.01, 0.01],
+                            "directPlusAmbientRgb": [0.19, 0.18, 0.18],
+                            "shadingNormalThreeJs": [0.0, 0.0, 1.0],
+                            "shadingNormalWgpuCompat": [0.1, 0.0, 0.995]
                         }
                     }
+                }
                 }
             }]}}}
         }"#,
@@ -1246,9 +1366,12 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                         "material_name": "body",
                         "triangle": 7,
                         "pbr_terms": {
+                            "diffuse_lobe_rgb": [0.15, 0.14, 0.14],
+                            "specular_lobe_rgb": [0.03, 0.03, 0.02],
                             "direct_rgb": [0.18, 0.17, 0.17],
                             "ambient_rgb": [0.01, 0.01, 0.01],
-                            "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+                            "direct_plus_ambient_rgb": [0.19, 0.18, 0.18],
+                            "shading_normal": [0.1, 0.0, 0.995]
                         }
                     }
                 },
@@ -1298,10 +1421,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(report.browser_best_sample_rust_color_count, 1);
     assert_eq!(report.browser_best_sample_expected_color_closer, 1);
     assert_eq!(report.browser_best_coverage_sample_rust_color_count, 1);
-    assert_eq!(
-        report.browser_best_coverage_sample_expected_color_closer,
-        1
-    );
+    assert_eq!(report.browser_best_coverage_sample_expected_color_closer, 1);
     assert_eq!(
         report
             .browser_best_to_rust_expected_best_relation
@@ -1322,19 +1442,49 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(report.pbr_best_to_frontmost_term_output.count, 0);
     assert_eq!(report.pbr_best_to_expected_term_output.count, 1);
-    assert!(
-        report
-            .pbr_best_to_expected_term_output
-            .mean_direct_rgb_distance
-            .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12)
-    );
-    assert!(
-        report
-            .pbr_best_to_expected_term_output
-            .mean_output_rgb_distance
-            .is_some_and(|distance| (distance - 155.88457268119896).abs() < 1e-12)
-    );
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_diffuse_lobe_rgb_distance
+        .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_specular_lobe_rgb_distance
+        .is_some_and(|distance| (distance - 0.01).abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_direct_rgb_distance
+        .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_shading_normal_wgpu_compat_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_shading_normal_three_js_distance
+        .is_some_and(|distance| distance > 0.09 && distance < 0.11));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_output_rgb_distance
+        .is_some_and(|distance| (distance - 155.88457268119896).abs() < 1e-12));
     assert_eq!(report.pbr_coverage_to_expected_term_output.count, 1);
+    assert_eq!(
+        report
+            .pbr_coverage_to_expected_term_output
+            .diffuse_lobe_sample_count,
+        1
+    );
+    assert!(report
+        .pbr_coverage_to_expected_term_output
+        .mean_diffuse_lobe_rgb_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_coverage_to_expected_term_output
+        .mean_specular_lobe_rgb_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_coverage_to_expected_term_output
+        .mean_shading_normal_wgpu_compat_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
     assert!(report.top_disagreements.is_empty());
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Rendered owner matches Rust frontmost"));
@@ -1343,7 +1493,41 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser best coverage sample Rust color count"));
     assert!(markdown.contains("Browser Best Surface Relations"));
     assert!(markdown.contains("Same-Surface PBR Term vs Output Residual"));
-    assert!(markdown.contains("| Browser best -> Rust expected-best | 1 | 0.0173"));
+    assert!(markdown.contains("Diffuse lobe dist"));
+    assert!(markdown.contains("Browser 3js normal -> Rust shade"));
+    assert!(markdown.contains(
+        "| Browser best -> Rust expected-best | 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
+    ));
+    let legacy_browser = serde_json::json!({
+        "terms": {
+            "directRgb": [0.19, 0.18, 0.18],
+            "ambientRgb": [0.01, 0.01, 0.01],
+            "directPlusAmbientRgb": [0.20, 0.19, 0.19]
+        }
+    });
+    let legacy_rust = serde_json::json!({
+        "terms": {
+            "direct_rgb": [0.18, 0.17, 0.17],
+            "ambient_rgb": [0.01, 0.01, 0.01],
+            "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+        }
+    });
+    let mut legacy_accumulator = PbrTermOutputAccumulator::default();
+    legacy_accumulator.observe(
+        browser_pbr_terms(&legacy_browser, "/terms"),
+        rust_pbr_terms(&legacy_rust, "/terms"),
+        Some(12.0),
+    );
+    let legacy_summary = legacy_accumulator.into_summary();
+    assert_eq!(legacy_summary.count, 1);
+    assert_eq!(legacy_summary.diffuse_lobe_sample_count, 0);
+    assert!(legacy_summary.mean_diffuse_lobe_rgb_distance.is_none());
+    assert!(legacy_summary
+        .mean_shading_normal_three_js_distance
+        .is_none());
+    assert!(legacy_summary
+        .mean_direct_rgb_distance
+        .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12));
     let pbr_fixture = serde_json::json!({
         "browserPbrTerms": {
             "model": "MeshStandardMaterial",
@@ -1392,11 +1576,10 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .contains("shade-wgpu=0.100,0.100,0.990"));
     assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
         .contains("direct=0.190,0.180,0.180"));
+    assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms").contains("f90=1.0000"));
     assert!(
-        browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms").contains("f90=1.0000")
+        rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms").contains("total=0.190,0.180,0.180")
     );
-    assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
-        .contains("total=0.190,0.180,0.180"));
     assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
         .contains("tan-wgpu=0.000,0.030,1.000"));
     Ok(())
