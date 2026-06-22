@@ -63,6 +63,16 @@ recipes are convenience entry points. Use these first:
   `--min-environments 1 --require-accepted-signoff` intake smoke. Use this only
   when the runner is actually taking responsibility for visual review; the
   underlying Rust script defaults to dry-run unless `--apply` is supplied.
+- `just render-parity-acceptance-runner-capture`: capture-only runner lane for a
+  single GPU/driver environment. It runs the three repeated acceptance captures
+  and leaves the visual-review pages, contact sheets, and draft signoff in
+  place without signing or exporting the bundle.
+- `just render-parity-acceptance-runner-finalize-strict`: finalize-only runner
+  lane for an already reviewed capture. It regenerates the current-source
+  strict signoff with the supplied reviewer and notes, exports the strict
+  portable bundle, and performs the same one-environment strict intake smoke.
+  Prefer the capture/finalize pair for external runners so visual review happens
+  before accepted signoff metadata is written.
 - `just render-parity-acceptance-current-bundle`: validate that the local
   strict bundle's recorded vrm-rs HEAD is the current clean checkout, then run
   the same one-environment strict intake smoke. This is a quick freshness check
@@ -87,7 +97,8 @@ recipes are convenience entry points. Use these first:
   `.external-fixtures/render-parity-acceptance-handoff/handoff.{md,json}` for
   an external GPU/driver runner. The handoff records the exact vrm-rs HEAD,
   repository URL, expected three-vrm commit, fixture-preparation command,
-  strict runner command, and final returned-bundle intake command.
+  two-phase capture/finalize runner commands, the legacy one-command runner
+  command, and final returned-bundle intake command.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -189,12 +200,17 @@ For that hardening task, each additional machine should run
 generated handoff Markdown as the source-locked runner instruction. The handoff
 directs the runner to check out the exact commit, prepare external fixtures
 with `cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures`, and
-then run `just render-parity-acceptance-runner-strict "<reviewer>"
-"<visual notes>"` after the runner has the review context needed to stand
-behind the visual notes. This wraps the repeat, strict signoff, strict bundle
-export, and local one-environment smoke. The manual sequence remains available
-as `just render-parity-acceptance-repeat`, inspection of the generated visual
-review pages, `just render-parity-acceptance-signoff-strict`, and
+then run `just render-parity-acceptance-runner-capture`. The runner must inspect
+the generated `visual-review.html` pages, contact sheets, and diff heatmaps
+before running `just render-parity-acceptance-runner-finalize-strict
+"<reviewer>" "<visual notes>"`. This finalizes the strict signoff, strict
+bundle export, and local one-environment smoke only after the reviewer can stand
+behind the visual notes. The older one-command
+`just render-parity-acceptance-runner-strict "<reviewer>" "<visual notes>"`
+remains available for deliberate local use, but the source-locked handoff now
+prefers the two-phase flow for external runners. The manual sequence remains
+available as `just render-parity-acceptance-repeat`, inspection of the generated
+visual review pages, `just render-parity-acceptance-signoff-strict`, and
 `just render-parity-acceptance-bundle-strict`. The returned strict bundle is
 small enough to transfer instead of the full image-heavy artifact tree. Bring
 those returned bundles back as sibling directories under one external parent

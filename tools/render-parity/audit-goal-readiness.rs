@@ -463,8 +463,21 @@ fn validate_handoff(handoff: &Path, head: &str, repo_url: &str) -> Result<String
     if !command.contains("render-parity-acceptance-runner-strict") {
         return Err("handoff strictRunnerCommand must use render-parity-acceptance-runner-strict".into());
     }
+    let capture_command = required_string(&value, "captureCommand")?;
+    if !capture_command.contains("render-parity-acceptance-runner-capture") {
+        return Err(
+            "handoff captureCommand must use render-parity-acceptance-runner-capture".into(),
+        );
+    }
+    let finalize_command = required_string(&value, "finalizeCommand")?;
+    if !finalize_command.contains("render-parity-acceptance-runner-finalize-strict") {
+        return Err(
+            "handoff finalizeCommand must use render-parity-acceptance-runner-finalize-strict"
+                .into(),
+        );
+    }
     Ok(format!(
-        "{} targets current HEAD and strict runner intake",
+        "{} targets current HEAD and two-phase strict runner intake",
         display_path(handoff)
     ))
 }
@@ -738,6 +751,8 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "format": "vrm-rs.render-parity.acceptance-handoff.v1",
             "repoUrl": "https://github.com/Sanzentyo/vrm-rs.git",
             "vrmRsGitHead": head,
+            "captureCommand": "just render-parity-acceptance-runner-capture",
+            "finalizeCommand": "just render-parity-acceptance-runner-finalize-strict Codex note",
             "strictRunnerCommand": "just render-parity-acceptance-runner-strict Codex note"
         }),
     )?;

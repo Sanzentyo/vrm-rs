@@ -126,6 +126,16 @@ render-parity-acceptance-bundle-strict acceptance_root=".external-fixtures/rende
 render-parity-acceptance-runner-strict reviewer visual_notes three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm" out_root=".external-fixtures/render-parity-acceptance-repeat" bundle_out=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false" browser_ready_timeout_ms="60000":
     cargo +nightly -Zscript tools/render-parity/run-strict-acceptance-runner.rs --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --accept-visual-review --three-vrm-root "{{ three_vrm_root }}" --background "{{ background }}" --light-accumulation "{{ light_accumulation }}" --out-root "{{ out_root }}" --bundle-out "{{ bundle_out }}" {{ if include_visual_contact_sheets == "true" { "--include-visual-contact-sheets" } else { "" } }} --browser-ready-timeout-ms "{{ browser_ready_timeout_ms }}" --apply
 
+# Capture strict runner evidence without signing it, so a runner can review generated pages first.
+render-parity-acceptance-runner-capture three_vrm_root=".external-fixtures/three-vrm" background="opaque-black" light_accumulation="three-vrm" out_root=".external-fixtures/render-parity-acceptance-repeat" browser_ready_timeout_ms="60000":
+    just render-parity-acceptance-repeat "{{ three_vrm_root }}" "{{ background }}" "{{ light_accumulation }}" "{{ out_root }}" "{{ browser_ready_timeout_ms }}"
+
+# Finalize an already reviewed strict runner capture by signing, exporting, and smoke-validating it.
+render-parity-acceptance-runner-finalize-strict reviewer visual_notes acceptance_root=".external-fixtures/render-parity-acceptance-repeat" bundle_out=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false" smoke_out_root=".external-fixtures/render-parity-acceptance-environments":
+    just render-parity-acceptance-signoff-strict "{{ reviewer }}" "{{ visual_notes }}" "{{ acceptance_root }}/acceptance-repeat-summary.json" "{{ acceptance_root }}/acceptance-signoff.md"
+    just render-parity-acceptance-bundle-strict "{{ acceptance_root }}" "{{ bundle_out }}" "{{ include_visual_contact_sheets }}"
+    cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle_out }}" --min-environments 1 --require-accepted-signoff --json-out "{{ smoke_out_root }}/local-strict-smoke.json" --markdown-out "{{ smoke_out_root }}/local-strict-smoke.md"
+
 # Validate that the local strict bundle is fresh for the current checkout, then run the one-environment strict intake smoke.
 render-parity-acceptance-current-bundle bundle=".external-fixtures/render-parity-acceptance-bundle" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-current-acceptance-bundle.rs --bundle "{{ bundle }}"

@@ -127,6 +127,8 @@ fn handoff_json(handoff: &Handoff) -> Value {
         "vrmRsGitHead": handoff.expected_head,
         "threeVrmGitHead": handoff.three_vrm_head,
         "checkoutDir": handoff.checkout_dir,
+        "captureCommand": capture_command(),
+        "finalizeCommand": finalize_command(handoff),
         "strictRunnerCommand": strict_runner_command(handoff),
         "preparationCommands": preparation_commands(handoff),
         "returnedBundleIntakeCommand": "just render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned",
@@ -151,10 +153,15 @@ fn handoff_markdown(handoff: &Handoff) -> String {
          - Enough time to run three repeated six-fixture acceptance captures.\n\n\
          ## Prepare The Runner Checkout\n\n\
          ```powershell\n{preparation}```\n\n\
-         ## Run And Review\n\n\
-         Inspect `.external-fixtures/render-parity-acceptance-repeat/run-*/visual-review.html`, especially run 3, then run:\n\n\
+         ## Capture\n\n\
+         Run the reference-clean acceptance capture first:\n\n\
+         ```powershell\n{capture}\n```\n\n\
+         ## Review And Finalize\n\n\
+         Inspect `.external-fixtures/render-parity-acceptance-repeat/run-*/visual-review.html`, especially run 3, plus the generated contact sheets and diff heatmaps. Only after that review, finalize the bundle:\n\n\
+         ```powershell\n{finalize}\n```\n\n\
+         The finalize command writes a strict portable bundle under `.external-fixtures/render-parity-acceptance-bundle/` and also runs a local one-environment strict smoke. Return that bundle directory without committing generated images or binary fixtures.\n\n\
+         If a runner deliberately wants the older one-command path, the equivalent command is:\n\n\
          ```powershell\n{strict_runner}\n```\n\n\
-         The command writes a strict portable bundle under `.external-fixtures/render-parity-acceptance-bundle/` and also runs a local one-environment strict smoke. Return that bundle directory without committing generated images or binary fixtures.\n\n\
          ## Intake On The Main Machine\n\n\
          Copy each returned strict bundle as a sibling under `.external-fixtures/render-parity-acceptance-returned/`, then run:\n\n\
          ```powershell\njust render-parity-acceptance-bundle-root-strict .external-fixtures/render-parity-acceptance-returned\n```\n",
@@ -162,6 +169,8 @@ fn handoff_markdown(handoff: &Handoff) -> String {
         head = handoff.expected_head,
         three = handoff.three_vrm_head,
         checkout = handoff.checkout_dir,
+        capture = capture_command(),
+        finalize = finalize_command(handoff),
         strict_runner = strict_runner_command(handoff),
     )
 }
@@ -183,6 +192,18 @@ fn preparation_commands(handoff: &Handoff) -> Vec<String> {
 fn strict_runner_command(handoff: &Handoff) -> String {
     format!(
         "just render-parity-acceptance-runner-strict {} {}",
+        shell_quote(&handoff.reviewer),
+        shell_quote(&handoff.visual_notes)
+    )
+}
+
+fn capture_command() -> String {
+    "just render-parity-acceptance-runner-capture".to_owned()
+}
+
+fn finalize_command(handoff: &Handoff) -> String {
+    format!(
+        "just render-parity-acceptance-runner-finalize-strict {} {}",
         shell_quote(&handoff.reviewer),
         shell_quote(&handoff.visual_notes)
     )
@@ -280,10 +301,22 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     {
         return Err("handoff JSON format marker is missing".into());
     }
+    if json.get("captureCommand").and_then(Value::as_str)
+        != Some("just render-parity-acceptance-runner-capture")
+    {
+        return Err("handoff JSON capture command is missing".into());
+    }
+    if json.get("finalizeCommand").and_then(Value::as_str)
+        != Some("just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"")
+    {
+        return Err("handoff JSON finalize command is missing".into());
+    }
     let markdown = handoff_markdown(&handoff);
     for needle in [
         "git checkout --detach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures",
+        "just render-parity-acceptance-runner-capture",
+        "just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"",
         "just render-parity-acceptance-runner-strict Codex \"Accepted local residuals\"",
         "just render-parity-acceptance-bundle-root-strict",
     ] {
