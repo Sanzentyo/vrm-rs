@@ -22,10 +22,12 @@ use std::path::{Path, PathBuf};
     about = "Validate render parity review-manifest.json paths and pass/fail summaries"
 )]
 struct Options {
-    #[arg(long)]
-    manifest: PathBuf,
+    #[arg(long, required_unless_present = "self_test")]
+    manifest: Option<PathBuf>,
     #[arg(long)]
     allow_failed: bool,
+    #[arg(long, hide = true)]
+    self_test: bool,
 }
 
 fn main() {
@@ -36,18 +38,70 @@ fn main() {
 }
 
 fn run(options: Options) -> Result<(), Box<dyn Error>> {
-    let text = fs::read_to_string(&options.manifest)?;
-    let manifest = serde_json::from_str::<Value>(&text)?;
-    let base_dir = options
+    if options.self_test {
+        return run_self_test();
+    }
+
+    let manifest_path = options
         .manifest
+        .as_ref()
+        .ok_or("--manifest is required unless --self-test is supplied")?;
+    let text = fs::read_to_string(manifest_path)?;
+    let manifest = serde_json::from_str::<Value>(&text)?;
+    let base_dir = manifest_path
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     validate_manifest(&manifest, base_dir, options.allow_failed)?;
     println!(
         "validated render parity review manifest: {}",
-        display_path(&options.manifest)
+        display_path(manifest_path)
     );
+    Ok(())
+}
+
+fn run_self_test() -> Result<(), Box<dyn Error>> {
+    validate_run_mode_contract(&serde_json::json!({
+        "runMode": "acceptance",
+        "referenceClean": true
+    }))?;
+    validate_run_mode_contract(&serde_json::json!({
+        "runMode": "diagnostic",
+        "referenceClean": false
+    }))?;
+    validate_run_mode_contract(&serde_json::json!({
+        "runMode": "experiment",
+        "referenceClean": false
+    }))?;
+
+    for (label, manifest) in [
+        (
+            "acceptance without referenceClean",
+            serde_json::json!({
+                "runMode": "acceptance",
+                "referenceClean": false
+            }),
+        ),
+        (
+            "diagnostic with referenceClean",
+            serde_json::json!({
+                "runMode": "diagnostic",
+                "referenceClean": true
+            }),
+        ),
+        (
+            "unknown runMode",
+            serde_json::json!({
+                "runMode": "trial",
+                "referenceClean": false
+            }),
+        ),
+    ] {
+        if validate_run_mode_contract(&manifest).is_ok() {
+            return Err(format!("{label} should be rejected").into());
+        }
+    }
+
     Ok(())
 }
 
@@ -61,8 +115,7 @@ fn validate_manifest(
     require_existing_path(manifest, base_dir, "visualReview")?;
     require_existing_path(manifest, base_dir, "artifacts")?;
     require_string(manifest, "numericGate")?;
-    require_string(manifest, "runMode")?;
-    require_bool(manifest, "referenceClean")?;
+    validate_run_mode_contract(manifest)?;
     require_string(manifest, "metric")?;
 
     let fixtures = manifest
@@ -76,6 +129,21 @@ fn validate_manifest(
         validate_fixture(fixture, base_dir, index, allow_failed)?;
     }
     Ok(())
+}
+
+fn validate_run_mode_contract(manifest: &Value) -> Result<(), Box<dyn Error>> {
+    let run_mode = require_string(manifest, "runMode")?;
+    let reference_clean = require_bool(manifest, "referenceClean")?;
+    match run_mode {
+        "acceptance" if reference_clean => Ok(()),
+        "acceptance" => Err("acceptance manifests must have referenceClean=true".into()),
+        "diagnostic" | "experiment" if !reference_clean => Ok(()),
+        "diagnostic" | "experiment" => {
+            Err(format!("{run_mode} manifests must have referenceClean=false").into())
+        }
+        _ => Err(format!("runMode must be acceptance, diagnostic, or experiment, got {run_mode}")
+            .into()),
+    }
 }
 
 fn validate_fixture(

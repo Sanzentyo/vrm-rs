@@ -772,6 +772,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/validate-review-manifest.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/map-render-hotspots.rs",
             "--",
             "--self-test",

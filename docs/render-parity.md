@@ -12,8 +12,18 @@ P3 render parity compares three rendering paths:
 The implementation source of truth is `tools/ci/local-ci.rs`; `Justfile`
 recipes are convenience entry points. Use these first:
 
+- `just render-parity-acceptance`: reference-clean acceptance-lane evidence for
+  the current six-fixture Ash-gated real sweep. It writes
+  `.external-fixtures/render-parity-acceptance/`, passes
+  `--render-run-mode acceptance`, records `runMode: acceptance` and
+  `referenceClean: true` in `review-manifest.json`, and uses the current
+  provisional `rgb-visible >= 34 dB` floor. This is the lane to repeat for
+  final evidence; the threshold is still provisional until the Seed-san/local
+  residuals and calibration report are closed.
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
-  gate for three-vrm, wgpu, Bevy, and Ash.
+  gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
+  `--render-run-mode diagnostic`; pass `acceptance` as the final `run_mode`
+  argument only when using it deliberately as reference-clean evidence.
 - `just render-parity-real-transparent-ash-gated`: transparent-background
   real-fixture regression gate.
 - `just render-parity-samples-nonblack-ash-gated`: model-body material/color
@@ -1683,7 +1693,10 @@ validator also cross-checks the manifest's reference/capture artifact paths
 against the `expected` and `actual` fields embedded in both the direct-imqraw
 numeric report and RGBA diagnostic report, and requires the manifest summary
 strings to match the numeric report's selected PSNR, selected max-channel
-delta, alpha mismatch count, and alpha max delta.
+delta, alpha mismatch count, and alpha max delta. It also rejects missing or
+inconsistent `runMode` / `referenceClean` metadata: `acceptance` manifests must
+be reference-clean, while `diagnostic` and `experiment` manifests must not claim
+that status.
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
