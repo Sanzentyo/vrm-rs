@@ -13,7 +13,8 @@ serde_json = "1.0.150"
 
 use clap::Parser;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,11 @@ struct Options {
     json_out: Option<PathBuf>,
     #[arg(long)]
     markdown_out: Option<PathBuf>,
-    #[arg(long, default_value_t = 16)]
+    #[arg(
+        long,
+        default_value_t = 12,
+        help = "Number of retained per-pair rows to print and re-bucket; rerun compare-owner-id-images with a larger --top to widen the input population"
+    )]
     top: usize,
     #[arg(long)]
     max_mismatched_shared_nonzero: Option<u64>,
@@ -58,6 +63,8 @@ struct OwnerTailReport {
     actual_raster_metadata_alignment_summary: Value,
     top_actual_metadata_recoveries: Vec<Value>,
     top_actual_near_expected_owner_recoveries: Vec<Value>,
+    top_actual_metadata_recovery_delta_buckets: Vec<RecoveryDeltaBucket>,
+    top_actual_near_expected_recovery_delta_buckets: Vec<RecoveryDeltaBucket>,
     top_unexplained_material_transitions: Vec<Value>,
     top_unexplained_details: Vec<TailDetail>,
 }
@@ -133,6 +140,41 @@ struct OwnerLabelSummary {
     visible_by_cull_policy: Option<bool>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RecoveryDeltaKey {
+    id_delta: Option<i64>,
+    red_delta: Option<i64>,
+    green_delta: Option<i64>,
+    blue_delta: Option<i64>,
+    channel_delta_class: String,
+    source_triangle_delta: Option<i64>,
+    draw_index_delta: Option<i64>,
+    decoded_material_name: Option<String>,
+    target_material_name: Option<String>,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RecoveryDeltaBucket {
+    count: u64,
+    id_delta: Option<i64>,
+    red_delta: Option<i64>,
+    green_delta: Option<i64>,
+    blue_delta: Option<i64>,
+    channel_delta_class: String,
+    source_triangle_delta: Option<i64>,
+    draw_index_delta: Option<i64>,
+    decoded_material_name: Option<String>,
+    target_material_name: Option<String>,
+    mesh_relation: String,
+    material_relation: String,
+    triangle_relation: String,
+    projection_relation: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct DetailRelation {
     pass: String,
@@ -184,7 +226,9 @@ fn validate_thresholds(
     )?;
     check_max(
         "unexplained_owner_tail_mismatched_shared_nonzero",
-        report.counts.unexplained_owner_tail_mismatched_shared_nonzero,
+        report
+            .counts
+            .unexplained_owner_tail_mismatched_shared_nonzero,
         options.max_unexplained_owner_tail,
     )?;
     check_max(
@@ -228,6 +272,9 @@ fn summarize_report(
         .get("top_unexplained_expected_to_actual_details")
         .and_then(Value::as_array)
         .ok_or("top_unexplained_expected_to_actual_details must be an array")?;
+    let top_actual_metadata_recoveries = take_values(value, "top_actual_metadata_recoveries", top);
+    let top_actual_near_expected_owner_recoveries =
+        take_values(value, "top_actual_near_expected_owner_recoveries", top);
     Ok(OwnerTailReport {
         input: display_path(input),
         expected: string_field(value, "expected"),
@@ -318,12 +365,18 @@ fn summarize_report(
             .get("actual_raster_metadata_alignment_summary")
             .cloned()
             .unwrap_or(Value::Null),
-        top_actual_metadata_recoveries: take_values(value, "top_actual_metadata_recoveries", top),
-        top_actual_near_expected_owner_recoveries: take_values(
-            value,
-            "top_actual_near_expected_owner_recoveries",
+        top_actual_metadata_recovery_delta_buckets: recovery_delta_buckets(
+            &top_actual_metadata_recoveries,
+            "recovered",
             top,
         ),
+        top_actual_near_expected_recovery_delta_buckets: recovery_delta_buckets(
+            &top_actual_near_expected_owner_recoveries,
+            "expected",
+            top,
+        ),
+        top_actual_metadata_recoveries,
+        top_actual_near_expected_owner_recoveries,
         top_unexplained_material_transitions: take_values(
             value,
             "top_unexplained_material_transitions",
@@ -335,6 +388,59 @@ fn summarize_report(
             .map(summarize_detail)
             .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+fn recovery_delta_buckets(items: &[Value], target: &str, top: usize) -> Vec<RecoveryDeltaBucket> {
+    let mut buckets = BTreeMap::<RecoveryDeltaKey, u64>::new();
+    for item in items {
+        let count = u64_field(item, "count").unwrap_or(0);
+        if count == 0 {
+            continue;
+        }
+        let key = RecoveryDeltaKey {
+            id_delta: i64_field(item, "id_delta"),
+            red_delta: i64_field(item, "red_delta"),
+            green_delta: i64_field(item, "green_delta"),
+            blue_delta: i64_field(item, "blue_delta"),
+            channel_delta_class: string_field(item, "channel_delta_class")
+                .unwrap_or_else(|| "unknown".to_owned()),
+            source_triangle_delta: i64_field(item, "source_triangle_delta"),
+            draw_index_delta: i64_field(item, "draw_index_delta"),
+            decoded_material_name: string_field(item, "decoded_material_name"),
+            target_material_name: string_field(item, &format!("{target}_material_name")),
+            mesh_relation: string_field(item, "mesh_relation")
+                .unwrap_or_else(|| "unknown".to_owned()),
+            material_relation: string_field(item, "material_relation")
+                .unwrap_or_else(|| "unknown".to_owned()),
+            triangle_relation: string_field(item, "triangle_relation")
+                .unwrap_or_else(|| "unknown".to_owned()),
+            projection_relation: string_field(item, "projection_relation")
+                .unwrap_or_else(|| "unknown".to_owned()),
+        };
+        *buckets.entry(key).or_default() += count;
+    }
+    let mut buckets = buckets.into_iter().collect::<Vec<_>>();
+    buckets.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    buckets
+        .into_iter()
+        .take(top)
+        .map(|(key, count)| RecoveryDeltaBucket {
+            count,
+            id_delta: key.id_delta,
+            red_delta: key.red_delta,
+            green_delta: key.green_delta,
+            blue_delta: key.blue_delta,
+            channel_delta_class: key.channel_delta_class,
+            source_triangle_delta: key.source_triangle_delta,
+            draw_index_delta: key.draw_index_delta,
+            decoded_material_name: key.decoded_material_name,
+            target_material_name: key.target_material_name,
+            mesh_relation: key.mesh_relation,
+            material_relation: key.material_relation,
+            triangle_relation: key.triangle_relation,
+            projection_relation: key.projection_relation,
+        })
+        .collect()
 }
 
 fn summarize_detail(value: &Value) -> Result<TailDetail, Box<dyn std::error::Error>> {
@@ -649,8 +755,16 @@ fn markdown_report(report: &OwnerTailReport) -> String {
     write_projection_gap_count(&mut output, report, "pixel_inside_expected_screen_bounds");
     write_projection_gap_count(&mut output, report, "pixel_inside_actual_screen_bounds");
     write_projection_gap_count(&mut output, report, "pixel_inside_both_screen_bounds");
-    write_projection_gap_count(&mut output, report, "pixel_inside_expected_only_screen_bounds");
-    write_projection_gap_count(&mut output, report, "pixel_inside_actual_only_screen_bounds");
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_expected_only_screen_bounds",
+    );
+    write_projection_gap_count(
+        &mut output,
+        report,
+        "pixel_inside_actual_only_screen_bounds",
+    );
     write_projection_gap_count(&mut output, report, "pixel_inside_neither_screen_bounds");
     write_projection_gap_count(
         &mut output,
@@ -894,7 +1008,11 @@ fn markdown_report(report: &OwnerTailReport) -> String {
 
     output.push_str("\n## Raster Bounds vs Metadata\n\n");
     output.push_str("| Image | Metric | Value |\n|---|---|---:|\n");
-    write_raster_bounds_summary(&mut output, "expected", &report.expected_raster_bounds_summary);
+    write_raster_bounds_summary(
+        &mut output,
+        "expected",
+        &report.expected_raster_bounds_summary,
+    );
     write_raster_bounds_summary(&mut output, "actual", &report.actual_raster_bounds_summary);
 
     output.push_str("\n## Top Actual Raster Bounds Excess\n\n");
@@ -933,6 +1051,13 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         &report.actual_raster_metadata_alignment_summary,
     );
 
+    output.push_str("\n## Actual Metadata Recovery Delta Buckets\n\n");
+    write_recovery_delta_scope_note(&mut output);
+    write_recovery_delta_buckets(
+        &mut output,
+        &report.top_actual_metadata_recovery_delta_buckets,
+    );
+
     output.push_str("\n## Top Actual Metadata Recoveries\n\n");
     output.push_str(
         "| Count | Decoded | Recovered | ID Delta | RGB Delta | Class | Source Δ | Draw Δ | Relation |\n|---:|---:|---:|---:|---|---|---:|---:|---|\n",
@@ -956,6 +1081,13 @@ fn markdown_report(report: &OwnerTailReport) -> String {
             text_field(item, "projection_relation"),
         ));
     }
+
+    output.push_str("\n## Near Expected Owner Recovery Delta Buckets\n\n");
+    write_recovery_delta_scope_note(&mut output);
+    write_recovery_delta_buckets(
+        &mut output,
+        &report.top_actual_near_expected_recovery_delta_buckets,
+    );
 
     output.push_str("\n## Top Near Expected Owner Recoveries\n\n");
     output.push_str(
@@ -1048,6 +1180,35 @@ fn markdown_report(report: &OwnerTailReport) -> String {
         ));
     }
     output
+}
+
+fn write_recovery_delta_buckets(output: &mut String, buckets: &[RecoveryDeltaBucket]) {
+    output.push_str(
+        "| Count | ID Δ | RGB Δ | Class | Source Δ | Draw Δ | Materials | Relation |\n|---:|---:|---|---|---:|---:|---|---|\n",
+    );
+    for bucket in buckets {
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} -> {} | {}; {}; {}; {} |\n",
+            bucket.count,
+            optional_i64_text(bucket.id_delta),
+            rgb_delta_text(bucket.red_delta, bucket.green_delta, bucket.blue_delta),
+            bucket.channel_delta_class.replace('|', "\\|"),
+            optional_i64_text(bucket.source_triangle_delta),
+            optional_i64_text(bucket.draw_index_delta),
+            markdown_opt_text(bucket.decoded_material_name.as_deref()),
+            markdown_opt_text(bucket.target_material_name.as_deref()),
+            bucket.mesh_relation.replace('|', "\\|"),
+            bucket.material_relation.replace('|', "\\|"),
+            bucket.triangle_relation.replace('|', "\\|"),
+            bucket.projection_relation.replace('|', "\\|"),
+        ));
+    }
+}
+
+fn write_recovery_delta_scope_note(output: &mut String) {
+    output.push_str(
+        "_Scope: buckets summarize the retained top-N recovery rows present in the input report, not every recovery pixel or owner pair._\n\n",
+    );
 }
 
 fn label_cell(label: &OwnerLabelSummary) -> String {
@@ -1173,7 +1334,7 @@ fn write_raster_alignment_summary(output: &mut String, image: &str, summary: &Va
 }
 
 fn markdown_text_field(value: &Value, key: &str) -> String {
-    text_field(value, key)
+    markdown_opt_text(value.get(key).and_then(Value::as_str))
 }
 
 fn text_field(value: &Value, key: &str) -> String {
@@ -1200,9 +1361,24 @@ fn i64_field(value: &Value, key: &str) -> Option<i64> {
 }
 
 fn optional_i64_cell(value: &Value, key: &str) -> String {
-    i64_field(value, key)
+    optional_i64_text(i64_field(value, key))
+}
+
+fn optional_i64_text(value: Option<i64>) -> String {
+    value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn rgb_delta_text(red: Option<i64>, green: Option<i64>, blue: Option<i64>) -> String {
+    match (red, green, blue) {
+        (Some(red), Some(green), Some(blue)) => format!("({red:+}, {green:+}, {blue:+})"),
+        _ => "n/a".to_owned(),
+    }
+}
+
+fn markdown_opt_text(value: Option<&str>) -> String {
+    value.unwrap_or("unknown").replace('|', "\\|")
 }
 
 fn f64_field(value: &Value, key: &str) -> Option<f64> {
@@ -1416,6 +1592,140 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         report.top_unexplained_details[0].relation.material,
         "same-index"
     );
+    assert_eq!(report.top_actual_metadata_recovery_delta_buckets.len(), 1);
+    assert_eq!(
+        report.top_actual_metadata_recovery_delta_buckets[0].count,
+        34
+    );
+    assert_eq!(
+        report.top_actual_metadata_recovery_delta_buckets[0].id_delta,
+        Some(256)
+    );
+    assert_eq!(
+        report.top_actual_near_expected_recovery_delta_buckets.len(),
+        1
+    );
+    assert_eq!(
+        report.top_actual_near_expected_recovery_delta_buckets[0].count,
+        12
+    );
+    assert_eq!(
+        report.top_actual_near_expected_recovery_delta_buckets[0].id_delta,
+        Some(-1)
+    );
+    let merged_buckets = recovery_delta_buckets(
+        &[
+            json!({
+                "decoded_actual": 34459,
+                "recovered_actual": 34715,
+                "id_delta": 256,
+                "red_delta": 0,
+                "green_delta": 1,
+                "blue_delta": 0,
+                "channel_delta_class": "g+1",
+                "source_triangle_delta": 1,
+                "draw_index_delta": 1,
+                "decoded_material_name": "huku_bake",
+                "recovered_material_name": "huku_bake",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-name",
+                "triangle_relation": "adjacent-triangle-index",
+                "projection_relation": "overlap-depth-close",
+                "count": 2
+            }),
+            json!({
+                "decoded_actual": 111,
+                "recovered_actual": 367,
+                "id_delta": 256,
+                "red_delta": 0,
+                "green_delta": 1,
+                "blue_delta": 0,
+                "channel_delta_class": "g+1",
+                "source_triangle_delta": 1,
+                "draw_index_delta": 1,
+                "decoded_material_name": "huku_bake",
+                "recovered_material_name": "huku_bake",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-name",
+                "triangle_relation": "adjacent-triangle-index",
+                "projection_relation": "overlap-depth-close",
+                "count": 3
+            }),
+            json!({
+                "id_delta": 256,
+                "channel_delta_class": "g+1",
+                "decoded_material_name": "huku_bake",
+                "recovered_material_name": "huku_bake",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-name",
+                "triangle_relation": "adjacent-triangle-index",
+                "projection_relation": "overlap-depth-close",
+                "count": 0
+            }),
+            json!({
+                "id_delta": 256,
+                "channel_delta_class": "g+1",
+                "decoded_material_name": "huku_bake",
+                "recovered_material_name": "huku_bake",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-name",
+                "triangle_relation": "adjacent-triangle-index",
+                "projection_relation": "overlap-depth-close"
+            }),
+        ],
+        "recovered",
+        16,
+    );
+    assert_eq!(merged_buckets.len(), 1);
+    assert_eq!(merged_buckets[0].count, 5);
+    let merged_near_expected_buckets = recovery_delta_buckets(
+        &[
+            json!({
+                "decoded_actual": 11,
+                "expected_owner": 10,
+                "id_delta": -1,
+                "red_delta": -1,
+                "green_delta": 0,
+                "blue_delta": 0,
+                "channel_delta_class": "r-1",
+                "draw_index_delta": -1,
+                "decoded_material_name": "huku_bake",
+                "expected_material_name": "huku_bake (Outline)",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-index",
+                "triangle_relation": "different-triangle",
+                "projection_relation": "overlap-depth-close",
+                "count": 4
+            }),
+            json!({
+                "decoded_actual": 21,
+                "expected_owner": 20,
+                "id_delta": -1,
+                "red_delta": -1,
+                "green_delta": 0,
+                "blue_delta": 0,
+                "channel_delta_class": "r-1",
+                "draw_index_delta": -1,
+                "decoded_material_name": "huku_bake",
+                "expected_material_name": "huku_bake (Outline)",
+                "mesh_relation": "same-normalized-name",
+                "material_relation": "same-index",
+                "triangle_relation": "different-triangle",
+                "projection_relation": "overlap-depth-close",
+                "count": 7
+            }),
+        ],
+        "expected",
+        16,
+    );
+    assert_eq!(merged_near_expected_buckets.len(), 1);
+    assert_eq!(merged_near_expected_buckets[0].count, 11);
+    assert_eq!(
+        merged_near_expected_buckets[0]
+            .target_material_name
+            .as_deref(),
+        Some("huku_bake (Outline)")
+    );
     let markdown = markdown_report(&report);
     assert!(markdown.contains("huku_bake (Outline)"));
     assert!(markdown.contains("depth_delta=0.010000"));
@@ -1425,16 +1735,21 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(
         markdown.contains("actual_near_id_matches_expected_owner_unexplained_tail_after_touching")
     );
-    assert!(
-        markdown.contains("unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero")
-    );
-    assert!(
-        markdown
-            .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero")
-    );
+    assert!(markdown
+        .contains("unresolved_owner_tail_after_near_id_after_touching_mismatched_shared_nonzero"));
+    assert!(markdown
+        .contains("actual_metadata_bounds_miss_recovered_by_near_id_mismatched_shared_nonzero"));
     assert!(markdown.contains("Projection Gap Shape"));
+    assert!(markdown.contains("Actual Metadata Recovery Delta Buckets"));
     assert!(markdown.contains("Top Actual Metadata Recoveries"));
+    assert!(markdown.contains("Near Expected Owner Recovery Delta Buckets"));
     assert!(markdown.contains("Top Near Expected Owner Recoveries"));
+    assert!(markdown.contains(
+        "| 34 | 256 | (+0, +1, +0) | g+1 | 1 | 1 | huku_bake -> huku_bake | same-normalized-name; same-name; adjacent-triangle-index; overlap-depth-close |"
+    ));
+    assert!(markdown.contains(
+        "| 12 | -1 | (-1, +0, +0) | r-1 | -8 | -1 | huku_bake -> huku_bake (Outline) | same-normalized-name; same-index; different-triangle; overlap-depth-close |"
+    ));
     assert!(markdown.contains("| 12 | 11 | 10 | -1 | (-1, +0, +0) | r-1 | -8 | -1 |"));
     assert!(markdown.contains(
         "| 34 | 34459 | 34715 | 256 | (+0, +1, +0) | g+1 | 1 | 1 | same-normalized-name; same-name; adjacent-triangle-index; overlap-depth-close |"
