@@ -113,6 +113,13 @@ recipes are convenience entry points. Use these first:
   `README.md`, `handoff.{md,json}`, `RETURN_BUNDLE_LAYOUT.md`, and
   `import-command.txt` / `intake-command.txt`; it intentionally contains no
   fixture binaries, generated images, or golden files.
+- `just render-parity-acceptance-runner-kit-zip`: regenerate the same
+  external-only kit and package it as
+  `target/render-parity-acceptance-runner-kit.zip` by default. The zip root is
+  `render-parity-acceptance-runner-kit/`, and the packer requires the README,
+  handoff files, return-layout note, and intake command files before writing.
+  This is the preferred artifact to send to a runner when a directory transfer
+  is awkward.
 - `just render-parity-acceptance-runner-preflight <expected-head>`: check a
   prepared external runner checkout before the long capture starts. It verifies
   Rust nightly, `just`, Node/npm, `glslangValidator`, the exact repo HEAD,
@@ -151,6 +158,12 @@ recipes are convenience entry points. Use these first:
   whose visual review is `accepted` with `signoff status: complete`. Use this
   variant for final goal evidence; the non-strict bundle command remains useful
   for staging returned numeric bundles before human review is complete.
+- `just render-parity-acceptance-bundle-zip`: validate a strict accepted
+  `.external-fixtures/render-parity-acceptance-bundle/` and package it as
+  `target/render-parity-acceptance-bundle.zip` by default. The zip root is
+  `acceptance-bundle/`, so the main machine can import the returned archive
+  directly with
+  `just render-parity-acceptance-import-bundle <returned-bundle-path-or-zip> <label>`.
 
 - `just render-parity-acceptance-bundle-root`: recursively discover portable
   evidence bundles under one returned-bundle root directory and validate all of

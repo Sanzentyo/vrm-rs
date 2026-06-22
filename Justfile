@@ -163,6 +163,16 @@ render-parity-acceptance-handoff out_root=".external-fixtures/render-parity-acce
 render-parity-acceptance-runner-kit handoff_root=".external-fixtures/render-parity-acceptance-handoff" out_root=".external-fixtures/render-parity-acceptance-runner-kit":
     cargo +nightly -Zscript tools/render-parity/generate-acceptance-runner-kit.rs --handoff-root "{{ handoff_root }}" --out-root "{{ out_root }}" --apply
 
+# Zip the current external-only handoff kit for transfer to another GPU/driver environment.
+render-parity-acceptance-runner-kit-zip handoff_root=".external-fixtures/render-parity-acceptance-handoff" out_root=".external-fixtures/render-parity-acceptance-runner-kit" zip_out="target/render-parity-acceptance-runner-kit.zip":
+    just render-parity-acceptance-runner-kit "{{ handoff_root }}" "{{ out_root }}"
+    cargo +nightly -Zscript tools/render-parity/package-transfer-zip.rs --input-dir "{{ out_root }}" --zip-out "{{ zip_out }}" --root-name render-parity-acceptance-runner-kit --require-file README.md --require-file handoff.md --require-file handoff.json --require-file RETURN_BUNDLE_LAYOUT.md --require-file import-command.txt --require-file intake-command.txt --apply
+
+# Zip a strict accepted bundle for returning from an external runner.
+render-parity-acceptance-bundle-zip bundle=".external-fixtures/render-parity-acceptance-bundle" zip_out="target/render-parity-acceptance-bundle.zip":
+    cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle }}" --min-environments 1 --require-accepted-signoff
+    cargo +nightly -Zscript tools/render-parity/package-transfer-zip.rs --input-dir "{{ bundle }}" --zip-out "{{ zip_out }}" --root-name acceptance-bundle --require-file bundle-manifest.json --require-file acceptance-repeat-summary.json --require-file acceptance-repeat-summary.md --require-file acceptance-signoff.md --apply
+
 # Check a runner checkout before starting the long acceptance capture.
 render-parity-acceptance-runner-preflight expected_head="" three_vrm_root=".external-fixtures/three-vrm" fixture_dir=".external-fixtures/official":
     cargo +nightly -Zscript tools/render-parity/preflight-acceptance-runner.rs {{ if expected_head != "" { "--expected-head \"" + expected_head + "\"" } else { "" } }} --three-vrm-root "{{ three_vrm_root }}" --fixture-dir "{{ fixture_dir }}"
