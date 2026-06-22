@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -23,8 +23,10 @@ use std::path::{Path, PathBuf};
     about = "Validate multi-environment render-parity acceptance-repeat summaries"
 )]
 struct Options {
-    #[arg(long, required_unless_present = "self_test")]
+    #[arg(long)]
     summary: Vec<PathBuf>,
+    #[arg(long)]
+    bundle: Vec<PathBuf>,
     #[arg(long, default_value_t = 2)]
     min_environments: usize,
     #[arg(long, default_value_t = 3)]
@@ -56,11 +58,24 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     if options.self_test {
         return run_self_test();
     }
-    let summaries = options
+    if !options.summary.is_empty() && !options.bundle.is_empty() {
+        return Err("do not mix --summary and --bundle inputs in one validation run".into());
+    }
+    let mut summaries = options
         .summary
         .iter()
         .map(|path| read_summary(path))
         .collect::<Result<Vec<_>, _>>()?;
+    summaries.extend(
+        options
+            .bundle
+            .iter()
+            .map(|path| read_bundle_summary(path))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    if summaries.is_empty() {
+        return Err("provide at least one --summary or --bundle".into());
+    }
     let report = validate_summaries(&summaries, &options)?;
     if let Some(path) = options.json_out.as_ref() {
         write_json(path, &report)?;
@@ -78,6 +93,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 fn run_self_test() -> Result<(), Box<dyn Error>> {
     let options = Options {
         summary: Vec::new(),
+        bundle: Vec::new(),
         min_environments: 2,
         min_runs_per_environment: 3,
         expected_comparisons: 2,
@@ -130,6 +146,78 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         return Err("source-lock mismatch should be rejected".into());
     }
 
+    let bundle_root = PathBuf::from("target/acceptance-environments-self-test");
+    let _ = fs::remove_dir_all(&bundle_root);
+    write_test_bundle(
+        &bundle_root.join("env-a"),
+        &test_summary("env-a", "Adapter A"),
+    )?;
+    write_test_bundle(
+        &bundle_root.join("env-b"),
+        &test_summary("env-b", "Adapter B"),
+    )?;
+    let bundle_options = Options {
+        bundle: vec![bundle_root.join("env-a"), bundle_root.join("env-b")],
+        ..options.clone()
+    };
+    let bundle_summaries = bundle_options
+        .bundle
+        .iter()
+        .map(|path| read_bundle_summary(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_summaries(&bundle_summaries, &bundle_options)?;
+    run(Options {
+        self_test: false,
+        ..bundle_options
+    })?;
+
+    let mixed_options = Options {
+        summary: vec![bundle_root
+            .join("env-a")
+            .join("acceptance-repeat-summary.json")],
+        bundle: vec![bundle_root.join("env-b")],
+        self_test: false,
+        ..options.clone()
+    };
+    if run(mixed_options).is_ok() {
+        return Err("mixed summary and bundle inputs should be rejected".into());
+    }
+
+    let mut bad_manifest = read_json(&bundle_root.join("env-a").join("bundle-manifest.json"))?;
+    bad_manifest["runCount"] = Value::from(2);
+    fs::write(
+        bundle_root.join("env-a").join("bundle-manifest.json"),
+        serde_json::to_string(&bad_manifest)?,
+    )?;
+    if read_bundle_summary(&bundle_root.join("env-a")).is_ok() {
+        return Err("bundle manifest mismatch should be rejected".into());
+    }
+
+    let mut bad_metric_manifest =
+        read_json(&bundle_root.join("env-b").join("bundle-manifest.json"))?;
+    bad_metric_manifest["maxAlphaDelta"] = Value::from(1);
+    fs::write(
+        bundle_root.join("env-b").join("bundle-manifest.json"),
+        serde_json::to_string(&bad_metric_manifest)?,
+    )?;
+    if read_bundle_summary(&bundle_root.join("env-b")).is_ok() {
+        return Err("bundle metric mismatch should be rejected".into());
+    }
+
+    write_test_bundle(
+        &bundle_root.join("env-c"),
+        &test_summary("env-c", "Adapter C"),
+    )?;
+    let mut bad_path_manifest = read_json(&bundle_root.join("env-c").join("bundle-manifest.json"))?;
+    bad_path_manifest["files"][0]["path"] = Value::String("../escape.json".to_owned());
+    fs::write(
+        bundle_root.join("env-c").join("bundle-manifest.json"),
+        serde_json::to_string(&bad_path_manifest)?,
+    )?;
+    if read_bundle_summary(&bundle_root.join("env-c")).is_ok() {
+        return Err("bundle path traversal should be rejected".into());
+    }
+
     Ok(())
 }
 
@@ -138,6 +226,129 @@ fn read_summary(path: &Path) -> Result<Value, Box<dyn Error>> {
     let mut summary = serde_json::from_str::<Value>(&text)?;
     summary["_summaryPath"] = Value::String(display_path(path));
     Ok(summary)
+}
+
+fn read_bundle_summary(bundle_dir: &Path) -> Result<Value, Box<dyn Error>> {
+    let manifest_path = bundle_dir.join("bundle-manifest.json");
+    let manifest = read_json(&manifest_path)?;
+    if required_string(&manifest, "bundleFormat")? != "vrm-rs.render-parity.acceptance-evidence.v1"
+    {
+        return Err("bundle-manifest.json has an unsupported bundleFormat".into());
+    }
+    let summary_path = bundle_dir.join("acceptance-repeat-summary.json");
+    let mut summary = read_summary(&summary_path)?;
+    summary["_bundlePath"] = Value::String(display_path(bundle_dir));
+
+    ensure_same_value(
+        required_object_value(&manifest, "sourceLock", "bundle-manifest")?,
+        required_object_value(&summary, "sourceLock", "summary")?,
+        "bundle.sourceLock",
+    )?;
+    ensure_same_value(
+        required_object_value(&manifest, "environmentLock", "bundle-manifest")?,
+        required_object_value(&summary, "environmentLock", "summary")?,
+        "bundle.environmentLock",
+    )?;
+    if required_u64(&manifest, "runCount")? != required_u64(&summary, "runCount")? {
+        return Err("bundle runCount does not match summary runCount".into());
+    }
+    if required_u64(&manifest, "comparisonCount")? as usize
+        != required_array(&summary, "comparisons")?.len()
+    {
+        return Err("bundle comparisonCount does not match summary comparisons".into());
+    }
+    let expected_min_psnr = metric_json(min_comparison_f64(&summary, "minSelectedPsnr")?);
+    ensure_same_value(
+        &expected_min_psnr,
+        manifest
+            .get("minSelectedPsnr")
+            .ok_or("bundle-manifest.minSelectedPsnr is missing")?,
+        "bundle.minSelectedPsnr",
+    )?;
+    if required_u64(&manifest, "maxAlphaMismatches")?
+        != max_comparison_u64(&summary, "maxAlphaMismatches")?
+    {
+        return Err("bundle maxAlphaMismatches does not match summary comparisons".into());
+    }
+    if required_u64(&manifest, "maxAlphaDelta")? != max_comparison_u64(&summary, "maxAlphaDelta")? {
+        return Err("bundle maxAlphaDelta does not match summary comparisons".into());
+    }
+    validate_bundle_files(bundle_dir, &manifest, required_u64(&summary, "runCount")?)?;
+    Ok(summary)
+}
+
+fn validate_bundle_files(
+    bundle_dir: &Path,
+    manifest: &Value,
+    run_count: u64,
+) -> Result<(), Box<dyn Error>> {
+    let mut has_summary = false;
+    let mut listed_files = BTreeSet::new();
+    let canonical_bundle_dir = bundle_dir.canonicalize()?;
+    for file in required_array(manifest, "files")? {
+        let relative = required_string(file, "path")?;
+        let relative_path = Path::new(relative);
+        if relative_path.is_absolute()
+            || relative_path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(format!(
+                "bundle file path must be relative and stay inside the bundle: {relative:?}"
+            )
+            .into());
+        }
+        if relative == "acceptance-repeat-summary.json" {
+            has_summary = true;
+        }
+        listed_files.insert(relative.replace('\\', "/"));
+        let path = bundle_dir.join(relative_path);
+        let canonical_path = path
+            .canonicalize()
+            .map_err(|err| format!("bundle file is missing: {}: {err}", display_path(&path)))?;
+        if !canonical_path.starts_with(&canonical_bundle_dir) {
+            return Err(format!(
+                "bundle file resolves outside the bundle: {}",
+                display_path(&path)
+            )
+            .into());
+        }
+        let bytes = path
+            .metadata()
+            .map_err(|err| format!("bundle file is missing: {}: {err}", display_path(&path)))?
+            .len();
+        let expected_bytes = required_u64(file, "bytes")?;
+        if bytes != expected_bytes {
+            return Err(format!(
+                "bundle file {} has {bytes} bytes, expected {expected_bytes}",
+                display_path(&path)
+            )
+            .into());
+        }
+    }
+    if !has_summary {
+        return Err("bundle manifest must list acceptance-repeat-summary.json".into());
+    }
+    for required in required_bundle_files(run_count) {
+        if !listed_files.contains(&required) {
+            return Err(format!("bundle manifest must list required file {required}").into());
+        }
+    }
+    Ok(())
+}
+
+fn required_bundle_files(run_count: u64) -> Vec<String> {
+    let mut paths = vec![
+        "acceptance-repeat-summary.json".to_owned(),
+        "acceptance-repeat-summary.md".to_owned(),
+    ];
+    paths.extend((1..=run_count).flat_map(|run| {
+        [
+            format!("run-{run}/review-manifest.json"),
+            format!("run-{run}/summary.md"),
+        ]
+    }));
+    paths
 }
 
 fn validate_summaries(summaries: &[Value], options: &Options) -> Result<Value, Box<dyn Error>> {
@@ -512,6 +723,79 @@ fn write_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, text)?;
+    Ok(())
+}
+
+fn read_json(path: &Path) -> Result<Value, Box<dyn Error>> {
+    let text = fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn write_test_bundle(bundle_dir: &Path, summary: &Value) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(bundle_dir)?;
+    let summary_text = format!("{}\n", serde_json::to_string_pretty(summary)?);
+    let mut files = Vec::new();
+    write_test_bundle_file(
+        bundle_dir,
+        "acceptance-repeat-summary.json",
+        &summary_text,
+        &mut files,
+    )?;
+    write_test_bundle_file(
+        bundle_dir,
+        "acceptance-repeat-summary.md",
+        "# acceptance repeat summary\n",
+        &mut files,
+    )?;
+    write_test_bundle_file(
+        bundle_dir,
+        "acceptance-signoff.md",
+        "# acceptance signoff\n",
+        &mut files,
+    )?;
+    for run in 1..=required_u64(summary, "runCount")? {
+        write_test_bundle_file(
+            bundle_dir,
+            &format!("run-{run}/review-manifest.json"),
+            "{}\n",
+            &mut files,
+        )?;
+        write_test_bundle_file(
+            bundle_dir,
+            &format!("run-{run}/summary.md"),
+            "# run summary\n",
+            &mut files,
+        )?;
+    }
+    let manifest = serde_json::json!({
+        "bundleFormat": "vrm-rs.render-parity.acceptance-evidence.v1",
+        "sourceLock": required_object_value(summary, "sourceLock", "summary")?,
+        "environmentLock": required_object_value(summary, "environmentLock", "summary")?,
+        "runCount": required_u64(summary, "runCount")?,
+        "comparisonCount": required_array(summary, "comparisons")?.len(),
+        "minSelectedPsnr": metric_json(min_comparison_f64(summary, "minSelectedPsnr")?),
+        "maxAlphaMismatches": max_comparison_u64(summary, "maxAlphaMismatches")?,
+        "maxAlphaDelta": max_comparison_u64(summary, "maxAlphaDelta")?,
+        "files": files,
+    });
+    write_json(&bundle_dir.join("bundle-manifest.json"), &manifest)
+}
+
+fn write_test_bundle_file(
+    bundle_dir: &Path,
+    relative: &str,
+    text: &str,
+    files: &mut Vec<Value>,
+) -> Result<(), Box<dyn Error>> {
+    let path = bundle_dir.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, text)?;
+    files.push(serde_json::json!({
+        "path": relative,
+        "bytes": text.len() as u64,
+    }));
     Ok(())
 }
 

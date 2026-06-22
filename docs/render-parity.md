@@ -59,6 +59,20 @@ recipes are convenience entry points. Use these first:
   just render-parity-acceptance-environments .external-fixtures/env-a/acceptance-repeat-summary.json .external-fixtures/env-b/acceptance-repeat-summary.json '--summary .external-fixtures/env-c/acceptance-repeat-summary.json'
   ```
 
+- `just render-parity-acceptance-bundles`: validate portable evidence bundle
+  directories gathered from multiple runner environments. This is the preferred
+  entry point after each runner has exported `just render-parity-acceptance-bundle`
+  output, because the validator also checks `bundle-manifest.json`, copied file
+  byte counts, required summary/run evidence files, and
+  source/environment/run-count/comparison-count/numeric metadata before reading
+  the embedded summary. Do not mix `--summary` and `--bundle` in one validation
+  run; bundle validation is the stronger transfer-integrity path:
+
+  ```powershell
+  just render-parity-acceptance-bundles .external-fixtures/env-a-bundle .external-fixtures/env-b-bundle
+  just render-parity-acceptance-bundles .external-fixtures/env-a-bundle .external-fixtures/env-b-bundle '--bundle .external-fixtures/env-c-bundle'
+  ```
+
   The underlying Rust script requires at least two distinct GPU/driver
   environment signatures derived from `environmentLock`, the same source lock,
   the same reference-clean acceptance lane config, the same fixture signatures,
@@ -101,8 +115,7 @@ For that hardening task, each additional machine should run
 external. The runner can then run `just render-parity-acceptance-bundle` and
 transfer only the generated bundle directory instead of the full image-heavy
 artifact tree. Bring those bundles back under separate external directories and
-run `just render-parity-acceptance-environments` against each bundle's
-`acceptance-repeat-summary.json` to produce
+run `just render-parity-acceptance-bundles` against the bundle directories to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
