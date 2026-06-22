@@ -78,6 +78,13 @@ recipes are convenience entry points. Use these first:
   just render-parity-acceptance-bundles .external-fixtures/env-a-bundle .external-fixtures/env-b-bundle '--bundle .external-fixtures/env-c-bundle'
   ```
 
+- `just render-parity-acceptance-bundles-strict`: run the same bundle intake
+  path, but require every returned bundle to include an
+  `acceptance-signoff.md` whose source lock matches the embedded summary and
+  whose visual review is `accepted` with `signoff status: complete`. Use this
+  variant for final goal evidence; the non-strict bundle command remains useful
+  for staging returned numeric bundles before human review is complete.
+
 - `just render-parity-acceptance-bundle-root`: recursively discover portable
   evidence bundles under one returned-bundle root directory and validate all of
   them. This is the default recommended intake command once multiple GPU/driver
@@ -93,6 +100,12 @@ recipes are convenience entry points. Use these first:
   just render-parity-acceptance-bundle-root .external-fixtures/render-parity-acceptance-returned
   ```
 
+- `just render-parity-acceptance-bundle-root-strict`: discover bundles under
+  one returned-bundle root and require accepted signoffs for all of them. This
+  is the preferred final multi-GPU/driver intake command after each runner has
+  completed `just render-parity-acceptance-signoff-strict` and exported its
+  portable bundle.
+
   All three intake commands use the same aggregation validator. They require at
   least two distinct GPU/driver environment signatures derived from
   `environmentLock`, the same source lock, the same reference-clean acceptance
@@ -103,16 +116,16 @@ recipes are convenience entry points. Use these first:
 ## Current Local Acceptance Evidence
 
 The latest local acceptance repeat was generated from clean source commit
-`4fb384e44142db8adc2f5fb7dd9828ca1cfa6e80`, with three-vrm pinned to
+`7f9546749203787c763679f0b41a6485f3b84f48`, with three-vrm pinned to
 `9d125586f6d7da094b0ac5f204cebf19586f2397`. The external-only artifacts live
 under `.external-fixtures/render-parity-acceptance-repeat/`; they include the
 environment lock (`windows` / `x86_64`, Rust nightly `1.98.0`, Node `v25.9.0`,
 just `1.49.0`, plus GPU adapter snapshot), three repeated acceptance runs, and
 an accepted `acceptance-signoff.md` generated with
-`--require-visual-accepted`. Because that artifact is source-locked to the
-commit above, the strict signoff command must be rerun after a fresh
-`just render-parity-acceptance-repeat` before using it as evidence for a newer
-HEAD.
+`--require-visual-accepted --require-current-source`. Because that artifact is
+source-locked to the commit above, the strict signoff command must be rerun
+after a fresh `just render-parity-acceptance-repeat` before using it as
+evidence for a newer HEAD.
 
 Numeric status for the six-fixture wgpu/Bevy/Ash acceptance set is stable: all
 `18` comparisons pass over `3` runs, the minimum selected PSNR is Seed-san Bevy
@@ -140,7 +153,9 @@ external. The runner can then run `just render-parity-acceptance-bundle` and
 transfer only the generated bundle directory instead of the full image-heavy
 artifact tree. Bring those returned bundles back as sibling directories under
 one external parent directory, then run `just render-parity-acceptance-bundle-root`
-against that parent to produce
+against that parent for staging, or
+`just render-parity-acceptance-bundle-root-strict` for final accepted visual
+review evidence, to produce
 `.external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.{json,md}`.
 
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression

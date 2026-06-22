@@ -42,6 +42,8 @@ struct Options {
     #[arg(long, default_value_t = 0)]
     max_alpha_delta: u64,
     #[arg(long)]
+    require_accepted_signoff: bool,
+    #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
     markdown_out: Option<PathBuf>,
@@ -68,6 +70,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 .into(),
         );
     }
+    if options.require_accepted_signoff && !options.summary.is_empty() {
+        return Err(
+            "--require-accepted-signoff can only be used with --bundle or --bundle-root inputs"
+                .into(),
+        );
+    }
     let bundle_dirs = unique_bundle_dirs(discover_bundle_inputs(&options)?)?;
     let mut summaries = options
         .summary
@@ -77,7 +85,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     summaries.extend(
         bundle_dirs
             .iter()
-            .map(|path| read_bundle_summary(path))
+            .map(|path| read_bundle_summary(path, options.require_accepted_signoff))
             .collect::<Result<Vec<_>, _>>()?,
     );
     if summaries.is_empty() {
@@ -108,6 +116,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         min_psnr_floor: 34.0,
         max_alpha_mismatches: 0,
         max_alpha_delta: 0,
+        require_accepted_signoff: false,
         json_out: None,
         markdown_out: None,
         self_test: true,
@@ -171,7 +180,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     let bundle_summaries = bundle_options
         .bundle
         .iter()
-        .map(|path| read_bundle_summary(path))
+        .map(|path| read_bundle_summary(path, false))
         .collect::<Result<Vec<_>, _>>()?;
     validate_summaries(&bundle_summaries, &bundle_options)?;
     run(Options {
@@ -236,6 +245,18 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     if run(mixed_options).is_ok() {
         return Err("mixed summary and bundle-root inputs should be rejected".into());
     }
+    if run(Options {
+        summary: vec![bundle_root
+            .join("env-a")
+            .join("acceptance-repeat-summary.json")],
+        require_accepted_signoff: true,
+        self_test: false,
+        ..options.clone()
+    })
+    .is_ok()
+    {
+        return Err("accepted signoff requirement should reject summary-only inputs".into());
+    }
 
     let empty_root = bundle_root.join("empty-root");
     fs::create_dir_all(&empty_root)?;
@@ -259,7 +280,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         bundle_root.join("env-a").join("bundle-manifest.json"),
         serde_json::to_string(&bad_manifest)?,
     )?;
-    if read_bundle_summary(&bundle_root.join("env-a")).is_ok() {
+    if read_bundle_summary(&bundle_root.join("env-a"), false).is_ok() {
         return Err("bundle manifest mismatch should be rejected".into());
     }
 
@@ -270,7 +291,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         bundle_root.join("env-b").join("bundle-manifest.json"),
         serde_json::to_string(&bad_metric_manifest)?,
     )?;
-    if read_bundle_summary(&bundle_root.join("env-b")).is_ok() {
+    if read_bundle_summary(&bundle_root.join("env-b"), false).is_ok() {
         return Err("bundle metric mismatch should be rejected".into());
     }
 
@@ -284,9 +305,31 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         bundle_root.join("env-c").join("bundle-manifest.json"),
         serde_json::to_string(&bad_path_manifest)?,
     )?;
-    if read_bundle_summary(&bundle_root.join("env-c")).is_ok() {
+    if read_bundle_summary(&bundle_root.join("env-c"), false).is_ok() {
         return Err("bundle path traversal should be rejected".into());
     }
+
+    write_test_bundle(
+        &bundle_root.join("env-d"),
+        &test_summary("env-d", "Adapter D"),
+    )?;
+    let env_d = bundle_root.join("env-d");
+    if read_bundle_summary(&env_d, true).is_ok() {
+        return Err("draft signoff should be rejected when accepted signoff is required".into());
+    }
+    fs::write(
+        env_d.join("acceptance-signoff.md"),
+        test_accepted_signoff_text("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    )?;
+    let mut env_d_manifest = read_json(&env_d.join("bundle-manifest.json"))?;
+    for file in required_array(&env_d_manifest, "files")?.clone() {
+        if required_string(&file, "path")? == "acceptance-signoff.md" {
+            let bytes = fs::metadata(env_d.join("acceptance-signoff.md"))?.len();
+            replace_bundle_file_bytes(&mut env_d_manifest, "acceptance-signoff.md", bytes)?;
+        }
+    }
+    write_json(&env_d.join("bundle-manifest.json"), &env_d_manifest)?;
+    read_bundle_summary(&env_d, true)?;
 
     Ok(())
 }
@@ -384,7 +427,10 @@ fn unique_bundle_dirs(bundle_dirs: Vec<PathBuf>) -> Result<Vec<PathBuf>, Box<dyn
     Ok(unique)
 }
 
-fn read_bundle_summary(bundle_dir: &Path) -> Result<Value, Box<dyn Error>> {
+fn read_bundle_summary(
+    bundle_dir: &Path,
+    require_accepted_signoff: bool,
+) -> Result<Value, Box<dyn Error>> {
     let manifest_path = bundle_dir.join("bundle-manifest.json");
     let manifest = read_json(&manifest_path)?;
     if required_string(&manifest, "bundleFormat")? != "vrm-rs.render-parity.acceptance-evidence.v1"
@@ -429,7 +475,15 @@ fn read_bundle_summary(bundle_dir: &Path) -> Result<Value, Box<dyn Error>> {
     if required_u64(&manifest, "maxAlphaDelta")? != max_comparison_u64(&summary, "maxAlphaDelta")? {
         return Err("bundle maxAlphaDelta does not match summary comparisons".into());
     }
-    validate_bundle_files(bundle_dir, &manifest, required_u64(&summary, "runCount")?)?;
+    validate_bundle_files(
+        bundle_dir,
+        &manifest,
+        required_u64(&summary, "runCount")?,
+        require_accepted_signoff,
+    )?;
+    if require_accepted_signoff {
+        validate_accepted_signoff(bundle_dir, &summary)?;
+    }
     Ok(summary)
 }
 
@@ -437,6 +491,7 @@ fn validate_bundle_files(
     bundle_dir: &Path,
     manifest: &Value,
     run_count: u64,
+    require_accepted_signoff: bool,
 ) -> Result<(), Box<dyn Error>> {
     let mut has_summary = false;
     let mut listed_files = BTreeSet::new();
@@ -485,10 +540,50 @@ fn validate_bundle_files(
     if !has_summary {
         return Err("bundle manifest must list acceptance-repeat-summary.json".into());
     }
+    if require_accepted_signoff && !listed_files.contains("acceptance-signoff.md") {
+        return Err(
+            "bundle manifest must list acceptance-signoff.md when --require-accepted-signoff is used"
+                .into(),
+        );
+    }
     for required in required_bundle_files(run_count) {
         if !listed_files.contains(&required) {
             return Err(format!("bundle manifest must list required file {required}").into());
         }
+    }
+    Ok(())
+}
+
+fn validate_accepted_signoff(bundle_dir: &Path, summary: &Value) -> Result<(), Box<dyn Error>> {
+    let path = bundle_dir.join("acceptance-signoff.md");
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("accepted signoff is missing: {}: {err}", display_path(&path)))?;
+    let source_lock = required_object_value(summary, "sourceLock", "summary")?;
+    let vrm_rs_head = required_string(source_lock, "vrmRsGitHead")?;
+    let three_vrm_head = required_string(source_lock, "threeVrmGitHead")?;
+    for needle in [
+        format!("- vrm-rs HEAD: `{vrm_rs_head}`"),
+        "- current-source gate: `required`".to_owned(),
+        format!("- three-vrm HEAD: `{three_vrm_head}`"),
+        "- numeric gate: pass".to_owned(),
+        "- visual review: accepted".to_owned(),
+        "- signoff status: complete".to_owned(),
+    ] {
+        if !text.contains(&needle) {
+            return Err(format!(
+                "accepted signoff {} is missing required line {needle:?}",
+                display_path(&path)
+            )
+            .into());
+        }
+    }
+    let reviewer_prefix = "- reviewer: `";
+    let reviewer_line = text
+        .lines()
+        .find(|line| line.starts_with(reviewer_prefix))
+        .ok_or("accepted signoff must record a reviewer")?;
+    if reviewer_line == "- reviewer: ``" {
+        return Err("accepted signoff reviewer must not be empty".into());
     }
     Ok(())
 }
@@ -953,6 +1048,40 @@ fn write_test_bundle_file(
         "bytes": text.len() as u64,
     }));
     Ok(())
+}
+
+fn replace_bundle_file_bytes(
+    manifest: &mut Value,
+    relative: &str,
+    bytes: u64,
+) -> Result<(), Box<dyn Error>> {
+    let files = manifest
+        .get_mut("files")
+        .and_then(Value::as_array_mut)
+        .ok_or("bundle manifest files must be an array")?;
+    for file in files {
+        if file.get("path").and_then(Value::as_str) == Some(relative) {
+            file["bytes"] = Value::from(bytes);
+            return Ok(());
+        }
+    }
+    Err(format!("bundle manifest does not list {relative}").into())
+}
+
+fn test_accepted_signoff_text(vrm_rs_head: &str) -> String {
+    format!(
+        "\
+# Render Parity Acceptance Signoff
+
+- vrm-rs HEAD: `{vrm_rs_head}`
+- current-source gate: `required`
+- three-vrm HEAD: `9d125586f6d7da094b0ac5f204cebf19586f2397`
+- numeric gate: pass
+- visual review: accepted
+- signoff status: complete
+- reviewer: `self-test`
+"
+    )
 }
 
 fn required_object_value<'a>(

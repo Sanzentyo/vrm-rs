@@ -126,9 +126,17 @@ render-parity-acceptance-environments summary_a summary_b extra_summaries="" out
 render-parity-acceptance-bundles bundle_a bundle_b extra_bundles="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle_a }}" --bundle "{{ bundle_b }}" {{ extra_bundles }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
 
+# Validate portable acceptance evidence bundles and require accepted visual-review signoffs from every runner.
+render-parity-acceptance-bundles-strict bundle_a bundle_b extra_bundles="" out_root=".external-fixtures/render-parity-acceptance-environments":
+    cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle_a }}" --bundle "{{ bundle_b }}" {{ extra_bundles }} --require-accepted-signoff --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
+
 # Discover and validate portable acceptance evidence bundles under a returned-bundle root directory.
 render-parity-acceptance-bundle-root bundle_root=".external-fixtures/render-parity-acceptance-returned" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle-root "{{ bundle_root }}" --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
+
+# Discover and validate returned bundles, requiring accepted visual-review signoffs from every runner.
+render-parity-acceptance-bundle-root-strict bundle_root=".external-fixtures/render-parity-acceptance-returned" out_root=".external-fixtures/render-parity-acceptance-environments":
+    cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle-root "{{ bundle_root }}" --require-accepted-signoff --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
 
 # Regenerate the same real sample sweep with a model-body RGB metric that ignores opaque-black background pixels and one-pixel silhouette edges.
 render-parity-samples-nonblack three_vrm_root=".external-fixtures/three-vrm" light_accumulation="three-vrm" run_mode="diagnostic":
