@@ -25,8 +25,11 @@ recipes are convenience entry points. Use these first:
   `.external-fixtures/render-parity-acceptance-repeat/run-*/`, then validates
   that all three manifests have matching source-lock metadata, matching fixture
   SHA-256/byte-size signatures, matching comparison sets, and passing
-  wgpu/Bevy/Ash summaries. It writes `acceptance-repeat-summary.json` and
-  `acceptance-repeat-summary.md` next to the run directories.
+  wgpu/Bevy/Ash summaries. The recipe also raises the three-vrm browser
+  readiness timeout to `60000ms` and records that value in the manifest lane
+  config so slow reference startup is explicit. It writes
+  `acceptance-repeat-summary.json` and `acceptance-repeat-summary.md` next to
+  the run directories.
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
   `--render-run-mode diagnostic`; pass `acceptance` as the final `run_mode`

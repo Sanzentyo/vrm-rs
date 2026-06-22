@@ -78,6 +78,8 @@ struct Options {
     render_camera_z: f32,
     #[arg(long, default_value_t = 40)]
     render_bevy_pre_roll_frames: u32,
+    #[arg(long, default_value_t = 15000)]
+    render_browser_ready_timeout_ms: u32,
     #[arg(long)]
     render_bevy_release: bool,
     #[arg(long)]
@@ -1387,6 +1389,8 @@ fn capture_three_vrm_reference(options: &Options, fixture: &RenderFixture) -> Re
         .arg(options.render_width.to_string())
         .arg("--height")
         .arg(options.render_height.to_string())
+        .arg("--ready-timeout-ms")
+        .arg(options.render_browser_ready_timeout_ms.to_string())
         .arg("--background")
         .arg(options.render_background.as_cli_value())
         .arg("--camera-z")
@@ -2253,6 +2257,7 @@ fn render_review_manifest_value(
         "ownerIdPhaseOrderPolicy": options.render_owner_id_phase_order_policy.as_cli_value(),
         "ownerIdColorSource": options.render_owner_id_color_source.as_cli_value(),
         "frontFace": options.render_front_face.as_cli_value(),
+        "browserReadyTimeoutMs": options.render_browser_ready_timeout_ms,
         "normalMapMode": options.render_normal_map_mode.as_cli_value(),
         "normalMapScale": options.render_normal_map_scale,
         "disableTextureMips": options.render_disable_texture_mips,

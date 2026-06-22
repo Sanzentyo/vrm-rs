@@ -34,6 +34,7 @@ const hotspotSampleCenterY = Number(args.get('hotspot-sample-center-y') ?? '0.5'
 const hotspotSubpixelSteps = Number.parseInt(args.get('hotspot-subpixel-steps') ?? '3', 10);
 const width = Number.parseInt(args.get('width') ?? '512', 10);
 const height = Number.parseInt(args.get('height') ?? '512', 10);
+const readyTimeoutMs = Number.parseInt(args.get('ready-timeout-ms') ?? '15000', 10);
 const cameraY = Number(args.get('camera-y') ?? '1.0');
 const cameraZ = Number(args.get('camera-z') ?? '5.0');
 const targetY = Number(args.get('target-y') ?? '1.0');
@@ -56,11 +57,15 @@ const expressionWeights = parseExpressionWeights(expressions);
 const hotspotDeltas = hotspotDeltasPath ? readHotspotDeltas(hotspotDeltasPath, hotspotTop) : null;
 
 if (!fixture || !out) {
-  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--hotspot-subpixel-steps 3] [--width 512] [--height 512] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|base-color-texture-as-linear|uv|base-uv|owner-id]');
+  console.error('usage: node tools/render-parity/three-vrm-browser-capture.mjs --fixture avatar.vrm --three-vrm-root ../three-vrm --out frame.rgba.json [--png-out frame.png] [--imqraw-out frame.imqraw] [--hotspot-deltas deltas.json] [--hotspot-top 32] [--hotspot-subpixel-steps 3] [--width 512] [--height 512] [--ready-timeout-ms 15000] [--background opaque-black|transparent] [--ambient-intensity 0.1] [--directional-intensity PI] [--directional-r 1.0] [--expression happy=1.0] [--disable-outlines] [--disable-normal-maps] [--disable-texture-mips] [--force-nearest-textures] [--diagnostic-render shaded|flat|base-factor|base-color|base-color-flip-v|base-color-raw-srgb|base-color-texture-as-linear|uv|base-uv|owner-id]');
   process.exit(2);
 }
 if (![width, height].every((value) => Number.isInteger(value) && value > 0)) {
   console.error(`invalid dimensions: ${width}x${height}`);
+  process.exit(2);
+}
+if (!Number.isInteger(readyTimeoutMs) || readyTimeoutMs <= 0) {
+  console.error(`invalid ready-timeout-ms: ${readyTimeoutMs}`);
   process.exit(2);
 }
 if (!Number.isInteger(hotspotTop) || hotspotTop <= 0) {
@@ -201,7 +206,7 @@ try {
   });
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => typeof globalThis.captureVrmFrame === 'function', null, {
-    timeout: 15000,
+    timeout: readyTimeoutMs,
   });
   const capture = await page.evaluate(() => globalThis.captureVrmFrame());
   const json = `${JSON.stringify({
