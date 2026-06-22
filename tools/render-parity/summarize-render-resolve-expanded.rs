@@ -385,6 +385,10 @@ struct OwnerRenderPbrTermOutputSummary {
     mean_shading_normal_wgpu_compat_distance: Option<f64>,
     shading_normal_three_js_rust_space_sample_count: u64,
     mean_shading_normal_three_js_rust_space_distance: Option<f64>,
+    tangent_space_normal_three_js_sample_count: u64,
+    mean_tangent_space_normal_three_js_distance: Option<f64>,
+    tangent_space_normal_wgpu_compat_sample_count: u64,
+    mean_tangent_space_normal_wgpu_compat_distance: Option<f64>,
     normal_source_pairs: BTreeMap<String, u64>,
     mean_output_rgb_distance: Option<f64>,
 }
@@ -792,7 +796,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
     }
     if !summary.owner_render_joins.is_empty() {
         out.push_str("\n## Owner/Render PBR Term Joins\n\n");
-        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Raw normal columns keep each side's world-space convention; the Rust-space normal column maps only Browser three.js normals through `[-x, y, -z]` and leaves Rust shading normals as captured. Read the normal source-pair column before treating the basis-adjusted distance as a like-for-like normal-map comparison.\n\n");
+        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Raw normal columns keep each side's world-space convention; the Rust-space normal column maps only Browser three.js normals through `[-x, y, -z]` and leaves Rust shading normals as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n");
         let warnings = summary
             .owner_render_joins
             .iter()
@@ -825,14 +829,14 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             ));
         }
         out.push('\n');
-        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Output RGB |\n");
+        out.push_str("| Renderer | Pair | Count | Normal sources | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal | Tangent wgpu normal | Output RGB |\n");
         out.push_str(
-            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
         );
         for join in &summary.owner_render_joins {
             for row in &join.pbr_term_outputs {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     join.renderer,
                     row.pair,
                     row.count,
@@ -859,6 +863,14 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                     fmt_optional_f64_with_count(
                         row.mean_shading_normal_three_js_rust_space_distance,
                         row.shading_normal_three_js_rust_space_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_tangent_space_normal_three_js_distance,
+                        row.tangent_space_normal_three_js_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_tangent_space_normal_wgpu_compat_distance,
+                        row.tangent_space_normal_wgpu_compat_sample_count,
                     ),
                     fmt_optional_pbr_distance(row.mean_output_rgb_distance),
                 ));
@@ -1930,6 +1942,24 @@ fn owner_render_pbr_term_output(
         mean_shading_normal_three_js_rust_space_distance: optional_f64_path(
             value,
             &["mean_shading_normal_three_js_rust_space_distance"],
+        )?,
+        tangent_space_normal_three_js_sample_count: optional_u64_path(
+            value,
+            &["tangent_space_normal_three_js_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_tangent_space_normal_three_js_distance: optional_f64_path(
+            value,
+            &["mean_tangent_space_normal_three_js_distance"],
+        )?,
+        tangent_space_normal_wgpu_compat_sample_count: optional_u64_path(
+            value,
+            &["tangent_space_normal_wgpu_compat_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_tangent_space_normal_wgpu_compat_distance: optional_f64_path(
+            value,
+            &["mean_tangent_space_normal_wgpu_compat_distance"],
         )?,
         normal_source_pairs: optional_u64_map_path(value, &["normal_source_pairs"])?,
         mean_output_rgb_distance: optional_f64_path(value, &["mean_output_rgb_distance"])?,
@@ -3057,6 +3087,10 @@ fn self_test() -> Result<(), Box<dyn Error>> {
                 "mean_shading_normal_wgpu_compat_distance": 1.50,
                 "shading_normal_three_js_rust_space_sample_count": 2,
                 "mean_shading_normal_three_js_rust_space_distance": 0.02,
+                "tangent_space_normal_three_js_sample_count": 2,
+                "mean_tangent_space_normal_three_js_distance": 0.001,
+                "tangent_space_normal_wgpu_compat_sample_count": 2,
+                "mean_tangent_space_normal_wgpu_compat_distance": 0.002,
                 "normal_source_pairs": {
                     "normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space": 2
                 },
@@ -3354,6 +3388,16 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         summary.owner_render_joins[0].pbr_term_outputs[0].mean_output_rgb_distance,
         Some(52.9)
     );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0]
+            .mean_tangent_space_normal_three_js_distance,
+        Some(0.001)
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0]
+            .mean_tangent_space_normal_wgpu_compat_distance,
+        Some(0.002)
+    );
     assert_eq!(summary.owner_render_joins[0].joined_count, Some(8));
     assert_eq!(
         summary.owner_render_joins[0].rendered_owner_matches_rust_frontmost,
@@ -3443,6 +3487,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     );
     assert!(summary_json.contains(r#""mean_shading_normal_three_js_distance""#));
     assert!(summary_json.contains(r#""mean_shading_normal_three_js_rust_space_distance":0.02"#));
+    assert!(summary_json.contains(r#""mean_tangent_space_normal_three_js_distance":0.001"#));
+    assert!(summary_json.contains(r#""mean_tangent_space_normal_wgpu_compat_distance":0.002"#));
     assert!(summary_json.contains(
         r#""normal_source_pairs":{"normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space":2}"#
     ));
@@ -3459,7 +3505,7 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("| wgpu | 8 | 8 | 6 | 7 | 6 | 8 | 6 |"));
     assert!(markdown.contains("wgpu: omitted 2 zero-count PBR term output bucket(s)"));
     assert!(markdown.contains("legacy: no PBR term output objects found"));
-    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 52.9000 |"));
+    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 0.0200 (n=2) | 0.0010 (n=2) | 0.0020 (n=2) | 52.9000 |"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(

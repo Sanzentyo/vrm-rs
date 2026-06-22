@@ -21,6 +21,16 @@
   final color/sample-output behavior and the non-PBR-comparable residual rows;
   exact browser TBN-mapped normal parity still needs a fixture/report where
   both sides expose matching tangent-space shading normals.
+- Extended the same owner/render PBR join with decoded tangent-space normal
+  distances before TBN application. This keeps the previous world-normal basis
+  diagnostic separate from normal-map decode parity. After regenerating the
+  Seed-san expanded owner/render joins and aggregate summary, the Browser-best
+  to Rust-frontmost tangent-space normal distances are small and backend-stable:
+  wgpu `0.039251`, Bevy `0.037027`, and Ash `0.038584` for both the three.js
+  and wgpu-compatible tangent normal variants. These rows still have large
+  output RGB distances (`42.2301`, `45.7153`, `32.2958`), so the current
+  evidence points away from tangent-space normal decode as the primary
+  remaining color parity blocker on that comparable subset.
 - Wired the owner/render PBR term join into the top-level expanded
   render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
   repeated `--owner-render-join RENDERER=PATH` inputs and emits an

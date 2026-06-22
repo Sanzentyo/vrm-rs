@@ -112,6 +112,10 @@ struct PbrTermOutputSummary {
     mean_shading_normal_wgpu_compat_distance: Option<f64>,
     shading_normal_three_js_rust_space_sample_count: u64,
     mean_shading_normal_three_js_rust_space_distance: Option<f64>,
+    tangent_space_normal_three_js_sample_count: u64,
+    mean_tangent_space_normal_three_js_distance: Option<f64>,
+    tangent_space_normal_wgpu_compat_sample_count: u64,
+    mean_tangent_space_normal_wgpu_compat_distance: Option<f64>,
     normal_source_pairs: BTreeMap<String, u64>,
     mean_output_rgb_distance: Option<f64>,
 }
@@ -127,6 +131,8 @@ struct PbrTermOutputAccumulator {
     shading_normal_three_js_distance: MeanAccumulator,
     shading_normal_wgpu_compat_distance: MeanAccumulator,
     shading_normal_three_js_rust_space_distance: MeanAccumulator,
+    tangent_space_normal_three_js_distance: MeanAccumulator,
+    tangent_space_normal_wgpu_compat_distance: MeanAccumulator,
     normal_source_pairs: BTreeMap<String, u64>,
     output_distance_sum: f64,
 }
@@ -148,6 +154,8 @@ struct PbrTermSample {
     shading_normal_three_js: Option<[f64; 3]>,
     shading_normal_wgpu_compat: Option<[f64; 3]>,
     shading_normal: Option<[f64; 3]>,
+    tangent_space_normal_three_js: Option<[f64; 3]>,
+    tangent_space_normal_wgpu_compat: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -753,6 +761,14 @@ impl PbrTermOutputAccumulator {
                     .map(browser_normal_to_rust_space),
                 rust.shading_normal,
             );
+        self.tangent_space_normal_three_js_distance.observe_pair(
+            browser.tangent_space_normal_three_js,
+            rust.tangent_space_normal_three_js,
+        );
+        self.tangent_space_normal_wgpu_compat_distance.observe_pair(
+            browser.tangent_space_normal_wgpu_compat,
+            rust.tangent_space_normal_wgpu_compat,
+        );
         let browser_source = browser.normal_source.as_deref().unwrap_or("n/a");
         let rust_source = rust.normal_source.as_deref().unwrap_or("n/a");
         *self
@@ -786,6 +802,18 @@ impl PbrTermOutputAccumulator {
                 .count,
             mean_shading_normal_three_js_rust_space_distance: self
                 .shading_normal_three_js_rust_space_distance
+                .mean(),
+            tangent_space_normal_three_js_sample_count: self
+                .tangent_space_normal_three_js_distance
+                .count,
+            mean_tangent_space_normal_three_js_distance: self
+                .tangent_space_normal_three_js_distance
+                .mean(),
+            tangent_space_normal_wgpu_compat_sample_count: self
+                .tangent_space_normal_wgpu_compat_distance
+                .count,
+            mean_tangent_space_normal_wgpu_compat_distance: self
+                .tangent_space_normal_wgpu_compat_distance
                 .mean(),
             normal_source_pairs: self.normal_source_pairs,
             mean_output_rgb_distance: Some(self.output_distance_sum / count),
@@ -822,6 +850,8 @@ fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
         shading_normal_three_js: value_vec3_path(terms, "shadingNormalThreeJs"),
         shading_normal_wgpu_compat: value_vec3_path(terms, "shadingNormalWgpuCompat"),
         shading_normal: None,
+        tangent_space_normal_three_js: value_vec3_path(terms, "tangentSpaceNormalThreeJs"),
+        tangent_space_normal_wgpu_compat: value_vec3_path(terms, "tangentSpaceNormalWgpuCompat"),
     })
 }
 
@@ -837,6 +867,11 @@ fn rust_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
         shading_normal_three_js: None,
         shading_normal_wgpu_compat: None,
         shading_normal: value_vec3_path(terms, "shading_normal"),
+        tangent_space_normal_three_js: value_vec3_path(terms, "tangent_space_normal_three_js"),
+        tangent_space_normal_wgpu_compat: value_vec3_path(
+            terms,
+            "tangent_space_normal_wgpu_compat",
+        ),
     })
 }
 
@@ -1175,10 +1210,10 @@ fn markdown_report(report: &JoinReport) -> String {
     );
     output.push_str("## Same-Surface PBR Term vs Output Residual\n\n");
     output.push_str(
-        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Read the normal source-pair column before treating the basis-adjusted distance as a like-for-like normal-map comparison.\n\n",
+        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel. Diffuse/specular lobe and normal columns are optional-field subset means and show their own `n`; raw normal columns keep each side's world-space convention, while the Rust-space normal column maps only the Browser three.js normal through the observed three.js-to-Rust basis flip `[-x, y, -z]` and leaves the Rust shading normal as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n",
     );
-    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Output RGB dist |\n");
-    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str("| Pair | Count | Normal sources | Diffuse lobe dist | Specular lobe dist | Direct term dist | Ambient term dist | Total term dist | Browser 3js normal raw -> Rust shade | Browser wgpu normal raw -> Rust shade | Browser 3js normal Rust-space -> Rust shade | Tangent 3js normal dist | Tangent wgpu normal dist | Output RGB dist |\n");
+    output.push_str("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     write_pbr_summary_row(
         &mut output,
         "Browser best -> Rust frontmost",
@@ -1244,7 +1279,7 @@ fn markdown_report(report: &JoinReport) -> String {
 
 fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
     output.push_str(&format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         label,
         summary.count,
         fmt_counts_inline(&summary.normal_source_pairs),
@@ -1270,6 +1305,14 @@ fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutp
         fmt_mean_with_count(
             summary.mean_shading_normal_three_js_rust_space_distance,
             summary.shading_normal_three_js_rust_space_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_tangent_space_normal_three_js_distance,
+            summary.tangent_space_normal_three_js_sample_count,
+        ),
+        fmt_mean_with_count(
+            summary.mean_tangent_space_normal_wgpu_compat_distance,
+            summary.tangent_space_normal_wgpu_compat_sample_count,
         ),
         fmt_opt_f64(summary.mean_output_rgb_distance),
     ));
@@ -1374,6 +1417,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             shading_normal_three_js: Some([0.0, 0.0, 1.0]),
             shading_normal_wgpu_compat: None,
             shading_normal: None,
+            tangent_space_normal_three_js: Some([0.0, -0.03, 1.0]),
+            tangent_space_normal_wgpu_compat: Some([0.0, 0.03, 1.0]),
         }),
         Some(PbrTermSample {
             normal_source: Some("rust_shade".to_owned()),
@@ -1385,6 +1430,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             shading_normal_three_js: None,
             shading_normal_wgpu_compat: None,
             shading_normal: Some([0.0, 0.0, -1.0]),
+            tangent_space_normal_three_js: Some([0.0, -0.03, 1.0]),
+            tangent_space_normal_wgpu_compat: Some([0.0, 0.03, 1.0]),
         }),
         Some(0.0),
     );
@@ -1416,7 +1463,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                                 "ambientRgb": [0.01, 0.01, 0.01],
                                 "directPlusAmbientRgb": [0.20, 0.19, 0.19],
                                 "shadingNormalThreeJs": [0.0, 0.0, 1.0],
-                                "shadingNormalWgpuCompat": [0.1, 0.0, 0.995]
+                                "shadingNormalWgpuCompat": [0.1, 0.0, 0.995],
+                                "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
+                                "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0]
                             }
                         }
                     },
@@ -1435,7 +1484,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "ambientRgb": [0.01, 0.01, 0.01],
                             "directPlusAmbientRgb": [0.19, 0.18, 0.18],
                             "shadingNormalThreeJs": [0.0, 0.0, 1.0],
-                            "shadingNormalWgpuCompat": [0.1, 0.0, 0.995]
+                            "shadingNormalWgpuCompat": [0.1, 0.0, 0.995],
+                            "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
+                            "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0]
                         }
                     }
                 }
@@ -1463,7 +1514,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                             "direct_rgb": [0.18, 0.17, 0.17],
                             "ambient_rgb": [0.01, 0.01, 0.01],
                             "direct_plus_ambient_rgb": [0.19, 0.18, 0.18],
-                            "shading_normal": [0.1, 0.0, 0.995]
+                            "shading_normal": [0.1, 0.0, 0.995],
+                            "tangent_space_normal_three_js": [0.0, -0.03, 1.0],
+                            "tangent_space_normal_wgpu_compat": [0.0, 0.03, 1.0]
                         }
                     }
                 },
@@ -1559,6 +1612,14 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
         .is_some_and(|distance| distance.abs() < 1e-12));
     assert!(report
         .pbr_best_to_expected_term_output
+        .mean_tangent_space_normal_three_js_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
+        .mean_tangent_space_normal_wgpu_compat_distance
+        .is_some_and(|distance| distance.abs() < 1e-12));
+    assert!(report
+        .pbr_best_to_expected_term_output
         .mean_shading_normal_three_js_distance
         .is_some_and(|distance| distance > 0.09 && distance < 0.11));
     assert!(report
@@ -1595,6 +1656,7 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Diffuse lobe dist"));
     assert!(markdown.contains("Browser 3js normal raw -> Rust shade"));
     assert!(markdown.contains("Browser 3js normal Rust-space -> Rust shade"));
+    assert!(markdown.contains("Tangent wgpu normal dist"));
     assert!(markdown.contains(
         "| Browser best -> Rust expected-best | 1 | normal_map_sampled_missing_tangent_or_normal -> normal_map_tangent_space: 1 | 0.0173 (n=1) | 0.0100 (n=1) | 0.0173"
     ));
@@ -1624,6 +1686,9 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(legacy_summary.mean_diffuse_lobe_rgb_distance.is_none());
     assert!(legacy_summary
         .mean_shading_normal_three_js_distance
+        .is_none());
+    assert!(legacy_summary
+        .mean_tangent_space_normal_three_js_distance
         .is_none());
     assert!(legacy_summary
         .mean_direct_rgb_distance
