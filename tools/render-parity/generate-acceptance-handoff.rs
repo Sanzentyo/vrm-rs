@@ -127,6 +127,7 @@ fn handoff_json(handoff: &Handoff) -> Value {
         "vrmRsGitHead": handoff.expected_head,
         "threeVrmGitHead": handoff.three_vrm_head,
         "checkoutDir": handoff.checkout_dir,
+        "preflightCommand": preflight_command(handoff),
         "captureCommand": capture_command(),
         "finalizeCommand": finalize_command(handoff),
         "strictRunnerCommand": strict_runner_command(handoff),
@@ -153,6 +154,9 @@ fn handoff_markdown(handoff: &Handoff) -> String {
          - Enough time to run three repeated six-fixture acceptance captures.\n\n\
          ## Prepare The Runner Checkout\n\n\
          ```powershell\n{preparation}```\n\n\
+         ## Preflight\n\n\
+         Before starting the long capture, verify the runner checkout, tools, fixtures, three-vrm build, and Ash shader compiler:\n\n\
+         ```powershell\n{preflight}\n```\n\n\
          ## Capture\n\n\
          Run the reference-clean acceptance capture first:\n\n\
          ```powershell\n{capture}\n```\n\n\
@@ -169,6 +173,7 @@ fn handoff_markdown(handoff: &Handoff) -> String {
         head = handoff.expected_head,
         three = handoff.three_vrm_head,
         checkout = handoff.checkout_dir,
+        preflight = preflight_command(handoff),
         capture = capture_command(),
         finalize = finalize_command(handoff),
         strict_runner = strict_runner_command(handoff),
@@ -194,6 +199,13 @@ fn strict_runner_command(handoff: &Handoff) -> String {
         "just render-parity-acceptance-runner-strict {} {}",
         shell_quote(&handoff.reviewer),
         shell_quote(&handoff.visual_notes)
+    )
+}
+
+fn preflight_command(handoff: &Handoff) -> String {
+    format!(
+        "just render-parity-acceptance-runner-preflight {}",
+        handoff.expected_head
     )
 }
 
@@ -306,6 +318,13 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     {
         return Err("handoff JSON capture command is missing".into());
     }
+    if json.get("preflightCommand").and_then(Value::as_str)
+        != Some(
+            "just render-parity-acceptance-runner-preflight aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+    {
+        return Err("handoff JSON preflight command is missing".into());
+    }
     if json.get("finalizeCommand").and_then(Value::as_str)
         != Some("just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"")
     {
@@ -315,6 +334,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
     for needle in [
         "git checkout --detach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures",
+        "just render-parity-acceptance-runner-preflight aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "just render-parity-acceptance-runner-capture",
         "just render-parity-acceptance-runner-finalize-strict Codex \"Accepted local residuals\"",
         "just render-parity-acceptance-runner-strict Codex \"Accepted local residuals\"",

@@ -459,6 +459,12 @@ fn validate_handoff(handoff: &Path, head: &str, repo_url: &str) -> Result<String
     if normalize_repo_url(recorded_repo) != normalize_repo_url(repo_url) {
         return Err(format!("handoff repo {recorded_repo} does not match {repo_url}").into());
     }
+    let preflight_command = required_string(&value, "preflightCommand")?;
+    if !preflight_command.contains("render-parity-acceptance-runner-preflight") {
+        return Err(
+            "handoff preflightCommand must use render-parity-acceptance-runner-preflight".into(),
+        );
+    }
     let command = required_string(&value, "strictRunnerCommand")?;
     if !command.contains("render-parity-acceptance-runner-strict") {
         return Err("handoff strictRunnerCommand must use render-parity-acceptance-runner-strict".into());
@@ -751,6 +757,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "format": "vrm-rs.render-parity.acceptance-handoff.v1",
             "repoUrl": "https://github.com/Sanzentyo/vrm-rs.git",
             "vrmRsGitHead": head,
+            "preflightCommand": "just render-parity-acceptance-runner-preflight aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "captureCommand": "just render-parity-acceptance-runner-capture",
             "finalizeCommand": "just render-parity-acceptance-runner-finalize-strict Codex note",
             "strictRunnerCommand": "just render-parity-acceptance-runner-strict Codex note"

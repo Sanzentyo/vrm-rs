@@ -155,6 +155,10 @@ render-parity-goal-readiness require_public_repo="false" local_bundle=".external
 render-parity-acceptance-handoff out_root=".external-fixtures/render-parity-acceptance-handoff" reviewer="<runner reviewer>" visual_notes="Reviewed generated visual review pages and accepted only local edge/outline/text-boundary residuals covered by PSNR and zero-alpha acceptance.":
     cargo +nightly -Zscript tools/render-parity/generate-acceptance-handoff.rs --out-root "{{ out_root }}" --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --apply
 
+# Check a runner checkout before starting the long acceptance capture.
+render-parity-acceptance-runner-preflight expected_head="" three_vrm_root=".external-fixtures/three-vrm" fixture_dir=".external-fixtures/official":
+    cargo +nightly -Zscript tools/render-parity/preflight-acceptance-runner.rs {{ if expected_head != "" { "--expected-head \"" + expected_head + "\"" } else { "" } }} --three-vrm-root "{{ three_vrm_root }}" --fixture-dir "{{ fixture_dir }}"
+
 # Validate acceptance-repeat summaries collected from at least two distinct runner environments.
 render-parity-acceptance-environments summary_a summary_b extra_summaries="" out_root=".external-fixtures/render-parity-acceptance-environments":
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --summary "{{ summary_a }}" --summary "{{ summary_b }}" {{ extra_summaries }} --json-out "{{ out_root }}/acceptance-environments-summary.json" --markdown-out "{{ out_root }}/acceptance-environments-summary.md"
