@@ -89,7 +89,36 @@ struct JoinReport {
     rendered_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
     browser_best_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
     browser_best_coverage_to_rust_expected_best_subpixel: BTreeMap<String, u64>,
+    pbr_best_to_frontmost_term_output: PbrTermOutputSummary,
+    pbr_best_to_expected_term_output: PbrTermOutputSummary,
+    pbr_coverage_to_frontmost_term_output: PbrTermOutputSummary,
+    pbr_coverage_to_expected_term_output: PbrTermOutputSummary,
     top_disagreements: Vec<JoinedHotspotLine>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct PbrTermOutputSummary {
+    count: u64,
+    mean_direct_rgb_distance: Option<f64>,
+    mean_ambient_rgb_distance: Option<f64>,
+    mean_total_rgb_distance: Option<f64>,
+    mean_output_rgb_distance: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PbrTermOutputAccumulator {
+    count: u64,
+    direct_distance_sum: f64,
+    ambient_distance_sum: f64,
+    total_distance_sum: f64,
+    output_distance_sum: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PbrTermSample {
+    direct_rgb: [f64; 3],
+    ambient_rgb: [f64; 3],
+    direct_plus_ambient_rgb: [f64; 3],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -110,6 +139,9 @@ struct JoinedHotspotLine {
     rust_actual_best_subpixel: Option<SurfaceSummary>,
     rust_actual_best_subpixel_sample: Option<[f64; 2]>,
     browser_best_sample_cpu_base_color: Option<[u64; 4]>,
+    actual_rgba: Option<[u64; 4]>,
+    expected_rgba: Option<[u64; 4]>,
+    actual_expected_rgb_distance: Option<f64>,
     browser_best_sample_actual_rgb_distance: Option<f64>,
     browser_best_sample_expected_rgb_distance: Option<f64>,
     browser_best_coverage_sample_cpu_base_color: Option<[u64; 4]>,
@@ -229,12 +261,20 @@ fn join_reports(
         rendered_to_rust_expected_best_subpixel: BTreeMap::new(),
         browser_best_to_rust_expected_best_subpixel: BTreeMap::new(),
         browser_best_coverage_to_rust_expected_best_subpixel: BTreeMap::new(),
+        pbr_best_to_frontmost_term_output: PbrTermOutputSummary::default(),
+        pbr_best_to_expected_term_output: PbrTermOutputSummary::default(),
+        pbr_coverage_to_frontmost_term_output: PbrTermOutputSummary::default(),
+        pbr_coverage_to_expected_term_output: PbrTermOutputSummary::default(),
         top_disagreements: Vec::new(),
     };
     let mut browser_best_actual_distance_sum = 0.0;
     let mut browser_best_expected_distance_sum = 0.0;
     let mut browser_best_coverage_actual_distance_sum = 0.0;
     let mut browser_best_coverage_expected_distance_sum = 0.0;
+    let mut pbr_best_frontmost = PbrTermOutputAccumulator::default();
+    let mut pbr_best_expected = PbrTermOutputAccumulator::default();
+    let mut pbr_coverage_frontmost = PbrTermOutputAccumulator::default();
+    let mut pbr_coverage_expected = PbrTermOutputAccumulator::default();
 
     for owner_hotspot in owner_hotspots {
         let Some((x, y)) = pixel_key(owner_hotspot) else {
@@ -258,6 +298,11 @@ fn join_reports(
             number_pair(owner_hotspot.pointer("/renderedOwnerRecovery/bestSubpixel/sampleCenter"));
         let browser_best_coverage_sample =
             number_pair(owner_hotspot.pointer("/renderedOwnerRecovery/bestCoverage/sampleCenter"));
+        let actual_rgba = rgba_field(rust_hotspot, "actual");
+        let expected_rgba = rgba_field(rust_hotspot, "expected");
+        let actual_expected_rgb_distance = actual_rgba
+            .zip(expected_rgba)
+            .map(|(actual, expected)| rgb_distance_u64(actual, expected));
         let browser_best_coverage_area =
             f64_at(owner_hotspot, "/renderedOwnerRecovery/bestCoverage/coverageAreaPixels");
         let browser_best_coverage_point_count =
@@ -273,16 +318,16 @@ fn join_reports(
             .map(|(surface, sample)| RenderOwnerSampleKey::from_pair(surface.owner_key(), sample))
             .and_then(|sample_key| rust_color_for_owner_sample(rust_hotspot, &sample_key));
         let browser_best_sample_actual_distance = browser_best_sample_color
-            .zip(rgba_field(rust_hotspot, "actual"))
+            .zip(actual_rgba)
             .map(|(color, actual)| rgb_distance_u64(color, actual));
         let browser_best_sample_expected_distance = browser_best_sample_color
-            .zip(rgba_field(rust_hotspot, "expected"))
+            .zip(expected_rgba)
             .map(|(color, expected)| rgb_distance_u64(color, expected));
         let browser_best_coverage_sample_actual_distance = browser_best_coverage_sample_color
-            .zip(rgba_field(rust_hotspot, "actual"))
+            .zip(actual_rgba)
             .map(|(color, actual)| rgb_distance_u64(color, actual));
         let browser_best_coverage_sample_expected_distance = browser_best_coverage_sample_color
-            .zip(rgba_field(rust_hotspot, "expected"))
+            .zip(expected_rgba)
             .map(|(color, expected)| rgb_distance_u64(color, expected));
 
         if let (Some(actual), Some(expected)) = (
@@ -458,6 +503,52 @@ fn join_reports(
             browser_best_coverage.as_ref(),
             rust_actual.as_ref(),
         );
+        if same_surface(browser_best.as_ref(), rust_frontmost.as_ref()) {
+            pbr_best_frontmost.observe(
+                browser_pbr_terms(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestSubpixel/candidate/browserPbrTerms",
+                ),
+                rust_pbr_terms(rust_hotspot, "/frontmost_visible/pbr_terms"),
+                actual_expected_rgb_distance,
+            );
+        }
+        if same_surface(browser_best.as_ref(), rust_expected.as_ref()) {
+            pbr_best_expected.observe(
+                browser_pbr_terms(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestSubpixel/candidate/browserPbrTerms",
+                ),
+                rust_pbr_terms(
+                    rust_hotspot,
+                    "/best_subpixel_visible_expected/candidate/pbr_terms",
+                ),
+                actual_expected_rgb_distance,
+            );
+        }
+        if same_surface(browser_best_coverage.as_ref(), rust_frontmost.as_ref()) {
+            pbr_coverage_frontmost.observe(
+                browser_pbr_terms(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestCoverage/candidate/browserPbrTerms",
+                ),
+                rust_pbr_terms(rust_hotspot, "/frontmost_visible/pbr_terms"),
+                actual_expected_rgb_distance,
+            );
+        }
+        if same_surface(browser_best_coverage.as_ref(), rust_expected.as_ref()) {
+            pbr_coverage_expected.observe(
+                browser_pbr_terms(
+                    owner_hotspot,
+                    "/renderedOwnerRecovery/bestCoverage/candidate/browserPbrTerms",
+                ),
+                rust_pbr_terms(
+                    rust_hotspot,
+                    "/best_subpixel_visible_expected/candidate/pbr_terms",
+                ),
+                actual_expected_rgb_distance,
+            );
+        }
 
         if report.top_disagreements.len() < top && rendered.as_ref() != rust_expected.as_ref() {
             let browser_best_to_expected_relation =
@@ -487,6 +578,9 @@ fn join_reports(
                     rust_hotspot.pointer("/best_subpixel_visible_actual/sample"),
                 ),
                 browser_best_sample_cpu_base_color: browser_best_sample_color,
+                actual_rgba,
+                expected_rgba,
+                actual_expected_rgb_distance,
                 browser_best_sample_actual_rgb_distance: browser_best_sample_actual_distance,
                 browser_best_sample_expected_rgb_distance: browser_best_sample_expected_distance,
                 browser_best_coverage_sample_cpu_base_color: browser_best_coverage_sample_color,
@@ -530,6 +624,10 @@ fn join_reports(
         report.browser_best_coverage_sample_mean_expected_rgb_distance =
             Some(browser_best_coverage_expected_distance_sum / count);
     }
+    report.pbr_best_to_frontmost_term_output = pbr_best_frontmost.into_summary();
+    report.pbr_best_to_expected_term_output = pbr_best_expected.into_summary();
+    report.pbr_coverage_to_frontmost_term_output = pbr_coverage_frontmost.into_summary();
+    report.pbr_coverage_to_expected_term_output = pbr_coverage_expected.into_summary();
 
     Ok(report)
 }
@@ -563,6 +661,74 @@ fn relation_label(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>)
     left.as_ref()
         .map(|left| left.relation_to(right.as_ref()).as_str())
         .unwrap_or(RenderOwnerSurfaceRelation::Missing.as_str())
+}
+
+fn same_surface(left: Option<&SurfaceSummary>, right: Option<&SurfaceSummary>) -> bool {
+    left.zip(right).is_some_and(|(left, right)| left == right)
+}
+
+impl PbrTermOutputAccumulator {
+    fn observe(
+        &mut self,
+        browser: Option<PbrTermSample>,
+        rust: Option<PbrTermSample>,
+        output_distance: Option<f64>,
+    ) {
+        let (Some(browser), Some(rust), Some(output_distance)) = (browser, rust, output_distance)
+        else {
+            return;
+        };
+        self.count += 1;
+        self.direct_distance_sum += vec3_distance(browser.direct_rgb, rust.direct_rgb);
+        self.ambient_distance_sum += vec3_distance(browser.ambient_rgb, rust.ambient_rgb);
+        self.total_distance_sum += vec3_distance(
+            browser.direct_plus_ambient_rgb,
+            rust.direct_plus_ambient_rgb,
+        );
+        self.output_distance_sum += output_distance;
+    }
+
+    fn into_summary(self) -> PbrTermOutputSummary {
+        let Some(count) = (self.count > 0).then_some(self.count as f64) else {
+            return PbrTermOutputSummary::default();
+        };
+        PbrTermOutputSummary {
+            count: self.count,
+            mean_direct_rgb_distance: Some(self.direct_distance_sum / count),
+            mean_ambient_rgb_distance: Some(self.ambient_distance_sum / count),
+            mean_total_rgb_distance: Some(self.total_distance_sum / count),
+            mean_output_rgb_distance: Some(self.output_distance_sum / count),
+        }
+    }
+}
+
+fn browser_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
+    let terms = value.pointer(pointer)?;
+    Some(PbrTermSample {
+        direct_rgb: value_vec3_path(terms, "directRgb")?,
+        ambient_rgb: value_vec3_path(terms, "ambientRgb")?,
+        direct_plus_ambient_rgb: value_vec3_path(terms, "directPlusAmbientRgb")?,
+    })
+}
+
+fn rust_pbr_terms(value: &Value, pointer: &str) -> Option<PbrTermSample> {
+    let terms = value.pointer(pointer)?;
+    Some(PbrTermSample {
+        direct_rgb: value_vec3_path(terms, "direct_rgb")?,
+        ambient_rgb: value_vec3_path(terms, "ambient_rgb")?,
+        direct_plus_ambient_rgb: value_vec3_path(terms, "direct_plus_ambient_rgb")?,
+    })
+}
+
+fn vec3_distance(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left.iter()
+        .zip(right.iter())
+        .map(|(left, right)| {
+            let delta = left - right;
+            delta * delta
+        })
+        .sum::<f64>()
+        .sqrt()
 }
 
 fn owner_surface(hotspot: &Value) -> Option<SurfaceSummary> {
@@ -882,15 +1048,42 @@ fn markdown_report(report: &JoinReport) -> String {
         &mut output,
         &report.browser_best_coverage_to_rust_expected_best_subpixel,
     );
+    output.push_str("## Same-Surface PBR Term vs Output Residual\n\n");
+    output.push_str(
+        "These rows compare source-derived Browser PBR terms with Rust CPU PBR terms only when the joined surfaces match. The output distance is the final actual-vs-three-vrm expected RGB distance at the same pixel.\n\n",
+    );
+    output.push_str("| Pair | Count | Direct term dist | Ambient term dist | Total term dist | Output RGB dist |\n");
+    output.push_str("|---|---:|---:|---:|---:|---:|\n");
+    write_pbr_summary_row(
+        &mut output,
+        "Browser best -> Rust frontmost",
+        &report.pbr_best_to_frontmost_term_output,
+    );
+    write_pbr_summary_row(
+        &mut output,
+        "Browser best -> Rust expected-best",
+        &report.pbr_best_to_expected_term_output,
+    );
+    write_pbr_summary_row(
+        &mut output,
+        "Browser coverage -> Rust frontmost",
+        &report.pbr_coverage_to_frontmost_term_output,
+    );
+    write_pbr_summary_row(
+        &mut output,
+        "Browser coverage -> Rust expected-best",
+        &report.pbr_coverage_to_expected_term_output,
+    );
+    output.push('\n');
     output.push_str("## Top Rendered/Expected Disagreements\n\n");
     if report.top_disagreements.is_empty() {
         output.push_str("_None_\n");
     } else {
-        output.push_str("| Pixel | Rendered | Browser best | Browser coverage | Rust frontmost | Rust expected-best | Relations | Samples | Browser colors | Browser/Rust PBR terms |\n");
-        output.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
+        output.push_str("| Pixel | Rendered | Browser best | Browser coverage | Rust frontmost | Rust expected-best | Relations | Samples | Output colors | Browser colors | Browser/Rust PBR terms |\n");
+        output.push_str("|---|---|---|---|---|---|---|---|---|---|---|\n");
         for item in &report.top_disagreements {
             output.push_str(&format!(
-                "| {},{} | {} | {} | {} area={} pts={} | {} | {} | subpixel={} coverage={} | subpixel={} coverage={} rust={} | subpixel_rgba={} subpixel_actual_dist={} subpixel_expected_dist={} coverage_rgba={} coverage_actual_dist={} coverage_expected_dist={} | browser_subpixel=[{}] browser_coverage=[{}] rust_front=[{}] rust_expected=[{}] |\n",
+                "| {},{} | {} | {} | {} area={} pts={} | {} | {} | subpixel={} coverage={} | subpixel={} coverage={} rust={} | actual={} expected={} output_dist={} | subpixel_rgba={} subpixel_actual_dist={} subpixel_expected_dist={} coverage_rgba={} coverage_actual_dist={} coverage_expected_dist={} | browser_subpixel=[{}] browser_coverage=[{}] rust_front=[{}] rust_expected=[{}] |\n",
                 item.x,
                 item.y,
                 surface_label(item.rendered_owner.as_ref()),
@@ -905,6 +1098,9 @@ fn markdown_report(report: &JoinReport) -> String {
                 fmt_pair(item.browser_best_subpixel_sample),
                 fmt_pair(item.browser_best_coverage_sample),
                 fmt_pair(item.rust_expected_best_subpixel_sample),
+                fmt_rgba(item.actual_rgba),
+                fmt_rgba(item.expected_rgba),
+                fmt_opt_f64(item.actual_expected_rgb_distance),
                 fmt_rgba(item.browser_best_sample_cpu_base_color),
                 fmt_opt_f64(item.browser_best_sample_actual_rgb_distance),
                 fmt_opt_f64(item.browser_best_sample_expected_rgb_distance),
@@ -919,6 +1115,18 @@ fn markdown_report(report: &JoinReport) -> String {
         }
     }
     output
+}
+
+fn write_pbr_summary_row(output: &mut String, label: &str, summary: &PbrTermOutputSummary) {
+    output.push_str(&format!(
+        "| {} | {} | {} | {} | {} | {} |\n",
+        label,
+        summary.count,
+        fmt_opt_f64(summary.mean_direct_rgb_distance),
+        fmt_opt_f64(summary.mean_ambient_rgb_distance),
+        fmt_opt_f64(summary.mean_total_rgb_distance),
+        fmt_opt_f64(summary.mean_output_rgb_distance),
+    ));
 }
 
 fn write_counts(output: &mut String, counts: &BTreeMap<String, u64>) {
@@ -996,13 +1204,29 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "renderedOwnerRecovery": {
                     "bestSubpixel": {
                         "sampleCenter": [0.7, 0.5],
-                        "candidate": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7}
+                        "candidate": {
+                            "materialName": "body:vrm-rs-owner-id-diagnostic",
+                            "triangle": 7,
+                            "browserPbrTerms": {
+                                "directRgb": [0.19, 0.18, 0.18],
+                                "ambientRgb": [0.01, 0.01, 0.01],
+                                "directPlusAmbientRgb": [0.20, 0.19, 0.19]
+                            }
+                        }
                     },
                     "bestCoverage": {
                         "sampleCenter": [0.62, 0.48],
                         "coverageAreaPixels": 0.375,
                         "coveragePointCount": 4,
-                        "candidate": {"materialName": "body:vrm-rs-owner-id-diagnostic", "triangle": 7}
+                        "candidate": {
+                            "materialName": "body:vrm-rs-owner-id-diagnostic",
+                            "triangle": 7,
+                            "browserPbrTerms": {
+                                "directRgb": [0.18, 0.17, 0.17],
+                                "ambientRgb": [0.01, 0.01, 0.01],
+                                "directPlusAmbientRgb": [0.19, 0.18, 0.18]
+                            }
+                        }
                     }
                 }
             }]}}}
@@ -1018,7 +1242,15 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
                 "frontmost_visible": {"materialName": "hair", "triangle": 3},
                 "best_subpixel_visible_expected": {
                     "sample": [0.7, 0.5],
-                    "candidate": {"material_name": "body", "triangle": 7}
+                    "candidate": {
+                        "material_name": "body",
+                        "triangle": 7,
+                        "pbr_terms": {
+                            "direct_rgb": [0.18, 0.17, 0.17],
+                            "ambient_rgb": [0.01, 0.01, 0.01],
+                            "direct_plus_ambient_rgb": [0.19, 0.18, 0.18]
+                        }
+                    }
                 },
                 "best_subpixel_visible_actual": {
                     "sample": [0.3, 0.5],
@@ -1088,6 +1320,21 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             .get("same-surface"),
         Some(&1)
     );
+    assert_eq!(report.pbr_best_to_frontmost_term_output.count, 0);
+    assert_eq!(report.pbr_best_to_expected_term_output.count, 1);
+    assert!(
+        report
+            .pbr_best_to_expected_term_output
+            .mean_direct_rgb_distance
+            .is_some_and(|distance| (distance - 0.017320508075688787).abs() < 1e-12)
+    );
+    assert!(
+        report
+            .pbr_best_to_expected_term_output
+            .mean_output_rgb_distance
+            .is_some_and(|distance| (distance - 155.88457268119896).abs() < 1e-12)
+    );
+    assert_eq!(report.pbr_coverage_to_expected_term_output.count, 1);
     assert!(report.top_disagreements.is_empty());
     let markdown = markdown_report(&report);
     assert!(markdown.contains("Rendered owner matches Rust frontmost"));
@@ -1095,6 +1342,8 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     assert!(markdown.contains("Browser best sample Rust color count"));
     assert!(markdown.contains("Browser best coverage sample Rust color count"));
     assert!(markdown.contains("Browser Best Surface Relations"));
+    assert!(markdown.contains("Same-Surface PBR Term vs Output Residual"));
+    assert!(markdown.contains("| Browser best -> Rust expected-best | 1 | 0.0173"));
     let pbr_fixture = serde_json::json!({
         "browserPbrTerms": {
             "model": "MeshStandardMaterial",

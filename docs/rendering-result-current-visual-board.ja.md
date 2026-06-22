@@ -152,6 +152,13 @@ Expanded diagnostic summary:
 
 現行の実データでは `gltf_pbr` の top residual は `backpack_nm node145/mesh4/prim9/base` に集中し、三 renderer とも draw-key 単位で additive fit が優勢です。MToon は `eye node2/mesh2/prim1/base` が additive、`arm_mat node144/mesh3/prim0/base` は Bevy / wgpu で gain が僅差優勢です。
 
+同一 surface だけを比較した PBR term 診断では、Browser/Rust の direct+ambient term はかなり近い一方で、最終 output RGB 距離はまだ残っています。これは global light/exposure を数値 fit するより、final output / resolve / local surface adoption を追うべきという読みです。
+
+| Pair | wgpu term / output | Bevy term / output | Ash term / output |
+| --- | ---: | ---: | ---: |
+| Browser best -> Rust frontmost | 0.0047 / 52.8983 | 0.0047 / 51.8283 | 0.0005 / 32.2958 |
+| Browser best -> Rust expected-best | 0.0138 / 76.7299 | 0.0178 / 85.5651 | 0.0027 / 24.5709 |
+
 | Track | Renderer | Rows | Mean E-A | Preferred | Additive RGB | Additive error | Gain error | 読み |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
 | `gltf_pbr/backpack_nm` | Ash | 16 | 32.6468 | additive | 17.06,19.12,20.19 | 5.4811 | 6.6892 | backpack/PBR fill の共通残差。 |

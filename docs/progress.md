@@ -2,6 +2,19 @@
 
 ## 2026-06-22
 
+- Added same-surface PBR-term/output residual summaries to
+  `join-owner-render-hotspots.rs`. The report now compares source-derived
+  Browser `MeshStandardMaterial` direct/ambient/total terms with Rust CPU PBR
+  terms only when the joined surfaces match, and prints those term distances
+  beside the final actual-vs-three-vrm expected output RGB distance. Regenerating
+  `just render-parity-seed-base-color-flat32-render-resolve-owner-render-join`
+  shows the current Seed-san backpack/PBR residual is no longer explained by a
+  broad PBR term mismatch: Browser-best to Rust-frontmost total-term distance is
+  only wgpu `0.0047`, Bevy `0.0047`, and Ash `0.0005`, while the same pixels
+  still have output RGB distances wgpu `52.8983`, Bevy `51.8283`, and Ash
+  `32.2958`. This keeps the next parity pass focused on final sample/fill,
+  color-output, and local surface adoption behavior rather than a global
+  direct-light, ambient, or exposure fit.
 - Rechecked the current rendering image comparison board and the real expanded
   Seed-san summary artifact after the latest color-fit parser changes. The
   visual board now points at the 2026-06-22 artifact set, and the real
