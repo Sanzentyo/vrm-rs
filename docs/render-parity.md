@@ -37,8 +37,10 @@ recipes are convenience entry points. Use these first:
   and diff heatmaps.
 - `just render-parity-acceptance-signoff-strict`: regenerate the same file but
   require accepted visual-review metadata, including a reviewer and note. This
-  is the final local command for turning a numeric calibration draft into a
-  signed-off artifact.
+  also requires `acceptance-repeat-summary.json` to be source-locked to the
+  current clean `git rev-parse HEAD`, so an older accepted signoff cannot be
+  reused as final evidence after repository changes. This is the final local
+  command for turning a numeric calibration draft into a signed-off artifact.
 - `just render-parity-acceptance-bundle`: copy the small, portable
   acceptance-repeat evidence files into
   `.external-fixtures/render-parity-acceptance-bundle/` after a runner finishes
@@ -107,7 +109,10 @@ under `.external-fixtures/render-parity-acceptance-repeat/`; they include the
 environment lock (`windows` / `x86_64`, Rust nightly `1.98.0`, Node `v25.9.0`,
 just `1.49.0`, plus GPU adapter snapshot), three repeated acceptance runs, and
 an accepted `acceptance-signoff.md` generated with
-`--require-visual-accepted`.
+`--require-visual-accepted`. Because that artifact is source-locked to the
+commit above, the strict signoff command must be rerun after a fresh
+`just render-parity-acceptance-repeat` before using it as evidence for a newer
+HEAD.
 
 Numeric status for the six-fixture wgpu/Bevy/Ash acceptance set is stable: all
 `18` comparisons pass over `3` runs, the minimum selected PSNR is Seed-san Bevy
@@ -1838,6 +1843,11 @@ just render-parity-acceptance-signoff-strict `
   .external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json `
   .external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md
 ```
+
+The strict recipe passes `--require-current-source`; it fails when the summary's
+`sourceLock.vrmRsGitHead` differs from the current clean worktree HEAD. Rerun
+`just render-parity-acceptance-repeat` after renderer, adapter, parity tooling,
+or threshold changes before attempting final signoff.
 
 The `just render-parity-validate MANIFEST` wrapper runs the same audit. The
 validator also cross-checks the manifest's reference/capture artifact paths

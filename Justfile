@@ -112,7 +112,7 @@ render-parity-acceptance-signoff summary=".external-fixtures/render-parity-accep
 
 # Require accepted visual review metadata while regenerating the final acceptance signoff.
 render-parity-acceptance-signoff-strict reviewer visual_notes summary=".external-fixtures/render-parity-acceptance-repeat/acceptance-repeat-summary.json" markdown_out=".external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md":
-    cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ summary }}" --markdown-out "{{ markdown_out }}" --visual-review-state accepted --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --require-visual-accepted
+    cargo +nightly -Zscript tools/render-parity/generate-acceptance-signoff.rs --summary "{{ summary }}" --markdown-out "{{ markdown_out }}" --visual-review-state accepted --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --require-visual-accepted --require-current-source
 
 # Export the small acceptance-repeat evidence files for transfer from a GPU/driver runner.
 render-parity-acceptance-bundle acceptance_root=".external-fixtures/render-parity-acceptance-repeat" out_dir=".external-fixtures/render-parity-acceptance-bundle" include_visual_contact_sheets="false":

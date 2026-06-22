@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -46,6 +47,8 @@ struct Options {
     visual_notes: String,
     #[arg(long)]
     require_visual_accepted: bool,
+    #[arg(long)]
+    require_current_source: bool,
     #[arg(long, hide = true)]
     self_test: bool,
 }
@@ -118,6 +121,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         reviewer: String::new(),
         visual_notes: String::new(),
         require_visual_accepted: false,
+        require_current_source: false,
         self_test: true,
     };
     let report = SignoffReport::from_summary(&summary, &options)?;
@@ -213,6 +217,9 @@ impl SignoffReport {
         if source_lock.get("vrmRsGitDirty").and_then(Value::as_bool) != Some(false) {
             return Err("sourceLock.vrmRsGitDirty must be false for signoff".into());
         }
+        if options.require_current_source {
+            validate_current_source(&source_head)?;
+        }
         if three_vrm_head != required_string(source_lock, "expectedThreeVrmCommit")? {
             return Err("sourceLock.threeVrmGitHead must match expectedThreeVrmCommit".into());
         }
@@ -307,16 +314,26 @@ impl SignoffReport {
         }
     }
 
-    fn to_markdown(&self, summary_path: &Path, options: &Options) -> Result<String, Box<dyn Error>> {
+    fn to_markdown(
+        &self,
+        summary_path: &Path,
+        options: &Options,
+    ) -> Result<String, Box<dyn Error>> {
         let mut output = String::new();
         output.push_str("# Render Parity Acceptance Signoff\n\n");
         output.push_str(&format!("- Summary: `{}`\n", display_path(summary_path)));
         output.push_str(&format!("- vrm-rs HEAD: `{}`\n", self.source_head));
+        if options.require_current_source {
+            output.push_str("- current-source gate: `required`\n");
+        }
         output.push_str(&format!("- three-vrm HEAD: `{}`\n", self.three_vrm_head));
         for line in &self.environment_summary {
             output.push_str(&format!("- {line}\n"));
         }
-        output.push_str(&format!("- Runs: `{}` / `{}`\n", self.run_count, options.expected_runs));
+        output.push_str(&format!(
+            "- Runs: `{}` / `{}`\n",
+            self.run_count, options.expected_runs
+        ));
         output.push_str(&format!(
             "- Comparisons: `{}` / `{}`\n",
             self.comparison_count, options.expected_comparisons
@@ -331,7 +348,10 @@ impl SignoffReport {
         ));
         output.push_str(&format!(
             "- signoff status: {}\n",
-            if self.numeric_pass && self.visual_pass(options) && options.visual_review_state == VisualReviewState::Accepted {
+            if self.numeric_pass
+                && self.visual_pass(options)
+                && options.visual_review_state == VisualReviewState::Accepted
+            {
                 "complete"
             } else {
                 "draft"
@@ -395,7 +415,10 @@ fn read_json(path: &Path) -> Result<Value, Box<dyn Error>> {
 }
 
 fn write_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, text)?;
@@ -454,14 +477,12 @@ fn validate_lane_config(summary: &Value, options: &Options) -> Result<(), Box<dy
 
 fn environment_summary(summary: &Value) -> Result<Vec<String>, Box<dyn Error>> {
     let environment = required_object(summary, "environmentLock", "summary")?;
-    let mut lines = vec![
-        format!(
-            "environment: `{}` `{}` `{}`",
-            required_string(environment, "os")?,
-            required_string(environment, "family")?,
-            required_string(environment, "arch")?
-        ),
-    ];
+    let mut lines = vec![format!(
+        "environment: `{}` `{}` `{}`",
+        required_string(environment, "os")?,
+        required_string(environment, "family")?,
+        required_string(environment, "arch")?
+    )];
     for (label, field) in [
         ("rustc", "rustcVersion"),
         ("cargo", "cargoVersion"),
@@ -482,6 +503,36 @@ fn environment_summary(summary: &Value) -> Result<Vec<String>, Box<dyn Error>> {
     }
     lines.push(format!("gpu adapters: `{}`", compact_json(gpu_adapters)?));
     Ok(lines)
+}
+
+fn validate_current_source(source_head: &str) -> Result<(), Box<dyn Error>> {
+    let current_head = git_output(["rev-parse", "HEAD"])?;
+    if current_head != source_head {
+        return Err(format!(
+            "summary sourceLock.vrmRsGitHead ({source_head}) must match current git HEAD ({current_head})"
+        )
+        .into());
+    }
+    let tracked_status = git_output(["status", "--porcelain", "--untracked-files=no"])?;
+    if !tracked_status.is_empty() {
+        return Err(
+            "current vrm-rs worktree must have no tracked changes for current-source signoff"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn git_output<const N: usize>(args: [&str; N]) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git").args(args).output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "git command failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 fn compact_json(value: &Value) -> Result<String, Box<dyn Error>> {
@@ -556,11 +607,19 @@ fn require_string_or_null<'a>(
 }
 
 fn pass_fail(pass: bool) -> &'static str {
-    if pass { "pass" } else { "fail" }
+    if pass {
+        "pass"
+    } else {
+        "fail"
+    }
 }
 
 fn empty_name(name: &str) -> &str {
-    if name.is_empty() { "none" } else { name }
+    if name.is_empty() {
+        "none"
+    } else {
+        name
+    }
 }
 
 fn test_summary(psnr: f64, alpha_mismatches: u64, alpha_delta: u64) -> Value {
