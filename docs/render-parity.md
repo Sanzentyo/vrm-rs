@@ -39,6 +39,37 @@ recipes are convenience entry points. Use these first:
   require accepted visual-review metadata, including a reviewer and note. This
   is the final local command for turning a numeric calibration draft into a
   signed-off artifact.
+
+## Current Local Acceptance Evidence
+
+The latest local acceptance repeat was generated from clean source commit
+`4fb384e44142db8adc2f5fb7dd9828ca1cfa6e80`, with three-vrm pinned to
+`9d125586f6d7da094b0ac5f204cebf19586f2397`. The external-only artifacts live
+under `.external-fixtures/render-parity-acceptance-repeat/`; they include the
+environment lock (`windows` / `x86_64`, Rust nightly `1.98.0`, Node `v25.9.0`,
+just `1.49.0`, plus GPU adapter snapshot), three repeated acceptance runs, and
+an accepted `acceptance-signoff.md` generated with
+`--require-visual-accepted`.
+
+Numeric status for the six-fixture wgpu/Bevy/Ash acceptance set is stable: all
+`18` comparisons pass over `3` runs, the minimum selected PSNR is Seed-san Bevy
+`34.1039 dB`, and alpha mismatch / max alpha delta are exactly `0`.
+Visual review of the generated contact sheets accepts the current residuals as
+local edge, outline, text-boundary, and gradient-boundary differences. No
+whole-surface color drift, pose drift, material placement error, alpha-mask
+failure, expression mismatch, UV animation layout mismatch, VRM0 orientation
+regression, or constraint-sample mismatch was observed.
+
+The Seed-san max-channel-delta value is intentionally treated as an edge/local
+residual, not as a reason for value fitting. In the run-3 `.imqraw` reports,
+the high-delta (`>=128`) bucket is small: wgpu `25` RGB pixels, Bevy `31`, Ash
+`25`; all three have `0` high-delta flat-interior pixels and `0` alpha
+mismatches. The worst Bevy case has only `15` of those high-delta pixels inside
+the shared nonblack 3px edge band, `13` coverage-only pixels, and `8`
+gradient-interior pixels. This supports keeping the accepted local threshold at
+`rgb-visible >= 34 dB` while leaving broader multi-GPU repeat evidence as the
+remaining acceptance hardening task.
+
 - `just render-parity-samples-ash-gated`: opaque-black real-fixture regression
   gate for three-vrm, wgpu, Bevy, and Ash. It defaults to
   `--render-run-mode diagnostic`; pass `acceptance` as the final `run_mode`
