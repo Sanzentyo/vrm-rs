@@ -47,6 +47,10 @@ struct Options {
 struct JoinReport {
     owner_hotspots: String,
     rust_hotspots: String,
+    owner_reference_diagnostic_render: Option<String>,
+    owner_reference_diagnostic_render_reference: Option<String>,
+    owner_reference_output_color_space: Option<String>,
+    rust_delta_source: Option<String>,
     owner_hotspot_count: u64,
     rust_hotspot_count: u64,
     joined_count: u64,
@@ -355,6 +359,19 @@ fn join_reports(
     let mut report = JoinReport {
         owner_hotspots: display_path(owner_path),
         rust_hotspots: display_path(rust_path),
+        owner_reference_diagnostic_render: pointer_string(
+            owner,
+            "/reference/renderer/diagnosticRender",
+        ),
+        owner_reference_diagnostic_render_reference: pointer_string(
+            owner,
+            "/reference/renderer/diagnosticRenderReference",
+        ),
+        owner_reference_output_color_space: pointer_string(
+            owner,
+            "/reference/renderer/outputColorSpace",
+        ),
+        rust_delta_source: pointer_string(rust, "/deltas"),
         owner_hotspot_count: owner_hotspots.len() as u64,
         rust_hotspot_count: rust_hotspots.len() as u64,
         joined_count: 0,
@@ -1522,6 +1539,13 @@ fn string_path(value: &Value, key: &str) -> String {
         .to_owned()
 }
 
+fn pointer_string(value: &Value, pointer: &str) -> Option<String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
 fn value_f64_path(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
@@ -1553,6 +1577,25 @@ fn markdown_report(report: &JoinReport) -> String {
     output.push_str("# Joined Owner/Render Hotspots\n\n");
     output.push_str(&format!("- Owner hotspots: `{}`\n", report.owner_hotspots));
     output.push_str(&format!("- Rust hotspots: `{}`\n", report.rust_hotspots));
+    output.push_str(&format!(
+        "- Owner diagnostic render/reference/output color space: `{}` / `{}` / `{}`\n",
+        report
+            .owner_reference_diagnostic_render
+            .as_deref()
+            .unwrap_or("n/a"),
+        report
+            .owner_reference_diagnostic_render_reference
+            .as_deref()
+            .unwrap_or("n/a"),
+        report
+            .owner_reference_output_color_space
+            .as_deref()
+            .unwrap_or("n/a")
+    ));
+    output.push_str(&format!(
+        "- Rust delta source: `{}`\n",
+        report.rust_delta_source.as_deref().unwrap_or("n/a")
+    ));
     output.push_str(&format!(
         "- Joined: `{}` / `{}`; missing Rust: `{}`\n",
         report.joined_count, report.owner_hotspot_count, report.missing_rust_count

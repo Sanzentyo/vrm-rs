@@ -357,6 +357,10 @@ struct BaseColorOwnerJoinSummary {
 struct OwnerRenderJoinSummary {
     renderer: String,
     path: String,
+    owner_reference_diagnostic_render: Option<String>,
+    owner_reference_diagnostic_render_reference: Option<String>,
+    owner_reference_output_color_space: Option<String>,
+    rust_delta_source: Option<String>,
     joined_count: Option<u64>,
     rendered_owner_count: Option<u64>,
     rendered_owner_matches_rust_frontmost: Option<u64>,
@@ -832,7 +836,7 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
     }
     if !summary.owner_render_joins.is_empty() {
         out.push_str("\n## Owner/Render PBR Term Joins\n\n");
-        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Raw normal columns keep each side's world-space convention; the Rust-space normal column maps only Browser three.js normals through `[-x, y, -z]` and leaves Rust shading normals as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. PBR-total projection columns convert `direct + ambient` from linear RGB to sRGB8, then compare it to the actual and expected pixels. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n");
+        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance; check the join metadata before interpreting it as lit-shader output, because many current residual lanes are base-color diagnostics. Raw normal columns keep each side's world-space convention; the Rust-space normal column maps only Browser three.js normals through `[-x, y, -z]` and leaves Rust shading normals as captured. Tangent normal columns compare decoded normal-map vectors before TBN application. PBR-total projection columns convert `direct + ambient` from linear RGB to sRGB8, then compare it to the actual and expected pixels. Read the normal source-pair column before treating any basis-adjusted or tangent-space distance as a like-for-like normal-map comparison.\n\n");
         let warnings = summary
             .owner_render_joins
             .iter()
@@ -849,6 +853,25 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             }
             out.push('\n');
         }
+        out.push_str("| Renderer | Owner diagnostic | Owner reference | Output color space | Rust delta source |\n");
+        out.push_str("| --- | --- | --- | --- | --- |\n");
+        for join in &summary.owner_render_joins {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | `{}` |\n",
+                join.renderer,
+                join.owner_reference_diagnostic_render
+                    .as_deref()
+                    .unwrap_or("n/a"),
+                join.owner_reference_diagnostic_render_reference
+                    .as_deref()
+                    .unwrap_or("n/a"),
+                join.owner_reference_output_color_space
+                    .as_deref()
+                    .unwrap_or("n/a"),
+                join.rust_delta_source.as_deref().unwrap_or("n/a"),
+            ));
+        }
+        out.push('\n');
         out.push_str("| Renderer | Joined | Rendered owner | Rendered owner matches Rust frontmost | Browser best subpixel | Browser best subpixel matches Rust frontmost | Browser coverage | Browser coverage matches Rust frontmost |\n");
         out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
         for join in &summary.owner_render_joins {
@@ -1975,6 +1998,19 @@ fn owner_render_join_summary(
     Ok(OwnerRenderJoinSummary {
         renderer: renderer.to_owned(),
         path: path.display().to_string(),
+        owner_reference_diagnostic_render: optional_string_path(
+            &value,
+            &["owner_reference_diagnostic_render"],
+        )?,
+        owner_reference_diagnostic_render_reference: optional_string_path(
+            &value,
+            &["owner_reference_diagnostic_render_reference"],
+        )?,
+        owner_reference_output_color_space: optional_string_path(
+            &value,
+            &["owner_reference_output_color_space"],
+        )?,
+        rust_delta_source: optional_string_path(&value, &["rust_delta_source"])?,
         joined_count: optional_u64_path(&value, &["joined_count"])?,
         rendered_owner_count: optional_u64_path(&value, &["rendered_owner_count"])?,
         rendered_owner_matches_rust_frontmost: optional_u64_path(
