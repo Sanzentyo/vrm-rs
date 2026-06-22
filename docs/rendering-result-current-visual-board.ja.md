@@ -1,6 +1,6 @@
 # 現状レンダリング結果 画像比較ボード
 
-更新日: 2026-06-21
+更新日: 2026-06-22
 
 このページは、現在ローカルにあるレンダリング結果を目視比較するための短い Markdown です。画像と raw 比較レポートは `.external-fixtures/` 配下の作業用 artifact で、リポジトリには含めません。基準画像は `three-vrm`、比較対象は Rust 側の `wgpu` / Bevy / Ash です。
 
@@ -141,7 +141,7 @@ Expanded diagnostic summary:
 
 ### 現行 join / summary の確認
 
-実データの shading-model residual join は、Markdown と summary JSON の両方で additive / gain fit を保持しています。以前は summary parser の取り込み漏れで色 fit が空扱いになることがありましたが、現行 artifact では `color_fit` と `material_draw_color_fits` が JSON に入っています。
+実データの shading-model residual join は、Markdown と summary JSON の両方で additive / gain fit を保持しています。以前は summary parser の取り込み漏れで色 fit が空扱いになることがありましたが、現行 artifact では `color_fit` と `material_draw_color_fits` が JSON に入っています。`summary.json` 側に `"color_fit": null` が残らないことも、parser self-test と実 artifact の grep で確認済みです。
 
 | Source | Path | 現状 |
 | --- | --- | --- |

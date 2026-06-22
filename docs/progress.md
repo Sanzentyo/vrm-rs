@@ -2,6 +2,14 @@
 
 ## 2026-06-22
 
+- Rechecked the current rendering image comparison board and the real expanded
+  Seed-san summary artifact after the latest color-fit parser changes. The
+  visual board now points at the 2026-06-22 artifact set, and the real
+  `Seed-san.render-resolve-expanded.summary.json` keeps backend and
+  material/draw additive/gain `color_fit` entries without serialized
+  `"color_fit": null`. The parser self-test still covers the important case
+  where an upstream join object contains `color_fit: null` plus a populated
+  alias such as `color_fit_summary` or `colorFit`.
 - Added source-derived three.js `MeshStandardMaterial` PBR term diagnostics to
   the browser hotspot projection and aligned the Rust CPU hotspot PBR diffuse
   input with glTF base-texture color space. Browser owner projections now emit
