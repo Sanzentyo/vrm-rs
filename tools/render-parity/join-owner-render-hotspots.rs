@@ -682,20 +682,29 @@ fn browser_pbr_terms_summary(value: &Value, pointer: &str) -> String {
         return "n/a".to_owned();
     }
     format!(
-        "model={} nL/nV={}/{} normal={} uv={} tex={} geom={} shade3={} shade-wgpu={} tan3={} tan-wgpu={} m/r={}/{}",
+        "model={} nL/nV={}/{} normal={} uv={} tex={} base-uv={} base-tex={} geom={} shade3={} shade-wgpu={} tan3={} tan-wgpu={} diff={} spec={} direct={} amb={} total={} m/r={}/{} f90={} rough-used={}",
         string_path(terms, "model"),
         fmt_opt_f64(value_f64_path(terms, "nDotL")),
         fmt_opt_f64(value_f64_path(terms, "nDotV")),
         string_path(terms, "normalSource"),
         fmt_vec2(value_vec2_path(terms, "normalUv")),
         fmt_rgba(value_rgba_path(terms, "normalTextureRgba")),
+        fmt_vec2(value_vec2_path(terms, "baseUv")),
+        fmt_rgba(value_rgba_path(terms, "baseTextureRgba")),
         fmt_vec3(value_vec3_path(terms, "geometricNormal")),
         fmt_vec3(value_vec3_path(terms, "shadingNormalThreeJs")),
         fmt_vec3(value_vec3_path(terms, "shadingNormalWgpuCompat")),
         fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalThreeJs")),
         fmt_vec3(value_vec3_path(terms, "tangentSpaceNormalWgpuCompat")),
+        fmt_vec3(value_vec3_path(terms, "diffuseLobeRgb")),
+        fmt_vec3(value_vec3_path(terms, "specularLobeRgb")),
+        fmt_vec3(value_vec3_path(terms, "directRgb")),
+        fmt_vec3(value_vec3_path(terms, "ambientRgb")),
+        fmt_vec3(value_vec3_path(terms, "directPlusAmbientRgb")),
         fmt_opt_f64(value_f64_path(terms, "metalness")),
         fmt_opt_f64(value_f64_path(terms, "roughness")),
+        fmt_opt_f64(value_f64_path(terms, "specularF90")),
+        fmt_opt_f64(value_f64_path(terms, "roughnessUsed")),
     )
 }
 
@@ -1094,11 +1103,20 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
             "normalSource": "normal_map_tangent_space",
             "normalUv": [0.25, 0.75],
             "normalTextureRgba": [127, 123, 255, 255],
+            "baseUv": [0.3, 0.4],
+            "baseTextureRgba": [60, 55, 55, 255],
             "geometricNormal": [0.0, 0.0, 1.0],
             "shadingNormalThreeJs": [0.1, -0.1, 0.99],
             "shadingNormalWgpuCompat": [0.1, 0.1, 0.99],
             "tangentSpaceNormalThreeJs": [0.0, -0.03, 1.0],
             "tangentSpaceNormalWgpuCompat": [0.0, 0.03, 1.0],
+            "diffuseLobeRgb": [0.16, 0.15, 0.15],
+            "specularLobeRgb": [0.03, 0.03, 0.03],
+            "directRgb": [0.19, 0.18, 0.18],
+            "ambientRgb": [0.01, 0.01, 0.01],
+            "directPlusAmbientRgb": [0.20, 0.19, 0.19],
+            "specularF90": 1.0,
+            "roughnessUsed": 0.657,
             "metalness": 0.0,
             "roughness": 0.657
         },
@@ -1123,6 +1141,11 @@ fn self_test() -> Result<(), Box<dyn std::error::Error>> {
     });
     assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
         .contains("shade-wgpu=0.100,0.100,0.990"));
+    assert!(browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms")
+        .contains("direct=0.190,0.180,0.180"));
+    assert!(
+        browser_pbr_terms_summary(&pbr_fixture, "/browserPbrTerms").contains("f90=1.0000")
+    );
     assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")
         .contains("total=0.190,0.180,0.180"));
     assert!(rust_pbr_terms_summary(&pbr_fixture, "/rust/pbr_terms")

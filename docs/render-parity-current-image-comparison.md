@@ -87,11 +87,16 @@ Current guardrail:
 ## Current Blocker
 
 The backend images are structurally close enough for owner/alpha checks, but the
-remaining blocker is material/light color accumulation. The strongest current
-signal is the `backpack_nm` glTF/PBR residual on `node145/mesh4/prim9/base`:
-three-vrm remains consistently brighter than the Rust renderers after ownership,
-base-color projection, normal-map sampling, and render-readback diagnostics.
+remaining blocker is still concentrated around `backpack_nm` glTF/PBR rows and
+nearby material/sample ownership. The latest source-derived PBR term dump shows
+that same-surface Browser and Rust CPU terms now agree after fixing the Rust
+hotspot diagnostic to linearize sRGB base texture samples for PBR terms. For
+example, a refreshed owner/render join has Browser direct
+`0.036,0.031,0.030` and Rust direct `0.037,0.031,0.030` on a matching
+`backpack_nm` row, with both ambient terms near `0.001`.
 
-Next useful diagnostic: add a source-derived three.js `MeshStandardMaterial`
-term dump for the same pixels and compare it against Rust CPU `pbr_terms`
-without introducing any gain/exposure tuning.
+Interpretation: the old apparent large PBR direct-term mismatch was a diagnostic
+color-space bug, not proof that a broad gain/exposure knob is needed. The next
+useful work is to compare full rendered sample/fill/shader-output behavior for
+the remaining `backpack_nm` and MToon body/plastic rows using these term dumps as
+guardrails.

@@ -2,6 +2,22 @@
 
 ## 2026-06-22
 
+- Added source-derived three.js `MeshStandardMaterial` PBR term diagnostics to
+  the browser hotspot projection and aligned the Rust CPU hotspot PBR diffuse
+  input with glTF base-texture color space. Browser owner projections now emit
+  base UV/texel, linear diffuse, three.js direct diffuse/specular/direct,
+  ambient, total, roughness floor, and `specularF90` beside the existing normal
+  terms. The owner/render join prints those Browser terms next to Rust
+  `pbr_terms`. Re-running the Seed-san wgpu owner/render join showed the old
+  apparent `backpack_nm` direct-term mismatch was a CPU diagnostic color-space
+  issue: Rust hotspot terms had treated base texture bytes as linear, while
+  three.js uses sRGB-to-linear map sampling. After fixing `map-render-hotspots`,
+  same-surface `backpack_nm` rows line up on the same scale, for example
+  Browser direct `0.036,0.031,0.030` vs Rust direct `0.037,0.031,0.030` with
+  ambient near `0.001`. Keep using additive/gain fit values only as residual
+  diagnostics; this term dump redirects the next root-cause pass away from a
+  broad PBR direct-light gain and toward full rendered sample/fill/shader-output
+  differences that remain after same-surface term agreement.
 - Routed Rust glTF/PBR tangent-space normal diagnostics through the remaining
   render-parity report layers. `map-render-hotspots.rs` now stores both
   three.js-style and wgpu-compatible tangent-space normal terms next to the

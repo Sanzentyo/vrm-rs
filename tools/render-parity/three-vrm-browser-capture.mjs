@@ -511,6 +511,9 @@ function capturePage(options) {
     ? left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
     : null;
 
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const saturate = (value) => clamp(value, 0.0, 1.0);
+
   const cross3 = (left, right) => [
     left[1] * right[2] - left[2] * right[1],
     left[2] * right[0] - left[0] * right[2],
@@ -529,10 +532,22 @@ function capturePage(options) {
     value[2] * scalar,
   ];
 
+  const multiply3 = (left, right) => [
+    left[0] * right[0],
+    left[1] * right[1],
+    left[2] * right[2],
+  ];
+
   const add3 = (left, right) => [
     left[0] + right[0],
     left[1] + right[1],
     left[2] + right[2],
+  ];
+
+  const mix3 = (left, right, amount) => [
+    lerp(left[0], right[0], amount),
+    lerp(left[1], right[1], amount),
+    lerp(left[2], right[2], amount),
   ];
 
   const transformTextureUv = (uv, texture) => {
@@ -712,7 +727,88 @@ function capturePage(options) {
     };
   };
 
-  const browserPbrTerms = (projected, weights, rawUv, camera, light) => {
+  const textureColorToLinear = (texture, channel) => {
+    if (texture?.colorSpace === THREE.SRGBColorSpace) return srgbToLinear(channel);
+    return channel;
+  };
+
+  const sampledDiffuseLinear = (material, rawUv) => {
+    const mapUv = transformTextureUv(rawUv, material?.map);
+    const baseTextureRgba = sampleTextureRgba(material?.map, mapUv);
+    const materialColor = material?.color?.isColor ? material.color.toArray() : [1.0, 1.0, 1.0];
+    const textureLinear = [
+      textureColorToLinear(material?.map, baseTextureRgba[0] / 255),
+      textureColorToLinear(material?.map, baseTextureRgba[1] / 255),
+      textureColorToLinear(material?.map, baseTextureRgba[2] / 255),
+    ];
+    return {
+      baseUv: mapUv,
+      baseTextureRgba,
+      baseTextureColorSpace: material?.map?.colorSpace ?? null,
+      diffuseLinearRgb: multiply3(materialColor, textureLinear),
+    };
+  };
+
+  const physicalSpecularTerms = (material, diffuseLinearRgb, metallic) => {
+    if (material?.type === 'MeshPhysicalMaterial') {
+      const ior = material.ior ?? 1.5;
+      const iorF0 = ((ior - 1.0) / (ior + 1.0)) ** 2;
+      const specularIntensity = material.specularIntensity ?? 1.0;
+      const specularColorFactor = material.specularColor?.isColor
+        ? material.specularColor.toArray()
+        : [1.0, 1.0, 1.0];
+      const dielectricF0 = specularColorFactor.map((value) => Math.min(1.0, iorF0 * value) * specularIntensity);
+      return {
+        specularColor: mix3(dielectricF0, diffuseLinearRgb, metallic),
+        specularF90: lerp(specularIntensity, 1.0, metallic),
+        specularModel: 'mesh_physical_ior',
+      };
+    }
+    return {
+      specularColor: mix3([0.04, 0.04, 0.04], diffuseLinearRgb, metallic),
+      specularF90: 1.0,
+      specularModel: 'mesh_standard',
+    };
+  };
+
+  const pbrDirectTerms = (diffuseLinearRgb, normal, viewDir, lightDir, lightColor, metallic, roughness, specularColor, specularF90) => {
+    if (!diffuseLinearRgb || !normal || !viewDir || !lightDir || !lightColor || !specularColor) return null;
+    const pi = Math.PI;
+    const nDotL = saturate(dot3(normal, lightDir));
+    const nDotV = saturate(dot3(normal, viewDir));
+    const halfDir = normalize3(add3(lightDir, viewDir));
+    const nDotH = saturate(dot3(normal, halfDir));
+    const vDotH = saturate(dot3(viewDir, halfDir));
+    const rough = Math.min(Math.max(roughness ?? 1.0, 0.0525), 1.0);
+    const alpha = rough * rough;
+    const alpha2 = alpha * alpha;
+    const denom = nDotH * nDotH * (alpha2 - 1.0) + 1.0;
+    const distribution = (1.0 / pi) * alpha2 / Math.max(denom * denom, 1.0e-12);
+    const geometryV = nDotL * Math.sqrt(alpha2 + (1.0 - alpha2) * nDotV * nDotV);
+    const geometryL = nDotV * Math.sqrt(alpha2 + (1.0 - alpha2) * nDotL * nDotL);
+    const visibility = 0.5 / Math.max(geometryV + geometryL, 1.0e-6);
+    const fresnelFactor = (1.0 - vDotH) ** 5;
+    const fresnel = specularColor.map((value) => value + (specularF90 - value) * fresnelFactor);
+    const diffuseColor = scale3(diffuseLinearRgb, 1.0 - metallic);
+    const diffuseLobe = multiply3(scale3(diffuseColor, nDotL / pi), lightColor);
+    const specularLobe = multiply3(scale3(fresnel, distribution * visibility * nDotL), lightColor);
+    return {
+      nDotL,
+      nDotV,
+      nDotH,
+      vDotH,
+      roughnessUsed: rough,
+      distribution,
+      visibility,
+      fresnel,
+      diffuseColor,
+      diffuseLobeRgb: diffuseLobe,
+      specularLobeRgb: specularLobe,
+      directRgb: add3(diffuseLobe, specularLobe),
+    };
+  };
+
+  const browserPbrTerms = (projected, weights, rawUv, camera, light, ambient) => {
     const material = projected.material;
     if (material?.type !== 'MeshStandardMaterial' && material?.type !== 'MeshPhysicalMaterial') return null;
     const worldPosition = interpolateVec3(weights, projected.a, projected.b, projected.c, 'worldPosition');
@@ -723,11 +819,42 @@ function capturePage(options) {
     const viewDir = worldPosition ? normalize3(subtract3(camera.position.toArray(), worldPosition)) : null;
     const halfDir = lightDir && viewDir ? normalize3(add3(lightDir, viewDir)) : null;
     const shadingNormal = normalTerms.shadingNormalThreeJs ?? geometricNormal;
+    const diffuseTerms = sampledDiffuseLinear(material, rawUv);
+    const metallic = material.metalness ?? 0.0;
+    const roughness = material.roughness ?? 1.0;
+    const specularTerms = physicalSpecularTerms(material, diffuseTerms.diffuseLinearRgb, metallic);
+    const effectiveLightColor = scale3(
+      light.color?.isColor ? light.color.toArray() : [1.0, 1.0, 1.0],
+      light.intensity ?? 1.0,
+    );
+    const directTerms = pbrDirectTerms(
+      diffuseTerms.diffuseLinearRgb,
+      shadingNormal,
+      viewDir,
+      lightDir,
+      effectiveLightColor,
+      metallic,
+      roughness,
+      specularTerms.specularColor,
+      specularTerms.specularF90,
+    );
+    const ambientLightColor = scale3(
+      ambient?.color?.isColor ? ambient.color.toArray() : [1.0, 1.0, 1.0],
+      ambient?.intensity ?? 0.0,
+    );
+    const ambientRgb = multiply3(
+      scale3(diffuseTerms.diffuseLinearRgb, (1.0 - metallic) / Math.PI),
+      ambientLightColor,
+    );
     return {
       model: material.type,
       worldPosition,
       geometricNormal,
       worldTangent,
+      baseUv: diffuseTerms.baseUv,
+      baseTextureRgba: diffuseTerms.baseTextureRgba,
+      baseTextureColorSpace: diffuseTerms.baseTextureColorSpace,
+      diffuseLinearRgb: diffuseTerms.diffuseLinearRgb,
       normalSource: normalTerms.normalSource,
       normalUv: normalTerms.normalUv,
       normalTextureRgba: normalTerms.normalTextureRgba,
@@ -743,13 +870,28 @@ function capturePage(options) {
       nDotV: dot3(shadingNormal, viewDir),
       nDotH: dot3(shadingNormal, halfDir),
       vDotH: dot3(viewDir, halfDir),
-      metalness: material.metalness ?? null,
-      roughness: material.roughness ?? null,
+      metalness: metallic,
+      roughness,
+      specularModel: specularTerms.specularModel,
+      specularColor: specularTerms.specularColor,
+      specularF90: specularTerms.specularF90,
+      roughnessUsed: directTerms?.roughnessUsed ?? null,
+      distribution: directTerms?.distribution ?? null,
+      visibility: directTerms?.visibility ?? null,
+      fresnel: directTerms?.fresnel ?? null,
+      diffuseColor: directTerms?.diffuseColor ?? null,
+      diffuseLobeRgb: directTerms?.diffuseLobeRgb ?? null,
+      specularLobeRgb: directTerms?.specularLobeRgb ?? null,
+      directRgb: directTerms?.directRgb ?? null,
+      ambientRgb,
+      directPlusAmbientRgb: directTerms ? add3(directTerms.directRgb, ambientRgb) : null,
       color: material.color?.isColor ? material.color.toArray() : null,
       emissive: material.emissive?.isColor ? material.emissive.toArray() : null,
       emissiveIntensity: material.emissiveIntensity ?? null,
       lightColor: light.color?.isColor ? light.color.toArray() : null,
       lightIntensity: light.intensity ?? null,
+      effectiveLightColor,
+      ambientLightColor,
     };
   };
 
@@ -1193,7 +1335,7 @@ function capturePage(options) {
     return summary;
   };
 
-  const projectHotspots = (root, camera, light, hotspots, sampleCenter, renderedRgba = null) => {
+  const projectHotspots = (root, camera, light, ambient, hotspots, sampleCenter, renderedRgba = null) => {
     if (!hotspots) return null;
     root.updateMatrixWorld(true);
     camera.updateMatrixWorld(true);
@@ -1277,7 +1419,7 @@ function capturePage(options) {
           hotspot.expected?.[3] ?? 255,
         ];
         const baseColor = projectedBaseColor(projected.material, mapUv, hotspot.expected?.[3] ?? 255);
-        const pbrTerms = browserPbrTerms(projected, weights, rawUv, camera, light);
+        const pbrTerms = browserPbrTerms(projected, weights, rawUv, camera, light, ambient);
         candidates.push({
           drawIndex: projected.drawIndex,
           meshOrder: projected.meshOrder,
@@ -1724,7 +1866,15 @@ function capturePage(options) {
       const destination = y * rowBytes;
       rgba.set(readback.subarray(source, source + rowBytes), destination);
     }
-    const diagnosticHotspots = projectHotspots(vrm.scene, camera, light, hotspotDeltas, hotspotSampleCenter, rgba);
+    const diagnosticHotspots = projectHotspots(
+      vrm.scene,
+      camera,
+      light,
+      ambient,
+      hotspotDeltas,
+      hotspotSampleCenter,
+      rgba,
+    );
     let imqraw = null;
     if (${options.imqraw}) {
       await initImqraw();

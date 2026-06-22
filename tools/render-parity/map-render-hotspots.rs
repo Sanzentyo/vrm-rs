@@ -3035,7 +3035,18 @@ fn hit_candidate_for_projected_triangle(
     let cpu_base_color_rgba =
         multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color)
             .map(quantize_unorm8);
-    let diffuse_linear = multiply_rgba(multiply_rgba(surface.base_color, vertex_color), texture_color);
+    let pbr_texture_color = if surface.pbr_fallback {
+        [
+            srgb_to_linear_channel(texture_color[0]),
+            srgb_to_linear_channel(texture_color[1]),
+            srgb_to_linear_channel(texture_color[2]),
+            texture_color[3],
+        ]
+    } else {
+        texture_color
+    };
+    let diffuse_linear =
+        multiply_rgba(multiply_rgba(surface.base_color, vertex_color), pbr_texture_color);
     let vertex_alpha = if surface.pbr_fallback { vertex_color[3] } else { 1.0 };
     let texture_alpha = texture_color[3];
     let alpha = surface.base_color_alpha * vertex_alpha * texture_alpha;
