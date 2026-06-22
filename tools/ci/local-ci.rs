@@ -822,6 +822,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/run-strict-acceptance-runner.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/map-render-hotspots.rs",
             "--",
             "--self-test",
@@ -872,6 +881,7 @@ const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/render-parity/map-render-hotspots.rs",
     "tools/render-parity/merge-owner-sample-selection.rs",
     "tools/render-parity/rgba-json-to-png.rs",
+    "tools/render-parity/run-strict-acceptance-runner.rs",
     "tools/render-parity/summarize-focused-material-pixels.rs",
     "tools/render-parity/summarize-owner-hotspots.rs",
     "tools/render-parity/summarize-owner-tail.rs",

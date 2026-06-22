@@ -56,6 +56,13 @@ recipes are convenience entry points. Use these first:
   `acceptance-signoff.md`. Use this after running
   `just render-parity-acceptance-signoff-strict`; it prevents a runner from
   returning a draft or unreviewed bundle as final evidence.
+- `just render-parity-acceptance-runner-strict`: one-command runner lane for a
+  single GPU/driver environment. It runs the three repeated acceptance captures,
+  regenerates the current-source strict signoff using the supplied reviewer and
+  visual notes, exports the strict portable bundle, and performs a local
+  `--min-environments 1 --require-accepted-signoff` intake smoke. Use this only
+  when the runner is actually taking responsibility for visual review; the
+  underlying Rust script defaults to dry-run unless `--apply` is supplied.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
   summaries gathered from multiple runner environments. Pass at least two
   summary paths, and put any additional summaries in the optional third
@@ -120,8 +127,8 @@ recipes are convenience entry points. Use these first:
 
 ## Current Local Acceptance Evidence
 
-The latest local acceptance repeat was generated from clean source commit
-`7f9546749203787c763679f0b41a6485f3b84f48`, with three-vrm pinned to
+The most recently recorded local acceptance repeat was generated from clean source commit
+`ffd0bff876107ed05ecf0c3b66722fbd508e23e1`, with three-vrm pinned to
 `9d125586f6d7da094b0ac5f204cebf19586f2397`. The external-only artifacts live
 under `.external-fixtures/render-parity-acceptance-repeat/`; they include the
 environment lock (`windows` / `x86_64`, Rust nightly `1.98.0`, Node `v25.9.0`,
@@ -152,9 +159,12 @@ gradient-interior pixels. This supports keeping the accepted local threshold at
 remaining acceptance hardening task.
 
 For that hardening task, each additional machine should run
-`just render-parity-acceptance-repeat` from the same pushed commit, inspect the
-generated visual review pages, then run
-`just render-parity-acceptance-signoff-strict` and
+`just render-parity-acceptance-runner-strict "<reviewer>" "<visual notes>"`
+from the same pushed commit after the runner has the review context needed to
+stand behind the visual notes. This wraps the repeat, strict signoff, strict
+bundle export, and local one-environment smoke. The manual sequence remains
+available as `just render-parity-acceptance-repeat`, inspection of the generated
+visual review pages, `just render-parity-acceptance-signoff-strict`, and
 `just render-parity-acceptance-bundle-strict`. The returned strict bundle is
 small enough to transfer instead of the full image-heavy artifact tree. Bring
 those returned bundles back as sibling directories under one external parent
