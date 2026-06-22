@@ -125,7 +125,13 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         return Err("passing summary should pass numeric calibration".into());
     }
     let markdown = report.to_markdown(Path::new("summary.json"), &options)?;
-    for needle in ["numeric gate: pass", "visual review: pending", "minimum selected PSNR"] {
+    for needle in [
+        "numeric gate: pass",
+        "visual review: pending",
+        "minimum selected PSNR",
+        "environment:",
+        "gpu adapters:",
+    ] {
         if !markdown.contains(needle) {
             return Err(format!("self-test markdown missing {needle:?}").into());
         }
@@ -168,6 +174,7 @@ struct SignoffReport {
     run_count: u64,
     comparison_count: usize,
     run_artifacts: Vec<String>,
+    environment_summary: Vec<String>,
     source_head: String,
     three_vrm_head: String,
     min_psnr: f64,
@@ -198,6 +205,7 @@ impl SignoffReport {
             .map(|run| Ok(required_string(run, "artifacts")?.to_owned()))
             .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
         validate_lane_config(summary, options)?;
+        let environment_summary = environment_summary(summary)?;
 
         let source_lock = required_object(summary, "sourceLock", "summary")?;
         let source_head = required_string(source_lock, "vrmRsGitHead")?.to_owned();
@@ -274,6 +282,7 @@ impl SignoffReport {
             run_count,
             comparison_count: comparisons.len(),
             run_artifacts,
+            environment_summary,
             source_head,
             three_vrm_head,
             min_psnr,
@@ -304,6 +313,9 @@ impl SignoffReport {
         output.push_str(&format!("- Summary: `{}`\n", display_path(summary_path)));
         output.push_str(&format!("- vrm-rs HEAD: `{}`\n", self.source_head));
         output.push_str(&format!("- three-vrm HEAD: `{}`\n", self.three_vrm_head));
+        for line in &self.environment_summary {
+            output.push_str(&format!("- {line}\n"));
+        }
         output.push_str(&format!("- Runs: `{}` / `{}`\n", self.run_count, options.expected_runs));
         output.push_str(&format!(
             "- Comparisons: `{}` / `{}`\n",
@@ -440,6 +452,42 @@ fn validate_lane_config(summary: &Value, options: &Options) -> Result<(), Box<dy
     Ok(())
 }
 
+fn environment_summary(summary: &Value) -> Result<Vec<String>, Box<dyn Error>> {
+    let environment = required_object(summary, "environmentLock", "summary")?;
+    let mut lines = vec![
+        format!(
+            "environment: `{}` `{}` `{}`",
+            required_string(environment, "os")?,
+            required_string(environment, "family")?,
+            required_string(environment, "arch")?
+        ),
+    ];
+    for (label, field) in [
+        ("rustc", "rustcVersion"),
+        ("cargo", "cargoVersion"),
+        ("node", "nodeVersion"),
+        ("npm", "npmVersion"),
+        ("just", "justVersion"),
+    ] {
+        match require_string_or_null(environment, field)? {
+            Some(value) => lines.push(format!("{label}: `{value}`")),
+            None => lines.push(format!("{label}: `null`")),
+        }
+    }
+    let gpu_adapters = environment
+        .get("gpuAdapters")
+        .ok_or("environmentLock.gpuAdapters is missing")?;
+    if !matches!(gpu_adapters, Value::Null | Value::Array(_)) {
+        return Err("environmentLock.gpuAdapters must be null or an array".into());
+    }
+    lines.push(format!("gpu adapters: `{}`", compact_json(gpu_adapters)?));
+    Ok(lines)
+}
+
+fn compact_json(value: &Value) -> Result<String, Box<dyn Error>> {
+    Ok(serde_json::to_string(value)?)
+}
+
 fn update_max_u64(
     value: &Value,
     field: &str,
@@ -493,6 +541,20 @@ fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, Box<dyn
         .ok_or_else(|| format!("{field} must be a string").into())
 }
 
+fn require_string_or_null<'a>(
+    value: &'a Value,
+    field: &str,
+) -> Result<Option<&'a str>, Box<dyn Error>> {
+    match value.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(field_value) => field_value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("{field} must be a string or null").into()),
+        None => Err(format!("{field} must be a string or null").into()),
+    }
+}
+
 fn pass_fail(pass: bool) -> &'static str {
     if pass { "pass" } else { "fail" }
 }
@@ -538,6 +600,17 @@ fn test_summary(psnr: f64, alpha_mismatches: u64, alpha_delta: u64) -> Value {
             "vrmRsGitDirty": false,
             "threeVrmGitHead": "9d125586f6d7da094b0ac5f204cebf19586f2397",
             "expectedThreeVrmCommit": "9d125586f6d7da094b0ac5f204cebf19586f2397"
+        },
+        "environmentLock": {
+            "os": "windows",
+            "family": "windows",
+            "arch": "x86_64",
+            "rustcVersion": "rustc 1.90.0",
+            "cargoVersion": "cargo 1.90.0",
+            "nodeVersion": "v25.0.0",
+            "npmVersion": null,
+            "justVersion": "just 1.42.0",
+            "gpuAdapters": [{"Name": "Adapter", "DriverVersion": "1.2.3"}]
         },
         "comparisons": comparisons
     })

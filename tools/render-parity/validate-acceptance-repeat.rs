@@ -137,6 +137,7 @@ fn validate_repeated_manifests(
         .ok_or("expected at least one acceptance manifest")?;
     validate_acceptance_manifest(baseline, allow_dirty_source)?;
     let baseline_source_lock = source_lock_signature(baseline, allow_dirty_source)?;
+    let baseline_environment_lock = environment_lock_signature(baseline)?;
     let baseline_lane_config = lane_config_signature(baseline)?;
     let baseline_fixtures = fixture_signatures(baseline)?;
     let baseline_comparisons = comparison_signatures(baseline)?;
@@ -150,6 +151,11 @@ fn validate_repeated_manifests(
             &baseline_source_lock,
             &source_lock_signature(manifest, allow_dirty_source)?,
             &format!("manifest[{index}].sourceLock"),
+        )?;
+        ensure_same_value(
+            &baseline_environment_lock,
+            &environment_lock_signature(manifest)?,
+            &format!("manifest[{index}].environmentLock"),
         )?;
         ensure_same_value(
             &baseline_lane_config,
@@ -191,6 +197,7 @@ fn validate_repeated_manifests(
         "runCount": manifests.len(),
         "runs": runs,
         "sourceLock": baseline_source_lock,
+        "environmentLock": baseline_environment_lock,
         "laneConfig": baseline_lane_config,
         "fixtures": baseline_fixtures,
         "comparisons": aggregate_json(aggregates),
@@ -240,6 +247,36 @@ fn source_lock_signature(
         source_lock["vrmRsGitDirty"] = Value::String("<allowed>".to_owned());
     }
     Ok(source_lock)
+}
+
+fn environment_lock_signature(manifest: &Value) -> Result<Value, Box<dyn Error>> {
+    let environment_lock = required_object(manifest, "environmentLock", "manifest")?;
+    for field in ["os", "family", "arch"] {
+        required_string(environment_lock, field)?;
+    }
+    for field in [
+        "rustcVersion",
+        "cargoVersion",
+        "nodeVersion",
+        "npmVersion",
+        "justVersion",
+    ] {
+        require_string_or_null(environment_lock, field)?;
+    }
+    validate_gpu_adapters(environment_lock, "manifest.environmentLock")?;
+    Ok(environment_lock.clone())
+}
+
+fn validate_gpu_adapters(value: &Value, source: &str) -> Result<(), Box<dyn Error>> {
+    gpu_adapters_value(value, source).map(|_| ())
+}
+
+fn gpu_adapters_value<'a>(value: &'a Value, source: &str) -> Result<&'a Value, Box<dyn Error>> {
+    match value.get("gpuAdapters") {
+        Some(value @ (Value::Null | Value::Array(_))) => Ok(value),
+        Some(_) => Err(format!("{source}.gpuAdapters must be null or an array").into()),
+        None => Err(format!("{source}.gpuAdapters is missing").into()),
+    }
 }
 
 fn lane_config_signature(manifest: &Value) -> Result<Value, Box<dyn Error>> {
@@ -459,6 +496,33 @@ fn markdown_summary(summary: &Value) -> Result<String, Box<dyn Error>> {
         "- three-vrm HEAD: `{}`\n\n",
         required_string(source_lock, "threeVrmGitHead")?
     ));
+    let environment_lock = required_object(summary, "environmentLock", "summary")?;
+    output.push_str(&format!(
+        "- Environment: `{}` `{}` `{}`\n",
+        required_string(environment_lock, "os")?,
+        required_string(environment_lock, "family")?,
+        required_string(environment_lock, "arch")?
+    ));
+    for (label, field) in [
+        ("rustc", "rustcVersion"),
+        ("cargo", "cargoVersion"),
+        ("node", "nodeVersion"),
+        ("npm", "npmVersion"),
+        ("just", "justVersion"),
+    ] {
+        match environment_lock.get(field) {
+            Some(Value::String(value)) => output.push_str(&format!("- {label}: `{value}`\n")),
+            Some(Value::Null) => output.push_str(&format!("- {label}: `null`\n")),
+            _ => {}
+        }
+    }
+    output.push_str(&format!(
+        "- GPU adapters: `{}`\n\n",
+        serde_json::to_string(gpu_adapters_value(
+            environment_lock,
+            "summary.environmentLock"
+        )?)?
+    ));
     output.push_str("| Fixture / renderer | Runs | Min selected PSNR | Max channel delta | Max alpha mismatches | Max alpha delta |\n");
     output.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
     for comparison in required_array(summary, "comparisons")? {
@@ -523,6 +587,20 @@ fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, Box<dyn
         .get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{field} must be a string").into())
+}
+
+fn require_string_or_null<'a>(
+    value: &'a Value,
+    field: &str,
+) -> Result<Option<&'a str>, Box<dyn Error>> {
+    match value.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(field_value) => field_value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("{field} must be a string or null").into()),
+        None => Err(format!("{field} must be a string or null").into()),
+    }
 }
 
 fn required_bool(value: &Value, field: &str) -> Result<bool, Box<dyn Error>> {
@@ -617,6 +695,17 @@ fn test_manifest(artifact: &str) -> Value {
             "expectedThreeVrmCommit": "9d125586f6d7da094b0ac5f204cebf19586f2397",
             "expectedThreeVrmViewerCommit": "75ab65c9d4e488521d41bff7f5cfd1976a0b16e8",
             "expectedVrmSpecCommit": "3942748efbc803b258e288e0f6c993c6bb96cebf"
+        },
+        "environmentLock": {
+            "os": "windows",
+            "family": "windows",
+            "arch": "x86_64",
+            "rustcVersion": "rustc 1.90.0",
+            "cargoVersion": "cargo 1.90.0",
+            "nodeVersion": "v25.0.0",
+            "npmVersion": null,
+            "justVersion": "just 1.42.0",
+            "gpuAdapters": [{"Name": "Adapter", "DriverVersion": "1.2.3"}]
         },
         "fixtures": fixtures
     })

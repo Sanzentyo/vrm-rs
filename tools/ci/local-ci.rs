@@ -2255,6 +2255,7 @@ fn render_review_manifest_value(
         "generatedBy": "cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity",
         "artifacts": path(&options.render_parity_dir),
         "sourceLock": render_review_manifest_source_lock(options),
+        "environmentLock": render_review_manifest_environment_lock(),
         "summary": path(&options.render_parity_dir.join("summary.md")),
         "visualReview": path(&options.render_parity_dir.join("visual-review.html")),
         "numericGate": "direct .imqraw via tools/render-parity/compare-imqraw.rs",
@@ -2309,9 +2310,61 @@ fn render_review_manifest_source_lock(options: &Options) -> serde_json::Value {
     })
 }
 
+fn render_review_manifest_environment_lock() -> serde_json::Value {
+    serde_json::json!({
+        "os": env::consts::OS,
+        "family": env::consts::FAMILY,
+        "arch": env::consts::ARCH,
+        "rustcVersion": command_output("rustc", ["--version"]).ok(),
+        "cargoVersion": command_output("cargo", ["--version"]).ok(),
+        "nodeVersion": command_output("node", ["--version"]).ok(),
+        "npmVersion": command_output("npm", ["--version"]).ok(),
+        "justVersion": command_output("just", ["--version"]).ok(),
+        "gpuAdapters": gpu_adapter_snapshot(),
+    })
+}
+
+fn gpu_adapter_snapshot() -> serde_json::Value {
+    if env::consts::OS != "windows" {
+        return serde_json::Value::Null;
+    }
+    let Ok(output) = command_output(
+        "powershell",
+        [
+            "-NoLogo",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,PNPDeviceID | ConvertTo-Json -Compress",
+        ],
+    ) else {
+        return serde_json::Value::Null;
+    };
+    if output.is_empty() {
+        return serde_json::Value::Null;
+    }
+    match serde_json::from_str::<serde_json::Value>(&output) {
+        Ok(serde_json::Value::Array(adapters)) => serde_json::Value::Array(adapters),
+        Ok(serde_json::Value::Object(adapter)) => {
+            serde_json::Value::Array(vec![serde_json::Value::Object(adapter)])
+        }
+        _ => serde_json::Value::Null,
+    }
+}
+
 fn git_dirty(current_dir: &Path) -> Result<bool, String> {
     git_output(current_dir, ["status", "--porcelain", "--untracked-files=no"])
         .map(|output| !output.is_empty())
+}
+
+fn command_output<const N: usize>(program: &str, args: [&str; N]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|err| format!("failed to run {program}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!("{program} command failed with {}", output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn git_output<const N: usize>(current_dir: &Path, args: [&str; N]) -> Result<String, String> {

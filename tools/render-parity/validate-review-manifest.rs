@@ -84,6 +84,19 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
             "expectedVrmSpecCommit": "3942748efbc803b258e288e0f6c993c6bb96cebf"
         }
     }))?;
+    validate_environment_lock(&serde_json::json!({
+        "environmentLock": {
+            "os": "windows",
+            "family": "windows",
+            "arch": "x86_64",
+            "rustcVersion": "rustc 1.90.0",
+            "cargoVersion": "cargo 1.90.0",
+            "nodeVersion": "v25.0.0",
+            "npmVersion": null,
+            "justVersion": "just 1.42.0",
+            "gpuAdapters": [{"Name": "Adapter", "DriverVersion": "1.2.3"}]
+        }
+    }))?;
     validate_fixture_source_hash(
         &serde_json::json!({
             "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -135,6 +148,7 @@ fn validate_manifest(
     require_string(manifest, "numericGate")?;
     validate_run_mode_contract(manifest)?;
     validate_source_lock(manifest)?;
+    validate_environment_lock(manifest)?;
     require_string(manifest, "metric")?;
 
     let fixtures = manifest
@@ -179,6 +193,32 @@ fn validate_source_lock(manifest: &Value) -> Result<(), Box<dyn Error>> {
         require_string(source_lock, field)?;
     }
     Ok(())
+}
+
+fn validate_environment_lock(manifest: &Value) -> Result<(), Box<dyn Error>> {
+    let environment_lock = required_object(manifest, "environmentLock", "manifest")?;
+    for field in ["os", "family", "arch"] {
+        require_string(environment_lock, field)?;
+    }
+    for field in [
+        "rustcVersion",
+        "cargoVersion",
+        "nodeVersion",
+        "npmVersion",
+        "justVersion",
+    ] {
+        require_string_or_null(environment_lock, field)?;
+    }
+    validate_gpu_adapters(environment_lock, "environmentLock")?;
+    Ok(())
+}
+
+fn validate_gpu_adapters(value: &Value, source: &str) -> Result<(), Box<dyn Error>> {
+    match value.get("gpuAdapters") {
+        Some(Value::Null | Value::Array(_)) => Ok(()),
+        Some(_) => Err(format!("{source}.gpuAdapters must be null or an array").into()),
+        None => Err(format!("{source}.gpuAdapters is missing").into()),
+    }
 }
 
 fn validate_fixture_source_hash(fixture: &Value, source: &str) -> Result<(), Box<dyn Error>> {

@@ -24,8 +24,8 @@ recipes are convenience entry points. Use these first:
   acceptance lane three times into
   `.external-fixtures/render-parity-acceptance-repeat/run-*/`, then validates
   that all three manifests have matching source-lock metadata, matching fixture
-  SHA-256/byte-size signatures, matching comparison sets, and passing
-  wgpu/Bevy/Ash summaries. The recipe also raises the three-vrm browser
+  SHA-256/byte-size signatures, matching runner environment metadata, matching
+  comparison sets, and passing wgpu/Bevy/Ash summaries. The recipe also raises the three-vrm browser
   readiness timeout to `60000ms` and records that value in the manifest lane
   config so slow reference startup is explicit. It writes
   `acceptance-repeat-summary.json`, `acceptance-repeat-summary.md`, and
@@ -1699,9 +1699,10 @@ summary before the side-by-side PNGs and diff heatmaps.
 fixture and renderer to the source VRM, reference/capture RGBA JSON, direct
 imqraw, preview PNG, numeric gate report, RGBA diagnostic report, diff heatmap,
 and pass/fail summary. It also carries `sourceLock` with the current vrm-rs git
-HEAD/dirty bit, the three-vrm root and expected pinned commits, plus each
-fixture's `sourceSha256` and byte length so acceptance artifacts can be tied
-back to exact local inputs without committing binary fixtures.
+HEAD/dirty bit, the three-vrm root and expected pinned commits,
+`environmentLock` with OS/toolchain/GPU-adapter metadata, plus each fixture's
+`sourceSha256` and byte length so acceptance artifacts can be tied back to exact
+local inputs without committing binary fixtures.
 The local runner validates this manifest before completing. To re-check an
 existing artifact set, run:
 
