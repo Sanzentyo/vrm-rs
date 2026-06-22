@@ -46,6 +46,8 @@ struct Options {
     focused_material_pixels: Vec<String>,
     #[arg(long, value_name = "RENDERER=PATH")]
     base_color_owner_join: Vec<String>,
+    #[arg(long, value_name = "RENDERER=PATH")]
+    owner_render_join: Vec<String>,
     #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
@@ -65,6 +67,7 @@ struct ExpandedSummary {
     pbr_response_diagnostics: Vec<PbrResponseDiagnosticSummary>,
     focused_material_pixels: Vec<FocusedMaterialPixelSummary>,
     base_color_owner_joins: Vec<BaseColorOwnerJoinSummary>,
+    owner_render_joins: Vec<OwnerRenderJoinSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -350,6 +353,39 @@ struct BaseColorOwnerJoinSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct OwnerRenderJoinSummary {
+    renderer: String,
+    path: String,
+    joined_count: Option<u64>,
+    rendered_owner_count: Option<u64>,
+    rendered_owner_matches_rust_frontmost: Option<u64>,
+    browser_best_subpixel_count: Option<u64>,
+    browser_best_subpixel_matches_rust_frontmost: Option<u64>,
+    browser_best_coverage_count: Option<u64>,
+    browser_best_coverage_matches_rust_frontmost: Option<u64>,
+    warnings: Vec<String>,
+    pbr_term_outputs: Vec<OwnerRenderPbrTermOutputSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OwnerRenderPbrTermOutputSummary {
+    pair: String,
+    count: u64,
+    diffuse_lobe_sample_count: u64,
+    mean_diffuse_lobe_rgb_distance: Option<f64>,
+    specular_lobe_sample_count: u64,
+    mean_specular_lobe_rgb_distance: Option<f64>,
+    mean_direct_rgb_distance: Option<f64>,
+    mean_ambient_rgb_distance: Option<f64>,
+    mean_total_rgb_distance: Option<f64>,
+    shading_normal_three_js_sample_count: u64,
+    mean_shading_normal_three_js_distance: Option<f64>,
+    shading_normal_wgpu_compat_sample_count: u64,
+    mean_shading_normal_wgpu_compat_distance: Option<f64>,
+    mean_output_rgb_distance: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct BaseColorOwnerMaterialBucketSummary {
     material_name: String,
     count: u64,
@@ -466,8 +502,11 @@ fn summarize(options: &Options, reports_dir: &Path) -> Result<ExpandedSummary, B
             .transpose()?,
         texture_audits,
         pbr_response_diagnostics,
-        focused_material_pixels: focused_material_pixel_summaries(&options.focused_material_pixels)?,
+        focused_material_pixels: focused_material_pixel_summaries(
+            &options.focused_material_pixels,
+        )?,
         base_color_owner_joins: base_color_owner_join_summaries(&options.base_color_owner_join)?,
+        owner_render_joins: owner_render_join_summaries(&options.owner_render_join)?,
     })
 }
 
@@ -490,11 +529,14 @@ fn renderer_lighting_summary(
     let value = read_json(&path)?;
     let exposure = optional_f64_path(&value, &["mtoonLighting", "effective", "exposure"])?
         .or(optional_f64_path(&value, &["mtoonLighting", "exposure"])?);
-    let ambient_base = optional_f64_path(&value, &["mtoonLighting", "effective", "ambientBase"])?
-        .or(optional_f64_path(&value, &["mtoonLighting", "ambientBase"])?);
+    let ambient_base =
+        optional_f64_path(&value, &["mtoonLighting", "effective", "ambientBase"])?.or(
+            optional_f64_path(&value, &["mtoonLighting", "ambientBase"])?,
+        );
     let ambient_gi_scale =
-        optional_f64_path(&value, &["mtoonLighting", "effective", "ambientGiScale"])?
-            .or(optional_f64_path(&value, &["mtoonLighting", "ambientGiScale"])?);
+        optional_f64_path(&value, &["mtoonLighting", "effective", "ambientGiScale"])?.or(
+            optional_f64_path(&value, &["mtoonLighting", "ambientGiScale"])?,
+        );
     let pbr_ambient = optional_f64_path(&value, &["mtoonLighting", "effective", "pbrAmbient"])?
         .or(optional_f64_path(&value, &["mtoonLighting", "pbrAmbient"])?);
     let direct_light_scale = optional_f64_path(&value, &["mtoonLighting", "directLightScale"])?;
@@ -535,57 +577,54 @@ fn pbr_response_diagnostics(
             (pbr_ambient > 0.0).then_some((audit, lighting, pbr_ambient))
         })
         .flat_map(|(audit, lighting, pbr_ambient)| {
-            audit
-                .recommended_probes
-                .iter()
-                .filter_map(move |probe| {
-                    let shading_input =
-                        find_pbr_shading_input(shading_model_join, &audit.renderer, probe)?;
-                    let missing = probe.least_squares_expected_minus_actual_over_manifest_rgb_gain?;
-                    let ambient_response = pbr_ambient_response_gain(
-                        pbr_ambient,
-                        shading_input.mean_metallic,
-                        shading_input.mean_occlusion_strength,
-                    );
-                    let actual_non_ambient = subtract_optional_vec3_scalar(
-                        probe.least_squares_actual_over_manifest_rgb_gain,
-                        ambient_response,
-                    );
-                    let expected_non_ambient = subtract_optional_vec3_scalar(
-                        probe.least_squares_expected_over_manifest_rgb_gain,
-                        ambient_response,
-                    );
-                    let expected_over_actual_non_ambient =
-                        divide_optional_vec3(expected_non_ambient, actual_non_ambient);
-                    Some(PbrResponseDiagnosticSummary {
-                        renderer: audit.renderer.clone(),
-                        material_name: probe.material_name.clone(),
-                        draw_key: probe.draw_key.clone(),
-                        count: probe.count,
-                        pbr_ambient,
-                        direct_light_scale: lighting.direct_light_scale,
-                        mean_roughness: shading_input.mean_roughness,
-                        mean_metallic: shading_input.mean_metallic,
-                        mean_occlusion_strength: shading_input.mean_occlusion_strength,
-                        mean_normal_scale: shading_input.mean_normal_scale,
-                        estimated_ambient_response_rgb_gain: ambient_response,
-                        estimated_actual_non_ambient_over_manifest_rgb_gain: actual_non_ambient,
-                        estimated_expected_non_ambient_over_manifest_rgb_gain: expected_non_ambient,
-                        estimated_expected_over_actual_non_ambient_rgb_ratio:
-                            expected_over_actual_non_ambient,
-                        estimated_missing_over_actual_non_ambient_rgb_ratio: divide_optional_vec3(
-                            Some(missing),
-                            actual_non_ambient,
-                        ),
-                        estimated_direct_scale_needed_rgb: scale_optional_vec3(
-                            expected_over_actual_non_ambient,
-                            lighting.direct_light_scale,
-                        ),
-                        missing_response_rgb_gain: missing,
-                        missing_response_over_pbr_ambient_rgb: scale_vec3(missing, 1.0 / pbr_ambient),
-                        ambient_plus_missing_response_rgb_gain: add_scalar_vec3(missing, pbr_ambient),
-                    })
+            audit.recommended_probes.iter().filter_map(move |probe| {
+                let shading_input =
+                    find_pbr_shading_input(shading_model_join, &audit.renderer, probe)?;
+                let missing = probe.least_squares_expected_minus_actual_over_manifest_rgb_gain?;
+                let ambient_response = pbr_ambient_response_gain(
+                    pbr_ambient,
+                    shading_input.mean_metallic,
+                    shading_input.mean_occlusion_strength,
+                );
+                let actual_non_ambient = subtract_optional_vec3_scalar(
+                    probe.least_squares_actual_over_manifest_rgb_gain,
+                    ambient_response,
+                );
+                let expected_non_ambient = subtract_optional_vec3_scalar(
+                    probe.least_squares_expected_over_manifest_rgb_gain,
+                    ambient_response,
+                );
+                let expected_over_actual_non_ambient =
+                    divide_optional_vec3(expected_non_ambient, actual_non_ambient);
+                Some(PbrResponseDiagnosticSummary {
+                    renderer: audit.renderer.clone(),
+                    material_name: probe.material_name.clone(),
+                    draw_key: probe.draw_key.clone(),
+                    count: probe.count,
+                    pbr_ambient,
+                    direct_light_scale: lighting.direct_light_scale,
+                    mean_roughness: shading_input.mean_roughness,
+                    mean_metallic: shading_input.mean_metallic,
+                    mean_occlusion_strength: shading_input.mean_occlusion_strength,
+                    mean_normal_scale: shading_input.mean_normal_scale,
+                    estimated_ambient_response_rgb_gain: ambient_response,
+                    estimated_actual_non_ambient_over_manifest_rgb_gain: actual_non_ambient,
+                    estimated_expected_non_ambient_over_manifest_rgb_gain: expected_non_ambient,
+                    estimated_expected_over_actual_non_ambient_rgb_ratio:
+                        expected_over_actual_non_ambient,
+                    estimated_missing_over_actual_non_ambient_rgb_ratio: divide_optional_vec3(
+                        Some(missing),
+                        actual_non_ambient,
+                    ),
+                    estimated_direct_scale_needed_rgb: scale_optional_vec3(
+                        expected_over_actual_non_ambient,
+                        lighting.direct_light_scale,
+                    ),
+                    missing_response_rgb_gain: missing,
+                    missing_response_over_pbr_ambient_rgb: scale_vec3(missing, 1.0 / pbr_ambient),
+                    ambient_plus_missing_response_rgb_gain: add_scalar_vec3(missing, pbr_ambient),
                 })
+            })
         })
         .collect()
 }
@@ -747,6 +786,76 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             ));
         }
     }
+    if !summary.owner_render_joins.is_empty() {
+        out.push_str("\n## Owner/Render PBR Term Joins\n\n");
+        out.push_str("Diagnostic only: these rows summarize same-surface Browser/Rust PBR term joins from owner/render hotspot reports. Optional diffuse/specular/normal columns include their own `n`; direct/ambient/total use the row count. Output RGB is the original Rust-rendered actual vs three-vrm expected pixel distance for the joined rows, not another PBR term distance. Normal columns compare Browser diagnostic normals against the current Rust shading normal, so they are coordinate/convention diagnostics rather than final lighting verdicts.\n\n");
+        let warnings = summary
+            .owner_render_joins
+            .iter()
+            .flat_map(|join| {
+                join.warnings
+                    .iter()
+                    .map(move |warning| format!("{}: {}", join.renderer, warning))
+            })
+            .collect::<Vec<_>>();
+        if !warnings.is_empty() {
+            out.push_str("Notes:\n");
+            for warning in warnings {
+                out.push_str(&format!("- {warning}\n"));
+            }
+            out.push('\n');
+        }
+        out.push_str("| Renderer | Joined | Rendered owner | Rendered owner matches Rust frontmost | Browser best subpixel | Browser best subpixel matches Rust frontmost | Browser coverage | Browser coverage matches Rust frontmost |\n");
+        out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        for join in &summary.owner_render_joins {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                join.renderer,
+                fmt_optional_u64(join.joined_count),
+                fmt_optional_u64(join.rendered_owner_count),
+                fmt_optional_u64(join.rendered_owner_matches_rust_frontmost),
+                fmt_optional_u64(join.browser_best_subpixel_count),
+                fmt_optional_u64(join.browser_best_subpixel_matches_rust_frontmost),
+                fmt_optional_u64(join.browser_best_coverage_count),
+                fmt_optional_u64(join.browser_best_coverage_matches_rust_frontmost),
+            ));
+        }
+        out.push('\n');
+        out.push_str("| Renderer | Pair | Count | Diffuse lobe | Specular lobe | Direct | Ambient | Total | Browser 3js normal -> Rust shade | Browser wgpu normal -> Rust shade | Output RGB |\n");
+        out.push_str(
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+        );
+        for join in &summary.owner_render_joins {
+            for row in &join.pbr_term_outputs {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    join.renderer,
+                    row.pair,
+                    row.count,
+                    fmt_optional_f64_with_count(
+                        row.mean_diffuse_lobe_rgb_distance,
+                        row.diffuse_lobe_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_specular_lobe_rgb_distance,
+                        row.specular_lobe_sample_count,
+                    ),
+                    fmt_optional_pbr_distance(row.mean_direct_rgb_distance),
+                    fmt_optional_pbr_distance(row.mean_ambient_rgb_distance),
+                    fmt_optional_pbr_distance(row.mean_total_rgb_distance),
+                    fmt_optional_f64_with_count(
+                        row.mean_shading_normal_three_js_distance,
+                        row.shading_normal_three_js_sample_count,
+                    ),
+                    fmt_optional_f64_with_count(
+                        row.mean_shading_normal_wgpu_compat_distance,
+                        row.shading_normal_wgpu_compat_sample_count,
+                    ),
+                    fmt_optional_pbr_distance(row.mean_output_rgb_distance),
+                ));
+            }
+        }
+    }
     out.push_str("\n## Top Selected Materials\n\n");
     for row in &summary.renderers {
         out.push_str(&format!("### {}\n\n", row.renderer));
@@ -842,7 +951,9 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             {
                 out.push_str("#### Material / Draw Color Fit\n\n");
                 out.push_str("| Backend | Material | Draw key | Rows | Mean E-A | Mean E-A RGB | Preferred | Additive RGB | Additive error | Gain RGB | Gain error |\n");
-                out.push_str("| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
+                out.push_str(
+                    "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n",
+                );
                 for backend in &model.backends {
                     for fit in backend.material_draw_color_fits.iter().take(8) {
                         let color_fit = fit.color_fit.as_ref();
@@ -861,12 +972,8 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
                             fmt_optional_f64(
                                 color_fit.and_then(|fit| fit.additive_fit_mean_distance)
                             ),
-                            fmt_optional_vec3(
-                                color_fit.and_then(|fit| fit.least_squares_gain_rgb)
-                            ),
-                            fmt_optional_f64(
-                                color_fit.and_then(|fit| fit.gain_fit_mean_distance)
-                            ),
+                            fmt_optional_vec3(color_fit.and_then(|fit| fit.least_squares_gain_rgb)),
+                            fmt_optional_f64(color_fit.and_then(|fit| fit.gain_fit_mean_distance)),
                         ));
                     }
                 }
@@ -879,7 +986,9 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             {
                 out.push_str("#### Material / Draw Shading Inputs\n\n");
                 out.push_str("| Backend | Material | Draw key | Rows | Models | Base | Shade | Emissive | M/R/O/N | Unlit | V0 shade |\n");
-                out.push_str("| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+                out.push_str(
+                    "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+                );
                 for backend in &model.backends {
                     for input in backend.material_draw_shading_inputs.iter().take(8) {
                         out.push_str(&format!(
@@ -943,7 +1052,9 @@ fn render_markdown(summary: &ExpandedSummary) -> String {
             inputs.path, inputs.fixture, inputs.selected_count
         ));
         out.push_str("| Material | Branch | Prims | Base | M/R | Alpha | Double-sided | Unlit | Emissive | Base tex | Shade tex | Normal tex | MToon |\n");
-        out.push_str("| --- | --- | ---: | ---: | ---: | --- | --- | --- | ---: | --- | --- | --- | --- |\n");
+        out.push_str(
+            "| --- | --- | ---: | ---: | ---: | --- | --- | --- | ---: | --- | --- | --- | --- |\n",
+        );
         for material in &inputs.materials {
             out.push_str(&format!(
                 "| {}#{} | {} | {} | {} | {:.3}/{:.3} | {} | {} | {} | {} x{:.3} | {} | {} | {} | {} |\n",
@@ -1231,9 +1342,7 @@ fn focused_renderer_role(row: &FocusedMaterialPixelRowSummary) -> &str {
         .unwrap_or("n/a")
 }
 
-fn material_track_input_summary(
-    path: &Path,
-) -> Result<MaterialTrackInputSummary, Box<dyn Error>> {
+fn material_track_input_summary(path: &Path) -> Result<MaterialTrackInputSummary, Box<dyn Error>> {
     let value = read_json(path)?;
     let materials = get_path(&value, &["selected_materials"])?
         .as_array()
@@ -1317,9 +1426,12 @@ fn texture_slot_summary(
     }
     let texture = get_u64_path(slot, &["texture"])?;
     let image = optional_string_path(slot, &["image", "name"])?
-        .or_else(|| optional_u64_path(slot, &["image", "index"]).ok().flatten().map(|index| {
-            format!("image#{index}")
-        }))
+        .or_else(|| {
+            optional_u64_path(slot, &["image", "index"])
+                .ok()
+                .flatten()
+                .map(|index| format!("image#{index}"))
+        })
         .unwrap_or_else(|| "image?".to_owned());
     let sampler = optional_u64_path(slot, &["sampler", "min_filter"])?
         .map(|min| format!(" min={min}"))
@@ -1379,10 +1491,7 @@ fn texture_selection_source_summary(
         manifest_actual_closer: get_u64_path(stats, &["manifest_sample_actual_closer"])?,
         manifest_expected_closer: get_u64_path(stats, &["manifest_sample_expected_closer"])?,
         manifest_tied: get_u64_path(stats, &["manifest_sample_tied"])?,
-        manifest_actual_within_1_5: get_u64_path(
-            stats,
-            &["manifest_sample_actual_within_1_5"],
-        )?,
+        manifest_actual_within_1_5: get_u64_path(stats, &["manifest_sample_actual_within_1_5"])?,
         manifest_expected_within_1_5: get_u64_path(
             stats,
             &["manifest_sample_expected_within_1_5"],
@@ -1569,8 +1678,8 @@ fn focused_browser_material_summary(value: &Value) -> Result<String, Box<dyn Err
     let mesh = optional_string_path(material, &["mesh_name"])?.unwrap_or_else(|| "n/a".to_owned());
     let pass = optional_string_path(material, &["pass"])?.unwrap_or_else(|| "n/a".to_owned());
     let map = optional_string_path(material, &["map_name"])?.unwrap_or_else(|| "n/a".to_owned());
-    let color_space = optional_string_path(material, &["map_color_space"])?
-        .unwrap_or_else(|| "n/a".to_owned());
+    let color_space =
+        optional_string_path(material, &["map_color_space"])?.unwrap_or_else(|| "n/a".to_owned());
     let flip_y = optional_bool_path(material, &["map_flip_y"])?
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned());
@@ -1665,6 +1774,15 @@ fn base_color_owner_join_summaries(
         .collect()
 }
 
+fn owner_render_join_summaries(
+    joins: &[String],
+) -> Result<Vec<OwnerRenderJoinSummary>, Box<dyn Error>> {
+    renderer_path_inputs(joins, "--owner-render-join")?
+        .into_iter()
+        .map(|(renderer, path)| owner_render_join_summary(&renderer, Path::new(&path)))
+        .collect()
+}
+
 fn renderer_path_inputs(
     inputs: &[String],
     option_name: &str,
@@ -1678,6 +1796,125 @@ fn renderer_path_inputs(
             Ok((renderer.to_owned(), path.to_owned()))
         })
         .collect()
+}
+
+fn owner_render_join_summary(
+    renderer: &str,
+    path: &Path,
+) -> Result<OwnerRenderJoinSummary, Box<dyn Error>> {
+    let value = read_json(path)?;
+    let pairs = [
+        (
+            "Browser best -> Rust frontmost",
+            "pbr_best_to_frontmost_term_output",
+        ),
+        (
+            "Browser best -> Rust expected-best",
+            "pbr_best_to_expected_term_output",
+        ),
+        (
+            "Browser coverage -> Rust frontmost",
+            "pbr_coverage_to_frontmost_term_output",
+        ),
+        (
+            "Browser coverage -> Rust expected-best",
+            "pbr_coverage_to_expected_term_output",
+        ),
+    ];
+    let mut warnings = Vec::new();
+    let mut present_pair_count = 0usize;
+    let mut zero_count_pair_count = 0usize;
+    let mut pbr_term_outputs = Vec::new();
+    for (pair, key) in pairs {
+        let Some(value) = optional_path(&value, &[key]) else {
+            continue;
+        };
+        present_pair_count += 1;
+        let output = owner_render_pbr_term_output(pair, value)?;
+        if output.count == 0 {
+            zero_count_pair_count += 1;
+            continue;
+        }
+        pbr_term_outputs.push(output);
+    }
+    if present_pair_count == 0 {
+        warnings.push(
+            "no PBR term output objects found; this may be a legacy owner/render join report"
+                .to_owned(),
+        );
+    } else if pbr_term_outputs.is_empty() {
+        warnings.push("all PBR term output buckets were present but empty".to_owned());
+    } else if zero_count_pair_count > 0 {
+        warnings.push(format!(
+            "omitted {zero_count_pair_count} zero-count PBR term output bucket(s)"
+        ));
+    }
+    Ok(OwnerRenderJoinSummary {
+        renderer: renderer.to_owned(),
+        path: path.display().to_string(),
+        joined_count: optional_u64_path(&value, &["joined_count"])?,
+        rendered_owner_count: optional_u64_path(&value, &["rendered_owner_count"])?,
+        rendered_owner_matches_rust_frontmost: optional_u64_path(
+            &value,
+            &["rendered_owner_matches_rust_frontmost"],
+        )?,
+        browser_best_subpixel_count: optional_u64_path(&value, &["browser_best_subpixel_count"])?,
+        browser_best_subpixel_matches_rust_frontmost: optional_u64_path(
+            &value,
+            &["browser_best_subpixel_matches_rust_frontmost"],
+        )?,
+        browser_best_coverage_count: optional_u64_path(&value, &["browser_best_coverage_count"])?,
+        browser_best_coverage_matches_rust_frontmost: optional_u64_path(
+            &value,
+            &["browser_best_coverage_matches_rust_frontmost"],
+        )?,
+        warnings,
+        pbr_term_outputs,
+    })
+}
+
+fn owner_render_pbr_term_output(
+    pair: &str,
+    value: &Value,
+) -> Result<OwnerRenderPbrTermOutputSummary, Box<dyn Error>> {
+    Ok(OwnerRenderPbrTermOutputSummary {
+        pair: pair.to_owned(),
+        count: get_u64_path(value, &["count"])?,
+        diffuse_lobe_sample_count: optional_u64_path(value, &["diffuse_lobe_sample_count"])?
+            .unwrap_or(0),
+        mean_diffuse_lobe_rgb_distance: optional_f64_path(
+            value,
+            &["mean_diffuse_lobe_rgb_distance"],
+        )?,
+        specular_lobe_sample_count: optional_u64_path(value, &["specular_lobe_sample_count"])?
+            .unwrap_or(0),
+        mean_specular_lobe_rgb_distance: optional_f64_path(
+            value,
+            &["mean_specular_lobe_rgb_distance"],
+        )?,
+        mean_direct_rgb_distance: optional_f64_path(value, &["mean_direct_rgb_distance"])?,
+        mean_ambient_rgb_distance: optional_f64_path(value, &["mean_ambient_rgb_distance"])?,
+        mean_total_rgb_distance: optional_f64_path(value, &["mean_total_rgb_distance"])?,
+        shading_normal_three_js_sample_count: optional_u64_path(
+            value,
+            &["shading_normal_three_js_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_shading_normal_three_js_distance: optional_f64_path(
+            value,
+            &["mean_shading_normal_three_js_distance"],
+        )?,
+        shading_normal_wgpu_compat_sample_count: optional_u64_path(
+            value,
+            &["shading_normal_wgpu_compat_sample_count"],
+        )?
+        .unwrap_or(0),
+        mean_shading_normal_wgpu_compat_distance: optional_f64_path(
+            value,
+            &["mean_shading_normal_wgpu_compat_distance"],
+        )?,
+        mean_output_rgb_distance: optional_f64_path(value, &["mean_output_rgb_distance"])?,
+    })
 }
 
 fn base_color_owner_join_summary(
@@ -1762,10 +1999,7 @@ fn base_color_owner_material_buckets(
                     bucket,
                     &["mean_texture_as_linear_rendered_rgb_distance"],
                 )?),
-                frontmost_material_matches: get_u64_path(
-                    bucket,
-                    &["frontmost_material_matches"],
-                )?,
+                frontmost_material_matches: get_u64_path(bucket, &["frontmost_material_matches"])?,
                 frontmost_surface_matches: get_u64_path(bucket, &["frontmost_surface_matches"])?,
             })
         })
@@ -1995,10 +2229,15 @@ fn optional_color_fit(
 }
 
 fn optional_color_fit_value(value: &Value) -> Option<&Value> {
-    ["color_fit", "color_fit_summary", "colorFit", "colorFitSummary"]
-        .into_iter()
-        .filter_map(|key| value.get(key))
-        .find(|candidate| !candidate.is_null())
+    [
+        "color_fit",
+        "color_fit_summary",
+        "colorFit",
+        "colorFitSummary",
+    ]
+    .into_iter()
+    .filter_map(|key| value.get(key))
+    .find(|candidate| !candidate.is_null())
 }
 
 fn shading_model_sample_following_summary(
@@ -2098,9 +2337,12 @@ fn count_map_summary(value: &Value, path: &[&str]) -> Result<String, Box<dyn Err
         .map(|(key, count)| {
             Ok((
                 key.clone(),
-                count
-                    .as_u64()
-                    .ok_or_else(|| format!("JSON path {}.{key} is not an unsigned integer", path.join(".")))?,
+                count.as_u64().ok_or_else(|| {
+                    format!(
+                        "JSON path {}.{key} is not an unsigned integer",
+                        path.join(".")
+                    )
+                })?,
             ))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -2358,7 +2600,10 @@ fn optional_rgba_path(value: &Value, path: &[&str]) -> Result<Option<[u64; 4]>, 
     ]))
 }
 
-fn optional_surface_material(value: &Value, path: &[&str]) -> Result<Option<String>, Box<dyn Error>> {
+fn optional_surface_material(
+    value: &Value,
+    path: &[&str],
+) -> Result<Option<String>, Box<dyn Error>> {
     let Some(value) = optional_path(value, path) else {
         return Ok(None);
     };
@@ -2427,10 +2672,32 @@ fn fmt_optional_f64(value: Option<f64>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
-fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
+fn fmt_optional_u64(value: Option<u64>) -> String {
     value
-        .map(fmt_vec3)
+        .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_pbr_distance(value: Option<f64>) -> String {
+    value
+        .map(|value| {
+            if value != 0.0 && value.abs() < 0.0001 {
+                format!("{value:.2e}")
+            } else {
+                format!("{value:.4}")
+            }
+        })
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn fmt_optional_f64_with_count(value: Option<f64>, count: u64) -> String {
+    value
+        .map(|value| format!("{} (n={count})", fmt_optional_pbr_distance(Some(value))))
+        .unwrap_or_else(|| "n/a (n=0)".to_owned())
+}
+
+fn fmt_optional_vec3(value: Option<[f64; 3]>) -> String {
+    value.map(fmt_vec3).unwrap_or_else(|| "n/a".to_owned())
 }
 
 fn fmt_optional_vec2(value: Option<[f64; 2]>) -> String {
@@ -2440,9 +2707,7 @@ fn fmt_optional_vec2(value: Option<[f64; 2]>) -> String {
 }
 
 fn fmt_optional_vec4(value: Option<[f64; 4]>) -> String {
-    value
-        .map(fmt_vec4)
-        .unwrap_or_else(|| "n/a".to_owned())
+    value.map(fmt_vec4).unwrap_or_else(|| "n/a".to_owned())
 }
 
 fn fmt_vec3(value: [f64; 3]) -> String {
@@ -2477,7 +2742,10 @@ fn subtract_optional_vec3_scalar(
     ])
 }
 
-fn divide_optional_vec3(numerator: Option<[f64; 3]>, denominator: Option<[f64; 3]>) -> Option<[f64; 3]> {
+fn divide_optional_vec3(
+    numerator: Option<[f64; 3]>,
+    denominator: Option<[f64; 3]>,
+) -> Option<[f64; 3]> {
     let numerator = numerator?;
     let denominator = denominator?;
     denominator
@@ -2706,6 +2974,55 @@ fn self_test() -> Result<(), Box<dyn Error>> {
             }]
         }"#,
     )?;
+    let owner_render_join_path = root.join("Seed-san.owner-render-hotspots.json");
+    fs::write(
+        &owner_render_join_path,
+        r#"{
+            "joined_count": 8,
+            "rendered_owner_count": 8,
+            "rendered_owner_matches_rust_frontmost": 6,
+            "browser_best_subpixel_count": 7,
+            "browser_best_subpixel_matches_rust_frontmost": 6,
+            "browser_best_coverage_count": 8,
+            "browser_best_coverage_matches_rust_frontmost": 6,
+            "pbr_best_to_frontmost_term_output": {
+                "count": 2,
+                "diffuse_lobe_sample_count": 2,
+                "mean_diffuse_lobe_rgb_distance": 0.0012,
+                "specular_lobe_sample_count": 2,
+                "mean_specular_lobe_rgb_distance": 0.0034,
+                "mean_direct_rgb_distance": 0.0047,
+                "mean_ambient_rgb_distance": 0.0001,
+                "mean_total_rgb_distance": 0.0048,
+                "shading_normal_three_js_sample_count": 2,
+                "mean_shading_normal_three_js_distance": 1.51,
+                "shading_normal_wgpu_compat_sample_count": 2,
+                "mean_shading_normal_wgpu_compat_distance": 1.50,
+                "mean_output_rgb_distance": 52.9
+            },
+            "pbr_best_to_expected_term_output": {
+                "count": 0
+            },
+            "pbr_coverage_to_frontmost_term_output": {
+                "count": 2,
+                "mean_direct_rgb_distance": 0.0066,
+                "mean_ambient_rgb_distance": 0.0001,
+                "mean_total_rgb_distance": 0.0067,
+                "mean_output_rgb_distance": 52.9
+            },
+            "pbr_coverage_to_expected_term_output": {
+                "count": 0
+            }
+        }"#,
+    )?;
+    let legacy_owner_render_join_path = root.join("Seed-san.legacy-owner-render-hotspots.json");
+    fs::write(
+        &legacy_owner_render_join_path,
+        r#"{
+            "joined_pixels": 2,
+            "best_to_frontmost_owner_matches": 1
+        }"#,
+    )?;
     let material_track_inputs_path = root.join("Seed-san.material-track-inputs.json");
     fs::write(
         &material_track_inputs_path,
@@ -2911,10 +3228,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         material_track_inputs: Some(material_track_inputs_path),
         texture_audit: vec![format!("wgpu={}", texture_audit_path.display())],
         focused_material_pixels: vec![format!("wgpu={}", focused_pixels_path.display())],
-        base_color_owner_join: vec![format!(
-            "wgpu={}",
-            base_color_owner_join_path.display()
-        )],
+        base_color_owner_join: vec![format!("wgpu={}", base_color_owner_join_path.display())],
+        owner_render_join: vec![
+            format!("wgpu={}", owner_render_join_path.display()),
+            format!("legacy={}", legacy_owner_render_join_path.display()),
+        ],
         json_out: None,
         markdown_out: None,
     };
@@ -2960,9 +3278,34 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert_eq!(summary.pbr_response_diagnostics.len(), 1);
     assert_eq!(pbr_response.renderer, "wgpu");
     assert_eq!(pbr_response.material_name, "backpack_nm");
+    assert_eq!(pbr_response.missing_response_rgb_gain, [0.37, 0.46, 0.49]);
+    assert_eq!(summary.owner_render_joins.len(), 2);
     assert_eq!(
-        pbr_response.missing_response_rgb_gain,
-        [0.37, 0.46, 0.49]
+        summary.owner_render_joins[0].pbr_term_outputs[0].pair,
+        "Browser best -> Rust frontmost"
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].diffuse_lobe_sample_count,
+        2
+    );
+    assert_eq!(
+        summary.owner_render_joins[0].pbr_term_outputs[0].mean_output_rgb_distance,
+        Some(52.9)
+    );
+    assert_eq!(summary.owner_render_joins[0].joined_count, Some(8));
+    assert_eq!(
+        summary.owner_render_joins[0].rendered_owner_matches_rust_frontmost,
+        Some(6)
+    );
+    assert_eq!(summary.owner_render_joins[0].pbr_term_outputs.len(), 2);
+    assert_eq!(
+        summary.owner_render_joins[0].warnings[0],
+        "omitted 2 zero-count PBR term output bucket(s)"
+    );
+    assert!(summary.owner_render_joins[1].pbr_term_outputs.is_empty());
+    assert_eq!(
+        summary.owner_render_joins[1].warnings[0],
+        "no PBR term output objects found; this may be a legacy owner/render join report"
     );
     assert_eq!(pbr_response.mean_roughness, Some(0.65));
     assert_eq!(pbr_response.mean_metallic, Some(0.0));
@@ -3006,8 +3349,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains(r#""selection_source_buckets""#));
     assert!(summary_json.contains(r#""selection_source":"webgl-coverage""#));
     assert!(summary_json.contains(r#""recommended_probes""#));
-    assert!(summary_json.contains(r#""least_squares_actual_over_manifest_rgb_gain":[1.74,1.9,1.94]"#));
-    assert!(summary_json.contains(r#""least_squares_expected_over_manifest_rgb_gain":[2.11,2.36,2.43]"#));
+    assert!(
+        summary_json.contains(r#""least_squares_actual_over_manifest_rgb_gain":[1.74,1.9,1.94]"#)
+    );
+    assert!(summary_json
+        .contains(r#""least_squares_expected_over_manifest_rgb_gain":[2.11,2.36,2.43]"#));
     assert!(summary_json.contains(
         r#""least_squares_expected_minus_actual_over_manifest_rgb_gain":[0.37,0.46,0.49]"#
     ));
@@ -3022,6 +3368,12 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(summary_json.contains("tan-wgpu=0.00,0.03,1.00"));
     assert!(summary_json.contains(r#""base_texture":"baseColorTexture:tex#12:backpack min=9985""#));
     assert!(summary_json.contains(r#""base_color_owner_joins""#));
+    assert!(summary_json.contains(r#""owner_render_joins""#));
+    assert!(summary_json.contains(r#""joined_count":8"#));
+    assert!(
+        summary_json.contains(r#""warnings":["omitted 2 zero-count PBR term output bucket(s)"]"#)
+    );
+    assert!(summary_json.contains(r#""mean_shading_normal_three_js_distance""#));
     assert!(summary_json.contains(r#""projected_base_color":[112,115,119,255]"#));
     assert!(!summary_json.contains(r#""color_fit":null"#));
     let markdown = render_markdown(&summary);
@@ -3031,6 +3383,11 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     assert!(markdown.contains("## PBR Response Diagnostics"));
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 15 | 0.0318 | 1.0000 | 0.6500 / 0.0000 / 1.0000 / 1.0000 | 0.03,0.03,0.03 | 1.71,1.87,1.91 | 2.08,2.33,2.40 | 1.22,1.25,1.26 | 0.22,0.25,0.26 | 1.22,1.25,1.26 | 0.37,0.46,0.49 | 11.62,14.45,15.39 |"));
     assert!(markdown.contains("## Shading Model Backend Agreement"));
+    assert!(markdown.contains("## Owner/Render PBR Term Joins"));
+    assert!(markdown.contains("| wgpu | 8 | 8 | 6 | 7 | 6 | 8 | 6 |"));
+    assert!(markdown.contains("wgpu: omitted 2 zero-count PBR term output bucket(s)"));
+    assert!(markdown.contains("legacy: no PBR term output objects found"));
+    assert!(markdown.contains("| wgpu | Browser best -> Rust frontmost | 2 | 0.0012 (n=2) | 0.0034 (n=2) | 0.0047 | 0.0001 | 0.0048 | 1.5100 (n=2) | 1.5000 (n=2) | 52.9000 |"));
     assert!(markdown.contains("#### Backend Color Fit"));
     assert!(markdown.contains("#### Material / Draw Color Fit"));
     assert!(markdown.contains(
@@ -3038,7 +3395,9 @@ fn self_test() -> Result<(), Box<dyn Error>> {
     ));
     assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | 4.5000 | 1.00,2.00,3.00 | additive | 1.00,2.00,3.00 | 1.0000 | 1.05,1.10,1.15 | 2.0000 |"));
     assert!(markdown.contains("#### Material / Draw Shading Inputs"));
-    assert!(markdown.contains("| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | gltf_pbr:2 | 1.00,0.50,0.25,1.00 |"));
+    assert!(markdown.contains(
+        "| wgpu | backpack_nm | node145/mesh4/prim9/base | 2 | gltf_pbr:2 | 1.00,0.50,0.25,1.00 |"
+    ));
     assert!(markdown.contains("## Material Track Inputs"));
     assert!(markdown.contains("backpack_nm#14"));
     assert!(markdown.contains("baseColorTexture:tex#12:backpack min=9985"));
@@ -3055,7 +3414,8 @@ fn self_test() -> Result<(), Box<dyn Error>> {
         "| wgpu | 141,90 | backpack_nm#42 | center | backpack_nm | backpack_nm | yes | owner-sample-resolve |"
     ));
     assert!(markdown.contains("## Focused Material Pixels"));
-    assert!(markdown.contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
+    assert!(markdown
+        .contains("backpack_nm MeshStandardMaterial mesh=wear_10 pass=base map=backpack cs=srgb"));
     assert!(markdown.contains("nL/nV=0.7000/0.9000 diff=0.16,0.15,0.15 spec=0.02,0.02,0.02 direct=0.18,0.17,0.17 amb=0.01,0.01,0.01 total=0.19,0.18,0.18 normal=normal_map_tangent_space uv=0.2500,0.7500 tex=127,123,255,255 geom=0.00,0.00,1.00 shade=0.10,0.00,0.99"));
     assert!(markdown.contains("| 141,90 | selected sample is closer to three-vrm expected | backpack_nm#42 | center | backpack_nm MeshStandardMaterial"));
     assert!(markdown.contains(

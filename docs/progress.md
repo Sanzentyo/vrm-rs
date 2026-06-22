@@ -2,6 +2,32 @@
 
 ## 2026-06-22
 
+- Wired the owner/render PBR term join into the top-level expanded
+  render-resolve summary. `summarize-render-resolve-expanded.rs` now accepts
+  repeated `--owner-render-join RENDERER=PATH` inputs and emits an
+  `Owner/Render PBR Term Joins` Markdown/JSON section with headline owner
+  recovery counts plus the PBR-comparable subset rows, while
+  `just render-parity-seed-base-color-flat32-render-resolve-expanded-summary`
+  now regenerates expanded-scoped owner-render joins before reading them. After
+  refreshing the real Seed-san expanded summary, all three backends have
+  `64/64` joined expanded hotspots, `63/64` Browser-best subpixel samples, and
+  `58/64` Browser-best to Rust-frontmost same-surface owner matches across the
+  full joined set, but the PBR table is intentionally narrower: it only includes
+  same-surface rows where both Browser and Rust expose comparable PBR terms. In
+  that `20-22/64` subset, Browser-best to Rust-frontmost
+  diffuse/specular/direct/ambient/total/output is wgpu `0.0003` / `0.0005` /
+  `0.0007` / `<0.0001` / `0.0008` / `42.2301` over `20` rows, Bevy `0.0003` /
+  `0.0005` / `0.0007` / `<0.0001` / `0.0007` / `45.7153` over `22` rows, and
+  Ash `0.0003` / `0.0002` / `0.0005` / `<0.0001` / `0.0005` / `32.2958` over
+  `21` rows. The same rows still show large normal-coordinate distances around
+  `1.56` and large final pixel distances, so the next parity pass should treat
+  this as a focused expanded-residual signal: PBR diffuse/direct terms agree
+  closely on the comparable subset in the refreshed artifacts, while
+  normal/convention and final color-output behavior remain larger blockers.
+  The aggregate Markdown keeps per-column `n` values for lobe and normal
+  diagnostics; in this refreshed Browser-best to Rust-frontmost row they match
+  the quoted row counts. Output RGB is explicitly the rendered
+  actual-vs-three-vrm pixel distance and not itself a PBR term metric.
 - Added same-surface PBR-term/output residual summaries to
   `join-owner-render-hotspots.rs`. The report now compares source-derived
   Browser `MeshStandardMaterial` direct/ambient/total terms with Rust CPU PBR
