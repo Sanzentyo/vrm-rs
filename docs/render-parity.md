@@ -99,6 +99,12 @@ recipes are convenience entry points. Use these first:
   repository URL, expected three-vrm commit, fixture-preparation command,
   preflight command, two-phase capture/finalize runner commands, the legacy
   one-command runner command, and final returned-bundle intake command.
+- `just render-parity-acceptance-runner-kit`: copy the current handoff into a
+  small external-only kit under
+  `.external-fixtures/render-parity-acceptance-runner-kit/`. The kit contains
+  `README.md`, `handoff.{md,json}`, `RETURN_BUNDLE_LAYOUT.md`, and
+  `intake-command.txt`; it intentionally contains no fixture binaries,
+  generated images, or golden files.
 - `just render-parity-acceptance-runner-preflight <expected-head>`: check a
   prepared external runner checkout before the long capture starts. It verifies
   Rust nightly, `just`, Node/npm, `glslangValidator`, the exact repo HEAD,
@@ -202,12 +208,15 @@ remaining acceptance hardening task.
 
 For that hardening task, each additional machine should run
 `just render-parity-acceptance-handoff` on the main machine and use the
-generated handoff Markdown as the source-locked runner instruction. The handoff
-directs the runner to check out the exact commit, prepare external fixtures
-with `cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures`, and
-then run `just render-parity-acceptance-runner-preflight <expected-head>`. Once
-preflight passes, run `just render-parity-acceptance-runner-capture`. The runner
-must inspect the generated `visual-review.html` pages, contact sheets, and diff
+generated handoff Markdown as the source-locked runner instruction. To hand off
+a compact directory instead of individual files, run
+`just render-parity-acceptance-runner-kit` after regenerating the handoff. The
+handoff directs the runner to check out the exact commit, prepare external
+fixtures with `cargo +nightly -Zscript tools/ci/local-ci.rs --
+--external-fixtures`, and then run
+`just render-parity-acceptance-runner-preflight <expected-head>`. Once preflight
+passes, run `just render-parity-acceptance-runner-capture`. The runner must
+inspect the generated `visual-review.html` pages, contact sheets, and diff
 heatmaps before running `just render-parity-acceptance-runner-finalize-strict
 "<reviewer>" "<visual notes>"`. This finalizes the strict signoff, strict bundle
 export, and local one-environment smoke only after the reviewer can stand behind
