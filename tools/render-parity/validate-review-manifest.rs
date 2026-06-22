@@ -73,6 +73,24 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         "runMode": "experiment",
         "referenceClean": false
     }))?;
+    validate_source_lock(&serde_json::json!({
+        "sourceLock": {
+            "vrmRsGitHead": "0123456789abcdef0123456789abcdef01234567",
+            "vrmRsGitDirty": false,
+            "threeVrmRoot": ".external-fixtures/three-vrm",
+            "threeVrmGitHead": null,
+            "expectedThreeVrmCommit": "9d125586f6d7da094b0ac5f204cebf19586f2397",
+            "expectedThreeVrmViewerCommit": "75ab65c9d4e488521d41bff7f5cfd1976a0b16e8",
+            "expectedVrmSpecCommit": "3942748efbc803b258e288e0f6c993c6bb96cebf"
+        }
+    }))?;
+    validate_fixture_source_hash(
+        &serde_json::json!({
+            "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sourceSizeBytes": 1
+        }),
+        "self-test.fixture",
+    )?;
 
     for (label, manifest) in [
         (
@@ -116,6 +134,7 @@ fn validate_manifest(
     require_existing_path(manifest, base_dir, "artifacts")?;
     require_string(manifest, "numericGate")?;
     validate_run_mode_contract(manifest)?;
+    validate_source_lock(manifest)?;
     require_string(manifest, "metric")?;
 
     let fixtures = manifest
@@ -146,6 +165,37 @@ fn validate_run_mode_contract(manifest: &Value) -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn validate_source_lock(manifest: &Value) -> Result<(), Box<dyn Error>> {
+    let source_lock = required_object(manifest, "sourceLock", "manifest")?;
+    require_string_or_null(source_lock, "vrmRsGitHead")?;
+    require_bool_or_null(source_lock, "vrmRsGitDirty")?;
+    require_string(source_lock, "threeVrmRoot")?;
+    require_string_or_null(source_lock, "threeVrmGitHead")?;
+    for field in [
+        "expectedThreeVrmCommit",
+        "expectedThreeVrmViewerCommit",
+        "expectedVrmSpecCommit",
+    ] {
+        require_string(source_lock, field)?;
+    }
+    Ok(())
+}
+
+fn validate_fixture_source_hash(fixture: &Value, source: &str) -> Result<(), Box<dyn Error>> {
+    let sha256 = require_string(fixture, "sourceSha256")?;
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{source}.sourceSha256 must be a 64-character hex digest").into());
+    }
+    let size = fixture
+        .get("sourceSizeBytes")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{source}.sourceSizeBytes must be a nonzero integer"))?;
+    if size == 0 {
+        return Err(format!("{source}.sourceSizeBytes must be a nonzero integer").into());
+    }
+    Ok(())
+}
+
 fn validate_fixture(
     fixture: &Value,
     base_dir: &Path,
@@ -157,6 +207,7 @@ fn validate_fixture(
     require_string(fixture, "name")?;
     require_string(fixture, "stem")?;
     require_existing_path(fixture, base_dir, "source")?;
+    validate_fixture_source_hash(fixture, &source)?;
     let reference = artifact_group_paths(
         required_object(fixture, "reference", &source)?,
         base_dir,
@@ -473,6 +524,31 @@ fn require_bool(value: &Value, field: &str) -> Result<bool, Box<dyn Error>> {
         .get(field)
         .and_then(Value::as_bool)
         .ok_or_else(|| format!("{field} must be a boolean").into())
+}
+
+fn require_string_or_null<'a>(
+    value: &'a Value,
+    field: &str,
+) -> Result<Option<&'a str>, Box<dyn Error>> {
+    match value.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(field_value) => field_value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("{field} must be a string or null").into()),
+        None => Err(format!("{field} must be a string or null").into()),
+    }
+}
+
+fn require_bool_or_null(value: &Value, field: &str) -> Result<Option<bool>, Box<dyn Error>> {
+    match value.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(field_value) => field_value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| format!("{field} must be a boolean or null").into()),
+        None => Err(format!("{field} must be a boolean or null").into()),
+    }
 }
 
 fn require_existing_path(

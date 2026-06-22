@@ -7,6 +7,7 @@ edition = "2024"
 clap = { version = "4.6.1", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 serde_json = "1.0.150"
+sha2 = "0.11.0"
 ---
 
 //! Local replacement for the removed GitHub Actions workflow.
@@ -17,9 +18,11 @@ serde_json = "1.0.150"
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 
 use clap::{Parser, ValueEnum};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -2227,6 +2230,7 @@ fn render_review_manifest_value(
     Ok(serde_json::json!({
         "generatedBy": "cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity",
         "artifacts": path(&options.render_parity_dir),
+        "sourceLock": render_review_manifest_source_lock(options),
         "summary": path(&options.render_parity_dir.join("summary.md")),
         "visualReview": path(&options.render_parity_dir.join("visual-review.html")),
         "numericGate": "direct .imqraw via tools/render-parity/compare-imqraw.rs",
@@ -2261,9 +2265,77 @@ fn render_review_manifest_fixture(
         "name": &fixture.name,
         "stem": &fixture.stem,
         "source": path(&fixture.path),
+        "sourceSha256": sha256_file_hex(&fixture.path)?,
+        "sourceSizeBytes": fixture_size_bytes(&fixture.path)?,
         "reference": render_review_manifest_artifacts(options, fixture, "three-vrm"),
         "comparisons": comparisons,
     }))
+}
+
+fn render_review_manifest_source_lock(options: &Options) -> serde_json::Value {
+    serde_json::json!({
+        "vrmRsGitHead": git_output(Path::new("."), ["rev-parse", "HEAD"]).ok(),
+        "vrmRsGitDirty": git_dirty(Path::new(".")).ok(),
+        "threeVrmRoot": path(&options.three_vrm_root),
+        "threeVrmGitHead": git_output(&options.three_vrm_root, ["rev-parse", "HEAD"]).ok(),
+        "expectedThreeVrmCommit": THREE_VRM_COMMIT,
+        "expectedThreeVrmViewerCommit": THREE_VRM_VIEWER_COMMIT,
+        "expectedVrmSpecCommit": VRM_SPEC_COMMIT,
+    })
+}
+
+fn git_dirty(current_dir: &Path) -> Result<bool, String> {
+    git_output(current_dir, ["status", "--porcelain", "--untracked-files=no"])
+        .map(|output| !output.is_empty())
+}
+
+fn git_output<const N: usize>(current_dir: &Path, args: [&str; N]) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(current_dir)
+        .args(args)
+        .output()
+        .map_err(|err| format!("failed to run git in {}: {err}", path(current_dir)))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git command failed in {} with {}",
+            path(current_dir),
+            output.status
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn sha256_file_hex(file: &Path) -> Result<String, String> {
+    let mut file_handle =
+        fs::File::open(file).map_err(|err| format!("failed to hash {}: {err}", path(file)))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let bytes = file_handle
+            .read(&mut buffer)
+            .map_err(|err| format!("failed to read {} while hashing: {err}", path(file)))?;
+        if bytes == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes]);
+    }
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+fn fixture_size_bytes(file: &Path) -> Result<u64, String> {
+    fs::metadata(file)
+        .map(|metadata| metadata.len())
+        .map_err(|err| format!("failed to stat {}: {err}", path(file)))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn render_review_manifest_comparison(

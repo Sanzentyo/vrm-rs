@@ -1679,7 +1679,10 @@ summary before the side-by-side PNGs and diff heatmaps.
 `review-manifest.json` is the machine-readable audit index: it links each
 fixture and renderer to the source VRM, reference/capture RGBA JSON, direct
 imqraw, preview PNG, numeric gate report, RGBA diagnostic report, diff heatmap,
-and pass/fail summary.
+and pass/fail summary. It also carries `sourceLock` with the current vrm-rs git
+HEAD/dirty bit, the three-vrm root and expected pinned commits, plus each
+fixture's `sourceSha256` and byte length so acceptance artifacts can be tied
+back to exact local inputs without committing binary fixtures.
 The local runner validates this manifest before completing. To re-check an
 existing artifact set, run:
 
@@ -1696,7 +1699,8 @@ strings to match the numeric report's selected PSNR, selected max-channel
 delta, alpha mismatch count, and alpha max delta. It also rejects missing or
 inconsistent `runMode` / `referenceClean` metadata: `acceptance` manifests must
 be reference-clean, while `diagnostic` and `experiment` manifests must not claim
-that status.
+that status. The validator also requires the source lock block and per-fixture
+SHA-256 metadata.
 
 Open `visual-review.html` locally to compare the three PNGs side-by-side with
 their PSNR reports and diff heatmaps. In the heatmaps, red shows RGB-channel
