@@ -127,17 +127,16 @@ recipes are convenience entry points. Use these first:
 
 ## Current Local Acceptance Evidence
 
-The most recently recorded local acceptance repeat was generated from clean source commit
-`ffd0bff876107ed05ecf0c3b66722fbd508e23e1`, with three-vrm pinned to
-`9d125586f6d7da094b0ac5f204cebf19586f2397`. The external-only artifacts live
-under `.external-fixtures/render-parity-acceptance-repeat/`; they include the
-environment lock (`windows` / `x86_64`, Rust nightly `1.98.0`, Node `v25.9.0`,
-just `1.49.0`, plus GPU adapter snapshot), three repeated acceptance runs, and
-an accepted `acceptance-signoff.md` generated with
-`--require-visual-accepted --require-current-source`. Because that artifact is
-source-locked to the commit above, the strict signoff command must be rerun
-after a fresh `just render-parity-acceptance-repeat` before using it as
-evidence for a newer HEAD.
+The local acceptance evidence is external-only and source-locked. Treat
+`.external-fixtures/render-parity-acceptance-repeat/acceptance-signoff.md` as
+the authoritative current local signoff, not this tracked Markdown file. That
+signoff records the exact vrm-rs commit, pinned three-vrm commit, environment
+lock (`windows` / `x86_64`, Rust nightly, Node, just, and GPU adapter snapshot),
+three repeated acceptance runs, and the accepted visual-review notes generated
+with `--require-visual-accepted --require-current-source`. If the signoff's
+vrm-rs HEAD differs from `git rev-parse HEAD`, rerun
+`just render-parity-acceptance-repeat` and regenerate the strict signoff before
+using it as current evidence.
 
 Numeric status for the six-fixture wgpu/Bevy/Ash acceptance set is stable: all
 `18` comparisons pass over `3` runs, the minimum selected PSNR is Seed-san Bevy
