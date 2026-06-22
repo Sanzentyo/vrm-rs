@@ -804,6 +804,15 @@ fn run_render_tool_self_tests() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
+            "tools/render-parity/audit-goal-readiness.rs",
+            "--self-test",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
             "tools/render-parity/validate-current-acceptance-bundle.rs",
             "--self-test",
         ],
@@ -859,6 +868,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
 const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/ash/compile-ash-mtoon-base-shaders.rs",
     "tools/render-parity/apply-owner-sample-correction.rs",
+    "tools/render-parity/audit-goal-readiness.rs",
     "tools/render-parity/audit-center-owner-misses.rs",
     "tools/render-parity/audit-owner-sample-execution.rs",
     "tools/render-parity/audit-owner-sample-selection.rs",

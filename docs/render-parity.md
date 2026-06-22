@@ -68,6 +68,13 @@ recipes are convenience entry points. Use these first:
   the same one-environment strict intake smoke. This is a quick freshness check
   before handing the local bundle to another machine or comparing it with
   returned bundles.
+- `just render-parity-goal-readiness`: summarize the current source and
+  external-only evidence against the full thread goal. It checks the clean
+  current HEAD, optional public GitHub visibility, current strict local bundle,
+  source-locked external-runner handoff, and final multi-environment strict
+  summary. Until at least two strict runner bundles have been returned and
+  aggregated, this command should report `complete: false`; that is the correct
+  state, not a local failure.
 - `just render-parity-acceptance-handoff`: generate
   `.external-fixtures/render-parity-acceptance-handoff/handoff.{md,json}` for
   an external GPU/driver runner. The handoff records the exact vrm-rs HEAD,

@@ -131,6 +131,10 @@ render-parity-acceptance-current-bundle bundle=".external-fixtures/render-parity
     cargo +nightly -Zscript tools/render-parity/validate-current-acceptance-bundle.rs --bundle "{{ bundle }}"
     cargo +nightly -Zscript tools/render-parity/validate-acceptance-environments.rs --bundle "{{ bundle }}" --min-environments 1 --require-accepted-signoff --json-out "{{ out_root }}/local-strict-smoke.json" --markdown-out "{{ out_root }}/local-strict-smoke.md"
 
+# Summarize current evidence against the full render-parity goal without marking it complete.
+render-parity-goal-readiness require_public_repo="false" local_bundle=".external-fixtures/render-parity-acceptance-bundle" handoff=".external-fixtures/render-parity-acceptance-handoff/handoff.json" environment_summary=".external-fixtures/render-parity-acceptance-environments/acceptance-environments-summary.json":
+    cargo +nightly -Zscript tools/render-parity/audit-goal-readiness.rs --local-bundle "{{ local_bundle }}" --handoff "{{ handoff }}" --environment-summary "{{ environment_summary }}" {{ if require_public_repo == "true" { "--require-public-repo" } else { "" } }}
+
 # Generate a source-locked Markdown/JSON handoff for an external strict acceptance runner.
 render-parity-acceptance-handoff out_root=".external-fixtures/render-parity-acceptance-handoff" reviewer="<runner reviewer>" visual_notes="Reviewed generated visual review pages and accepted only local edge/outline/text-boundary residuals covered by PSNR and zero-alpha acceptance.":
     cargo +nightly -Zscript tools/render-parity/generate-acceptance-handoff.rs --out-root "{{ out_root }}" --reviewer "{{ reviewer }}" --visual-notes "{{ visual_notes }}" --apply
