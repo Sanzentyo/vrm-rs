@@ -314,6 +314,9 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         &test_summary("env-d", "Adapter D"),
     )?;
     let env_d = bundle_root.join("env-d");
+    let mut env_d_manifest = read_json(&env_d.join("bundle-manifest.json"))?;
+    env_d_manifest["acceptedSignoffRequired"] = Value::from(true);
+    write_json(&env_d.join("bundle-manifest.json"), &env_d_manifest)?;
     if read_bundle_summary(&env_d, true).is_ok() {
         return Err("draft signoff should be rejected when accepted signoff is required".into());
     }
@@ -322,6 +325,13 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         test_accepted_signoff_text("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
     )?;
     let mut env_d_manifest = read_json(&env_d.join("bundle-manifest.json"))?;
+    env_d_manifest["acceptedSignoffRequired"] = Value::from(false);
+    write_json(&env_d.join("bundle-manifest.json"), &env_d_manifest)?;
+    if read_bundle_summary(&env_d, true).is_ok() {
+        return Err("strict intake should reject acceptedSignoffRequired=false".into());
+    }
+    let mut env_d_manifest = read_json(&env_d.join("bundle-manifest.json"))?;
+    env_d_manifest["acceptedSignoffRequired"] = Value::from(true);
     for file in required_array(&env_d_manifest, "files")?.clone() {
         if required_string(&file, "path")? == "acceptance-signoff.md" {
             let bytes = fs::metadata(env_d.join("acceptance-signoff.md"))?.len();
@@ -436,6 +446,17 @@ fn read_bundle_summary(
     if required_string(&manifest, "bundleFormat")? != "vrm-rs.render-parity.acceptance-evidence.v1"
     {
         return Err("bundle-manifest.json has an unsupported bundleFormat".into());
+    }
+    if require_accepted_signoff
+        && manifest
+            .get("acceptedSignoffRequired")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err(
+            "bundle-manifest.acceptedSignoffRequired must be true when --require-accepted-signoff is used"
+                .into(),
+        );
     }
     let summary_path = bundle_dir.join("acceptance-repeat-summary.json");
     let mut summary = read_summary(&summary_path)?;
@@ -1020,6 +1041,7 @@ fn write_test_bundle(bundle_dir: &Path, summary: &Value) -> Result<(), Box<dyn E
     }
     let manifest = serde_json::json!({
         "bundleFormat": "vrm-rs.render-parity.acceptance-evidence.v1",
+        "acceptedSignoffRequired": false,
         "sourceLock": required_object_value(summary, "sourceLock", "summary")?,
         "environmentLock": required_object_value(summary, "environmentLock", "summary")?,
         "runCount": required_u64(summary, "runCount")?,
