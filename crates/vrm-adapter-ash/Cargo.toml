@@ -16,5 +16,8 @@ vrm-io = { path = "../vrm-io" }
 vrm-runtime = { path = "../vrm-runtime" }
 
 [dev-dependencies]
+ash-window = "0.13.0"
 imq.workspace = true
+raw-window-handle = "0.6.2"
 serde_json.workspace = true
+winit = "0.30.13"

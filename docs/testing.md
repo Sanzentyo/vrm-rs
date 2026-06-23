@@ -75,6 +75,7 @@ Recommended stable entrypoints:
 | ash frame-plan smoke without Vulkan device setup | `just ash-vrma-frame-plan` |
 | ash renderer-edge mock integration | `just ash-renderer-integration` |
 | ash real Vulkan offscreen submit/readback smoke | `just ash-unsafe-device-renderer` |
+| ash real Vulkan window/swapchain smoke | `just ash-windowed-viewer-smoke` |
 | ash readback artifact smoke | `just ash-render-parity-readback` |
 | Current official sample render sweep | `just render-parity-samples` |
 | Seed-san render sweep plus supplemental ash readback artifacts | `just render-parity-with-ash-readback` |

@@ -80,6 +80,20 @@ ash-mtoon-base-readback avatar=".external-fixtures/official/Seed-san.vrm" out_di
     cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer -- --avatar "{{ avatar }}" --no-animation --width "{{ width }}" --height "{{ height }}" --vertex-spv "{{ shader_dir }}/mtoon_base.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.frag.spv" --out "{{ out_dir }}/{{ artifact }}.frame000.rgba.json" --imqraw-out "{{ out_dir }}/{{ artifact }}.frame000.imqraw"
     just imqraw-verify "{{ out_dir }}/{{ artifact }}.frame000.imqraw" "{{ out_dir }}/{{ artifact }}.frame000.rgba.json"
 
+# Compile the source-controlled ash windowed viewer GLSL shaders to local SPIR-V artifacts.
+ash-windowed-simple-shaders out_dir="target/ash-windowed-simple-shaders":
+    cargo +nightly -Zscript tools/ash/compile-ash-mtoon-base-shaders.rs --vertex crates/vrm-adapter-ash/shaders/windowed_simple.vert.glsl --fragment crates/vrm-adapter-ash/shaders/windowed_simple.frag.glsl --out-dir "{{ out_dir }}"
+
+# Open a real Vulkan window and draw the CPU-baked VRM mesh through ash + swapchain.
+ash-windowed-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-windowed-simple-shaders":
+    just ash-windowed-simple-shaders "{{ shader_dir }}"
+    cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.frag.spv"
+
+# Smoke the ash windowed viewer for a few frames, then exit automatically.
+ash-windowed-viewer-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-windowed-simple-shaders" frames="3":
+    just ash-windowed-simple-shaders "{{ shader_dir }}"
+    cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.frag.spv" --max-frames "{{ frames }}"
+
 # Backward-compatible aliases for earlier Ash shader handoff notes.
 ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-base-shaders":
     just ash-mtoon-base-shaders "{{ out_dir }}"
