@@ -1,3 +1,5 @@
 /target
 .external-fixtures/
 node_modules/
+/examples/wasm/*/pkg/
+/examples/wasm/*/target/

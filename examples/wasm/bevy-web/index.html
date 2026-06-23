@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vrm-rs Bevy web</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #171a1f;
+        color: #f5f7fa;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      form {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        background: #20262e;
+        border-bottom: 1px solid #303946;
+      }
+      label {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        font-size: 13px;
+      }
+      button {
+        height: 32px;
+        padding: 0 14px;
+      }
+      #bevy-parent {
+        position: relative;
+        min-height: 0;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: #050608;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="controls">
+      <label>VRM <input id="avatar" type="file" accept=".vrm,.glb,.gltf" required /></label>
+      <label>VRMA <input id="animation" type="file" accept=".vrma,.glb,.gltf" /></label>
+      <button type="submit">Start</button>
+    </form>
+    <div id="bevy-parent">
+      <canvas id="bevy-canvas"></canvas>
+    </div>
+    <script type="module">
+      import init, { start_bevy_vrm_viewer } from "./pkg/vrm_rs_bevy_web.js";
+
+      await init();
+
+      const form = document.querySelector("#controls");
+      const avatar = document.querySelector("#avatar");
+      const animation = document.querySelector("#animation");
+
+      async function bytes(file) {
+        return new Uint8Array(await file.arrayBuffer());
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const avatarFile = avatar.files?.[0];
+        if (!avatarFile) {
+          return;
+        }
+        const animationFile = animation.files?.[0];
+        start_bevy_vrm_viewer(
+          "#bevy-canvas",
+          await bytes(avatarFile),
+          animationFile ? await bytes(animationFile) : new Uint8Array(),
+        );
+        form.querySelector("button").disabled = true;
+      });
+    </script>
+  </body>
+</html>

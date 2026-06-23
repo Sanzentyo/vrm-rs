@@ -16,3 +16,6 @@ vrm-io = { path = "../vrm-io" }
 vrm-runtime = { path = "../vrm-runtime" }
 wgpu.workspace = true
 winit = "0.30.13"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3.102", features = ["HtmlCanvasElement"] }

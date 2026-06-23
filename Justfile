@@ -30,6 +30,27 @@ bevy-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".e
 wgpu-vrma-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma":
     cargo run --release -p vrm-adapter-wgpu --example vrma_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}"
 
+# Check both browser/WASM viewer samples.
+wasm-web-check:
+    just wasm-bevy-web-check
+    just wasm-wgpu-web-check
+
+# Compile the Bevy browser viewer sample for wasm32.
+wasm-bevy-web-check:
+    cargo check --target wasm32-unknown-unknown --manifest-path examples/wasm/bevy-web/Cargo.toml
+
+# Compile the wgpu browser viewer sample for wasm32.
+wasm-wgpu-web-check:
+    cargo check --target wasm32-unknown-unknown --manifest-path examples/wasm/wgpu-web/Cargo.toml
+
+# Build the Bevy browser viewer sample with wasm-pack in release mode.
+wasm-bevy-web-build:
+    cd examples/wasm/bevy-web && wasm-pack build --target web --release
+
+# Build the wgpu browser viewer sample with wasm-pack in release mode.
+wasm-wgpu-web-build:
+    cd examples/wasm/wgpu-web && wasm-pack build --target web --release
+
 # Adapter integration examples.
 
 # Build an ash/Vulkan-shaped frame plan for a VRM avatar plus optional VRMA clip without creating a Vulkan device.

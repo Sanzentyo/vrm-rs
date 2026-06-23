@@ -69,6 +69,9 @@ Recommended stable entrypoints:
 | Headless VRMA sampling smoke | `just vrma-animation` |
 | Bevy release viewer | `just bevy-vrma-viewer` |
 | Bevy-independent wgpu release viewer | `just wgpu-vrma-viewer` |
+| Browser/WASM viewer compile check | `just wasm-web-check` |
+| Bevy browser viewer release wasm-pack build | `just wasm-bevy-web-build` |
+| wgpu browser viewer release wasm-pack build | `just wasm-wgpu-web-build` |
 | ash frame-plan smoke without Vulkan device setup | `just ash-vrma-frame-plan` |
 | ash renderer-edge mock integration | `just ash-renderer-integration` |
 | ash real Vulkan offscreen submit/readback smoke | `just ash-unsafe-device-renderer` |

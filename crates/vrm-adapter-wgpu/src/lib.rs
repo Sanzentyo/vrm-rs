@@ -643,6 +643,17 @@ impl WgpuViewer {
         let size = window.inner_size();
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window)?;
+        Self::new_from_surface(surface, size, options, avatar, animation).await
+    }
+
+    async fn new_from_surface(
+        surface: wgpu::Surface<'static>,
+        size: PhysicalSize<u32>,
+        options: &WgpuVrmViewerOptions,
+        avatar: LoadedVrm,
+        animation: Option<VrmAnimation>,
+    ) -> Result<Self, Box<dyn Error>> {
+        let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -881,6 +892,50 @@ impl WgpuViewer {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub struct WgpuCanvasViewer {
+    inner: WgpuViewer,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WgpuCanvasViewer {
+    pub async fn new(
+        canvas: web_sys::HtmlCanvasElement,
+        options: &WgpuVrmViewerOptions,
+        avatar: LoadedVrm,
+        animation: Option<VrmAnimation>,
+    ) -> Result<Self, Box<dyn Error>> {
+        let size = PhysicalSize::new(canvas.width().max(1), canvas.height().max(1));
+        let instance = wgpu::Instance::default();
+        let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas))?;
+        let inner = WgpuViewer::new_from_surface(surface, size, options, avatar, animation).await?;
+        Ok(Self { inner })
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.inner
+            .resize(PhysicalSize::new(width.max(1), height.max(1)));
+    }
+
+    pub fn render_frame(&mut self) -> Result<bool, Box<dyn Error>> {
+        self.inner.update()?;
+        match self.inner.render() {
+            RenderOutcome::Rendered => Ok(true),
+            RenderOutcome::Skip => Ok(false),
+            RenderOutcome::Reconfigure => {
+                self.inner.resize(PhysicalSize::new(
+                    self.inner.config.width,
+                    self.inner.config.height,
+                ));
+                Ok(false)
+            }
+            RenderOutcome::ValidationError => {
+                Err("failed to acquire a valid wgpu surface texture".into())
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RenderOutcome {
     Rendered,
@@ -1043,7 +1098,7 @@ pub fn run_vrma_viewer(options: WgpuVrmViewerOptions) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn animation_from_loaded(loaded: &LoadedVrm) -> Option<VrmAnimation> {
+pub fn animation_from_loaded(loaded: &LoadedVrm) -> Option<VrmAnimation> {
     match &loaded.model().document().animation {
         Feature::Present(animation) => Some(animation.clone()),
         Feature::Absent => loaded.model().document().animations.first().cloned(),
