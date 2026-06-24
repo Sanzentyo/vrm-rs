@@ -4530,12 +4530,41 @@ mod tests {
         assert!(wgsl_shader.contains("@group(0) @binding(1)"));
         assert!(wgsl_shader.contains("@group(0) @binding(2)"));
         assert!(wgsl_shader.contains("@group(0) @binding(30)"));
+        assert!(wgsl_shader.contains("@group(0) @binding(31)"));
+        assert!(wgsl_shader.contains("@group(0) @binding(32)"));
+        for binding in 1..=20 {
+            let declaration = format!("@group(0) @binding({binding})");
+            assert!(wgsl_shader.contains(&declaration));
+        }
         assert!(wgsl_shader.contains("@vertex"));
         assert!(wgsl_shader.contains("fn vs_main"));
         assert!(wgsl_shader.contains("@fragment"));
         assert!(wgsl_shader.contains("fn fs_main"));
-        assert!(wgsl_shader.contains("mtoon_lit_shade_rate"));
-        assert!(wgsl_shader.contains("mtoon_mix_shade"));
+        assert!(wgsl_shader.contains("fn ash_mtoon_lit_shade_rate"));
+        assert!(wgsl_shader.contains("fn ash_mtoon_normal"));
+        assert!(wgsl_shader.contains("fn ash_pbr_direct"));
+        assert!(wgsl_shader.contains("textureSampleGrad(source, source_sampler"));
+        assert!(wgsl_shader.contains("ash_srgb_to_linear_color(raw_main_texel.rgb)"));
+        assert!(wgsl_shader.contains("base_sample_uv = vec2<f32>(base_uv.x, 1.0 - base_uv.y)"));
+        assert!(wgsl_shader.contains("material_extra.flags2.z > 0.5"));
+        assert!(wgsl_shader.contains("material_extra.flags2.w > 4.5"));
+        assert!(wgsl_shader.contains("ash_owner_id_output_color(input.color_0.rgb"));
+        assert!(wgsl_shader.contains("material_extra.flags2.w < -0.5"));
+        assert!(wgsl_shader.contains("alpha_mode < 2u"));
+        assert!(wgsl_shader.contains("mtoon.flags.z == 1u"));
+        assert!(wgsl_shader.contains("ash_transform_uv(animated_uv"));
+        assert!(wgsl_shader.contains("centered.x * c + centered.y * s"));
+        assert!(wgsl_shader.contains("-centered.x * s + centered.y * c"));
+        assert!(wgsl_shader.contains("ash_matcap_uv_from_view(input, normal)"));
+        assert!(wgsl_shader.contains("@builtin(front_facing) front_facing: bool"));
+        assert!(wgsl_shader.contains("input.normal_scale == 0.0"));
+        assert!(wgsl_shader.contains("input.front_facing || input.double_sided < 0.5"));
+        assert!(wgsl_shader.contains("material_extra.flags2.y > 0.5"));
+        assert!(wgsl_shader.contains("dpdx(derivative_position)"));
+        assert!(wgsl_shader.contains("scene.world_from_view"));
+        assert!(wgsl_shader.contains("material_extra.flags.x > 0.5"));
+        assert!(wgsl_shader.contains("material_extra.flags2.x > 0.5"));
+        assert!(wgsl_shader.contains("output.tex_coord_0 = input.tex_coord_0"));
     }
 
     #[test]
