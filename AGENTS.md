@@ -55,14 +55,14 @@ git diff docs/testing.md docs/progress.md
 - Review delegated diffs and run gates before staging or committing; delegation does not transfer ownership of verification.
 - Run `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` locally before commits that affect tests, coverage, runtime paths, adapters, IO, or protocol behavior.
 - If a delegated subagent updates coverage docs, review its diff before staging.
-- If Codex subagent spawning is unavailable because the thread is at its agent limit, reuse an existing completed subagent when possible. If reuse is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
+- If Codex subagent spawning is unavailable because the thread is at its subagent limit, reuse an existing completed subagent when possible. If reuse is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
 
 ## Subagent Usage
 
 - Use Codex subagents for delegated routine mechanical work such as coverage refreshes and narrow bulk edits.
 - For coverage refreshes and non-judgmental mechanical edits, use a `worker` subagent with `gpt-5.4-codex-mini` when available.
 - For pessimistic reviews, use the model and reasoning level requested by the user, and ask for findings focused on regressions, missing tests, and API hazards.
-- Delegated agents should not make broad unrelated edits. Give them narrow ownership, ask them to report changed files, and review their output before integration.
+- Delegated subagents should not make broad unrelated edits. Give them narrow ownership, ask them to report changed files, and review their output before integration.
 
 ## Fixtures And Licensing
 

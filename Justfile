@@ -116,6 +116,11 @@ ash-windowed-viewer-cache-smoke avatar=".external-fixtures/official/Seed-san.vrm
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --print-cache-stats --require-cache-hits
 
+# Smoke swapchain recreation after a programmatic resize in the animated ash windowed viewer.
+ash-windowed-viewer-resize-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="36" resize_after="8" resize_width="960" resize_height="540":
+    just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
+    cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --resize-after-frames "{{ resize_after }}" --resize-width "{{ resize_width }}" --resize-height "{{ resize_height }}" --print-cache-stats --require-cache-hits --require-resize-recreate
+
 # Backward-compatible aliases for earlier Ash shader handoff notes.
 ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-wgsl-base-shaders":
     just ash-mtoon-wgsl-base-shaders "{{ out_dir }}"

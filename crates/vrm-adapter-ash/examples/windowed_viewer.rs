@@ -89,6 +89,18 @@ struct Options {
     /// Exit after rendering this many frames. Useful for smoke tests.
     #[arg(long)]
     max_frames: Option<u64>,
+    /// Request a window resize after this many successfully presented frames.
+    #[arg(long)]
+    resize_after_frames: Option<u64>,
+    /// Target width used by `--resize-after-frames`.
+    #[arg(long, default_value_t = 960)]
+    resize_width: u32,
+    /// Target height used by `--resize-after-frames`.
+    #[arg(long, default_value_t = 540)]
+    resize_height: u32,
+    /// Treat a smoke run as failed unless a requested resize recreates the swapchain.
+    #[arg(long)]
+    require_resize_recreate: bool,
     /// Print renderer cache hit/rebuild counters before exiting.
     #[arg(long)]
     print_cache_stats: bool,
@@ -202,6 +214,10 @@ struct App {
     window: Option<Window>,
     recreate_swapchain: bool,
     rendered_frames: u64,
+    resize_requested: bool,
+    resize_events: u64,
+    resize_events_after_request: u64,
+    swapchain_recreates: u64,
 }
 
 impl ApplicationHandler for App {
@@ -242,10 +258,11 @@ impl ApplicationHandler for App {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(window) = &self.window else {
-            return;
-        };
-        if window.id() != window_id {
+        if self
+            .window
+            .as_ref()
+            .is_none_or(|window| window.id() != window_id)
+        {
             return;
         }
         match event {
@@ -253,9 +270,17 @@ impl ApplicationHandler for App {
                 self.finish_windowed_run(event_loop);
             }
             WindowEvent::Resized(size) => {
+                self.resize_events = self.resize_events.saturating_add(1);
+                if self.resize_requested {
+                    self.resize_events_after_request =
+                        self.resize_events_after_request.saturating_add(1);
+                }
                 self.recreate_swapchain = size.width > 0 && size.height > 0;
             }
             WindowEvent::RedrawRequested => {
+                let Some(window) = self.window.as_ref() else {
+                    return;
+                };
                 let size = window.inner_size();
                 let render_status = match self.active_renderer.as_mut() {
                     Some(ActiveRenderer::Simple(renderer)) => {
@@ -276,6 +301,7 @@ impl ApplicationHandler for App {
                             renderer
                                 .recreate_swapchain(window)
                                 .expect("recreate swapchain");
+                            self.swapchain_recreates = self.swapchain_recreates.saturating_add(1);
                             self.recreate_swapchain = false;
                         }
                         renderer.render(window)
@@ -293,6 +319,7 @@ impl ApplicationHandler for App {
                             renderer
                                 .recreate_swapchain(window)
                                 .expect("recreate swapchain");
+                            self.swapchain_recreates = self.swapchain_recreates.saturating_add(1);
                             self.recreate_swapchain = false;
                         }
                         renderer.render(window, &frame)
@@ -302,6 +329,11 @@ impl ApplicationHandler for App {
                 match render_status {
                     Ok(RenderStatus::Ok) => {
                         self.rendered_frames = self.rendered_frames.saturating_add(1);
+                        if let Some(target) = self.consume_test_resize_target()
+                            && let Some(window) = self.window.as_ref()
+                        {
+                            let _ = window.request_inner_size(target);
+                        }
                         if self
                             .avatar
                             .options
@@ -339,6 +371,15 @@ impl App {
         {
             println!("ash windowed cache stats: {}", renderer.cache_stats());
         }
+        if self.avatar.options.print_cache_stats {
+            println!(
+                "ash windowed resize stats: requested={}, events={}, events_after_request={}, recreates={}",
+                self.resize_requested,
+                self.resize_events,
+                self.resize_events_after_request,
+                self.swapchain_recreates
+            );
+        }
         if self.avatar.options.require_cache_hits
             && let Some(ActiveRenderer::Mtoon(renderer)) = self.active_renderer.as_ref()
             && let Err(error) = renderer.cache_stats().validate_steady_state_hits()
@@ -346,7 +387,41 @@ impl App {
             eprintln!("ash windowed cache validation failed: {error}");
             std::process::exit(1);
         }
+        if self.avatar.options.require_resize_recreate
+            && let Err(error) = self.validate_resize_recreate()
+        {
+            eprintln!("ash windowed resize validation failed: {error}");
+            std::process::exit(1);
+        }
         event_loop.exit();
+    }
+
+    fn consume_test_resize_target(&mut self) -> Option<PhysicalSize<u32>> {
+        let resize_after_frames = self.avatar.options.resize_after_frames?;
+        if self.resize_requested || self.rendered_frames < resize_after_frames {
+            return None;
+        }
+        self.resize_requested = true;
+        Some(PhysicalSize::new(
+            self.avatar.options.resize_width.max(1),
+            self.avatar.options.resize_height.max(1),
+        ))
+    }
+
+    fn validate_resize_recreate(&self) -> Result<(), String> {
+        if self.avatar.options.resize_after_frames.is_none() {
+            return Err("--require-resize-recreate requires --resize-after-frames".to_owned());
+        }
+        if !self.resize_requested {
+            return Err("resize was never requested".to_owned());
+        }
+        if self.resize_events_after_request == 0 {
+            return Err("no WindowEvent::Resized was observed after resize request".to_owned());
+        }
+        if self.swapchain_recreates == 0 {
+            return Err("renderer.recreate_swapchain was never called".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -354,6 +429,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
     if options.simple_preview && options.require_cache_hits {
         return Err("--require-cache-hits is only supported by the MToon renderer path".into());
+    }
+    if options.require_resize_recreate && options.resize_after_frames.is_none() {
+        return Err("--require-resize-recreate requires --resize-after-frames".into());
     }
     let avatar = WindowedAvatar::new(options)?;
     let shaders = ShaderModules {
@@ -378,6 +456,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         window: None,
         recreate_swapchain: false,
         rendered_frames: 0,
+        resize_requested: false,
+        resize_events: 0,
+        resize_events_after_request: 0,
+        swapchain_recreates: 0,
     };
     event_loop.run_app(&mut app)?;
     Ok(())
