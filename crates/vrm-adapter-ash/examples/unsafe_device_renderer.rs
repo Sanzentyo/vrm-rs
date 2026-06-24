@@ -19,16 +19,17 @@ use vrm_adapter::{
 };
 use vrm_adapter_ash::{
     AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorSetLayoutPlan,
-    AshDescriptorWriteResource, AshDiagnosticOwnerId, AshDrawableFrameOptions,
-    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
-    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
-    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
-    ash_2d_image_resource_plan, ash_color_attachment_readback_plan, ash_depth_attachment_plan,
-    ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
-    ash_host_buffer_plan, ash_material_texture_binding, ash_memory_allocation_plan,
-    ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
+    AshDescriptorWriteData, AshDescriptorWriteResource, AshDiagnosticOwnerId,
+    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
+    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRenderPassCreationPlan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
+    AshVrmPrimitive, ash_2d_image_resource_plan, ash_color_attachment_readback_plan,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
+    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
+    ash_material_texture_binding, ash_memory_allocation_plan, ash_memory_type_index,
+    ash_mtoon_texture_binding, ash_pipeline_layout_plans,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
     ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
@@ -715,10 +716,7 @@ impl UnsafeAshDeviceRenderer {
         resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
         for plan in ash_descriptor_write_plans(frame)? {
-            let descriptor_set = plan
-                .vk_descriptor_set(descriptor_sets)
-                .map_err(io::Error::other)?;
-            match &plan.resource {
+            let write_data = match &plan.resource {
                 AshDescriptorWriteResource::UniformBuffer {
                     uniform_upload_index: _,
                 } => {
@@ -726,18 +724,7 @@ impl UnsafeAshDeviceRenderer {
                         .resource
                         .uniform_resource(resources.uniform_buffers)
                         .map_err(io::Error::other)?;
-                    let buffer_info = [vk::DescriptorBufferInfo::default()
-                        .buffer(uniform.buffer)
-                        .offset(0)
-                        .range(vk::WHOLE_SIZE)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .buffer_info(&buffer_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::whole_buffer(uniform.buffer)
                 }
                 AshDescriptorWriteResource::CombinedImageSampler {
                     sampler_index: _,
@@ -755,18 +742,11 @@ impl UnsafeAshDeviceRenderer {
                             resources.fallback_textures.get(fallback)
                         })
                         .map_err(io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default()
-                        .sampler(sampler)
-                        .image_view(image.view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::combined_image_sampler(
+                        sampler,
+                        image.view,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    )
                 }
                 AshDescriptorWriteResource::SampledImage { image: _ } => {
                     let image = plan
@@ -777,32 +757,17 @@ impl UnsafeAshDeviceRenderer {
                             resources.fallback_textures.get(fallback)
                         })
                         .map_err(io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default()
-                        .image_view(image.view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::sampled_image(
+                        image.view,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    )
                 }
                 AshDescriptorWriteResource::Sampler { sampler_index: _ } => {
                     let sampler = plan
                         .resource
                         .sampler(resources.samplers)
                         .map_err(io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::sampler(sampler)
                 }
                 AshDescriptorWriteResource::StorageBuffer {
                     buffer_upload_index: _,
@@ -811,20 +776,13 @@ impl UnsafeAshDeviceRenderer {
                         .resource
                         .storage_buffer_resource(resources.buffers)
                         .map_err(io::Error::other)?;
-                    let buffer_info = [vk::DescriptorBufferInfo::default()
-                        .buffer(buffer.buffer)
-                        .offset(0)
-                        .range(vk::WHOLE_SIZE)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .buffer_info(&buffer_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::whole_buffer(buffer.buffer)
                 }
-            }
+            };
+            plan.with_write_descriptor_set(descriptor_sets, write_data, |write| unsafe {
+                self.device.update_descriptor_sets(&[write], &[]);
+            })
+            .map_err(io::Error::other)?;
         }
         Ok(())
     }

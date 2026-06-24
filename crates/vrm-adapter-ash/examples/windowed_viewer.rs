@@ -29,7 +29,7 @@ use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
     ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout,
-    AshCommandPlan, AshDescriptorSetLayoutPlan, AshDescriptorWriteResource,
+    AshCommandPlan, AshDescriptorSetLayoutPlan, AshDescriptorWriteData, AshDescriptorWriteResource,
     AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan, AshGraphicsPipelinePlan,
     AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
     AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
@@ -1646,10 +1646,7 @@ impl MtoonWindowedAshRenderer {
         resources: MtoonDescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
         for plan in ash_descriptor_write_plans(frame)? {
-            let descriptor_set = plan
-                .vk_descriptor_set(descriptor_sets)
-                .map_err(std::io::Error::other)?;
-            match &plan.resource {
+            let write_data = match &plan.resource {
                 AshDescriptorWriteResource::UniformBuffer {
                     uniform_upload_index: _,
                 } => {
@@ -1657,18 +1654,7 @@ impl MtoonWindowedAshRenderer {
                         .resource
                         .uniform_resource(resources.uniform_buffers)
                         .map_err(std::io::Error::other)?;
-                    let buffer_info = [vk::DescriptorBufferInfo::default()
-                        .buffer(uniform.buffer)
-                        .offset(0)
-                        .range(vk::WHOLE_SIZE)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .buffer_info(&buffer_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::whole_buffer(uniform.buffer)
                 }
                 AshDescriptorWriteResource::CombinedImageSampler {
                     sampler_index: _,
@@ -1686,18 +1672,11 @@ impl MtoonWindowedAshRenderer {
                             resources.fallback_textures.get(fallback)
                         })
                         .map_err(std::io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default()
-                        .sampler(sampler)
-                        .image_view(image.view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::combined_image_sampler(
+                        sampler,
+                        image.view,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    )
                 }
                 AshDescriptorWriteResource::SampledImage { image: _ } => {
                     let image = plan
@@ -1708,32 +1687,17 @@ impl MtoonWindowedAshRenderer {
                             resources.fallback_textures.get(fallback)
                         })
                         .map_err(std::io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default()
-                        .image_view(image.view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::sampled_image(
+                        image.view,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    )
                 }
                 AshDescriptorWriteResource::Sampler { sampler_index: _ } => {
                     let sampler = plan
                         .resource
                         .sampler(resources.samplers)
                         .map_err(std::io::Error::other)?;
-                    let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .image_info(&image_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::sampler(sampler)
                 }
                 AshDescriptorWriteResource::StorageBuffer {
                     buffer_upload_index: _,
@@ -1742,20 +1706,13 @@ impl MtoonWindowedAshRenderer {
                         .resource
                         .storage_buffer_resource(resources.buffers)
                         .map_err(std::io::Error::other)?;
-                    let buffer_info = [vk::DescriptorBufferInfo::default()
-                        .buffer(buffer.buffer)
-                        .offset(0)
-                        .range(vk::WHOLE_SIZE)];
-                    let write = [vk::WriteDescriptorSet::default()
-                        .dst_set(descriptor_set)
-                        .dst_binding(plan.binding)
-                        .descriptor_type(plan.descriptor_type)
-                        .buffer_info(&buffer_info)];
-                    unsafe {
-                        self.device.update_descriptor_sets(&write, &[]);
-                    }
+                    AshDescriptorWriteData::whole_buffer(buffer.buffer)
                 }
-            }
+            };
+            plan.with_write_descriptor_set(descriptor_sets, write_data, |write| unsafe {
+                self.device.update_descriptor_sets(&[write], &[]);
+            })
+            .map_err(std::io::Error::other)?;
         }
         Ok(())
     }

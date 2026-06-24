@@ -2286,6 +2286,142 @@ impl AshDescriptorWritePlan {
                 )
             })
     }
+
+    pub fn with_write_descriptor_set<R>(
+        &self,
+        descriptor_sets: &[vk::DescriptorSet],
+        data: AshDescriptorWriteData,
+        f: impl FnOnce(vk::WriteDescriptorSet<'_>) -> R,
+    ) -> Result<R, String> {
+        let descriptor_set = self.vk_descriptor_set(descriptor_sets)?;
+        match (&self.resource, data) {
+            (
+                AshDescriptorWriteResource::UniformBuffer { .. }
+                | AshDescriptorWriteResource::StorageBuffer { .. },
+                AshDescriptorWriteData::Buffer {
+                    buffer,
+                    offset,
+                    range,
+                },
+            ) => {
+                let buffer_info = [vk::DescriptorBufferInfo::default()
+                    .buffer(buffer)
+                    .offset(offset)
+                    .range(range)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .buffer_info(&buffer_info);
+                Ok(f(write))
+            }
+            (
+                AshDescriptorWriteResource::CombinedImageSampler { .. },
+                AshDescriptorWriteData::CombinedImageSampler {
+                    sampler,
+                    image_view,
+                    image_layout,
+                },
+            ) => {
+                let image_info = [vk::DescriptorImageInfo::default()
+                    .sampler(sampler)
+                    .image_view(image_view)
+                    .image_layout(image_layout)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            (
+                AshDescriptorWriteResource::SampledImage { .. },
+                AshDescriptorWriteData::SampledImage {
+                    image_view,
+                    image_layout,
+                },
+            ) => {
+                let image_info = [vk::DescriptorImageInfo::default()
+                    .image_view(image_view)
+                    .image_layout(image_layout)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            (
+                AshDescriptorWriteResource::Sampler { .. },
+                AshDescriptorWriteData::Sampler { sampler },
+            ) => {
+                let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            (resource, data) => Err(format!(
+                "descriptor write data {data:?} does not match resource {resource:?}"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshDescriptorWriteData {
+    Buffer {
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        range: vk::DeviceSize,
+    },
+    CombinedImageSampler {
+        sampler: vk::Sampler,
+        image_view: vk::ImageView,
+        image_layout: vk::ImageLayout,
+    },
+    SampledImage {
+        image_view: vk::ImageView,
+        image_layout: vk::ImageLayout,
+    },
+    Sampler {
+        sampler: vk::Sampler,
+    },
+}
+
+impl AshDescriptorWriteData {
+    pub fn whole_buffer(buffer: vk::Buffer) -> Self {
+        Self::Buffer {
+            buffer,
+            offset: 0,
+            range: vk::WHOLE_SIZE,
+        }
+    }
+
+    pub fn combined_image_sampler(
+        sampler: vk::Sampler,
+        image_view: vk::ImageView,
+        image_layout: vk::ImageLayout,
+    ) -> Self {
+        Self::CombinedImageSampler {
+            sampler,
+            image_view,
+            image_layout,
+        }
+    }
+
+    pub fn sampled_image(image_view: vk::ImageView, image_layout: vk::ImageLayout) -> Self {
+        Self::SampledImage {
+            image_view,
+            image_layout,
+        }
+    }
+
+    pub fn sampler(sampler: vk::Sampler) -> Self {
+        Self::Sampler { sampler }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -8717,6 +8853,52 @@ mod tests {
                     .to_owned()
             )
         );
+
+        let wrote_buffer = plan
+            .with_write_descriptor_set(
+                &descriptor_sets,
+                AshDescriptorWriteData::whole_buffer(vk::Buffer::null()),
+                |write| {
+                    assert_eq!(write.dst_set, vk::DescriptorSet::null());
+                    assert_eq!(write.dst_binding, 7);
+                    assert_eq!(write.descriptor_type, vk::DescriptorType::UNIFORM_BUFFER);
+                    assert_eq!(write.descriptor_count, 1);
+                    assert!(!write.p_buffer_info.is_null());
+                    true
+                },
+            )
+            .unwrap();
+        assert!(wrote_buffer);
+
+        let sampled_image_plan = AshDescriptorWritePlan {
+            descriptor_set_index: 0,
+            binding: 11,
+            descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+            resource: AshDescriptorWriteResource::SampledImage { image },
+        };
+        sampled_image_plan
+            .with_write_descriptor_set(
+                &descriptor_sets,
+                AshDescriptorWriteData::sampled_image(
+                    vk::ImageView::null(),
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ),
+                |write| {
+                    assert_eq!(write.dst_binding, 11);
+                    assert_eq!(write.descriptor_type, vk::DescriptorType::SAMPLED_IMAGE);
+                    assert!(!write.p_image_info.is_null());
+                },
+            )
+            .unwrap();
+
+        let mismatch = sampled_image_plan
+            .with_write_descriptor_set(
+                &descriptor_sets,
+                AshDescriptorWriteData::whole_buffer(vk::Buffer::null()),
+                |_| (),
+            )
+            .unwrap_err();
+        assert!(mismatch.contains("does not match resource"));
     }
 
     fn cache_key_test_frame(
