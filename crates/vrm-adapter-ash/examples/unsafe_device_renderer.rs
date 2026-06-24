@@ -18,12 +18,13 @@ use vrm_adapter::{
     RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshDiagnosticOwnerId, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
-    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRendererFrame,
-    AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmPrimitive,
-    ash_descriptor_pool_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
-    ash_reference_depth_format, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_texture_fallback_for_binding, frame_plan_from_options_with_viewport,
+    AshDescriptorImageResource, AshDescriptorWriteResource, AshDiagnosticOwnerId,
+    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
+    AshMtoonPipelinePlan, AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan,
+    AshVrmFramePlanOptions, AshVrmPrimitive, ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_material_texture_binding, ash_mtoon_texture_binding, ash_reference_depth_format,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
     GltfAlphaMode, GltfMaterialTextureFallback, GltfMaterialTextureSlot, RgbaMipLevel,
@@ -192,12 +193,30 @@ struct CommandRecordContext<'a> {
     clear_alpha: f32,
 }
 
+#[derive(Clone, Copy)]
 struct DescriptorUpdateResources<'a> {
     buffers: &'a [VulkanBuffer],
     uniform_buffers: &'a [VulkanBuffer],
     images: &'a [VulkanImage],
     fallback_textures: &'a VulkanFallbackTextures,
     samplers: &'a [vk::Sampler],
+}
+
+fn descriptor_image_resource<'a>(
+    resources: DescriptorUpdateResources<'a>,
+    image: AshDescriptorImageResource,
+) -> Result<&'a VulkanImage, Box<dyn Error>> {
+    match image {
+        AshDescriptorImageResource::TextureUpload {
+            texture_upload_index,
+        } => resources
+            .images
+            .get(texture_upload_index)
+            .ok_or_else(|| "descriptor write references a missing texture image".into()),
+        AshDescriptorImageResource::Fallback { fallback } => {
+            Ok(resources.fallback_textures.get(fallback))
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -751,120 +770,100 @@ impl UnsafeAshDeviceRenderer {
         descriptor_sets: &[vk::DescriptorSet],
         resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
-        let mut sampler_index = 0;
-        for (set_index, set) in frame.descriptor_sets.iter().enumerate() {
-            let descriptor_set = descriptor_sets[set_index];
-            for binding in &set.bindings {
-                match binding.descriptor_type {
-                    vk::DescriptorType::UNIFORM_BUFFER => {
-                        let uniform = resources
-                            .uniform_buffers
-                            .get(binding.uniform_upload_index.ok_or(
-                                "uniform descriptor binding is missing a uniform upload index",
-                            )?)
-                            .ok_or("descriptor set references a missing uniform buffer")?;
-                        let buffer_info = [vk::DescriptorBufferInfo::default()
-                            .buffer(uniform.buffer)
-                            .offset(0)
-                            .range(vk::WHOLE_SIZE)];
-                        let write = [vk::WriteDescriptorSet::default()
-                            .dst_set(descriptor_set)
-                            .dst_binding(binding.binding)
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                            .buffer_info(&buffer_info)];
-                        unsafe {
-                            self.device.update_descriptor_sets(&write, &[]);
-                        }
+        for plan in ash_descriptor_write_plans(frame)? {
+            let descriptor_set = *descriptor_sets
+                .get(plan.descriptor_set_index)
+                .ok_or("descriptor write references a missing descriptor set")?;
+            match plan.resource {
+                AshDescriptorWriteResource::UniformBuffer {
+                    uniform_upload_index,
+                } => {
+                    let uniform = resources
+                        .uniform_buffers
+                        .get(uniform_upload_index)
+                        .ok_or("descriptor write references a missing uniform buffer")?;
+                    let buffer_info = [vk::DescriptorBufferInfo::default()
+                        .buffer(uniform.buffer)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)];
+                    let write = [vk::WriteDescriptorSet::default()
+                        .dst_set(descriptor_set)
+                        .dst_binding(plan.binding)
+                        .descriptor_type(plan.descriptor_type)
+                        .buffer_info(&buffer_info)];
+                    unsafe {
+                        self.device.update_descriptor_sets(&write, &[]);
                     }
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                        let sampler = *resources
-                            .samplers
-                            .get(sampler_index)
-                            .ok_or("descriptor set references a missing sampler")?;
-                        sampler_index += 1;
-                        let image = binding
-                            .texture_upload_index
-                            .and_then(|index| resources.images.get(index))
-                            .unwrap_or_else(|| {
-                                let fallback = ash_texture_fallback_for_binding(binding.binding)
-                                    .unwrap_or(GltfMaterialTextureFallback::White);
-                                resources.fallback_textures.get(fallback)
-                            });
-                        let image_info = [vk::DescriptorImageInfo::default()
-                            .sampler(sampler)
-                            .image_view(image.view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                        let write = [vk::WriteDescriptorSet::default()
-                            .dst_set(descriptor_set)
-                            .dst_binding(binding.binding)
-                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .image_info(&image_info)];
-                        unsafe {
-                            self.device.update_descriptor_sets(&write, &[]);
-                        }
+                }
+                AshDescriptorWriteResource::CombinedImageSampler {
+                    sampler_index,
+                    image,
+                } => {
+                    let sampler = *resources
+                        .samplers
+                        .get(sampler_index)
+                        .ok_or("descriptor write references a missing sampler")?;
+                    let image = descriptor_image_resource(resources, image)?;
+                    let image_info = [vk::DescriptorImageInfo::default()
+                        .sampler(sampler)
+                        .image_view(image.view)
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                    let write = [vk::WriteDescriptorSet::default()
+                        .dst_set(descriptor_set)
+                        .dst_binding(plan.binding)
+                        .descriptor_type(plan.descriptor_type)
+                        .image_info(&image_info)];
+                    unsafe {
+                        self.device.update_descriptor_sets(&write, &[]);
                     }
-                    vk::DescriptorType::SAMPLED_IMAGE => {
-                        let image = binding
-                            .texture_upload_index
-                            .and_then(|index| resources.images.get(index))
-                            .unwrap_or_else(|| {
-                                let fallback = ash_texture_fallback_for_binding(binding.binding)
-                                    .unwrap_or(GltfMaterialTextureFallback::White);
-                                resources.fallback_textures.get(fallback)
-                            });
-                        let image_info = [vk::DescriptorImageInfo::default()
-                            .image_view(image.view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                        let write = [vk::WriteDescriptorSet::default()
-                            .dst_set(descriptor_set)
-                            .dst_binding(binding.binding)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                            .image_info(&image_info)];
-                        unsafe {
-                            self.device.update_descriptor_sets(&write, &[]);
-                        }
+                }
+                AshDescriptorWriteResource::SampledImage { image } => {
+                    let image = descriptor_image_resource(resources, image)?;
+                    let image_info = [vk::DescriptorImageInfo::default()
+                        .image_view(image.view)
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                    let write = [vk::WriteDescriptorSet::default()
+                        .dst_set(descriptor_set)
+                        .dst_binding(plan.binding)
+                        .descriptor_type(plan.descriptor_type)
+                        .image_info(&image_info)];
+                    unsafe {
+                        self.device.update_descriptor_sets(&write, &[]);
                     }
-                    vk::DescriptorType::SAMPLER => {
-                        let sampler = *resources
-                            .samplers
-                            .get(sampler_index)
-                            .ok_or("descriptor set references a missing sampler")?;
-                        sampler_index += 1;
-                        let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-                        let write = [vk::WriteDescriptorSet::default()
-                            .dst_set(descriptor_set)
-                            .dst_binding(binding.binding)
-                            .descriptor_type(vk::DescriptorType::SAMPLER)
-                            .image_info(&image_info)];
-                        unsafe {
-                            self.device.update_descriptor_sets(&write, &[]);
-                        }
+                }
+                AshDescriptorWriteResource::Sampler { sampler_index } => {
+                    let sampler = *resources
+                        .samplers
+                        .get(sampler_index)
+                        .ok_or("descriptor write references a missing sampler")?;
+                    let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+                    let write = [vk::WriteDescriptorSet::default()
+                        .dst_set(descriptor_set)
+                        .dst_binding(plan.binding)
+                        .descriptor_type(plan.descriptor_type)
+                        .image_info(&image_info)];
+                    unsafe {
+                        self.device.update_descriptor_sets(&write, &[]);
                     }
-                    vk::DescriptorType::STORAGE_BUFFER => {
-                        let buffer = resources
-                            .buffers
-                            .get(binding.buffer_upload_index.ok_or(
-                                "storage descriptor binding is missing a buffer upload index",
-                            )?)
-                            .ok_or("descriptor set references a missing storage buffer")?;
-                        let buffer_info = [vk::DescriptorBufferInfo::default()
-                            .buffer(buffer.buffer)
-                            .offset(0)
-                            .range(vk::WHOLE_SIZE)];
-                        let write = [vk::WriteDescriptorSet::default()
-                            .dst_set(descriptor_set)
-                            .dst_binding(binding.binding)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .buffer_info(&buffer_info)];
-                        unsafe {
-                            self.device.update_descriptor_sets(&write, &[]);
-                        }
-                    }
-                    other => {
-                        return Err(format!(
-                            "unsupported ash descriptor type in example renderer: {other:?}"
-                        )
-                        .into());
+                }
+                AshDescriptorWriteResource::StorageBuffer {
+                    buffer_upload_index,
+                } => {
+                    let buffer = resources
+                        .buffers
+                        .get(buffer_upload_index)
+                        .ok_or("descriptor write references a missing storage buffer")?;
+                    let buffer_info = [vk::DescriptorBufferInfo::default()
+                        .buffer(buffer.buffer)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)];
+                    let write = [vk::WriteDescriptorSet::default()
+                        .dst_set(descriptor_set)
+                        .dst_binding(plan.binding)
+                        .descriptor_type(plan.descriptor_type)
+                        .buffer_info(&buffer_info)];
+                    unsafe {
+                        self.device.update_descriptor_sets(&write, &[]);
                     }
                 }
             }

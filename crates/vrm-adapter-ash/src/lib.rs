@@ -1406,6 +1406,44 @@ pub struct AshDescriptorPoolSizePlan {
     pub descriptor_count: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshDescriptorWritePlan {
+    pub descriptor_set_index: usize,
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub resource: AshDescriptorWriteResource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AshDescriptorWriteResource {
+    UniformBuffer {
+        uniform_upload_index: usize,
+    },
+    StorageBuffer {
+        buffer_upload_index: usize,
+    },
+    CombinedImageSampler {
+        sampler_index: usize,
+        image: AshDescriptorImageResource,
+    },
+    SampledImage {
+        image: AshDescriptorImageResource,
+    },
+    Sampler {
+        sampler_index: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshDescriptorImageResource {
+    TextureUpload {
+        texture_upload_index: usize,
+    },
+    Fallback {
+        fallback: GltfMaterialTextureFallback,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct AshDrawableFramePlan {
     pub render_pass: AshRenderPassPlan,
@@ -2178,6 +2216,105 @@ pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPl
                 descriptor_count: descriptor_binding_count(vk::DescriptorType::STORAGE_BUFFER),
             },
         ],
+    }
+}
+
+pub fn ash_descriptor_write_plans(
+    frame: &AshRendererFrame,
+) -> Result<Vec<AshDescriptorWritePlan>, String> {
+    let mut sampler_index = 0usize;
+    let mut plans = Vec::new();
+    for (descriptor_set_index, set) in frame.descriptor_sets.iter().enumerate() {
+        for binding in &set.bindings {
+            let resource = match binding.descriptor_type {
+                vk::DescriptorType::UNIFORM_BUFFER => {
+                    let uniform_upload_index = binding.uniform_upload_index.ok_or_else(|| {
+                        format!(
+                            "descriptor set {descriptor_set_index} binding {} is missing a uniform upload index",
+                            binding.binding
+                        )
+                    })?;
+                    if uniform_upload_index >= frame.uniforms.len() {
+                        return Err(format!(
+                            "descriptor set {descriptor_set_index} binding {} references missing uniform upload {uniform_upload_index}",
+                            binding.binding
+                        ));
+                    }
+                    AshDescriptorWriteResource::UniformBuffer {
+                        uniform_upload_index,
+                    }
+                }
+                vk::DescriptorType::STORAGE_BUFFER => {
+                    let buffer_upload_index = binding.buffer_upload_index.ok_or_else(|| {
+                        format!(
+                            "descriptor set {descriptor_set_index} binding {} is missing a storage buffer upload index",
+                            binding.binding
+                        )
+                    })?;
+                    if buffer_upload_index >= frame.buffers.len() {
+                        return Err(format!(
+                            "descriptor set {descriptor_set_index} binding {} references missing storage buffer upload {buffer_upload_index}",
+                            binding.binding
+                        ));
+                    }
+                    AshDescriptorWriteResource::StorageBuffer {
+                        buffer_upload_index,
+                    }
+                }
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                    let current_sampler = sampler_index;
+                    sampler_index = sampler_index.saturating_add(1);
+                    AshDescriptorWriteResource::CombinedImageSampler {
+                        sampler_index: current_sampler,
+                        image: ash_descriptor_image_resource(frame, binding)?,
+                    }
+                }
+                vk::DescriptorType::SAMPLED_IMAGE => AshDescriptorWriteResource::SampledImage {
+                    image: ash_descriptor_image_resource(frame, binding)?,
+                },
+                vk::DescriptorType::SAMPLER => {
+                    let current_sampler = sampler_index;
+                    sampler_index = sampler_index.saturating_add(1);
+                    AshDescriptorWriteResource::Sampler {
+                        sampler_index: current_sampler,
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "unsupported ash descriptor type in renderer frame: {other:?}"
+                    ));
+                }
+            };
+            plans.push(AshDescriptorWritePlan {
+                descriptor_set_index,
+                binding: binding.binding,
+                descriptor_type: binding.descriptor_type,
+                resource,
+            });
+        }
+    }
+    Ok(plans)
+}
+
+fn ash_descriptor_image_resource(
+    frame: &AshRendererFrame,
+    binding: &AshResolvedDescriptorBinding,
+) -> Result<AshDescriptorImageResource, String> {
+    if let Some(texture_upload_index) = binding.texture_upload_index {
+        if texture_upload_index >= frame.textures.len() {
+            return Err(format!(
+                "descriptor binding {} references missing texture upload {texture_upload_index}",
+                binding.binding
+            ));
+        }
+        Ok(AshDescriptorImageResource::TextureUpload {
+            texture_upload_index,
+        })
+    } else {
+        Ok(AshDescriptorImageResource::Fallback {
+            fallback: ash_texture_fallback_for_binding(binding.binding)
+                .unwrap_or(GltfMaterialTextureFallback::White),
+        })
     }
 }
 
@@ -5691,6 +5828,76 @@ mod tests {
         assert_eq!(
             ash_descriptor_pool_plan(&AshRendererFrame::default()).max_sets,
             1
+        );
+    }
+
+    #[test]
+    fn descriptor_write_plans_resolve_indices_samplers_and_fallbacks() {
+        let mut frame =
+            cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        frame.descriptor_sets[0]
+            .bindings
+            .push(AshResolvedDescriptorBinding {
+                binding: ash_mtoon_wgsl_owner_sample_override_binding(),
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                uniform_upload_index: None,
+                texture_upload_index: None,
+                buffer_upload_index: Some(0),
+                sampler: None,
+            });
+        frame.descriptor_sets[0]
+            .bindings
+            .push(AshResolvedDescriptorBinding {
+                binding: 3,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                uniform_upload_index: None,
+                texture_upload_index: None,
+                buffer_upload_index: None,
+                sampler: Some(AshSamplerPlan::default()),
+            });
+
+        let plans = ash_descriptor_write_plans(&frame).unwrap();
+        assert_eq!(plans.len(), 5);
+        assert_eq!(
+            plans[0].resource,
+            AshDescriptorWriteResource::UniformBuffer {
+                uniform_upload_index: 0,
+            }
+        );
+        assert_eq!(
+            plans[1].resource,
+            AshDescriptorWriteResource::SampledImage {
+                image: AshDescriptorImageResource::TextureUpload {
+                    texture_upload_index: 0,
+                },
+            }
+        );
+        assert_eq!(
+            plans[2].resource,
+            AshDescriptorWriteResource::Sampler { sampler_index: 0 }
+        );
+        assert_eq!(
+            plans[3].resource,
+            AshDescriptorWriteResource::StorageBuffer {
+                buffer_upload_index: 0,
+            }
+        );
+        assert_eq!(
+            plans[4].resource,
+            AshDescriptorWriteResource::CombinedImageSampler {
+                sampler_index: 1,
+                image: AshDescriptorImageResource::Fallback {
+                    fallback: GltfMaterialTextureFallback::Black,
+                },
+            }
+        );
+
+        frame.descriptor_sets[0].bindings[1].texture_upload_index = Some(99);
+        assert_eq!(
+            ash_descriptor_write_plans(&frame),
+            Err("descriptor binding 1 references missing texture upload 99".to_owned())
         );
     }
 
