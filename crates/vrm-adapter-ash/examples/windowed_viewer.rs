@@ -42,12 +42,13 @@ use vrm_adapter_ash::{
     ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
     ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
     ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_memory_type_index, ash_mtoon_renderer_cache_keys,
-    ash_one_time_command_buffer_begin_plan, ash_pipeline_layout_plans,
-    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
-    ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
-    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_signaled_fence_plan,
+    ash_graphics_pipeline_state_plan, ash_graphics_shader_stages_plan, ash_memory_type_index,
+    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
+    ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
+    ash_render_pass_begin_plan, ash_render_pass_begin_plan_from_clear_values,
+    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
+    ash_select_depth_format, ash_shader_module_plan, ash_signaled_fence_plan,
     ash_swapchain_surface_plan, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
     ash_unsignaled_fence_plan, ash_windowed_present_plan, ash_windowed_submit_plan,
 };
@@ -1827,16 +1828,9 @@ impl MtoonWindowedAshRenderer {
         vertex_entry: &CString,
         fragment_entry: &CString,
     ) -> Result<vk::Pipeline, Box<dyn Error>> {
-        let shader_stages = [
-            vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::VERTEX)
-                .module(self.vertex_shader)
-                .name(vertex_entry),
-            vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(self.fragment_shader)
-                .name(fragment_entry),
-        ];
+        let shader_stages =
+            ash_graphics_shader_stages_plan(self.vertex_shader, self.fragment_shader)
+                .shader_stage_create_infos(vertex_entry, fragment_entry);
         let state = ash_graphics_pipeline_state_plan(pipeline, extent);
         let layout = pipeline_layouts[state.descriptor_set_index];
         let vertex_binding = [state.vertex_binding];
@@ -2925,16 +2919,8 @@ fn create_simple_pipeline(
 ) -> Result<(vk::PipelineLayout, vk::Pipeline), Box<dyn Error>> {
     let vertex_shader = create_shader_module(device, vertex_spv)?;
     let fragment_shader = create_shader_module(device, fragment_spv)?;
-    let stages = [
-        vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(vertex_shader)
-            .name(vertex_entry),
-        vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fragment_shader)
-            .name(fragment_entry),
-    ];
+    let stages = ash_graphics_shader_stages_plan(vertex_shader, fragment_shader)
+        .shader_stage_create_infos(vertex_entry, fragment_entry);
     let binding = [vk::VertexInputBindingDescription {
         binding: 0,
         stride: std::mem::size_of::<SimpleVertex>() as u32,
@@ -3032,7 +3018,7 @@ fn create_shader_module(
     device: &ash::Device,
     words: &[u32],
 ) -> Result<vk::ShaderModule, vk::Result> {
-    let info = vk::ShaderModuleCreateInfo::default().code(words);
+    let info = ash_shader_module_plan(words).shader_module_create_info();
     unsafe { device.create_shader_module(&info, None) }
 }
 

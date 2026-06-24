@@ -26,13 +26,14 @@ use vrm_adapter_ash::{
     ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_descriptor_pool_plan,
     ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_material_texture_binding,
-    ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
-    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
-    ash_select_depth_format, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
-    ash_unsignaled_fence_plan, frame_plan_from_options_with_viewport,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_graphics_shader_stages_plan,
+    ash_material_texture_binding, ash_memory_type_index, ash_mtoon_texture_binding,
+    ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
+    ash_render_pass_begin_plan, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
+    ash_texture_mip_upload_bytes, ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
+    frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
     GltfAlphaMode, GltfMaterialTextureFallback, GltfMaterialTextureSlot, RgbaMipLevel,
@@ -899,7 +900,7 @@ impl UnsafeAshDeviceRenderer {
     }
 
     fn create_shader_module(&self, code: &[u32]) -> Result<vk::ShaderModule, vk::Result> {
-        let info = vk::ShaderModuleCreateInfo::default().code(code);
+        let info = ash_shader_module_plan(code).shader_module_create_info();
         unsafe { self.device.create_shader_module(&info, None) }
     }
 
@@ -920,16 +921,12 @@ impl UnsafeAshDeviceRenderer {
         pipeline: &AshGraphicsPipelinePlan,
         context: &PipelineBuildContext<'_>,
     ) -> Result<vk::Pipeline, Box<dyn Error>> {
-        let shader_stages = [
-            vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::VERTEX)
-                .module(context.vertex_shader)
-                .name(context.vertex_entry_point),
-            vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(context.fragment_shader)
-                .name(context.fragment_entry_point),
-        ];
+        let shader_stages =
+            ash_graphics_shader_stages_plan(context.vertex_shader, context.fragment_shader)
+                .shader_stage_create_infos(
+                    context.vertex_entry_point,
+                    context.fragment_entry_point,
+                );
         let state = ash_graphics_pipeline_state_plan(pipeline, context.extent);
         let layout = context.pipeline_layouts[state.descriptor_set_index];
         let vertex_binding = [state.vertex_binding];

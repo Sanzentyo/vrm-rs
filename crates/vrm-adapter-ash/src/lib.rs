@@ -12,6 +12,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
+    ffi::CStr,
     fmt,
     path::PathBuf,
     sync::Arc,
@@ -317,6 +318,56 @@ impl AshMtoonWgslShaderAbi {
 
     pub fn default_fragment_spirv_path(self) -> PathBuf {
         self.fragment_spirv_path(ASH_MTOON_WGSL_DEFAULT_SPIRV_DIR)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshShaderModulePlan<'a> {
+    pub code_words: &'a [u32],
+}
+
+impl<'a> AshShaderModulePlan<'a> {
+    pub fn shader_module_create_info(self) -> vk::ShaderModuleCreateInfo<'a> {
+        vk::ShaderModuleCreateInfo::default().code(self.code_words)
+    }
+}
+
+pub const fn ash_shader_module_plan(code_words: &[u32]) -> AshShaderModulePlan<'_> {
+    AshShaderModulePlan { code_words }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshGraphicsShaderStagesPlan {
+    pub vertex_shader: vk::ShaderModule,
+    pub fragment_shader: vk::ShaderModule,
+}
+
+impl AshGraphicsShaderStagesPlan {
+    pub fn shader_stage_create_infos<'a>(
+        self,
+        vertex_entry: &'a CStr,
+        fragment_entry: &'a CStr,
+    ) -> [vk::PipelineShaderStageCreateInfo<'a>; 2] {
+        [
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .module(self.vertex_shader)
+                .name(vertex_entry),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(self.fragment_shader)
+                .name(fragment_entry),
+        ]
+    }
+}
+
+pub const fn ash_graphics_shader_stages_plan(
+    vertex_shader: vk::ShaderModule,
+    fragment_shader: vk::ShaderModule,
+) -> AshGraphicsShaderStagesPlan {
+    AshGraphicsShaderStagesPlan {
+        vertex_shader,
+        fragment_shader,
     }
 }
 
@@ -8143,6 +8194,32 @@ mod tests {
             }],
             draw_calls: Vec::new(),
         }
+    }
+
+    #[test]
+    fn shader_module_and_stage_plans_expose_vk_infos() {
+        let words = [0x0723_0203_u32, 0, 1, 0];
+        let module_plan = ash_shader_module_plan(&words);
+        let module_info = module_plan.shader_module_create_info();
+        assert_eq!(module_plan.code_words, &words);
+        assert_eq!(
+            module_info.code_size,
+            words.len() * std::mem::size_of::<u32>()
+        );
+        assert_eq!(module_info.p_code, words.as_ptr());
+
+        let vertex_module = vk::ShaderModule::null();
+        let fragment_module = vk::ShaderModule::null();
+        let stages_plan = ash_graphics_shader_stages_plan(vertex_module, fragment_module);
+        let vertex_entry = std::ffi::CString::new("vs_main").unwrap();
+        let fragment_entry = std::ffi::CString::new("fs_main").unwrap();
+        let stages = stages_plan.shader_stage_create_infos(&vertex_entry, &fragment_entry);
+        assert_eq!(stages[0].stage, vk::ShaderStageFlags::VERTEX);
+        assert_eq!(stages[0].module, vertex_module);
+        assert_eq!(stages[0].p_name, vertex_entry.as_ptr());
+        assert_eq!(stages[1].stage, vk::ShaderStageFlags::FRAGMENT);
+        assert_eq!(stages[1].module, fragment_module);
+        assert_eq!(stages[1].p_name, fragment_entry.as_ptr());
     }
 
     #[test]
