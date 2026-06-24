@@ -34,9 +34,10 @@ use vrm_adapter_ash::{
     AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
     AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
     AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
-    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
-    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameSyncPlan,
-    AshWindowedResizeValidation, AshWindowedRunValidation, ash_depth_attachment_plan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshSwapchainAcquireStatus,
+    AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
+    AshVrmVertex, AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
+    ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_memory_type_index,
@@ -929,10 +930,12 @@ impl MtoonWindowedAshRenderer {
                 vk::Fence::null(),
             )
         };
-        let (image_index, suboptimal) = match acquired {
-            Ok(value) => value,
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
-            Err(error) => return Err(error.into()),
+        let (image_index, suboptimal) = match ash_classify_swapchain_acquire(acquired)? {
+            AshSwapchainAcquireStatus::Acquired {
+                image_index,
+                suboptimal,
+            } => (image_index, suboptimal),
+            AshSwapchainAcquireStatus::NeedsRecreate => return Ok(RenderStatus::NeedsRecreate),
         };
         let image_index = sync_plan.image_index_to_slot(image_index)?;
         let image_fence = *self
@@ -970,13 +973,9 @@ impl MtoonWindowedAshRenderer {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
-        let status = match present_result {
-            Ok(present_suboptimal) if suboptimal || present_suboptimal => {
-                Ok(RenderStatus::NeedsRecreate)
-            }
-            Ok(_) => Ok(RenderStatus::Ok),
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
-            Err(error) => Err(error.into()),
+        let status = match ash_classify_swapchain_present(suboptimal, present_result)? {
+            AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),
+            AshSwapchainPresentStatus::NeedsRecreate => Ok(RenderStatus::NeedsRecreate),
         };
         self.current_frame = sync_plan.next_frame_index(self.current_frame)?;
         status
@@ -2605,10 +2604,12 @@ impl WindowedAshRenderer {
                 vk::Fence::null(),
             )
         };
-        let (image_index, suboptimal) = match acquired {
-            Ok(value) => value,
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
-            Err(error) => return Err(error.into()),
+        let (image_index, suboptimal) = match ash_classify_swapchain_acquire(acquired)? {
+            AshSwapchainAcquireStatus::Acquired {
+                image_index,
+                suboptimal,
+            } => (image_index, suboptimal),
+            AshSwapchainAcquireStatus::NeedsRecreate => return Ok(RenderStatus::NeedsRecreate),
         };
         let wait_semaphores = [self.image_available];
         let signal_semaphores = [self.render_finished];
@@ -2631,13 +2632,9 @@ impl WindowedAshRenderer {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
-        match present_result {
-            Ok(present_suboptimal) if suboptimal || present_suboptimal => {
-                Ok(RenderStatus::NeedsRecreate)
-            }
-            Ok(_) => Ok(RenderStatus::Ok),
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
-            Err(error) => Err(error.into()),
+        match ash_classify_swapchain_present(suboptimal, present_result)? {
+            AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),
+            AshSwapchainPresentStatus::NeedsRecreate => Ok(RenderStatus::NeedsRecreate),
         }
     }
 

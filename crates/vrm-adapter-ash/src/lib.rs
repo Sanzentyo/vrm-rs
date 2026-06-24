@@ -404,6 +404,45 @@ impl AshWindowedFrameSyncPlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshSwapchainAcquireStatus {
+    Acquired { image_index: u32, suboptimal: bool },
+    NeedsRecreate,
+}
+
+pub fn ash_classify_swapchain_acquire(
+    result: Result<(u32, bool), vk::Result>,
+) -> Result<AshSwapchainAcquireStatus, vk::Result> {
+    match result {
+        Ok((image_index, suboptimal)) => Ok(AshSwapchainAcquireStatus::Acquired {
+            image_index,
+            suboptimal,
+        }),
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(AshSwapchainAcquireStatus::NeedsRecreate),
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshSwapchainPresentStatus {
+    Presented,
+    NeedsRecreate,
+}
+
+pub fn ash_classify_swapchain_present(
+    acquired_suboptimal: bool,
+    result: Result<bool, vk::Result>,
+) -> Result<AshSwapchainPresentStatus, vk::Result> {
+    match result {
+        Ok(present_suboptimal) if acquired_suboptimal || present_suboptimal => {
+            Ok(AshSwapchainPresentStatus::NeedsRecreate)
+        }
+        Ok(_) => Ok(AshSwapchainPresentStatus::Presented),
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(AshSwapchainPresentStatus::NeedsRecreate),
+        Err(error) => Err(error),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AshWindowedResizeValidation {
     pub resize_after_frames: Option<u64>,
@@ -6533,6 +6572,49 @@ mod tests {
         assert_eq!(
             plan.image_index_to_slot(3),
             Err("swapchain image index 3 is outside swapchain_images 3".to_owned())
+        );
+    }
+
+    #[test]
+    fn swapchain_acquire_status_classifies_recreate_and_errors() {
+        assert_eq!(
+            ash_classify_swapchain_acquire(Ok((7, true))),
+            Ok(AshSwapchainAcquireStatus::Acquired {
+                image_index: 7,
+                suboptimal: true
+            })
+        );
+        assert_eq!(
+            ash_classify_swapchain_acquire(Err(vk::Result::ERROR_OUT_OF_DATE_KHR)),
+            Ok(AshSwapchainAcquireStatus::NeedsRecreate)
+        );
+        assert_eq!(
+            ash_classify_swapchain_acquire(Err(vk::Result::ERROR_DEVICE_LOST)),
+            Err(vk::Result::ERROR_DEVICE_LOST)
+        );
+    }
+
+    #[test]
+    fn swapchain_present_status_combines_acquire_and_present_suboptimal() {
+        assert_eq!(
+            ash_classify_swapchain_present(false, Ok(false)),
+            Ok(AshSwapchainPresentStatus::Presented)
+        );
+        assert_eq!(
+            ash_classify_swapchain_present(true, Ok(false)),
+            Ok(AshSwapchainPresentStatus::NeedsRecreate)
+        );
+        assert_eq!(
+            ash_classify_swapchain_present(false, Ok(true)),
+            Ok(AshSwapchainPresentStatus::NeedsRecreate)
+        );
+        assert_eq!(
+            ash_classify_swapchain_present(false, Err(vk::Result::ERROR_OUT_OF_DATE_KHR)),
+            Ok(AshSwapchainPresentStatus::NeedsRecreate)
+        );
+        assert_eq!(
+            ash_classify_swapchain_present(false, Err(vk::Result::ERROR_DEVICE_LOST)),
+            Err(vk::Result::ERROR_DEVICE_LOST)
         );
     }
 
