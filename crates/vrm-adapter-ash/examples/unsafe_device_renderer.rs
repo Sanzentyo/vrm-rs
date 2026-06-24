@@ -857,12 +857,7 @@ impl UnsafeAshDeviceRenderer {
     ) -> Result<vk::Framebuffer, vk::Result> {
         let attachments = [color_view, depth_view];
         let plan = ash_framebuffer_plan(extent);
-        let info = vk::FramebufferCreateInfo::default()
-            .render_pass(render_pass)
-            .attachments(&attachments)
-            .width(plan.width())
-            .height(plan.height())
-            .layers(plan.layers);
+        let info = plan.framebuffer_create_info(render_pass, &attachments);
         unsafe { self.device.create_framebuffer(&info, None) }
     }
 

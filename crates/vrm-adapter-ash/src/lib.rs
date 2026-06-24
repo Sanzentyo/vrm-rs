@@ -1846,6 +1846,19 @@ impl AshFramebufferPlan {
     pub const fn height(self) -> u32 {
         self.extent.height
     }
+
+    pub fn framebuffer_create_info<'a>(
+        self,
+        render_pass: vk::RenderPass,
+        attachments: &'a [vk::ImageView],
+    ) -> vk::FramebufferCreateInfo<'a> {
+        vk::FramebufferCreateInfo::default()
+            .render_pass(render_pass)
+            .attachments(attachments)
+            .width(self.width())
+            .height(self.height())
+            .layers(self.layers)
+    }
 }
 
 pub const fn ash_framebuffer_plan(extent: vk::Extent2D) -> AshFramebufferPlan {
@@ -2595,6 +2608,51 @@ pub fn ash_2d_image_resource_plan(
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         initial_layout: vk::ImageLayout::UNDEFINED,
         memory_property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshImageViewPlan {
+    pub format: vk::Format,
+    pub aspect_mask: vk::ImageAspectFlags,
+    pub view_type: vk::ImageViewType,
+    pub base_mip_level: u32,
+    pub level_count: u32,
+    pub base_array_layer: u32,
+    pub layer_count: u32,
+}
+
+impl AshImageViewPlan {
+    pub fn subresource_range(self) -> vk::ImageSubresourceRange {
+        vk::ImageSubresourceRange::default()
+            .aspect_mask(self.aspect_mask)
+            .base_mip_level(self.base_mip_level)
+            .level_count(self.level_count)
+            .base_array_layer(self.base_array_layer)
+            .layer_count(self.layer_count)
+    }
+
+    pub fn image_view_create_info(self, image: vk::Image) -> vk::ImageViewCreateInfo<'static> {
+        vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(self.view_type)
+            .format(self.format)
+            .subresource_range(self.subresource_range())
+    }
+}
+
+pub const fn ash_2d_image_view_plan(
+    format: vk::Format,
+    aspect_mask: vk::ImageAspectFlags,
+) -> AshImageViewPlan {
+    AshImageViewPlan {
+        format,
+        aspect_mask,
+        view_type: vk::ImageViewType::TYPE_2D,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
     }
 }
 
@@ -7651,6 +7709,17 @@ mod tests {
         );
         assert_eq!(view_info.subresource_range.level_count, 1);
         assert_eq!(view_info.subresource_range.layer_count, 1);
+        let swapchain_view =
+            ash_2d_image_view_plan(vk::Format::B8G8R8A8_UNORM, vk::ImageAspectFlags::COLOR);
+        let swapchain_view_info = swapchain_view.image_view_create_info(vk::Image::null());
+        assert_eq!(swapchain_view_info.image, vk::Image::null());
+        assert_eq!(swapchain_view_info.format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(
+            swapchain_view_info.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(swapchain_view_info.subresource_range.level_count, 1);
+        assert_eq!(swapchain_view_info.subresource_range.layer_count, 1);
 
         let sampler = AshSamplerPlan {
             mag_filter: vk::Filter::NEAREST,
@@ -7681,6 +7750,20 @@ mod tests {
 
     #[test]
     fn command_buffer_and_render_pass_begin_plans_expose_vk_infos() {
+        let attachments = [vk::ImageView::null(), vk::ImageView::null()];
+        let framebuffer = ash_framebuffer_plan(vk::Extent2D {
+            width: 1280,
+            height: 720,
+        });
+        let framebuffer_info =
+            framebuffer.framebuffer_create_info(vk::RenderPass::null(), &attachments);
+        assert_eq!(framebuffer_info.render_pass, vk::RenderPass::null());
+        assert_eq!(framebuffer_info.attachment_count, 2);
+        assert_eq!(framebuffer_info.p_attachments, attachments.as_ptr());
+        assert_eq!(framebuffer_info.width, 1280);
+        assert_eq!(framebuffer_info.height, 720);
+        assert_eq!(framebuffer_info.layers, 1);
+
         let reusable = ash_reusable_command_buffer_begin_plan();
         assert_eq!(reusable.flags, vk::CommandBufferUsageFlags::empty());
         assert_eq!(
