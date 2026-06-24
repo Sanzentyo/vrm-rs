@@ -1451,6 +1451,24 @@ pub struct AshDrawableFramePlan {
     pub skipped_draws: Vec<AshSkippedDraw>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshDrawableFrameOptions {
+    pub color_clear: [f32; 4],
+    pub depth_stencil_clear: Option<AshDepthStencilClear>,
+}
+
+impl Default for AshDrawableFrameOptions {
+    fn default() -> Self {
+        Self {
+            color_clear: [0.0, 0.0, 0.0, 1.0],
+            depth_stencil_clear: Some(AshDepthStencilClear {
+                depth: 1.0,
+                stencil: 0,
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AshRenderPassPlan {
     pub render_area: vk::Rect2D,
@@ -1464,6 +1482,15 @@ pub struct AshRenderPassPlan {
 pub struct AshDepthStencilClear {
     pub depth: f32,
     pub stencil: u32,
+}
+
+impl Default for AshDepthStencilClear {
+    fn default() -> Self {
+        Self {
+            depth: 1.0,
+            stencil: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2333,6 +2360,18 @@ pub fn ash_drawable_frame_from_renderer_frame(
     frame: &AshRendererFrame,
     extent: vk::Extent2D,
 ) -> AshDrawableFramePlan {
+    ash_drawable_frame_from_renderer_frame_with_options(
+        frame,
+        extent,
+        AshDrawableFrameOptions::default(),
+    )
+}
+
+pub fn ash_drawable_frame_from_renderer_frame_with_options(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+    options: AshDrawableFrameOptions,
+) -> AshDrawableFramePlan {
     let first_pipeline = frame.pipelines.first();
     let mut commands = Vec::new();
     let mut skipped_draws = Vec::new();
@@ -2440,11 +2479,8 @@ pub fn ash_drawable_frame_from_renderer_frame(
                 .map(|pipeline| pipeline.color_format)
                 .unwrap_or(vk::Format::R8G8B8A8_UNORM),
             depth_format: first_pipeline.and_then(|pipeline| pipeline.depth_format),
-            color_clear: [0.0, 0.0, 0.0, 1.0],
-            depth_stencil_clear: Some(AshDepthStencilClear {
-                depth: 1.0,
-                stencil: 0,
-            }),
+            color_clear: options.color_clear,
+            depth_stencil_clear: options.depth_stencil_clear,
         },
         commands,
         skipped_draws,
@@ -6801,6 +6837,35 @@ mod tests {
                 reason: AshSkippedDrawReason::MissingPipeline,
             }]
         );
+    }
+
+    #[test]
+    fn drawable_frame_options_override_clear_values() {
+        let drawable = ash_drawable_frame_from_renderer_frame_with_options(
+            &AshRendererFrame::default(),
+            vk::Extent2D {
+                width: 4,
+                height: 2,
+            },
+            AshDrawableFrameOptions {
+                color_clear: [0.1, 0.2, 0.3, 0.4],
+                depth_stencil_clear: Some(AshDepthStencilClear {
+                    depth: 0.75,
+                    stencil: 2,
+                }),
+            },
+        );
+
+        assert_eq!(drawable.render_pass.color_clear, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(
+            drawable.render_pass.depth_stencil_clear,
+            Some(AshDepthStencilClear {
+                depth: 0.75,
+                stencil: 2,
+            })
+        );
+        assert_eq!(drawable.render_pass.render_area.extent.width, 4);
+        assert_eq!(drawable.render_pass.render_area.extent.height, 2);
     }
 
     #[test]

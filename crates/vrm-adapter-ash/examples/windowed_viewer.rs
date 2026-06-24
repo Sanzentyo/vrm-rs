@@ -28,15 +28,16 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
-    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshDescriptorImageResource,
-    AshDescriptorWriteResource, AshGraphicsPipelinePlan, AshMtoonBufferCacheKey,
-    AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
-    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
-    AshMtoonWindowedCacheStats, AshRenderOptions, AshRendererFrame, AshSamplerPlan,
-    AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
-    AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation, ash_descriptor_pool_plan,
-    ash_descriptor_write_plans, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
-    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshCommandPlan,
+    AshDescriptorImageResource, AshDescriptorWriteResource, AshDrawableFrameOptions,
+    AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
+    AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
+    AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
+    AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions,
+    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation,
+    AshWindowedRunValidation, ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_mtoon_renderer_cache_keys,
+    ash_reference_depth_format, ash_renderer_frame_from_plan_with_owner_sample_selection,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1902,29 +1903,41 @@ impl MtoonWindowedAshRenderer {
         frame: &AshRendererFrame,
         context: MtoonSwapchainDrawContext<'_>,
     ) -> Result<(), Box<dyn Error>> {
+        let drawable = ash_drawable_frame_from_renderer_frame_with_options(
+            frame,
+            context.extent,
+            AshDrawableFrameOptions {
+                color_clear: [0.0, 0.0, 0.0, 0.0],
+                ..Default::default()
+            },
+        );
+        if !drawable.skipped_draws.is_empty() {
+            return Err(format!(
+                "drawable frame has skipped draws: {:?}",
+                drawable.skipped_draws
+            )
+            .into());
+        }
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let depth_clear = drawable.render_pass.depth_stencil_clear.unwrap_or_default();
         let clear_values = [
             vk::ClearValue {
                 color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 0.0],
+                    float32: drawable.render_pass.color_clear,
                 },
             },
             vk::ClearValue {
                 depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
+                    depth: depth_clear.depth,
+                    stencil: depth_clear.stencil,
                 },
             },
         ];
-        let render_area = vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: context.extent,
-        };
         let render_pass_info = vk::RenderPassBeginInfo::default()
             .render_pass(context.render_pass)
             .framebuffer(context.framebuffer)
-            .render_area(render_area)
+            .render_area(drawable.render_pass.render_area)
             .clear_values(&clear_values);
         unsafe {
             self.device
@@ -1936,47 +1949,96 @@ impl MtoonWindowedAshRenderer {
                 &render_pass_info,
                 vk::SubpassContents::INLINE,
             );
-            for draw in &frame.draw_calls {
-                let Some(pipeline_plan_index) = draw.pipeline_plan_index else {
-                    continue;
-                };
-                let Some((pipeline_index, pipeline_plan)) = frame
-                    .pipelines
-                    .iter()
-                    .enumerate()
-                    .find(|(_, pipeline)| pipeline.pipeline_plan_index == pipeline_plan_index)
-                else {
-                    continue;
-                };
-                self.device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    context.pipelines[pipeline_index],
-                );
-                self.device.cmd_bind_vertex_buffers(
-                    command_buffer,
-                    0,
-                    &[context.buffers[draw.vertex_buffer_index].buffer],
-                    &[0],
-                );
-                self.device.cmd_bind_index_buffer(
-                    command_buffer,
-                    context.buffers[draw.index_buffer_index].buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
-                if let Some(descriptor_set_index) = draw.descriptor_set_index {
-                    self.device.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        context.pipeline_layouts[pipeline_plan.descriptor_set_index],
-                        0,
-                        &[context.descriptor_sets[descriptor_set_index]],
-                        &[],
-                    );
+            for command in &drawable.commands {
+                match *command {
+                    AshCommandPlan::BindGraphicsPipeline { pipeline_index } => {
+                        let pipeline = *context
+                            .pipelines
+                            .get(pipeline_index)
+                            .ok_or("drawable command references a missing graphics pipeline")?;
+                        self.device.cmd_bind_pipeline(
+                            command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            pipeline,
+                        );
+                    }
+                    AshCommandPlan::BindDescriptorSet {
+                        pipeline_index,
+                        descriptor_set_index,
+                    } => {
+                        let pipeline = frame
+                            .pipelines
+                            .get(pipeline_index)
+                            .ok_or("drawable command references a missing pipeline plan")?;
+                        let layout = *context
+                            .pipeline_layouts
+                            .get(pipeline.descriptor_set_index)
+                            .ok_or("drawable command references a missing pipeline layout")?;
+                        let descriptor_set = *context
+                            .descriptor_sets
+                            .get(descriptor_set_index)
+                            .ok_or("drawable command references a missing descriptor set")?;
+                        self.device.cmd_bind_descriptor_sets(
+                            command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            layout,
+                            0,
+                            &[descriptor_set],
+                            &[],
+                        );
+                    }
+                    AshCommandPlan::BindVertexBuffer {
+                        buffer_index,
+                        binding,
+                        offset,
+                    } => {
+                        let buffer = context
+                            .buffers
+                            .get(buffer_index)
+                            .ok_or("drawable command references a missing vertex buffer")?
+                            .buffer;
+                        self.device.cmd_bind_vertex_buffers(
+                            command_buffer,
+                            binding,
+                            &[buffer],
+                            &[offset],
+                        );
+                    }
+                    AshCommandPlan::BindIndexBuffer {
+                        buffer_index,
+                        offset,
+                        index_type,
+                    } => {
+                        let buffer = context
+                            .buffers
+                            .get(buffer_index)
+                            .ok_or("drawable command references a missing index buffer")?
+                            .buffer;
+                        self.device.cmd_bind_index_buffer(
+                            command_buffer,
+                            buffer,
+                            offset,
+                            index_type,
+                        );
+                    }
+                    AshCommandPlan::DrawIndexed {
+                        index_count,
+                        instance_count,
+                        first_index,
+                        vertex_offset,
+                        first_instance,
+                        ..
+                    } => {
+                        self.device.cmd_draw_indexed(
+                            command_buffer,
+                            index_count,
+                            instance_count,
+                            first_index,
+                            vertex_offset,
+                            first_instance,
+                        );
+                    }
                 }
-                self.device
-                    .cmd_draw_indexed(command_buffer, draw.index_count, 1, 0, 0, 0);
             }
             self.device.cmd_end_render_pass(command_buffer);
             self.device.end_command_buffer(command_buffer)?;
