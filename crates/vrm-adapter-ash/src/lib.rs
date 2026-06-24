@@ -970,6 +970,28 @@ impl AshSamplerPlan {
     }
 }
 
+pub const ASH_FALLBACK_TEXTURES: [GltfMaterialTextureFallback; 3] = [
+    GltfMaterialTextureFallback::White,
+    GltfMaterialTextureFallback::Black,
+    GltfMaterialTextureFallback::NeutralNormal,
+];
+
+pub const fn ash_fallback_texture_rgba(fallback: GltfMaterialTextureFallback) -> [u8; 4] {
+    match fallback {
+        GltfMaterialTextureFallback::White => [255, 255, 255, 255],
+        GltfMaterialTextureFallback::Black => [0, 0, 0, 255],
+        GltfMaterialTextureFallback::NeutralNormal => [128, 128, 255, 255],
+    }
+}
+
+pub fn ash_fallback_texture_mip_level(fallback: GltfMaterialTextureFallback) -> RgbaMipLevel {
+    RgbaMipLevel {
+        width: 1,
+        height: 1,
+        rgba: ash_fallback_texture_rgba(fallback).to_vec(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshMtoonPipelinePlan {
     pub material: MaterialRef,
@@ -7208,6 +7230,34 @@ mod tests {
     fn ash_sampler_hint_marks_normal_decode() {
         assert!(sampler_plan(MtoonSamplerHint::NormalMapLinearRepeat).normal_map_decode);
         assert!(!sampler_plan(MtoonSamplerHint::LinearRepeat).normal_map_decode);
+    }
+
+    #[test]
+    fn fallback_texture_helpers_expose_stable_rgba_and_order() {
+        assert_eq!(
+            ASH_FALLBACK_TEXTURES,
+            [
+                GltfMaterialTextureFallback::White,
+                GltfMaterialTextureFallback::Black,
+                GltfMaterialTextureFallback::NeutralNormal,
+            ]
+        );
+        assert_eq!(
+            ash_fallback_texture_rgba(GltfMaterialTextureFallback::White),
+            [255, 255, 255, 255]
+        );
+        assert_eq!(
+            ash_fallback_texture_rgba(GltfMaterialTextureFallback::Black),
+            [0, 0, 0, 255]
+        );
+        let normal = ash_fallback_texture_mip_level(GltfMaterialTextureFallback::NeutralNormal);
+        assert_eq!(normal.width, 1);
+        assert_eq!(normal.height, 1);
+        assert_eq!(normal.rgba, vec![128, 128, 255, 255]);
+        assert_eq!(
+            AshSamplerPlan::default().sampler_create_info().max_lod,
+            32.0
+        );
     }
 
     #[test]

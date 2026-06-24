@@ -18,15 +18,16 @@ use vrm_adapter::{
     RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorSetLayoutPlan,
-    AshDescriptorWriteData, AshDescriptorWriteResource, AshDiagnosticOwnerId,
-    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
-    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRenderPassCreationPlan,
-    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
-    AshVrmPrimitive, ash_2d_image_resource_plan, ash_color_attachment_readback_plan,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ASH_FALLBACK_TEXTURES, AshColorAttachmentFinalLayout, AshCommandPlan,
+    AshDescriptorSetLayoutPlan, AshDescriptorWriteData, AshDescriptorWriteResource,
+    AshDiagnosticOwnerId, AshDrawableFrameOptions, AshGraphicsPipelinePlan,
+    AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan,
+    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
+    AshVrmFramePlanOptions, AshVrmPrimitive, ash_2d_image_resource_plan,
+    ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_descriptor_pool_plan,
+    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
     ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
     ash_material_texture_binding, ash_memory_allocation_plan, ash_memory_type_index,
     ash_mtoon_texture_binding, ash_pipeline_layout_plans,
@@ -164,6 +165,16 @@ struct VulkanFallbackBuffers {
     white: VulkanBuffer,
     black: VulkanBuffer,
     neutral_normal: VulkanBuffer,
+}
+
+impl VulkanFallbackBuffers {
+    fn get(&self, fallback: GltfMaterialTextureFallback) -> &VulkanBuffer {
+        match fallback {
+            GltfMaterialTextureFallback::White => &self.white,
+            GltfMaterialTextureFallback::Black => &self.black,
+            GltfMaterialTextureFallback::NeutralNormal => &self.neutral_normal,
+        }
+    }
 }
 
 impl IntoIterator for VulkanFallbackBuffers {
@@ -653,7 +664,8 @@ impl UnsafeAshDeviceRenderer {
         &self,
         fallback: GltfMaterialTextureFallback,
     ) -> Result<VulkanBuffer, Box<dyn Error>> {
-        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, fallback_rgba(fallback))
+        let rgba = ash_fallback_texture_rgba(fallback);
+        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &rgba)
     }
 
     fn create_descriptor_set_layout(
@@ -700,7 +712,7 @@ impl UnsafeAshDeviceRenderer {
                     vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
                 )
             })
-            .map(|binding| self.create_sampler(binding.sampler.unwrap_or(default_sampler_plan())))
+            .map(|binding| self.create_sampler(binding.sampler.unwrap_or_default()))
             .collect()
     }
 
@@ -1013,28 +1025,10 @@ impl UnsafeAshDeviceRenderer {
         {
             self.record_texture_upload(command_buffer, image.image, staging.buffer, mip_levels);
         }
-        for (fallback, image, staging) in [
-            (
-                GltfMaterialTextureFallback::White,
-                &context.fallback_textures.white,
-                &context.fallback_texture_staging.white,
-            ),
-            (
-                GltfMaterialTextureFallback::Black,
-                &context.fallback_textures.black,
-                &context.fallback_texture_staging.black,
-            ),
-            (
-                GltfMaterialTextureFallback::NeutralNormal,
-                &context.fallback_textures.neutral_normal,
-                &context.fallback_texture_staging.neutral_normal,
-            ),
-        ] {
-            let level = [RgbaMipLevel {
-                width: 1,
-                height: 1,
-                rgba: fallback_rgba(fallback).to_vec(),
-            }];
+        for fallback in ASH_FALLBACK_TEXTURES {
+            let image = context.fallback_textures.get(fallback);
+            let staging = context.fallback_texture_staging.get(fallback);
+            let level = [ash_fallback_texture_mip_level(fallback)];
             self.record_texture_upload(command_buffer, image.image, staging.buffer, &level);
         }
     }
@@ -1188,27 +1182,6 @@ impl UnsafeAshDeviceRenderer {
                 self.device.free_memory(buffer.memory, None);
             }
         }
-    }
-}
-
-fn default_sampler_plan() -> AshSamplerPlan {
-    AshSamplerPlan {
-        mag_filter: vk::Filter::LINEAR,
-        min_filter: vk::Filter::LINEAR,
-        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-        address_mode_u: vk::SamplerAddressMode::REPEAT,
-        address_mode_v: vk::SamplerAddressMode::REPEAT,
-        min_lod: 0.0,
-        max_lod: 32.0,
-        normal_map_decode: false,
-    }
-}
-
-fn fallback_rgba(fallback: GltfMaterialTextureFallback) -> &'static [u8; 4] {
-    match fallback {
-        GltfMaterialTextureFallback::White => &[255, 255, 255, 255],
-        GltfMaterialTextureFallback::Black => &[0, 0, 0, 255],
-        GltfMaterialTextureFallback::NeutralNormal => &[128, 128, 255, 255],
     }
 }
 

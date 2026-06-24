@@ -27,9 +27,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
-    ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
-    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout,
-    AshCommandPlan, AshDescriptorSetLayoutPlan, AshDescriptorWriteData, AshDescriptorWriteResource,
+    ASH_FALLBACK_TEXTURES, ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH,
+    ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH, ASH_MTOON_WGSL_FRAGMENT_ENTRY,
+    ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout, AshCommandPlan,
+    AshDescriptorSetLayoutPlan, AshDescriptorWriteData, AshDescriptorWriteResource,
     AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan, AshGraphicsPipelinePlan,
     AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
     AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
@@ -43,9 +44,10 @@ use vrm_adapter_ash::{
     ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
     ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
     ash_drawable_frame_from_renderer_frame_with_options, ash_empty_pipeline_layout_plan,
-    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
-    ash_host_buffer_plan, ash_host_visible_buffer_plan, ash_memory_allocation_plan,
-    ash_memory_type_index, ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
+    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
+    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
+    ash_host_visible_buffer_plan, ash_memory_allocation_plan, ash_memory_type_index,
+    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
     ash_pipeline_layout_plans, ash_position_color_pipeline_state_plan,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
@@ -683,6 +685,16 @@ struct MtoonVulkanFallbackBuffers {
     white: MtoonVulkanBuffer,
     black: MtoonVulkanBuffer,
     neutral_normal: MtoonVulkanBuffer,
+}
+
+impl MtoonVulkanFallbackBuffers {
+    fn get(&self, fallback: GltfMaterialTextureFallback) -> &MtoonVulkanBuffer {
+        match fallback {
+            GltfMaterialTextureFallback::White => &self.white,
+            GltfMaterialTextureFallback::Black => &self.black,
+            GltfMaterialTextureFallback::NeutralNormal => &self.neutral_normal,
+        }
+    }
 }
 
 impl IntoIterator for MtoonVulkanFallbackBuffers {
@@ -1512,7 +1524,8 @@ impl MtoonWindowedAshRenderer {
         &self,
         fallback: GltfMaterialTextureFallback,
     ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
-        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, fallback_rgba(fallback))
+        let rgba = ash_fallback_texture_rgba(fallback);
+        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, &rgba)
     }
 
     fn upload_fallback_textures_once(
@@ -2187,42 +2200,16 @@ fn select_depth_format(
     .map_err(Into::into)
 }
 
-fn fallback_rgba(fallback: GltfMaterialTextureFallback) -> &'static [u8; 4] {
-    match fallback {
-        GltfMaterialTextureFallback::White => &[255, 255, 255, 255],
-        GltfMaterialTextureFallback::Black => &[0, 0, 0, 255],
-        GltfMaterialTextureFallback::NeutralNormal => &[128, 128, 255, 255],
-    }
-}
-
 fn record_mtoon_fallback_texture_uploads(
     device: &ash::Device,
     command_buffer: vk::CommandBuffer,
     textures: &MtoonVulkanFallbackTextures,
     staging: &MtoonVulkanFallbackBuffers,
 ) {
-    for (fallback, image, staging) in [
-        (
-            GltfMaterialTextureFallback::White,
-            &textures.white,
-            &staging.white,
-        ),
-        (
-            GltfMaterialTextureFallback::Black,
-            &textures.black,
-            &staging.black,
-        ),
-        (
-            GltfMaterialTextureFallback::NeutralNormal,
-            &textures.neutral_normal,
-            &staging.neutral_normal,
-        ),
-    ] {
-        let level = [RgbaMipLevel {
-            width: 1,
-            height: 1,
-            rgba: fallback_rgba(fallback).to_vec(),
-        }];
+    for fallback in ASH_FALLBACK_TEXTURES {
+        let image = textures.get(fallback);
+        let staging = staging.get(fallback);
+        let level = [ash_fallback_texture_mip_level(fallback)];
         record_mtoon_texture_upload(device, command_buffer, image.image, staging.buffer, &level);
     }
 }
