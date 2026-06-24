@@ -217,31 +217,49 @@ fn check_file(name: &'static str, path: &Path) -> Check {
 }
 
 fn check_ash_shader_compile(out_dir: &Path) -> Check {
-    match Command::new("cargo")
-        .args([
-            "+nightly",
-            "-Zscript",
-            "tools/ash/compile-ash-mtoon-base-shaders.rs",
-            "--out-dir",
-        ])
-        .arg(out_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            pass("ash_shader_compile", display_path(out_dir))
+    let vertex = out_dir.join("mtoon_base.wgsl.vert.spv");
+    let fragment = out_dir.join("mtoon_base.wgsl.frag.spv");
+    for (entry, stage, output_path) in [
+        ("vs_main", "vertex", &vertex),
+        ("fs_main", "fragment", &fragment),
+    ] {
+        match Command::new("cargo")
+            .args([
+                "+nightly",
+                "-Zscript",
+                "tools/ash/compile-wgsl-to-spirv.rs",
+                "--prelude",
+                "crates/vrm-adapter/src/mtoon_reference.wgsl",
+                "--source",
+                "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
+                "--entry",
+                entry,
+                "--stage",
+                stage,
+                "--out",
+            ])
+            .arg(output_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+        {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                return fail(
+                    "ash_shader_compile",
+                    format!(
+                        "shader compile exited with {}: {}",
+                        output.status,
+                        first_line(&String::from_utf8_lossy(&output.stderr)).unwrap_or("")
+                    ),
+                );
+            }
+            Err(error) => {
+                return fail("ash_shader_compile", format!("failed to run cargo: {error}"));
+            }
         }
-        Ok(output) => fail(
-            "ash_shader_compile",
-            format!(
-                "shader compile exited with {}: {}",
-                output.status,
-                first_line(&String::from_utf8_lossy(&output.stderr)).unwrap_or("")
-            ),
-        ),
-        Err(error) => fail("ash_shader_compile", format!("failed to run cargo: {error}")),
     }
+    pass("ash_shader_compile", display_path(out_dir))
 }
 
 fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {

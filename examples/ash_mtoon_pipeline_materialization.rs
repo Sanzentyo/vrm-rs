@@ -12,7 +12,8 @@ use vrm_adapter::{
     MtoonMaterializationOptions, MtoonRendererMaterialPlan, MtoonRendererPass, MtoonSamplerHint,
     MtoonTextureBindingPlan, MtoonTextureSlot, RENDER_OWNER_SAMPLE_OVERRIDE_BINDING,
     RendererMaterialAlphaMode, RendererMaterialCullMode, RendererMaterialPipelinePlan,
-    mtoon_gpu_combined_image_sampler_binding_number, mtoon_renderer_material_plans,
+    mtoon_gpu_sampler_binding_number, mtoon_gpu_texture_binding_number,
+    mtoon_renderer_material_plans,
 };
 use vrm_core::{
     EmissiveStrength, Feature, Material, MaterialRef, MtoonMaterial, MtoonRenderQueue,
@@ -29,7 +30,8 @@ enum VkShaderStage {
 enum VkDescriptorType {
     UniformBuffer,
     StorageBuffer,
-    CombinedImageSampler,
+    SampledImage,
+    Sampler,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -123,7 +125,8 @@ struct VkSamplerKey {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct VkImageBinding {
-    binding: u32,
+    image_binding: u32,
+    sampler_binding: u32,
     texture: TextureRef,
     sampler: VkSamplerKey,
     slot: MtoonTextureSlot,
@@ -194,12 +197,12 @@ fn vulkan_pipeline_recipe(plan: &MtoonRendererMaterialPlan) -> VkGraphicsPipelin
             blend: vk_blend(primitive.alpha_mode, primitive.blend),
         },
         vertex_shader_spv: match plan.pass {
-            MtoonRendererPass::Base => "shaders/mtoon_base.vert.spv",
-            MtoonRendererPass::Outline => "shaders/mtoon_outline.vert.spv",
+            MtoonRendererPass::Base => "shaders/mtoon_base.wgsl.vert.spv",
+            MtoonRendererPass::Outline => "shaders/mtoon_outline.wgsl.vert.spv",
         },
         fragment_shader_spv: match plan.pass {
-            MtoonRendererPass::Base => "shaders/mtoon_base.frag.spv",
-            MtoonRendererPass::Outline => "shaders/mtoon_outline.frag.spv",
+            MtoonRendererPass::Base => "shaders/mtoon_base.wgsl.frag.spv",
+            MtoonRendererPass::Outline => "shaders/mtoon_outline.wgsl.frag.spv",
         },
         descriptor_set_layout: descriptor_set_layout(&plan.texture_bindings),
         push_constants: VkPushConstants {
@@ -237,17 +240,22 @@ fn descriptor_set_layout(
         stage_flags: VkShaderStage::Fragment,
         slot: None,
     }))
-    .chain(
-        bindings
-            .iter()
-            .enumerate()
-            .map(|(index, binding)| VkDescriptorSetLayoutBinding {
+    .chain(bindings.iter().enumerate().flat_map(|(index, binding)| {
+        [
+            VkDescriptorSetLayoutBinding {
                 binding: texture_binding_number(index),
-                descriptor_type: VkDescriptorType::CombinedImageSampler,
+                descriptor_type: VkDescriptorType::SampledImage,
                 stage_flags: texture_stage_flags(binding.slot),
                 slot: Some(binding.slot),
-            }),
-    )
+            },
+            VkDescriptorSetLayoutBinding {
+                binding: sampler_binding_number(index),
+                descriptor_type: VkDescriptorType::Sampler,
+                stage_flags: texture_stage_flags(binding.slot),
+                slot: Some(binding.slot),
+            },
+        ]
+    }))
     .collect()
 }
 
@@ -256,7 +264,8 @@ fn image_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<VkImageBinding> {
         .iter()
         .enumerate()
         .map(|(index, binding)| VkImageBinding {
-            binding: texture_binding_number(index),
+            image_binding: texture_binding_number(index),
+            sampler_binding: sampler_binding_number(index),
             texture: binding.texture,
             sampler: vk_sampler(binding.sampler),
             slot: binding.slot,
@@ -265,7 +274,11 @@ fn image_bindings(bindings: &[MtoonTextureBindingPlan]) -> Vec<VkImageBinding> {
 }
 
 fn texture_binding_number(index: usize) -> u32 {
-    mtoon_gpu_combined_image_sampler_binding_number(index)
+    mtoon_gpu_texture_binding_number(index)
+}
+
+fn sampler_binding_number(index: usize) -> u32 {
+    mtoon_gpu_sampler_binding_number(index)
 }
 
 fn owner_sample_override_binding() -> u32 {
@@ -414,7 +427,10 @@ mod tests {
         assert_eq!(base.key.blend, VkBlendPreset::AlphaBlend);
         assert_eq!(outline.key.blend, VkBlendPreset::Disabled);
         assert_eq!(base.key.depth_stencil.compare_op, VkCompareOp::LessOrEqual);
-        assert_eq!(outline.vertex_shader_spv, "shaders/mtoon_outline.vert.spv");
+        assert_eq!(
+            outline.vertex_shader_spv,
+            "shaders/mtoon_outline.wgsl.vert.spv"
+        );
     }
 
     #[test]
@@ -445,13 +461,31 @@ mod tests {
             Some(MtoonTextureSlot::Main)
         );
         assert_eq!(
-            base.descriptor_set_layout[7].slot,
-            Some(MtoonTextureSlot::OutlineWidth)
+            base.descriptor_set_layout[2].descriptor_type,
+            VkDescriptorType::SampledImage
         );
         assert_eq!(
-            base.descriptor_set_layout[7].stage_flags,
-            VkShaderStage::VertexFragment
+            base.descriptor_set_layout[3].descriptor_type,
+            VkDescriptorType::Sampler
         );
+        let outline_image = base
+            .descriptor_set_layout
+            .iter()
+            .find(|entry| {
+                entry.slot == Some(MtoonTextureSlot::OutlineWidth)
+                    && entry.descriptor_type == VkDescriptorType::SampledImage
+            })
+            .expect("outline sampled image binding");
+        assert_eq!(outline_image.stage_flags, VkShaderStage::VertexFragment);
+        let outline_sampler = base
+            .descriptor_set_layout
+            .iter()
+            .find(|entry| {
+                entry.slot == Some(MtoonTextureSlot::OutlineWidth)
+                    && entry.descriptor_type == VkDescriptorType::Sampler
+            })
+            .expect("outline sampler binding");
+        assert_eq!(outline_sampler.stage_flags, VkShaderStage::VertexFragment);
         assert_eq!(
             base.descriptor_set_layout
                 .iter()
@@ -461,6 +495,8 @@ mod tests {
         );
         assert_eq!(material.image_bindings[2].slot, MtoonTextureSlot::Normal);
         assert!(material.image_bindings[2].sampler.normal_map_decode);
+        assert_eq!(material.image_bindings[0].image_binding, 1);
+        assert_eq!(material.image_bindings[0].sampler_binding, 2);
     }
 
     #[test]

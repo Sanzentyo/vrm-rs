@@ -24,8 +24,9 @@ use vrm_adapter::{
     RenderOwnerSampleSurfaceOverride, RenderOwnerSurfaceKey, RenderOwnerSurfaceRelation,
     RendererFrontFace, RendererMaterialAlphaMode, RendererMaterialCullMode, ScreenProjectionBounds,
     ScreenProjectionSize, ScreenTriangleProjection, WorldMatrixAccess, WorldTransformUpdate,
-    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_renderer_material_plans,
-    project_triangle_to_screen, renderer_material_pipeline_plan,
+    ZeroToOneDepth, apply_vrma_animation_frame_with_look_at, mtoon_gpu_sampler_binding_number,
+    mtoon_gpu_texture_binding_number, mtoon_renderer_material_plans, project_triangle_to_screen,
+    renderer_material_pipeline_plan,
 };
 use vrm_core::{Feature, MaterialRef, MtoonAlphaMode, NodeRef, TextureRef, VrmAnimation};
 use vrm_io::{
@@ -111,6 +112,9 @@ pub struct AshVrmFramePlanOptions {
     /// Expression weights applied before baking renderer vertices/materials.
     #[arg(long = "expression")]
     pub expressions: Vec<String>,
+    /// Descriptor binding model used by emitted ash material plans.
+    #[arg(long, value_enum, default_value_t = AshDescriptorBindingModel::SeparateImageSampler)]
+    pub descriptor_binding_model: AshDescriptorBindingModel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -137,6 +141,15 @@ pub enum AshNormalMapMode {
     GeneratedTangents,
     Derivative,
     ViewDerivative,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, ValueEnum)]
+pub enum AshDescriptorBindingModel {
+    /// Vulkan combined image sampler bindings, matching the legacy GLSL handoff shaders.
+    CombinedImageSampler,
+    /// Separate sampled-image and sampler bindings, matching WGSL/WebGPU and naga SPIR-V output.
+    #[default]
+    SeparateImageSampler,
 }
 
 impl From<AshMtoonLightAccumulation> for MtoonLightAccumulation {
@@ -200,6 +213,7 @@ impl AshVrmFramePlanOptions {
             disable_normal_maps: self.disable_normal_maps,
             normal_map_mode: self.normal_map_mode,
             normal_map_scale: self.normal_map_scale,
+            descriptor_binding_model: self.descriptor_binding_model,
         }
     }
 }
@@ -212,6 +226,7 @@ pub struct AshRenderOptions {
     pub disable_normal_maps: bool,
     pub normal_map_mode: AshNormalMapMode,
     pub normal_map_scale: f32,
+    pub descriptor_binding_model: AshDescriptorBindingModel,
 }
 
 impl Default for AshRenderOptions {
@@ -223,6 +238,7 @@ impl Default for AshRenderOptions {
             disable_normal_maps: false,
             normal_map_mode: AshNormalMapMode::GeneratedTangents,
             normal_map_scale: 1.0,
+            descriptor_binding_model: AshDescriptorBindingModel::SeparateImageSampler,
         }
     }
 }
@@ -1315,13 +1331,22 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                             binding if binding == ash_mtoon_uniform_binding() => {
                                 pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE
                             }
-                            binding if binding == ash_mtoon_uv_uniform_binding() => {
+                            binding
+                                if binding == ash_mtoon_uv_uniform_binding()
+                                    || binding == ash_mtoon_wgsl_uv_uniform_binding() =>
+                            {
                                 pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE + 1
                             }
-                            binding if binding == ash_mtoon_render_extra_binding() => {
+                            binding
+                                if binding == ash_mtoon_render_extra_binding()
+                                    || binding == ash_mtoon_wgsl_render_extra_binding() =>
+                            {
                                 pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE + 2
                             }
-                            binding if binding == ash_mtoon_scene_binding() => {
+                            binding
+                                if binding == ash_mtoon_scene_binding()
+                                    || binding == ash_mtoon_wgsl_scene_binding() =>
+                            {
                                 scene_uniform_upload_index
                             }
                             _ => pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE,
@@ -2451,6 +2476,7 @@ impl AshVrmFramePlanner {
                 descriptor_bindings: descriptor_bindings(
                     &self.loaded.textures,
                     self.loaded.material_texture_slots(material),
+                    render_options.descriptor_binding_model,
                 ),
                 uniform: gpu.uniform,
                 uv_uniform,
@@ -2538,6 +2564,7 @@ fn ash_gltf_base_pipeline_plan(
         descriptor_bindings: descriptor_bindings(
             &loaded.textures,
             loaded.material_texture_slots(material_index),
+            render_options.descriptor_binding_model,
         ),
         uniform: ash_gltf_base_uniform(shading, renderer_pipeline),
         uv_uniform,
@@ -3209,6 +3236,22 @@ pub const fn ash_mtoon_render_extra_binding() -> u32 {
     11
 }
 
+pub const fn ash_mtoon_wgsl_scene_binding() -> u32 {
+    30
+}
+
+pub const fn ash_mtoon_wgsl_uv_uniform_binding() -> u32 {
+    31
+}
+
+pub const fn ash_mtoon_wgsl_render_extra_binding() -> u32 {
+    32
+}
+
+pub const fn ash_mtoon_wgsl_owner_sample_override_binding() -> u32 {
+    40
+}
+
 pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
     match slot {
         MtoonTextureSlot::Main => 1,
@@ -3219,6 +3262,79 @@ pub const fn ash_mtoon_texture_binding(slot: MtoonTextureSlot) -> u32 {
         MtoonTextureSlot::RimMultiply => 6,
         MtoonTextureSlot::OutlineWidth => 7,
         MtoonTextureSlot::UvAnimationMask => 8,
+    }
+}
+
+pub const fn ash_mtoon_texture_sampler_binding(slot: MtoonTextureSlot) -> u32 {
+    mtoon_gpu_sampler_binding_number(ash_mtoon_texture_slot_index(slot))
+}
+
+pub const fn ash_mtoon_sampled_image_binding(slot: MtoonTextureSlot) -> u32 {
+    mtoon_gpu_texture_binding_number(ash_mtoon_texture_slot_index(slot))
+}
+
+pub const fn ash_material_sampled_image_binding(slot: GltfMaterialTextureSlot) -> u32 {
+    match slot {
+        GltfMaterialTextureSlot::Base => ash_mtoon_sampled_image_binding(MtoonTextureSlot::Main),
+        GltfMaterialTextureSlot::Shade => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::ShadeMultiply)
+        }
+        GltfMaterialTextureSlot::ShadingShift => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::ShadingShift)
+        }
+        GltfMaterialTextureSlot::Normal => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::Normal)
+        }
+        GltfMaterialTextureSlot::Matcap => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::Matcap)
+        }
+        GltfMaterialTextureSlot::Rim => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::RimMultiply)
+        }
+        GltfMaterialTextureSlot::UvAnimationMask => {
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::UvAnimationMask)
+        }
+        GltfMaterialTextureSlot::Emissive => 17,
+        GltfMaterialTextureSlot::Occlusion => 19,
+    }
+}
+
+pub const fn ash_material_sampler_binding(slot: GltfMaterialTextureSlot) -> u32 {
+    match slot {
+        GltfMaterialTextureSlot::Base => ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
+        GltfMaterialTextureSlot::Shade => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::ShadeMultiply)
+        }
+        GltfMaterialTextureSlot::ShadingShift => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::ShadingShift)
+        }
+        GltfMaterialTextureSlot::Normal => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Normal)
+        }
+        GltfMaterialTextureSlot::Matcap => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Matcap)
+        }
+        GltfMaterialTextureSlot::Rim => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::RimMultiply)
+        }
+        GltfMaterialTextureSlot::UvAnimationMask => {
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::UvAnimationMask)
+        }
+        GltfMaterialTextureSlot::Emissive => 18,
+        GltfMaterialTextureSlot::Occlusion => 20,
+    }
+}
+
+const fn ash_mtoon_texture_slot_index(slot: MtoonTextureSlot) -> usize {
+    match slot {
+        MtoonTextureSlot::Main => 0,
+        MtoonTextureSlot::ShadeMultiply => 1,
+        MtoonTextureSlot::ShadingShift => 2,
+        MtoonTextureSlot::Normal => 3,
+        MtoonTextureSlot::Matcap => 4,
+        MtoonTextureSlot::RimMultiply => 5,
+        MtoonTextureSlot::OutlineWidth => 6,
+        MtoonTextureSlot::UvAnimationMask => 7,
     }
 }
 
@@ -3238,8 +3354,10 @@ pub const fn ash_material_texture_binding(slot: GltfMaterialTextureSlot) -> u32 
 
 pub const fn ash_texture_fallback_for_binding(binding: u32) -> Option<GltfMaterialTextureFallback> {
     match binding {
-        1 | 2 | 6 | 7 | 8 | 12 | 13 => Some(GltfMaterialTextureFallback::White),
-        3 | 5 => Some(GltfMaterialTextureFallback::Black),
+        1 | 2 | 6 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 => {
+            Some(GltfMaterialTextureFallback::White)
+        }
+        3 | 5 | 9 | 10 => Some(GltfMaterialTextureFallback::Black),
         4 => Some(GltfMaterialTextureFallback::NeutralNormal),
         _ => None,
     }
@@ -3248,9 +3366,13 @@ pub const fn ash_texture_fallback_for_binding(binding: u32) -> Option<GltfMateri
 fn descriptor_bindings(
     textures: &[GltfTextureData],
     slots: GltfMaterialTextureSlots,
+    binding_model: AshDescriptorBindingModel,
 ) -> Vec<AshDescriptorBindingPlan> {
     let plan = slots.binding_plan();
-    let mut result = Vec::with_capacity(15);
+    let mut result = Vec::with_capacity(match binding_model {
+        AshDescriptorBindingModel::CombinedImageSampler => 15,
+        AshDescriptorBindingModel::SeparateImageSampler => 25,
+    });
     result.push(AshDescriptorBindingPlan {
         binding: ash_mtoon_uniform_binding(),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -3263,28 +3385,24 @@ fn descriptor_bindings(
         ASH_GLTF_TEXTURE_SLOTS_BEFORE_OUTLINE
             .iter()
             .filter_map(|slot| plan.binding(*slot))
-            .map(|binding| descriptor_binding_for_texture(textures, binding)),
+            .flat_map(|binding| descriptor_bindings_for_texture(textures, binding, binding_model)),
     );
-    result.push(AshDescriptorBindingPlan {
-        binding: ash_mtoon_texture_binding(MtoonTextureSlot::OutlineWidth),
-        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        texture: slots.outline_width.map(TextureRef),
-        color_space: GltfMaterialTextureColorSpace::Linear,
-        sampler: Some(sampler_plan_for_texture(
-            textures,
-            slots.outline_width,
-            MtoonSamplerHint::LinearRepeat,
-        )),
-    });
+    result.extend(descriptor_bindings_for_mtoon_texture(
+        textures,
+        MtoonTextureSlot::OutlineWidth,
+        slots.outline_width,
+        GltfMaterialTextureColorSpace::Linear,
+        MtoonSamplerHint::LinearRepeat,
+        binding_model,
+    ));
     result.extend(
         ASH_GLTF_TEXTURE_SLOTS_AFTER_OUTLINE
             .iter()
             .filter_map(|slot| plan.binding(*slot))
-            .map(|binding| descriptor_binding_for_texture(textures, binding)),
+            .flat_map(|binding| descriptor_bindings_for_texture(textures, binding, binding_model)),
     );
     result.push(AshDescriptorBindingPlan {
-        binding: ash_mtoon_scene_binding(),
+        binding: ash_scene_binding_for_model(binding_model),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
         texture: None,
@@ -3292,7 +3410,7 @@ fn descriptor_bindings(
         sampler: None,
     });
     result.push(AshDescriptorBindingPlan {
-        binding: ash_mtoon_uv_uniform_binding(),
+        binding: ash_uv_uniform_binding_for_model(binding_model),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
@@ -3300,7 +3418,7 @@ fn descriptor_bindings(
         sampler: None,
     });
     result.push(AshDescriptorBindingPlan {
-        binding: ash_mtoon_render_extra_binding(),
+        binding: ash_render_extra_binding_for_model(binding_model),
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
@@ -3308,7 +3426,7 @@ fn descriptor_bindings(
         sampler: None,
     });
     result.push(AshDescriptorBindingPlan {
-        binding: ash_owner_sample_override_binding(),
+        binding: ash_owner_sample_override_binding_for_model(binding_model),
         descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         texture: None,
@@ -3316,6 +3434,36 @@ fn descriptor_bindings(
         sampler: None,
     });
     result
+}
+
+const fn ash_scene_binding_for_model(model: AshDescriptorBindingModel) -> u32 {
+    match model {
+        AshDescriptorBindingModel::CombinedImageSampler => ash_mtoon_scene_binding(),
+        AshDescriptorBindingModel::SeparateImageSampler => ash_mtoon_wgsl_scene_binding(),
+    }
+}
+
+const fn ash_uv_uniform_binding_for_model(model: AshDescriptorBindingModel) -> u32 {
+    match model {
+        AshDescriptorBindingModel::CombinedImageSampler => ash_mtoon_uv_uniform_binding(),
+        AshDescriptorBindingModel::SeparateImageSampler => ash_mtoon_wgsl_uv_uniform_binding(),
+    }
+}
+
+const fn ash_render_extra_binding_for_model(model: AshDescriptorBindingModel) -> u32 {
+    match model {
+        AshDescriptorBindingModel::CombinedImageSampler => ash_mtoon_render_extra_binding(),
+        AshDescriptorBindingModel::SeparateImageSampler => ash_mtoon_wgsl_render_extra_binding(),
+    }
+}
+
+const fn ash_owner_sample_override_binding_for_model(model: AshDescriptorBindingModel) -> u32 {
+    match model {
+        AshDescriptorBindingModel::CombinedImageSampler => ash_owner_sample_override_binding(),
+        AshDescriptorBindingModel::SeparateImageSampler => {
+            ash_mtoon_wgsl_owner_sample_override_binding()
+        }
+    }
 }
 
 const ASH_MTOON_UNIFORMS_PER_PIPELINE: usize = 3;
@@ -3335,21 +3483,98 @@ const ASH_GLTF_TEXTURE_SLOTS_AFTER_OUTLINE: [GltfMaterialTextureSlot; 3] = [
     GltfMaterialTextureSlot::UvAnimationMask,
 ];
 
-fn descriptor_binding_for_texture(
+fn descriptor_bindings_for_texture(
     textures: &[GltfTextureData],
     binding: GltfMaterialTextureBinding,
-) -> AshDescriptorBindingPlan {
-    AshDescriptorBindingPlan {
-        binding: ash_material_texture_binding(binding.slot),
-        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        texture: binding.texture.map(TextureRef),
-        color_space: binding.color_space,
-        sampler: Some(sampler_plan_for_texture(
-            textures,
-            binding.texture,
-            sampler_hint_for_material_slot(binding.slot),
-        )),
+    binding_model: AshDescriptorBindingModel,
+) -> Vec<AshDescriptorBindingPlan> {
+    descriptor_bindings_for_texture_slot(
+        textures,
+        binding.slot,
+        binding.texture,
+        binding.color_space,
+        sampler_hint_for_material_slot(binding.slot),
+        binding_model,
+    )
+}
+
+fn descriptor_bindings_for_mtoon_texture(
+    textures: &[GltfTextureData],
+    slot: MtoonTextureSlot,
+    texture: Option<usize>,
+    color_space: GltfMaterialTextureColorSpace,
+    sampler_hint: MtoonSamplerHint,
+    binding_model: AshDescriptorBindingModel,
+) -> Vec<AshDescriptorBindingPlan> {
+    let texture_ref = texture.map(TextureRef);
+    let sampler = Some(sampler_plan_for_texture(textures, texture, sampler_hint));
+    match binding_model {
+        AshDescriptorBindingModel::CombinedImageSampler => vec![AshDescriptorBindingPlan {
+            binding: ash_mtoon_texture_binding(slot),
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            texture: texture_ref,
+            color_space,
+            sampler,
+        }],
+        AshDescriptorBindingModel::SeparateImageSampler => vec![
+            AshDescriptorBindingPlan {
+                binding: ash_mtoon_sampled_image_binding(slot),
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                texture: texture_ref,
+                color_space,
+                sampler: None,
+            },
+            AshDescriptorBindingPlan {
+                binding: ash_mtoon_texture_sampler_binding(slot),
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                texture: None,
+                color_space,
+                sampler,
+            },
+        ],
+    }
+}
+
+fn descriptor_bindings_for_texture_slot(
+    textures: &[GltfTextureData],
+    slot: GltfMaterialTextureSlot,
+    texture: Option<usize>,
+    color_space: GltfMaterialTextureColorSpace,
+    sampler_hint: MtoonSamplerHint,
+    binding_model: AshDescriptorBindingModel,
+) -> Vec<AshDescriptorBindingPlan> {
+    let texture_ref = texture.map(TextureRef);
+    let sampler = Some(sampler_plan_for_texture(textures, texture, sampler_hint));
+    match binding_model {
+        AshDescriptorBindingModel::CombinedImageSampler => vec![AshDescriptorBindingPlan {
+            binding: ash_material_texture_binding(slot),
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            texture: texture_ref,
+            color_space,
+            sampler,
+        }],
+        AshDescriptorBindingModel::SeparateImageSampler => vec![
+            AshDescriptorBindingPlan {
+                binding: ash_material_sampled_image_binding(slot),
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                texture: texture_ref,
+                color_space,
+                sampler: None,
+            },
+            AshDescriptorBindingPlan {
+                binding: ash_material_sampler_binding(slot),
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                texture: None,
+                color_space,
+                sampler,
+            },
+        ],
     }
 }
 
@@ -3686,6 +3911,7 @@ mod tests {
                 occlusion: Some(8),
                 ..Default::default()
             },
+            AshDescriptorBindingModel::CombinedImageSampler,
         );
         assert_eq!(bindings.len(), 15);
         assert_eq!(bindings[0].binding, ash_mtoon_uniform_binding());
@@ -3770,6 +3996,78 @@ mod tests {
             bindings[13]
                 .stage_flags
                 .contains(vk::ShaderStageFlags::FRAGMENT)
+        );
+    }
+
+    #[test]
+    fn descriptor_bindings_can_match_wgsl_texture_sampler_pairs() {
+        let bindings = descriptor_bindings(
+            &[],
+            GltfMaterialTextureSlots {
+                base: Some(0),
+                normal: Some(3),
+                outline_width: Some(6),
+                emissive: Some(7),
+                occlusion: Some(8),
+                uv_animation_mask: Some(9),
+                ..Default::default()
+            },
+            AshDescriptorBindingModel::SeparateImageSampler,
+        );
+        assert_eq!(bindings.len(), 25);
+        assert_eq!(
+            bindings[1].binding,
+            ash_mtoon_sampled_image_binding(MtoonTextureSlot::Main)
+        );
+        assert_eq!(
+            bindings[1].descriptor_type,
+            vk::DescriptorType::SAMPLED_IMAGE
+        );
+        assert_eq!(
+            bindings[2].binding,
+            ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main)
+        );
+        assert_eq!(bindings[2].descriptor_type, vk::DescriptorType::SAMPLER);
+        let normal_sampler = bindings
+            .iter()
+            .find(|binding| {
+                binding.binding == ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Normal)
+            })
+            .expect("normal sampler binding");
+        assert!(normal_sampler.sampler.unwrap().normal_map_decode);
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == ash_mtoon_sampled_image_binding(MtoonTextureSlot::OutlineWidth)
+        }));
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == ash_material_sampled_image_binding(GltfMaterialTextureSlot::Emissive)
+        }));
+        assert!(bindings.iter().any(|binding| {
+            binding.binding
+                == ash_material_sampled_image_binding(GltfMaterialTextureSlot::Occlusion)
+        }));
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == ash_mtoon_sampled_image_binding(MtoonTextureSlot::UvAnimationMask)
+        }));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.binding == ash_mtoon_wgsl_scene_binding())
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.binding == ash_mtoon_wgsl_uv_uniform_binding())
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.binding == ash_mtoon_wgsl_render_extra_binding())
+        );
+        assert_eq!(
+            ash_owner_sample_override_binding_for_model(
+                AshDescriptorBindingModel::SeparateImageSampler
+            ),
+            ash_mtoon_wgsl_owner_sample_override_binding()
         );
     }
 
@@ -4152,6 +4450,7 @@ mod tests {
     fn source_mtoon_shader_matches_rust_binding_contract() {
         let vertex_shader = include_str!("../shaders/mtoon_base.vert.glsl");
         let fragment_shader = include_str!("../shaders/mtoon_base.frag.glsl");
+        let wgsl_shader = include_str!("../shaders/mtoon_base.wgsl");
 
         for (slot, expected_name) in [
             (MtoonTextureSlot::Main, "main_texture"),
@@ -4227,6 +4526,16 @@ mod tests {
         assert!(vertex_shader.contains("gl_PointSize = 1.0;"));
         assert!(vertex_shader.contains("mtoon.flags.z == 1u"));
         assert!(vertex_shader.contains("gl_Position.z += 0.000001 * gl_Position.w"));
+        assert!(wgsl_shader.contains("@group(0) @binding(0)"));
+        assert!(wgsl_shader.contains("@group(0) @binding(1)"));
+        assert!(wgsl_shader.contains("@group(0) @binding(2)"));
+        assert!(wgsl_shader.contains("@group(0) @binding(30)"));
+        assert!(wgsl_shader.contains("@vertex"));
+        assert!(wgsl_shader.contains("fn vs_main"));
+        assert!(wgsl_shader.contains("@fragment"));
+        assert!(wgsl_shader.contains("fn fs_main"));
+        assert!(wgsl_shader.contains("mtoon_lit_shade_rate"));
+        assert!(wgsl_shader.contains("mtoon_mix_shade"));
     }
 
     #[test]
@@ -4273,7 +4582,11 @@ mod tests {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: false,
                 },
-                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+                descriptor_bindings: descriptor_bindings(
+                    &[],
+                    GltfMaterialTextureSlots::default(),
+                    AshDescriptorBindingModel::SeparateImageSampler,
+                ),
                 uniform: MtoonGpuUniform::zeroed(),
                 uv_uniform: AshMaterialUvUniform::default(),
                 render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -4351,28 +4664,31 @@ mod tests {
             renderer_frame.descriptor_sets[0].bindings[0].uniform_upload_index,
             Some(0)
         );
+        let descriptor_binding = |binding_number| {
+            renderer_frame.descriptor_sets[0]
+                .bindings
+                .iter()
+                .find(|binding| binding.binding == binding_number)
+                .expect("descriptor binding")
+        };
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[11].uniform_upload_index,
+            descriptor_binding(ash_mtoon_wgsl_scene_binding()).uniform_upload_index,
             Some(3)
         );
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[12].uniform_upload_index,
+            descriptor_binding(ash_mtoon_wgsl_uv_uniform_binding()).uniform_upload_index,
             Some(1)
         );
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[13].uniform_upload_index,
+            descriptor_binding(ash_mtoon_wgsl_render_extra_binding()).uniform_upload_index,
             Some(2)
         );
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[14].binding,
-            ash_owner_sample_override_binding()
-        );
-        assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[14].descriptor_type,
+            descriptor_binding(ash_mtoon_wgsl_owner_sample_override_binding()).descriptor_type,
             vk::DescriptorType::STORAGE_BUFFER
         );
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[14].buffer_upload_index,
+            descriptor_binding(ash_mtoon_wgsl_owner_sample_override_binding()).buffer_upload_index,
             Some(0)
         );
         assert_eq!(
@@ -4493,7 +4809,11 @@ mod tests {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: false,
                 },
-                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+                descriptor_bindings: descriptor_bindings(
+                    &[],
+                    GltfMaterialTextureSlots::default(),
+                    AshDescriptorBindingModel::SeparateImageSampler,
+                ),
                 uniform: MtoonGpuUniform::zeroed(),
                 uv_uniform: AshMaterialUvUniform::default(),
                 render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -4526,9 +4846,9 @@ mod tests {
             .descriptor_sets
             .first()
             .and_then(|set| {
-                set.bindings
-                    .iter()
-                    .find(|binding| binding.binding == ash_owner_sample_override_binding())
+                set.bindings.iter().find(|binding| {
+                    binding.binding == ash_mtoon_wgsl_owner_sample_override_binding()
+                })
             })
             .unwrap();
         let buffer_index = binding.buffer_upload_index.unwrap();
@@ -4635,7 +4955,11 @@ mod tests {
                     depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                     blend_enable: false,
                 },
-                descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+                descriptor_bindings: descriptor_bindings(
+                    &[],
+                    GltfMaterialTextureSlots::default(),
+                    AshDescriptorBindingModel::SeparateImageSampler,
+                ),
                 uniform: MtoonGpuUniform::zeroed(),
                 uv_uniform: AshMaterialUvUniform::default(),
                 render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -4734,7 +5058,11 @@ mod tests {
                 depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                 blend_enable: false,
             },
-            descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+            descriptor_bindings: descriptor_bindings(
+                &[],
+                GltfMaterialTextureSlots::default(),
+                AshDescriptorBindingModel::SeparateImageSampler,
+            ),
             uniform: MtoonGpuUniform::zeroed(),
             uv_uniform: AshMaterialUvUniform::default(),
             render_extra_uniform: AshMaterialExtraUniform::default(),
@@ -4846,7 +5174,11 @@ mod tests {
                 depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
                 blend_enable: false,
             },
-            descriptor_bindings: descriptor_bindings(&[], GltfMaterialTextureSlots::default()),
+            descriptor_bindings: descriptor_bindings(
+                &[],
+                GltfMaterialTextureSlots::default(),
+                AshDescriptorBindingModel::SeparateImageSampler,
+            ),
             uniform: MtoonGpuUniform::zeroed(),
             uv_uniform: AshMaterialUvUniform::default(),
             render_extra_uniform: AshMaterialExtraUniform::default(),

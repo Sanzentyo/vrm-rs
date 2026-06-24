@@ -601,23 +601,24 @@ For the current source-controlled Ash MToon base shader handoff, run:
 just ash-mtoon-base-readback
 ```
 
-This compiles `crates/vrm-adapter-ash/shaders/mtoon_base.{vert,frag}.glsl`
-with `glslangValidator`, writes local SPIR-V under `target/`, feeds those
-modules into `unsafe_device_renderer --vertex-spv --fragment-spv`, and verifies
-the direct `.imqraw` bundle against the `.rgba.json` readback artifact. The
-shader now consumes the shared MToon uniform ABI, fixed texture slots,
-normal/tangent vertex attributes, UV animation, shade/shading-shift textures,
-alpha mode, outline-pass flag, and a frame-level scene uniform for
-view-projection, camera position, light direction/color, and MToon lighting
-accumulation. It also exposes the same packed material-extra and UV-transform
-uniform surfaces used by the wgpu and Bevy captures, so transformed base, shade,
-shading-shift, normal, matcap, rim, and UV-animation-mask sampling can be driven
-through the same IO-derived plans. The fragment shader also uses the closer
-capture-side MToon accumulation shape: linear-to-SRGB output correction,
-view-space matcap UVs, glTF emissive texture multiplication, PBR/MToon ambient
-occlusion sampling, unlit and PBR fallback branches, v0-compatible direct light
-clamping, rim plus matcap composition, and render-extra direct-light scaling. It
-now also emits expanded outline primitives through the same renderer-neutral
+This compiles `crates/vrm-adapter-ash/shaders/mtoon_base.wgsl` with naga,
+writes local Vulkan SPIR-V under `target/`, feeds those modules into
+`unsafe_device_renderer --descriptor-binding-model separate-image-sampler
+--vertex-spv --fragment-spv --vertex-entry vs_main --fragment-entry fs_main`,
+and verifies the direct `.imqraw` bundle against the `.rgba.json` readback
+artifact. The shader consumes the shared MToon uniform ABI, WGSL-style separate
+texture/sampler bindings, normal/tangent vertex attributes, UV animation, the
+main texture slot, and a frame-level scene uniform for view-projection, light
+direction/color, and MToon lighting accumulation. The older GLSL shader handoff
+is still available through `just ash-mtoon-glsl-base-readback` for explicit
+legacy combined-image-sampler checks. The Ash renderer frame still emits the
+same packed material-extra and UV-transform uniform surfaces used by the wgpu
+and Bevy captures, so the next WGSL expansion can move transformed shade,
+shading-shift, normal, matcap, rim, emissive, occlusion, and UV-animation-mask
+sampling into the shared shader path without changing IO-derived material plans.
+The fragment shader also uses the shared MToon helper functions for shade-rate
+evaluation, shade mixing, and emissive color. The renderer still emits expanded
+outline primitives through the same renderer-neutral
 outline helper used by the wgpu and Bevy captures, routes those draws to the
 outline pipeline rather than the base pipeline, and materializes concrete
 glTF-only/PBR base pipelines for non-MToon materials. It is still not the final

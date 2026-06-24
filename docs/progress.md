@@ -2,6 +2,24 @@
 
 ## 2026-06-23
 
+- Moved the ash MToon shader handoff toward shared WGSL. `AshVrmFramePlanOptions`
+  now exposes `--descriptor-binding-model` and defaults to
+  `separate-image-sampler`, so emitted Vulkan descriptor plans can match WGSL's
+  separate `texture_2d` / `sampler` binding model instead of requiring combined
+  image samplers. Ash-specific scene, UV, render-extra, and owner/sample storage
+  bindings move to the 30/40 range in this WGSL model to avoid collisions with
+  the wgpu-style texture/sampler pairs. The unsafe ash example can now update
+  `SAMPLED_IMAGE` and `SAMPLER` descriptors separately and accepts distinct
+  vertex/fragment entry point names for naga output. `just ash-mtoon-base-readback`
+  now compiles `crates/vrm-adapter-ash/shaders/mtoon_base.wgsl` through naga,
+  runs it through the real Vulkan offscreen renderer with separate descriptors,
+  and verifies the resulting `.imqraw` artifact; the local Seed-san smoke
+  produced a real readback checksum with `external-spirv` shaders. The legacy
+  GLSL route remains available as `just ash-mtoon-glsl-base-readback` while the
+  default path moves toward wgpu/Bevy/Ash WGSL shader convergence. Vulkan
+  performance risk is expected to be low: separate image/sampler descriptors are
+  native Vulkan resources, descriptor count rises modestly, and sampler reuse is
+  at least as explicit as the combined-image-sampler path.
 - Added a naga-based WGSL-to-Vulkan-SPIR-V probe for the ash MToon shader path.
   `tools/ash/compile-wgsl-to-spirv.rs` compiles WGSL entry points with
   `naga 29.0.3`, validates the generated SPIR-V header, and can print entry

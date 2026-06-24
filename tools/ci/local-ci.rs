@@ -624,18 +624,42 @@ fn run_example_smokes() -> Result<(), String> {
             "target/ash-artifact-self-test/ash-self-test.frame000.imqraw",
         ],
     )?;
-    if program_is_available("glslangValidator") {
-        run_cmd(
-            "cargo",
-            [
-                "+nightly",
-                "-Zscript",
-                "tools/ash/compile-ash-mtoon-base-shaders.rs",
-            ],
-        )?;
-    } else {
-        println!("skipping ash MToon base shader compile: glslangValidator is not on PATH");
-    }
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
+            "tools/ash/compile-wgsl-to-spirv.rs",
+            "--prelude",
+            "crates/vrm-adapter/src/mtoon_reference.wgsl",
+            "--source",
+            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
+            "--entry",
+            "vs_main",
+            "--stage",
+            "vertex",
+            "--out",
+            "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.vert.spv",
+        ],
+    )?;
+    run_cmd(
+        "cargo",
+        [
+            "+nightly",
+            "-Zscript",
+            "tools/ash/compile-wgsl-to-spirv.rs",
+            "--prelude",
+            "crates/vrm-adapter/src/mtoon_reference.wgsl",
+            "--source",
+            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
+            "--entry",
+            "fs_main",
+            "--stage",
+            "fragment",
+            "--out",
+            "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv",
+        ],
+    )?;
     Ok(())
 }
 
@@ -903,6 +927,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
 
 const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/ash/compile-ash-mtoon-base-shaders.rs",
+    "tools/ash/compile-wgsl-to-spirv.rs",
     "tools/render-parity/apply-owner-sample-correction.rs",
     "tools/render-parity/audit-goal-readiness.rs",
     "tools/render-parity/audit-center-owner-misses.rs",
@@ -1095,22 +1120,40 @@ fn render_comparison_renderers(options: &Options) -> Vec<RenderComparisonRendere
 struct AshMtoonShaderPaths {
     vertex_spv: PathBuf,
     fragment_spv: PathBuf,
+    vertex_entry: &'static str,
+    fragment_entry: &'static str,
 }
 
 fn compile_ash_mtoon_base_shaders(options: &Options) -> Result<AshMtoonShaderPaths, String> {
     let out_dir = options.render_parity_dir.join("ash-shaders");
-    let mut command = Command::new("cargo");
-    command.args([
-        "+nightly",
-        "-Zscript",
-        "tools/ash/compile-ash-mtoon-base-shaders.rs",
-        "--out-dir",
-        path(&out_dir).as_str(),
-    ]);
-    run_command(command)?;
+    let vertex_spv = out_dir.join("mtoon_base.wgsl.vert.spv");
+    let fragment_spv = out_dir.join("mtoon_base.wgsl.frag.spv");
+    for (entry, stage, out) in [
+        ("vs_main", "vertex", &vertex_spv),
+        ("fs_main", "fragment", &fragment_spv),
+    ] {
+        let mut command = Command::new("cargo");
+        command.args([
+            "+nightly",
+            "-Zscript",
+            "tools/ash/compile-wgsl-to-spirv.rs",
+            "--prelude",
+            "crates/vrm-adapter/src/mtoon_reference.wgsl",
+            "--source",
+            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
+            "--entry",
+            entry,
+            "--stage",
+            stage,
+        ]);
+        command.arg("--out").arg(path(out));
+        run_command(command)?;
+    }
     Ok(AshMtoonShaderPaths {
-        vertex_spv: out_dir.join("mtoon_base.vert.spv"),
-        fragment_spv: out_dir.join("mtoon_base.frag.spv"),
+        vertex_spv,
+        fragment_spv,
+        vertex_entry: "vs_main",
+        fragment_entry: "fs_main",
     })
 }
 
@@ -1761,6 +1804,8 @@ fn capture_ash_readback(
         .arg(options.render_mtoon_light_accumulation.as_cli_value())
         .arg("--diagnostic-render")
         .arg(options.render_diagnostic_mode.as_cli_value())
+        .arg("--descriptor-binding-model")
+        .arg("separate-image-sampler")
         .arg("--clear-alpha")
         .arg(render_clear_alpha(options).to_string())
         .arg("--out")
@@ -1770,7 +1815,11 @@ fn capture_ash_readback(
         .arg("--vertex-spv")
         .arg(path(&shaders.vertex_spv))
         .arg("--fragment-spv")
-        .arg(path(&shaders.fragment_spv));
+        .arg(path(&shaders.fragment_spv))
+        .arg("--vertex-entry")
+        .arg(shaders.vertex_entry)
+        .arg("--fragment-entry")
+        .arg(shaders.fragment_entry);
     if options.render_disable_outlines {
         command.arg("--disable-outlines");
     }

@@ -69,8 +69,8 @@ struct Options {
     apply_owner_sample_readback_replacement: bool,
     /// Optional precompiled SPIR-V vertex shader for the offscreen graphics pipelines.
     ///
-    /// The shader must use entry point `main` and match the example vertex input
-    /// plus descriptor-set layout emitted from `AshRendererFrame`.
+    /// The shader must match the example vertex input plus descriptor-set layout
+    /// emitted from `AshRendererFrame`.
     #[arg(long, requires = "fragment_spv")]
     vertex_spv: Option<PathBuf>,
     /// Optional precompiled SPIR-V fragment shader for the offscreen graphics pipelines.
@@ -79,6 +79,12 @@ struct Options {
     /// shader without committing shader binaries to this repository.
     #[arg(long, requires = "vertex_spv")]
     fragment_spv: Option<PathBuf>,
+    /// Entry point name for `--vertex-spv`.
+    #[arg(long, default_value = "main")]
+    vertex_entry: String,
+    /// Entry point name for `--fragment-spv`.
+    #[arg(long, default_value = "main")]
+    fragment_entry: String,
 }
 
 struct VulkanFrameResources {
@@ -163,7 +169,8 @@ struct PipelineBuildContext<'a> {
     vertex_shader: vk::ShaderModule,
     fragment_shader: vk::ShaderModule,
     pipeline_layouts: &'a [vk::PipelineLayout],
-    entry_point: &'a CString,
+    vertex_entry_point: &'a CString,
+    fragment_entry_point: &'a CString,
 }
 
 struct CommandRecordContext<'a> {
@@ -234,6 +241,8 @@ impl ReadbackFrame {
 struct ShaderModuleSources {
     vertex: Vec<u32>,
     fragment: Vec<u32>,
+    vertex_entry: String,
+    fragment_entry: String,
     source: ShaderSourceKind,
 }
 
@@ -469,14 +478,16 @@ impl UnsafeAshDeviceRenderer {
         let vertex_shader = self.create_shader_module(&shaders.vertex)?;
         let fragment_shader = self.create_shader_module(&shaders.fragment)?;
         let shader_modules = vec![vertex_shader, fragment_shader];
-        let entry_point = CString::new("main")?;
+        let vertex_entry_point = CString::new(shaders.vertex_entry.as_str())?;
+        let fragment_entry_point = CString::new(shaders.fragment_entry.as_str())?;
         let pipeline_context = PipelineBuildContext {
             render_pass,
             extent,
             vertex_shader,
             fragment_shader,
             pipeline_layouts: &pipeline_layouts,
-            entry_point: &entry_point,
+            vertex_entry_point: &vertex_entry_point,
+            fragment_entry_point: &fragment_entry_point,
         };
         let pipelines = self.create_graphics_pipelines(frame, &pipeline_context)?;
         let command_context = CommandRecordContext {
@@ -698,7 +709,19 @@ impl UnsafeAshDeviceRenderer {
             .descriptor_sets
             .iter()
             .flat_map(|set| &set.bindings)
-            .filter(|binding| binding.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .filter(|binding| {
+                matches!(
+                    binding.descriptor_type,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                )
+            })
+            .count()
+            .max(1) as u32;
+        let sampled_image_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::SAMPLED_IMAGE)
             .count()
             .max(1) as u32;
         let storage_count = frame
@@ -715,6 +738,14 @@ impl UnsafeAshDeviceRenderer {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: sampled_image_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
                 descriptor_count: sampler_count,
             },
             vk::DescriptorPoolSize {
@@ -744,7 +775,12 @@ impl UnsafeAshDeviceRenderer {
             .descriptor_sets
             .iter()
             .flat_map(|set| &set.bindings)
-            .filter(|binding| binding.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .filter(|binding| {
+                matches!(
+                    binding.descriptor_type,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                )
+            })
             .map(|binding| self.create_sampler(binding.sampler.unwrap_or(default_sampler_plan())))
             .collect()
     }
@@ -815,6 +851,43 @@ impl UnsafeAshDeviceRenderer {
                             .dst_set(descriptor_set)
                             .dst_binding(binding.binding)
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::SAMPLED_IMAGE => {
+                        let image = binding
+                            .texture_upload_index
+                            .and_then(|index| resources.images.get(index))
+                            .unwrap_or_else(|| {
+                                let fallback = ash_texture_fallback_for_binding(binding.binding)
+                                    .unwrap_or(GltfMaterialTextureFallback::White);
+                                resources.fallback_textures.get(fallback)
+                            });
+                        let image_info = [vk::DescriptorImageInfo::default()
+                            .image_view(image.view)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::SAMPLER => {
+                        let sampler = *resources
+                            .samplers
+                            .get(sampler_index)
+                            .ok_or("descriptor set references a missing sampler")?;
+                        sampler_index += 1;
+                        let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::SAMPLER)
                             .image_info(&image_info)];
                         unsafe {
                             self.device.update_descriptor_sets(&write, &[]);
@@ -952,11 +1025,11 @@ impl UnsafeAshDeviceRenderer {
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
                 .module(context.vertex_shader)
-                .name(context.entry_point),
+                .name(context.vertex_entry_point),
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(context.fragment_shader)
-                .name(context.entry_point),
+                .name(context.fragment_entry_point),
         ];
         let layout = context.pipeline_layouts[pipeline.descriptor_set_index];
         let vertex_binding = [vk::VertexInputBindingDescription {
@@ -1450,11 +1523,15 @@ fn shader_sources_from_options(options: &Options) -> Result<ShaderModuleSources,
         (Some(vertex), Some(fragment)) => Ok(ShaderModuleSources {
             vertex: read_spirv_words(vertex)?,
             fragment: read_spirv_words(fragment)?,
+            vertex_entry: options.vertex_entry.clone(),
+            fragment_entry: options.fragment_entry.clone(),
             source: ShaderSourceKind::ExternalSpirv,
         }),
         (None, None) => Ok(ShaderModuleSources {
             vertex: MINIMAL_VERTEX_SPV.to_vec(),
             fragment: MINIMAL_FRAGMENT_SPV.to_vec(),
+            vertex_entry: "main".to_owned(),
+            fragment_entry: "main".to_owned(),
             source: ShaderSourceKind::BuiltInSmoke,
         }),
         _ => Err("--vertex-spv and --fragment-spv must be provided together".into()),
