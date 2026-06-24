@@ -344,6 +344,66 @@ impl AshWindowedRunValidation {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedFrameSyncPlan {
+    pub frames_in_flight: usize,
+    pub swapchain_images: usize,
+}
+
+impl AshWindowedFrameSyncPlan {
+    pub fn new(frames_in_flight: usize, swapchain_images: usize) -> Result<Self, String> {
+        if frames_in_flight == 0 {
+            return Err("frames_in_flight must be at least 1".to_owned());
+        }
+        if swapchain_images == 0 {
+            return Err("swapchain_images must be at least 1".to_owned());
+        }
+        Ok(Self {
+            frames_in_flight,
+            swapchain_images,
+        })
+    }
+
+    pub const fn semaphore_count(self) -> usize {
+        self.frames_in_flight * 2
+    }
+
+    pub const fn fence_count(self) -> usize {
+        self.frames_in_flight
+    }
+
+    pub const fn image_fence_slots(self) -> usize {
+        self.swapchain_images
+    }
+
+    pub fn frame_slot(self, current_frame: usize) -> Result<usize, String> {
+        if current_frame >= self.frames_in_flight {
+            return Err(format!(
+                "current_frame {current_frame} is outside frames_in_flight {}",
+                self.frames_in_flight
+            ));
+        }
+        Ok(current_frame)
+    }
+
+    pub fn next_frame_index(self, current_frame: usize) -> Result<usize, String> {
+        let slot = self.frame_slot(current_frame)?;
+        Ok((slot + 1) % self.frames_in_flight)
+    }
+
+    pub fn image_index_to_slot(self, image_index: u32) -> Result<usize, String> {
+        let slot = usize::try_from(image_index)
+            .map_err(|_| format!("swapchain image index {image_index} does not fit usize"))?;
+        if slot >= self.swapchain_images {
+            return Err(format!(
+                "swapchain image index {slot} is outside swapchain_images {}",
+                self.swapchain_images
+            ));
+        }
+        Ok(slot)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AshWindowedResizeValidation {
     pub resize_after_frames: Option<u64>,
@@ -1152,6 +1212,43 @@ pub struct AshTextureResourcePlan {
     pub image_usage: vk::ImageUsageFlags,
     pub image_layout_after_upload: vk::ImageLayout,
     pub aspect_mask: vk::ImageAspectFlags,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshDepthAttachmentPlan {
+    pub format: vk::Format,
+    pub extent: vk::Extent3D,
+    pub image_usage: vk::ImageUsageFlags,
+    pub aspect_mask: vk::ImageAspectFlags,
+    pub final_layout: vk::ImageLayout,
+}
+
+pub fn ash_depth_aspect_mask(format: vk::Format) -> vk::ImageAspectFlags {
+    match format {
+        vk::Format::D16_UNORM_S8_UINT
+        | vk::Format::D24_UNORM_S8_UINT
+        | vk::Format::D32_SFLOAT_S8_UINT => {
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        }
+        _ => vk::ImageAspectFlags::DEPTH,
+    }
+}
+
+pub fn ash_depth_attachment_plan(
+    format: vk::Format,
+    extent: vk::Extent2D,
+) -> AshDepthAttachmentPlan {
+    AshDepthAttachmentPlan {
+        format,
+        extent: vk::Extent3D {
+            width: extent.width,
+            height: extent.height,
+            depth: 1,
+        },
+        image_usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        aspect_mask: ash_depth_aspect_mask(format),
+        final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -5853,6 +5950,75 @@ mod tests {
             }
             .validate()
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn windowed_frame_sync_plan_counts_and_slots_are_stable() {
+        let plan = AshWindowedFrameSyncPlan::new(2, 3).unwrap();
+
+        assert_eq!(plan.semaphore_count(), 4);
+        assert_eq!(plan.fence_count(), 2);
+        assert_eq!(plan.image_fence_slots(), 3);
+        assert_eq!(plan.frame_slot(1), Ok(1));
+        assert_eq!(plan.next_frame_index(0), Ok(1));
+        assert_eq!(plan.next_frame_index(1), Ok(0));
+        assert_eq!(plan.image_index_to_slot(2), Ok(2));
+    }
+
+    #[test]
+    fn windowed_frame_sync_plan_rejects_invalid_counts_and_indices() {
+        assert_eq!(
+            AshWindowedFrameSyncPlan::new(0, 3),
+            Err("frames_in_flight must be at least 1".to_owned())
+        );
+        assert_eq!(
+            AshWindowedFrameSyncPlan::new(2, 0),
+            Err("swapchain_images must be at least 1".to_owned())
+        );
+        let plan = AshWindowedFrameSyncPlan::new(2, 3).unwrap();
+        assert_eq!(
+            plan.frame_slot(2),
+            Err("current_frame 2 is outside frames_in_flight 2".to_owned())
+        );
+        assert_eq!(
+            plan.image_index_to_slot(3),
+            Err("swapchain image index 3 is outside swapchain_images 3".to_owned())
+        );
+    }
+
+    #[test]
+    fn depth_attachment_plan_exposes_engine_owned_image_contract() {
+        let extent = vk::Extent2D {
+            width: 1280,
+            height: 720,
+        };
+        let plan = ash_depth_attachment_plan(vk::Format::D24_UNORM_S8_UINT, extent);
+
+        assert_eq!(plan.format, vk::Format::D24_UNORM_S8_UINT);
+        assert_eq!(
+            plan.extent,
+            vk::Extent3D {
+                width: 1280,
+                height: 720,
+                depth: 1
+            }
+        );
+        assert_eq!(
+            plan.image_usage,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+        );
+        assert_eq!(
+            plan.aspect_mask,
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        );
+        assert_eq!(
+            plan.final_layout,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        );
+        assert_eq!(
+            ash_depth_attachment_plan(vk::Format::D32_SFLOAT, extent).aspect_mask,
+            vk::ImageAspectFlags::DEPTH
         );
     }
 

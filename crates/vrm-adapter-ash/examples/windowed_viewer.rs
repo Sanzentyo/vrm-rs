@@ -34,9 +34,10 @@ use vrm_adapter_ash::{
     AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
     AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
     AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
-    AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation, ash_descriptor_pool_plan,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
+    AshVrmVertex, AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_graphics_pipeline_state_plan,
+    ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
 };
 
@@ -842,8 +843,10 @@ impl MtoonWindowedAshRenderer {
             },
             window,
         )?;
-        let frame_sync = create_mtoon_frame_sync(&device, frames_in_flight)?;
-        let images_in_flight = vec![vk::Fence::null(); swapchain.image_views.len()];
+        let sync_plan =
+            AshWindowedFrameSyncPlan::new(frames_in_flight, swapchain.image_views.len())?;
+        let frame_sync = create_mtoon_frame_sync(&device, sync_plan)?;
+        let images_in_flight = vec![vk::Fence::null(); sync_plan.image_fence_slots()];
         Ok(Self {
             _entry: entry,
             instance,
@@ -901,9 +904,12 @@ impl MtoonWindowedAshRenderer {
         if window.inner_size().width == 0 || window.inner_size().height == 0 {
             return Ok(RenderStatus::Ok);
         }
+        let sync_plan =
+            AshWindowedFrameSyncPlan::new(self.frame_sync.len(), self.swapchain.image_views.len())?;
+        let current_frame = sync_plan.frame_slot(self.current_frame)?;
         let sync = self
             .frame_sync
-            .get(self.current_frame)
+            .get(current_frame)
             .ok_or("ash windowed mtoon renderer has no frame sync object")?;
         let image_available = sync.image_available;
         let render_finished = sync.render_finished;
@@ -924,7 +930,7 @@ impl MtoonWindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
             Err(error) => return Err(error.into()),
         };
-        let image_index = image_index as usize;
+        let image_index = sync_plan.image_index_to_slot(image_index)?;
         let image_fence = *self
             .images_in_flight
             .get(image_index)
@@ -968,7 +974,7 @@ impl MtoonWindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
             Err(error) => Err(error.into()),
         };
-        self.current_frame = (self.current_frame + 1) % self.frame_sync.len();
+        self.current_frame = sync_plan.next_frame_index(self.current_frame)?;
         status
     }
 
@@ -1005,7 +1011,9 @@ impl MtoonWindowedAshRenderer {
         );
         destroy_swapchain_handle(&self.swapchain_loader, old_swapchain);
         self.swapchain = new_swapchain?;
-        self.images_in_flight = vec![vk::Fence::null(); self.swapchain.image_views.len()];
+        let sync_plan =
+            AshWindowedFrameSyncPlan::new(self.frame_sync.len(), self.swapchain.image_views.len())?;
+        self.images_in_flight = vec![vk::Fence::null(); sync_plan.image_fence_slots()];
         Ok(())
     }
 
@@ -2251,15 +2259,12 @@ fn create_mtoon_swapchain_shell(
         device: context.device,
         memory_properties: context.memory_properties,
     };
+    let depth_plan = ash_depth_attachment_plan(context.depth_format, support.extent);
     let depth = memory.create_image(
-        context.depth_format,
-        vk::Extent3D {
-            width: support.extent.width,
-            height: support.extent.height,
-            depth: 1,
-        },
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        depth_aspect_mask(context.depth_format),
+        depth_plan.format,
+        depth_plan.extent,
+        depth_plan.image_usage,
+        depth_plan.aspect_mask,
     )?;
     let render_pass =
         create_render_pass(context.device, support.format.format, context.depth_format)?;
@@ -2415,15 +2420,6 @@ fn record_mtoon_fallback_texture_uploads(
             rgba: fallback_rgba(fallback).to_vec(),
         }];
         record_mtoon_texture_upload(device, command_buffer, image.image, staging.buffer, &level);
-    }
-}
-
-fn depth_aspect_mask(format: vk::Format) -> vk::ImageAspectFlags {
-    match format {
-        vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT => {
-            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
-        }
-        _ => vk::ImageAspectFlags::DEPTH,
     }
 }
 
@@ -2859,15 +2855,12 @@ fn create_swapchain_resources(
         device: context.device,
         memory_properties: context.memory_properties,
     };
+    let depth_plan = ash_depth_attachment_plan(context.depth_format, support.extent);
     let depth = memory.create_image(
-        context.depth_format,
-        vk::Extent3D {
-            width: support.extent.width,
-            height: support.extent.height,
-            depth: 1,
-        },
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        depth_aspect_mask(context.depth_format),
+        depth_plan.format,
+        depth_plan.extent,
+        depth_plan.image_usage,
+        depth_plan.aspect_mask,
     )?;
     let render_pass =
         create_render_pass(context.device, support.format.format, context.depth_format)?;
@@ -3173,10 +3166,10 @@ fn create_shader_module(
 
 fn create_mtoon_frame_sync(
     device: &ash::Device,
-    frames_in_flight: usize,
+    plan: AshWindowedFrameSyncPlan,
 ) -> Result<Vec<MtoonFrameSync>, vk::Result> {
-    let mut sync_objects = Vec::with_capacity(frames_in_flight);
-    for _ in 0..frames_in_flight {
+    let mut sync_objects = Vec::with_capacity(plan.fence_count());
+    for _ in 0..plan.fence_count() {
         let image_available =
             match unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
                 Ok(semaphore) => semaphore,

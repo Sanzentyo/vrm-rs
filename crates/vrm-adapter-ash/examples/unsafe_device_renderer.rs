@@ -21,10 +21,11 @@ use vrm_adapter_ash::{
     AshCommandPlan, AshDescriptorImageResource, AshDescriptorWriteResource, AshDiagnosticOwnerId,
     AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
     AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRendererFrame,
-    AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_descriptor_pool_plan,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
-    ash_reference_depth_format, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_depth_attachment_plan,
+    ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_graphics_pipeline_state_plan,
+    ash_material_texture_binding, ash_mtoon_texture_binding, ash_reference_depth_format,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -429,6 +430,7 @@ impl UnsafeAshDeviceRenderer {
             .collect::<Result<Vec<_>, _>>()?;
         let color_format = vk::Format::R8G8B8A8_UNORM;
         let depth_format = self.select_depth_format()?;
+        let depth_plan = ash_depth_attachment_plan(depth_format, extent);
         let color_target = self.create_image(
             color_format,
             vk::Extent3D {
@@ -441,15 +443,11 @@ impl UnsafeAshDeviceRenderer {
             vk::ImageAspectFlags::COLOR,
         )?;
         let depth_target = self.create_image(
-            depth_format,
-            vk::Extent3D {
-                width: extent.width,
-                height: extent.height,
-                depth: 1,
-            },
+            depth_plan.format,
+            depth_plan.extent,
             1,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            depth_aspect_mask(depth_format),
+            depth_plan.image_usage,
+            depth_plan.aspect_mask,
         )?;
         let readback_len = extent.width as usize * extent.height as usize * 4;
         let readback = self.create_host_buffer(
@@ -2057,15 +2055,6 @@ fn ash_format_label(format: vk::Format) -> &'static str {
         vk::Format::R8G8B8A8_UNORM => "R8G8B8A8_UNORM",
         vk::Format::R8G8B8A8_SRGB => "R8G8B8A8_SRGB",
         _ => "UNKNOWN",
-    }
-}
-
-fn depth_aspect_mask(format: vk::Format) -> vk::ImageAspectFlags {
-    match format {
-        vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT => {
-            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
-        }
-        _ => vk::ImageAspectFlags::DEPTH,
     }
 }
 
