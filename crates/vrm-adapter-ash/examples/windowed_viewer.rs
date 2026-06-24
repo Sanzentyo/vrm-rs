@@ -12,9 +12,11 @@ use bytemuck::{Pod, Zeroable};
 use clap::Parser;
 use glam::{Mat4, Vec3, Vec4};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
 use std::fs;
+use std::hash::Hasher;
 use std::path::PathBuf;
 use std::ptr;
 use std::time::Instant;
@@ -32,6 +34,8 @@ use vrm_adapter_ash::{
     AshVrmVertex, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
+use vrm_core::TextureRef;
+use vrm_io::GltfMaterialTextureColorSpace;
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Open a real ash/Vulkan window and draw a VRM avatar")]
@@ -560,8 +564,6 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
 
 struct MtoonTransientFrameResources {
     buffers: Vec<MtoonVulkanBuffer>,
-    images: Vec<MtoonVulkanImage>,
-    texture_staging_buffers: Vec<MtoonVulkanBuffer>,
     uniform_buffers: Vec<MtoonVulkanBuffer>,
     shader_modules: Vec<vk::ShaderModule>,
     descriptor_pool: vk::DescriptorPool,
@@ -607,6 +609,29 @@ struct MtoonSamplerBindingKey {
 struct MtoonPersistentSamplerCache {
     key: MtoonPersistentSamplerCacheKey,
     samplers: Vec<vk::Sampler>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonPersistentTextureCacheKey {
+    textures: Vec<MtoonTextureResourceKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonTextureResourceKey {
+    texture: Option<TextureRef>,
+    color_space: GltfMaterialTextureColorSpace,
+    format: i32,
+    extent: [u32; 3],
+    image_usage: u32,
+    image_layout_after_upload: i32,
+    aspect_mask: u32,
+    rgba_len: usize,
+    rgba_hash: u64,
+}
+
+struct MtoonPersistentTextureCache {
+    key: MtoonPersistentTextureCacheKey,
+    images: Vec<MtoonVulkanImage>,
 }
 
 struct MtoonPersistentFallbackTextureCache {
@@ -661,6 +686,7 @@ struct MtoonWindowedAshRenderer {
     pending_frame: Option<MtoonTransientFrameResources>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
+    persistent_textures: Option<MtoonPersistentTextureCache>,
     persistent_fallback_textures: Option<MtoonPersistentFallbackTextureCache>,
 }
 
@@ -755,6 +781,7 @@ impl MtoonWindowedAshRenderer {
             pending_frame: None,
             persistent_cache: None,
             persistent_samplers: None,
+            persistent_textures: None,
             persistent_fallback_textures: None,
         })
     }
@@ -878,43 +905,6 @@ impl MtoonWindowedAshRenderer {
             .iter()
             .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
             .collect::<Result<Vec<_>, _>>()?;
-        let texture_mip_levels = frame
-            .textures
-            .iter()
-            .map(|texture| {
-                generate_rgba_mip_chain(
-                    texture.upload.extent.width,
-                    texture.upload.extent.height,
-                    &texture.upload.rgba,
-                )
-                .map_err(|err| format!("failed to build ash texture mip chain: {err}").into())
-            })
-            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-        let images = frame
-            .textures
-            .iter()
-            .zip(&texture_mip_levels)
-            .map(|(texture, mip_levels)| {
-                self.create_image(
-                    texture.upload.format,
-                    texture.upload.extent,
-                    u32::try_from(mip_levels.len()).unwrap_or(1),
-                    texture.image_usage,
-                    vk::ImageAspectFlags::COLOR,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let texture_staging_buffers = frame
-            .textures
-            .iter()
-            .zip(&texture_mip_levels)
-            .map(|(_, mip_levels)| {
-                self.create_host_buffer(
-                    vk::BufferUsageFlags::TRANSFER_SRC,
-                    &flatten_mip_level_rgba(mip_levels),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let uniform_buffers = frame
             .uniforms
             .iter()
@@ -930,11 +920,17 @@ impl MtoonWindowedAshRenderer {
             fragment_entry,
         )?;
         self.ensure_persistent_sampler_cache(frame)?;
+        self.ensure_persistent_texture_cache(frame)?;
         self.ensure_persistent_fallback_textures()?;
         let persistent = self
             .persistent_cache
             .as_ref()
             .ok_or("missing ash windowed persistent pipeline cache")?;
+        let texture_images = &self
+            .persistent_textures
+            .as_ref()
+            .ok_or("missing ash windowed persistent texture cache")?
+            .images;
         let fallback_textures = &self
             .persistent_fallback_textures
             .as_ref()
@@ -954,7 +950,7 @@ impl MtoonWindowedAshRenderer {
             MtoonDescriptorUpdateResources {
                 buffers: &buffers,
                 uniform_buffers: &uniform_buffers,
-                images: &images,
+                images: texture_images,
                 fallback_textures,
                 samplers,
             },
@@ -969,15 +965,10 @@ impl MtoonWindowedAshRenderer {
                 pipeline_layouts: &persistent.pipeline_layouts,
                 buffers: &buffers,
                 descriptor_sets: &descriptor_sets,
-                texture_images: &images,
-                texture_staging_buffers: &texture_staging_buffers,
-                texture_mip_levels: &texture_mip_levels,
             },
         )?;
         Ok(MtoonTransientFrameResources {
             buffers,
-            images,
-            texture_staging_buffers,
             uniform_buffers,
             shader_modules: Vec::new(),
             descriptor_pool,
@@ -1063,6 +1054,67 @@ impl MtoonWindowedAshRenderer {
             .map(|binding| self.create_sampler(binding.sampler))
             .collect::<Result<Vec<_>, _>>()?;
         self.persistent_samplers = Some(MtoonPersistentSamplerCache { key, samplers });
+        Ok(())
+    }
+
+    fn ensure_persistent_texture_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_texture_cache_key(frame);
+        if self
+            .persistent_textures
+            .as_ref()
+            .is_some_and(|cache| cache.key == key)
+        {
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_textures.take() {
+            self.destroy_persistent_texture_cache(cache);
+        }
+        let texture_mip_levels = frame
+            .textures
+            .iter()
+            .map(|texture| {
+                generate_rgba_mip_chain(
+                    texture.upload.extent.width,
+                    texture.upload.extent.height,
+                    &texture.upload.rgba,
+                )
+                .map_err(|err| format!("failed to build ash texture mip chain: {err}").into())
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        let images = frame
+            .textures
+            .iter()
+            .zip(&texture_mip_levels)
+            .map(|(texture, mip_levels)| {
+                self.create_image(
+                    texture.upload.format,
+                    texture.upload.extent,
+                    u32::try_from(mip_levels.len()).unwrap_or(1),
+                    texture.image_usage,
+                    texture.aspect_mask,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let staging_buffers = texture_mip_levels
+            .iter()
+            .map(|mip_levels| {
+                self.create_host_buffer(
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    &flatten_mip_level_rgba(mip_levels),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let upload_result =
+            self.upload_texture_images_once(&images, &staging_buffers, &texture_mip_levels);
+        self.destroy_buffers(staging_buffers);
+        if let Err(error) = upload_result {
+            self.destroy_images(images);
+            return Err(error);
+        }
+        self.persistent_textures = Some(MtoonPersistentTextureCache { key, images });
         Ok(())
     }
 
@@ -1217,6 +1269,35 @@ impl MtoonWindowedAshRenderer {
         textures: &MtoonVulkanFallbackTextures,
         staging: &MtoonVulkanFallbackBuffers,
     ) -> Result<(), Box<dyn Error>> {
+        self.submit_one_time_commands(|command_buffer| {
+            record_mtoon_fallback_texture_uploads(&self.device, command_buffer, textures, staging);
+        })
+    }
+
+    fn upload_texture_images_once(
+        &self,
+        images: &[MtoonVulkanImage],
+        staging_buffers: &[MtoonVulkanBuffer],
+        mip_levels: &[Vec<RgbaMipLevel>],
+    ) -> Result<(), Box<dyn Error>> {
+        self.submit_one_time_commands(|command_buffer| {
+            for ((image, staging), mip_levels) in images.iter().zip(staging_buffers).zip(mip_levels)
+            {
+                record_mtoon_texture_upload(
+                    &self.device,
+                    command_buffer,
+                    image.image,
+                    staging.buffer,
+                    mip_levels,
+                );
+            }
+        })
+    }
+
+    fn submit_one_time_commands<F>(&self, record: F) -> Result<(), Box<dyn Error>>
+    where
+        F: FnOnce(vk::CommandBuffer),
+    {
         let allocate_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
@@ -1225,23 +1306,51 @@ impl MtoonWindowedAshRenderer {
         let command_buffer = command_buffers[0];
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe {
+        let begin_result = unsafe {
             self.device
-                .begin_command_buffer(command_buffer, &begin_info)?;
-            record_mtoon_fallback_texture_uploads(&self.device, command_buffer, textures, staging);
-            self.device.end_command_buffer(command_buffer)?;
-            let command_buffers = [command_buffer];
-            let submit = [vk::SubmitInfo::default().command_buffers(&command_buffers)];
-            let fence = self
-                .device
-                .create_fence(&vk::FenceCreateInfo::default(), None)?;
-            self.device.queue_submit(self.queue, &submit, fence)?;
-            self.device.wait_for_fences(&[fence], true, u64::MAX)?;
+                .begin_command_buffer(command_buffer, &begin_info)
+        };
+        if let Err(error) = begin_result {
+            unsafe {
+                self.device
+                    .free_command_buffers(self.command_pool, &command_buffers);
+            }
+            return Err(error.into());
+        }
+        record(command_buffer);
+        let end_result = unsafe { self.device.end_command_buffer(command_buffer) };
+        if let Err(error) = end_result {
+            unsafe {
+                self.device
+                    .free_command_buffers(self.command_pool, &command_buffers);
+            }
+            return Err(error.into());
+        }
+        let fence = match unsafe {
+            self.device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+        } {
+            Ok(fence) => fence,
+            Err(error) => {
+                unsafe {
+                    self.device
+                        .free_command_buffers(self.command_pool, &command_buffers);
+                }
+                return Err(error.into());
+            }
+        };
+        let submit = [vk::SubmitInfo::default().command_buffers(&command_buffers)];
+        let result = unsafe {
+            self.device
+                .queue_submit(self.queue, &submit, fence)
+                .and_then(|_| self.device.wait_for_fences(&[fence], true, u64::MAX))
+        };
+        unsafe {
             self.device.destroy_fence(fence, None);
             self.device
                 .free_command_buffers(self.command_pool, &command_buffers);
         }
-        Ok(())
+        result.map_err(Into::into)
     }
 
     fn create_descriptor_set_layout<I>(
@@ -1636,7 +1745,6 @@ impl MtoonWindowedAshRenderer {
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
-            self.record_mtoon_texture_uploads(command_buffer, &context);
             self.device.cmd_begin_render_pass(
                 command_buffer,
                 &render_pass_info,
@@ -1690,27 +1798,6 @@ impl MtoonWindowedAshRenderer {
         Ok(command_buffer)
     }
 
-    fn record_mtoon_texture_uploads(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        context: &MtoonSwapchainDrawContext<'_>,
-    ) {
-        for ((image, staging), mip_levels) in context
-            .texture_images
-            .iter()
-            .zip(context.texture_staging_buffers)
-            .zip(context.texture_mip_levels)
-        {
-            record_mtoon_texture_upload(
-                &self.device,
-                command_buffer,
-                image.image,
-                staging.buffer,
-                mip_levels,
-            );
-        }
-    }
-
     fn find_memory_type(
         &self,
         type_bits: u32,
@@ -1734,24 +1821,9 @@ impl MtoonWindowedAshRenderer {
             }
             self.device
                 .destroy_descriptor_pool(resources.descriptor_pool, None);
-            for buffer in resources.uniform_buffers {
-                self.device.destroy_buffer(buffer.buffer, None);
-                self.device.free_memory(buffer.memory, None);
-            }
-            for buffer in resources.texture_staging_buffers {
-                self.device.destroy_buffer(buffer.buffer, None);
-                self.device.free_memory(buffer.memory, None);
-            }
-            for image in resources.images {
-                self.device.destroy_image_view(image.view, None);
-                self.device.destroy_image(image.image, None);
-                self.device.free_memory(image.memory, None);
-            }
-            for buffer in resources.buffers {
-                self.device.destroy_buffer(buffer.buffer, None);
-                self.device.free_memory(buffer.memory, None);
-            }
         }
+        self.destroy_buffers(resources.uniform_buffers);
+        self.destroy_buffers(resources.buffers);
     }
 
     fn destroy_persistent_cache(&self, cache: MtoonPersistentPipelineCache) {
@@ -1776,11 +1848,34 @@ impl MtoonWindowedAshRenderer {
         }
     }
 
+    fn destroy_persistent_texture_cache(&self, cache: MtoonPersistentTextureCache) {
+        self.destroy_images(cache.images);
+    }
+
     fn destroy_persistent_fallback_texture_cache(
         &self,
         cache: MtoonPersistentFallbackTextureCache,
     ) {
         self.destroy_fallback_textures(cache.textures);
+    }
+
+    fn destroy_images(&self, images: Vec<MtoonVulkanImage>) {
+        unsafe {
+            for image in images {
+                self.device.destroy_image_view(image.view, None);
+                self.device.destroy_image(image.image, None);
+                self.device.free_memory(image.memory, None);
+            }
+        }
+    }
+
+    fn destroy_buffers(&self, buffers: Vec<MtoonVulkanBuffer>) {
+        unsafe {
+            for buffer in buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+        }
     }
 
     fn destroy_fallback_textures(&self, textures: MtoonVulkanFallbackTextures) {
@@ -1836,6 +1931,9 @@ impl Drop for MtoonWindowedAshRenderer {
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
         }
+        if let Some(cache) = self.persistent_textures.take() {
+            self.destroy_persistent_texture_cache(cache);
+        }
         if let Some(cache) = self.persistent_fallback_textures.take() {
             self.destroy_persistent_fallback_texture_cache(cache);
         }
@@ -1872,9 +1970,6 @@ struct MtoonSwapchainDrawContext<'a> {
     pipeline_layouts: &'a [vk::PipelineLayout],
     buffers: &'a [MtoonVulkanBuffer],
     descriptor_sets: &'a [vk::DescriptorSet],
-    texture_images: &'a [MtoonVulkanImage],
-    texture_staging_buffers: &'a [MtoonVulkanBuffer],
-    texture_mip_levels: &'a [Vec<RgbaMipLevel>],
 }
 
 struct MtoonSwapchainCreateContext<'a> {
@@ -2105,6 +2200,34 @@ fn mtoon_persistent_sampler_cache_key(frame: &AshRendererFrame) -> MtoonPersiste
                         descriptor_type: binding.descriptor_type,
                         sampler: binding.sampler.unwrap_or(default_sampler_plan()),
                     })
+            })
+            .collect(),
+    }
+}
+
+fn mtoon_persistent_texture_cache_key(frame: &AshRendererFrame) -> MtoonPersistentTextureCacheKey {
+    MtoonPersistentTextureCacheKey {
+        textures: frame
+            .textures
+            .iter()
+            .map(|texture| {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&texture.upload.rgba);
+                MtoonTextureResourceKey {
+                    texture: texture.upload.texture,
+                    color_space: texture.upload.color_space,
+                    format: texture.upload.format.as_raw(),
+                    extent: [
+                        texture.upload.extent.width,
+                        texture.upload.extent.height,
+                        texture.upload.extent.depth,
+                    ],
+                    image_usage: texture.image_usage.as_raw(),
+                    image_layout_after_upload: texture.image_layout_after_upload.as_raw(),
+                    aspect_mask: texture.aspect_mask.as_raw(),
+                    rgba_len: texture.upload.rgba.len(),
+                    rgba_hash: hasher.finish(),
+                }
             })
             .collect(),
     }
