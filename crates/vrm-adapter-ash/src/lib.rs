@@ -37,7 +37,7 @@ use vrm_io::{
     GltfMaterialTextureSlot, GltfMaterialTextureSlots, GltfMaterialUvUniformPlan, GltfMinFilter,
     GltfNodeRest, GltfNormalMapMode, GltfOutlineScale, GltfOutlineVertexSettings,
     GltfPrimitiveData, GltfSamplerData, GltfTextureData, GltfWrapMode, LoadedVrm,
-    Rgba8SamplingOrigin, generate_tangents, load_vrm_from_path,
+    Rgba8SamplingOrigin, RgbaMipLevel, generate_tangents, load_vrm_from_path,
 };
 use vrm_runtime::sample_vrm_animation;
 
@@ -1326,6 +1326,78 @@ pub struct AshTextureResourcePlan {
     pub image_usage: vk::ImageUsageFlags,
     pub image_layout_after_upload: vk::ImageLayout,
     pub aspect_mask: vk::ImageAspectFlags,
+}
+
+#[derive(Clone, Debug)]
+pub struct AshTextureUploadCommandPlan {
+    pub subresource_range: vk::ImageSubresourceRange,
+    pub copy_regions: Vec<vk::BufferImageCopy>,
+}
+
+impl AshTextureUploadCommandPlan {
+    pub fn transfer_dst_barrier(&self, image: vk::Image) -> vk::ImageMemoryBarrier<'static> {
+        vk::ImageMemoryBarrier::default()
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .image(image)
+            .subresource_range(self.subresource_range)
+    }
+
+    pub fn shader_read_barrier(&self, image: vk::Image) -> vk::ImageMemoryBarrier<'static> {
+        vk::ImageMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image(image)
+            .subresource_range(self.subresource_range)
+    }
+}
+
+pub fn ash_texture_upload_command_plan(mip_levels: &[RgbaMipLevel]) -> AshTextureUploadCommandPlan {
+    let level_count = u32::try_from(mip_levels.len()).unwrap_or(u32::MAX).max(1);
+    AshTextureUploadCommandPlan {
+        subresource_range: vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(level_count)
+            .layer_count(1),
+        copy_regions: ash_texture_mip_copy_regions(mip_levels),
+    }
+}
+
+pub fn ash_texture_mip_upload_bytes(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
+    let byte_len = mip_levels.iter().map(|level| level.rgba.len()).sum();
+    let mut bytes = Vec::with_capacity(byte_len);
+    mip_levels
+        .iter()
+        .for_each(|level| bytes.extend_from_slice(&level.rgba));
+    bytes
+}
+
+pub fn ash_texture_mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::BufferImageCopy> {
+    let mut offset = 0_u64;
+    mip_levels
+        .iter()
+        .enumerate()
+        .map(|(mip_level, level)| {
+            let region = vk::BufferImageCopy::default()
+                .buffer_offset(offset)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(u32::try_from(mip_level).unwrap_or(u32::MAX))
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width: level.width,
+                    height: level.height,
+                    depth: 1,
+                });
+            offset = offset.saturating_add(u64::try_from(level.rgba.len()).unwrap_or(u64::MAX));
+            region
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6715,6 +6787,66 @@ mod tests {
         assert_eq!(present.wait_semaphores(), [vk::Semaphore::null()]);
         assert_eq!(present.swapchains(), [vk::SwapchainKHR::null()]);
         assert_eq!(present.image_indices(), [4]);
+    }
+
+    #[test]
+    fn texture_upload_command_plan_exposes_mip_bytes_regions_and_barriers() {
+        let levels = vec![
+            RgbaMipLevel {
+                width: 4,
+                height: 2,
+                rgba: vec![1; 32],
+            },
+            RgbaMipLevel {
+                width: 2,
+                height: 1,
+                rgba: vec![2; 8],
+            },
+            RgbaMipLevel {
+                width: 1,
+                height: 1,
+                rgba: vec![3; 4],
+            },
+        ];
+
+        let bytes = ash_texture_mip_upload_bytes(&levels);
+        assert_eq!(bytes.len(), 44);
+        assert_eq!(&bytes[0..4], &[1, 1, 1, 1]);
+        assert_eq!(&bytes[32..36], &[2, 2, 2, 2]);
+        assert_eq!(&bytes[40..44], &[3, 3, 3, 3]);
+
+        let plan = ash_texture_upload_command_plan(&levels);
+        assert_eq!(
+            plan.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(plan.subresource_range.level_count, 3);
+        assert_eq!(plan.subresource_range.layer_count, 1);
+        assert_eq!(plan.copy_regions.len(), 3);
+        assert_eq!(plan.copy_regions[0].buffer_offset, 0);
+        assert_eq!(plan.copy_regions[1].buffer_offset, 32);
+        assert_eq!(plan.copy_regions[2].buffer_offset, 40);
+        assert_eq!(plan.copy_regions[2].image_subresource.mip_level, 2);
+
+        let image = vk::Image::null();
+        let to_transfer = plan.transfer_dst_barrier(image);
+        assert_eq!(to_transfer.dst_access_mask, vk::AccessFlags::TRANSFER_WRITE);
+        assert_eq!(to_transfer.old_layout, vk::ImageLayout::UNDEFINED);
+        assert_eq!(
+            to_transfer.new_layout,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL
+        );
+        assert_eq!(to_transfer.image, image);
+
+        let to_shader = plan.shader_read_barrier(image);
+        assert_eq!(to_shader.src_access_mask, vk::AccessFlags::TRANSFER_WRITE);
+        assert_eq!(to_shader.dst_access_mask, vk::AccessFlags::SHADER_READ);
+        assert_eq!(to_shader.old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        assert_eq!(
+            to_shader.new_layout,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        );
+        assert_eq!(to_shader.image, image);
     }
 
     #[test]

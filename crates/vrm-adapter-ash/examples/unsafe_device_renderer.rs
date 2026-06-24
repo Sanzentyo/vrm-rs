@@ -29,6 +29,7 @@ use vrm_adapter_ash::{
     ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_memory_type_index,
     ash_mtoon_texture_binding, ash_pipeline_layout_plans, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_select_depth_format,
+    ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -401,7 +402,7 @@ impl UnsafeAshDeviceRenderer {
             .map(|(_, mip_levels)| {
                 self.create_host_buffer(
                     vk::BufferUsageFlags::TRANSFER_SRC,
-                    &flatten_mip_level_rgba(mip_levels),
+                    &ash_texture_mip_upload_bytes(mip_levels),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1195,16 +1196,8 @@ impl UnsafeAshDeviceRenderer {
         staging_buffer: vk::Buffer,
         mip_levels: &[RgbaMipLevel],
     ) {
-        let subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(u32::try_from(mip_levels.len()).unwrap_or(1).max(1))
-            .layer_count(1);
-        let to_transfer = [vk::ImageMemoryBarrier::default()
-            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .image(image)
-            .subresource_range(subresource_range)];
+        let plan = ash_texture_upload_command_plan(mip_levels);
+        let to_transfer = [plan.transfer_dst_barrier(image)];
         unsafe {
             self.device.cmd_pipeline_barrier(
                 command_buffer,
@@ -1215,21 +1208,14 @@ impl UnsafeAshDeviceRenderer {
                 &[],
                 &to_transfer,
             );
-            let regions = mip_copy_regions(mip_levels);
             self.device.cmd_copy_buffer_to_image(
                 command_buffer,
                 staging_buffer,
                 image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &regions,
+                &plan.copy_regions,
             );
-            let to_shader = [vk::ImageMemoryBarrier::default()
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image(image)
-                .subresource_range(subresource_range)];
+            let to_shader = [plan.shader_read_barrier(image)];
             self.device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
@@ -1349,40 +1335,6 @@ impl UnsafeAshDeviceRenderer {
             }
         }
     }
-}
-
-fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
-    let byte_len = mip_levels.iter().map(|level| level.rgba.len()).sum();
-    let mut bytes = Vec::with_capacity(byte_len);
-    for level in mip_levels {
-        bytes.extend_from_slice(&level.rgba);
-    }
-    bytes
-}
-
-fn mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::BufferImageCopy> {
-    let mut offset = 0_u64;
-    mip_levels
-        .iter()
-        .enumerate()
-        .map(|(mip_level, level)| {
-            let region = vk::BufferImageCopy::default()
-                .buffer_offset(offset)
-                .image_subresource(
-                    vk::ImageSubresourceLayers::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .mip_level(u32::try_from(mip_level).unwrap_or(0))
-                        .layer_count(1),
-                )
-                .image_extent(vk::Extent3D {
-                    width: level.width,
-                    height: level.height,
-                    depth: 1,
-                });
-            offset += u64::try_from(level.rgba.len()).unwrap_or(0);
-            region
-        })
-        .collect()
 }
 
 fn default_sampler_plan() -> AshSamplerPlan {
@@ -2151,7 +2103,7 @@ mod tests {
         ];
 
         assert_eq!(
-            flatten_mip_level_rgba(&levels),
+            ash_texture_mip_upload_bytes(&levels),
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
     }
@@ -2176,7 +2128,7 @@ mod tests {
             },
         ];
 
-        let regions = mip_copy_regions(&levels);
+        let regions = ash_texture_upload_command_plan(&levels).copy_regions;
 
         assert_eq!(regions.len(), 3);
         assert_eq!(regions[0].buffer_offset, 0);
