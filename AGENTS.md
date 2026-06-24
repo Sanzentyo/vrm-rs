@@ -37,9 +37,8 @@ The default script run covers `cargo fmt --all -- --check`, `cargo test --worksp
 ## Coverage Refresh Delegation
 
 - Treat coverage table/progress updates as routine mechanical work suitable for delegation.
-- Use a Codex subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
-- Do not use the local `agent` CLI for repository automation or coverage refreshes.
-- The delegated `gpt-5.4-codex-mini` subagent must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
+- Use a Codex worker subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
+- The delegated worker must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
 - Preferred flow:
 
 ```powershell
@@ -49,7 +48,7 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 git diff docs/testing.md docs/progress.md
 ```
 
-- The first script run should be a dry run unless the user explicitly asked for direct application or the main agent has already reviewed the generated block.
+- The first script run should be a dry run unless the user explicitly asked for direct application or the primary Codex turn has already reviewed the generated block.
 - Keep `docs/testing.md` coverage snapshots and the newest relevant `docs/progress.md` coverage line synchronized.
 
 ## Primary Codex Responsibility
