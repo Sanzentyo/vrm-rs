@@ -565,7 +565,6 @@ struct MtoonTransientFrameResources {
     fallback_textures: MtoonVulkanFallbackTextures,
     fallback_texture_staging: MtoonVulkanFallbackBuffers,
     uniform_buffers: Vec<MtoonVulkanBuffer>,
-    samplers: Vec<vk::Sampler>,
     shader_modules: Vec<vk::ShaderModule>,
     descriptor_pool: vk::DescriptorPool,
     command_buffer: vk::CommandBuffer,
@@ -592,6 +591,24 @@ struct MtoonPersistentPipelineCache {
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MtoonPersistentSamplerCacheKey {
+    samplers: Vec<MtoonSamplerBindingKey>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MtoonSamplerBindingKey {
+    descriptor_set_index: usize,
+    binding: u32,
+    descriptor_type: vk::DescriptorType,
+    sampler: AshSamplerPlan,
+}
+
+struct MtoonPersistentSamplerCache {
+    key: MtoonPersistentSamplerCacheKey,
+    samplers: Vec<vk::Sampler>,
 }
 
 struct MtoonSwapchainShell {
@@ -641,6 +658,7 @@ struct MtoonWindowedAshRenderer {
     in_flight: vk::Fence,
     pending_frame: Option<MtoonTransientFrameResources>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
+    persistent_samplers: Option<MtoonPersistentSamplerCache>,
 }
 
 impl MtoonWindowedAshRenderer {
@@ -733,6 +751,7 @@ impl MtoonWindowedAshRenderer {
             in_flight,
             pending_frame: None,
             persistent_cache: None,
+            persistent_samplers: None,
         })
     }
 
@@ -908,6 +927,7 @@ impl MtoonWindowedAshRenderer {
             vertex_entry,
             fragment_entry,
         )?;
+        self.ensure_persistent_sampler_cache(frame)?;
         let persistent = self
             .persistent_cache
             .as_ref()
@@ -915,7 +935,11 @@ impl MtoonWindowedAshRenderer {
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let descriptor_sets =
             self.allocate_descriptor_sets(descriptor_pool, &persistent.descriptor_set_layouts)?;
-        let samplers = self.create_samplers(frame)?;
+        let samplers = &self
+            .persistent_samplers
+            .as_ref()
+            .ok_or("missing ash windowed persistent sampler cache")?
+            .samplers;
         self.update_descriptor_sets(
             frame,
             &descriptor_sets,
@@ -924,7 +948,7 @@ impl MtoonWindowedAshRenderer {
                 uniform_buffers: &uniform_buffers,
                 images: &images,
                 fallback_textures: &fallback_textures,
-                samplers: &samplers,
+                samplers,
             },
         )?;
         let command_buffer = self.record_mtoon_swapchain_draws(
@@ -951,7 +975,6 @@ impl MtoonWindowedAshRenderer {
             fallback_textures,
             fallback_texture_staging,
             uniform_buffers,
-            samplers,
             shader_modules: Vec::new(),
             descriptor_pool,
             command_buffer,
@@ -1012,6 +1035,30 @@ impl MtoonWindowedAshRenderer {
             pipeline_layouts,
             pipelines,
         });
+        Ok(())
+    }
+
+    fn ensure_persistent_sampler_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_sampler_cache_key(frame);
+        if self
+            .persistent_samplers
+            .as_ref()
+            .is_some_and(|cache| cache.key == key)
+        {
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_samplers.take() {
+            self.destroy_persistent_sampler_cache(cache);
+        }
+        let samplers = key
+            .samplers
+            .iter()
+            .map(|binding| self.create_sampler(binding.sampler))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.persistent_samplers = Some(MtoonPersistentSamplerCache { key, samplers });
         Ok(())
     }
 
@@ -1231,21 +1278,6 @@ impl MtoonWindowedAshRenderer {
             .descriptor_pool(pool)
             .set_layouts(layouts);
         unsafe { self.device.allocate_descriptor_sets(&info) }
-    }
-
-    fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {
-        frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| {
-                matches!(
-                    binding.descriptor_type,
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-                )
-            })
-            .map(|binding| self.create_sampler(binding.sampler.unwrap_or(default_sampler_plan())))
-            .collect()
     }
 
     fn create_sampler(&self, plan: AshSamplerPlan) -> Result<vk::Sampler, vk::Result> {
@@ -1680,9 +1712,6 @@ impl MtoonWindowedAshRenderer {
             }
             self.device
                 .destroy_descriptor_pool(resources.descriptor_pool, None);
-            for sampler in resources.samplers {
-                self.device.destroy_sampler(sampler, None);
-            }
             for buffer in resources.uniform_buffers {
                 self.device.destroy_buffer(buffer.buffer, None);
                 self.device.free_memory(buffer.memory, None);
@@ -1726,6 +1755,14 @@ impl MtoonWindowedAshRenderer {
         }
     }
 
+    fn destroy_persistent_sampler_cache(&self, cache: MtoonPersistentSamplerCache) {
+        unsafe {
+            for sampler in cache.samplers {
+                self.device.destroy_sampler(sampler, None);
+            }
+        }
+    }
+
     fn destroy_swapchain_shell(&self, resources: MtoonSwapchainShell, destroy_swapchain: bool) {
         unsafe {
             for framebuffer in resources.framebuffers {
@@ -1756,6 +1793,9 @@ impl Drop for MtoonWindowedAshRenderer {
         }
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
+        }
+        if let Some(cache) = self.persistent_samplers.take() {
+            self.destroy_persistent_sampler_cache(cache);
         }
         let shell = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
         self.destroy_swapchain_shell(shell, true);
@@ -2000,6 +2040,33 @@ fn mtoon_persistent_pipeline_cache_key(
             })
             .collect(),
         pipelines: frame.pipelines.clone(),
+    }
+}
+
+fn mtoon_persistent_sampler_cache_key(frame: &AshRendererFrame) -> MtoonPersistentSamplerCacheKey {
+    MtoonPersistentSamplerCacheKey {
+        samplers: frame
+            .descriptor_sets
+            .iter()
+            .enumerate()
+            .flat_map(|(descriptor_set_index, set)| {
+                set.bindings
+                    .iter()
+                    .filter(|binding| {
+                        matches!(
+                            binding.descriptor_type,
+                            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                                | vk::DescriptorType::SAMPLER
+                        )
+                    })
+                    .map(move |binding| MtoonSamplerBindingKey {
+                        descriptor_set_index,
+                        binding: binding.binding,
+                        descriptor_type: binding.descriptor_type,
+                        sampler: binding.sampler.unwrap_or(default_sampler_plan()),
+                    })
+            })
+            .collect(),
     }
 }
 
