@@ -12,11 +12,9 @@ use bytemuck::{Pod, Zeroable};
 use clap::Parser;
 use glam::{Mat4, Vec3, Vec4};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
 use std::fs;
-use std::hash::Hasher;
 use std::path::PathBuf;
 use std::ptr;
 use std::time::Instant;
@@ -30,15 +28,15 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
-    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshBufferRole,
-    AshGraphicsPipelinePlan, AshMtoonWindowedCacheStats, AshRenderOptions, AshRendererFrame,
-    AshSamplerPlan, AshUniformScope, AshVertexAttributePlan, AshVrmFramePlanOptions,
-    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation,
-    AshWindowedRunValidation, ash_reference_depth_format,
+    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshGraphicsPipelinePlan,
+    AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
+    AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
+    AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions, AshRendererFrame,
+    AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner,
+    AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation,
+    ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
-use vrm_core::TextureRef;
-use vrm_io::GltfMaterialTextureColorSpace;
 
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Open a real ash/Vulkan window and draw a VRM avatar")]
@@ -678,114 +676,36 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonDescriptorLayoutBindingKey {
-    binding: u32,
-    descriptor_type: vk::DescriptorType,
-    stage_flags: vk::ShaderStageFlags,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct MtoonPersistentPipelineCacheKey {
-    extent: vk::Extent2D,
-    vertex_entry: Vec<u8>,
-    fragment_entry: Vec<u8>,
-    descriptor_set_layouts: Vec<Vec<MtoonDescriptorLayoutBindingKey>>,
-    pipelines: Vec<AshGraphicsPipelinePlan>,
-}
-
 struct MtoonPersistentPipelineCache {
-    key: MtoonPersistentPipelineCacheKey,
+    key: AshMtoonPipelineCacheKey,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonPersistentDescriptorSetCacheKey {
-    descriptor_set_layouts: Vec<Vec<MtoonDescriptorLayoutBindingKey>>,
-}
-
 struct MtoonPersistentDescriptorSetCache {
-    key: MtoonPersistentDescriptorSetCacheKey,
+    key: AshMtoonDescriptorSetCacheKey,
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct MtoonPersistentSamplerCacheKey {
-    samplers: Vec<MtoonSamplerBindingKey>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct MtoonSamplerBindingKey {
-    descriptor_set_index: usize,
-    binding: u32,
-    descriptor_type: vk::DescriptorType,
-    sampler: AshSamplerPlan,
-}
-
 struct MtoonPersistentSamplerCache {
-    key: MtoonPersistentSamplerCacheKey,
+    key: AshMtoonSamplerCacheKey,
     samplers: Vec<vk::Sampler>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonPersistentBufferCacheKey {
-    buffers: Vec<MtoonBufferResourceKey>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonBufferResourceKey {
-    role: AshBufferRole,
-    usage: u32,
-    stride: u32,
-    count: u32,
-    byte_len: usize,
-}
-
 struct MtoonPersistentBufferCache {
-    key: MtoonPersistentBufferCacheKey,
+    key: AshMtoonBufferCacheKey,
     buffers: Vec<MtoonVulkanBuffer>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonPersistentUniformCacheKey {
-    uniforms: Vec<MtoonUniformResourceKey>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonUniformResourceKey {
-    scope: AshUniformScope,
-    binding: u32,
-    byte_len: usize,
 }
 
 struct MtoonPersistentUniformCache {
-    key: MtoonPersistentUniformCacheKey,
+    key: AshMtoonUniformCacheKey,
     buffers: Vec<MtoonVulkanBuffer>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonPersistentTextureCacheKey {
-    textures: Vec<MtoonTextureResourceKey>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MtoonTextureResourceKey {
-    texture: Option<TextureRef>,
-    color_space: GltfMaterialTextureColorSpace,
-    format: i32,
-    extent: [u32; 3],
-    image_usage: u32,
-    image_layout_after_upload: i32,
-    aspect_mask: u32,
-    rgba_len: usize,
-    rgba_hash: u64,
-}
-
 struct MtoonPersistentTextureCache {
-    key: MtoonPersistentTextureCacheKey,
+    key: AshMtoonTextureCacheKey,
     images: Vec<MtoonVulkanImage>,
 }
 
@@ -842,6 +762,7 @@ struct MtoonWindowedAshRenderer {
     fragment_shader: vk::ShaderModule,
     vertex_entry: CString,
     fragment_entry: CString,
+    shader_cache_key: AshMtoonShaderCacheKey,
     depth_format: vk::Format,
     frame_sync: Vec<MtoonFrameSync>,
     current_frame: usize,
@@ -937,6 +858,12 @@ impl MtoonWindowedAshRenderer {
             fragment_shader,
             vertex_entry: CString::new(shaders.vertex_entry.as_str())?,
             fragment_entry: CString::new(shaders.fragment_entry.as_str())?,
+            shader_cache_key: AshMtoonShaderCacheKey::from_spirv_words(
+                shaders.vertex_entry.clone(),
+                shaders.fragment_entry.clone(),
+                &shaders.vertex,
+                &shaders.fragment,
+            ),
             depth_format,
             frame_sync,
             current_frame: 0,
@@ -1095,19 +1022,22 @@ impl MtoonWindowedAshRenderer {
             .command_buffers
             .get(image_index)
             .ok_or("swapchain image has no matching draw command buffer")?;
+        let cache_keys =
+            ash_mtoon_renderer_cache_keys(frame, extent, self.shader_cache_key.clone());
         self.ensure_persistent_pipeline_cache(
             frame,
             extent,
             render_pass,
             vertex_entry,
             fragment_entry,
+            cache_keys.pipeline,
         )?;
-        self.ensure_persistent_sampler_cache(frame)?;
-        self.ensure_persistent_buffer_cache(frame)?;
-        self.ensure_persistent_uniform_cache(frame)?;
-        self.ensure_persistent_texture_cache(frame)?;
+        self.ensure_persistent_sampler_cache(frame, cache_keys.samplers)?;
+        self.ensure_persistent_buffer_cache(frame, cache_keys.buffers)?;
+        self.ensure_persistent_uniform_cache(frame, cache_keys.uniforms)?;
+        self.ensure_persistent_texture_cache(frame, cache_keys.textures)?;
         self.ensure_persistent_fallback_textures()?;
-        self.ensure_persistent_descriptor_set_cache(frame)?;
+        self.ensure_persistent_descriptor_set_cache(frame, cache_keys.descriptor_sets)?;
         let persistent = self
             .persistent_cache
             .as_ref()
@@ -1177,8 +1107,8 @@ impl MtoonWindowedAshRenderer {
         render_pass: vk::RenderPass,
         vertex_entry: &CString,
         fragment_entry: &CString,
+        key: AshMtoonPipelineCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_pipeline_cache_key(frame, extent, vertex_entry, fragment_entry);
         if self
             .persistent_cache
             .as_ref()
@@ -1235,8 +1165,8 @@ impl MtoonWindowedAshRenderer {
     fn ensure_persistent_descriptor_set_cache(
         &mut self,
         frame: &AshRendererFrame,
+        key: AshMtoonDescriptorSetCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_descriptor_set_cache_key(frame);
         if self
             .persistent_descriptors
             .as_ref()
@@ -1268,8 +1198,8 @@ impl MtoonWindowedAshRenderer {
     fn ensure_persistent_sampler_cache(
         &mut self,
         frame: &AshRendererFrame,
+        key: AshMtoonSamplerCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_sampler_cache_key(frame);
         if self
             .persistent_samplers
             .as_ref()
@@ -1282,10 +1212,18 @@ impl MtoonWindowedAshRenderer {
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
         }
-        let samplers = key
-            .samplers
+        let samplers = frame
+            .descriptor_sets
             .iter()
-            .map(|binding| self.create_sampler(binding.sampler))
+            .flat_map(|set| {
+                set.bindings.iter().filter(|binding| {
+                    matches!(
+                        binding.descriptor_type,
+                        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                    )
+                })
+            })
+            .map(|binding| self.create_sampler(binding.sampler.unwrap_or_default()))
             .collect::<Result<Vec<_>, _>>()?;
         self.persistent_samplers = Some(MtoonPersistentSamplerCache { key, samplers });
         Ok(())
@@ -1294,8 +1232,8 @@ impl MtoonWindowedAshRenderer {
     fn ensure_persistent_buffer_cache(
         &mut self,
         frame: &AshRendererFrame,
+        key: AshMtoonBufferCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_buffer_cache_key(frame);
         if let Some(cache) = self
             .persistent_buffers
             .as_ref()
@@ -1325,8 +1263,8 @@ impl MtoonWindowedAshRenderer {
     fn ensure_persistent_uniform_cache(
         &mut self,
         frame: &AshRendererFrame,
+        key: AshMtoonUniformCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_uniform_cache_key(frame);
         if let Some(cache) = self
             .persistent_uniforms
             .as_ref()
@@ -1358,8 +1296,8 @@ impl MtoonWindowedAshRenderer {
     fn ensure_persistent_texture_cache(
         &mut self,
         frame: &AshRendererFrame,
+        key: AshMtoonTextureCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        let key = mtoon_persistent_texture_cache_key(frame);
         if self
             .persistent_textures
             .as_ref()
@@ -2486,140 +2424,6 @@ fn mtoon_vertex_attribute_description(
     }
 }
 
-fn mtoon_persistent_pipeline_cache_key(
-    frame: &AshRendererFrame,
-    extent: vk::Extent2D,
-    vertex_entry: &CString,
-    fragment_entry: &CString,
-) -> MtoonPersistentPipelineCacheKey {
-    MtoonPersistentPipelineCacheKey {
-        extent,
-        vertex_entry: vertex_entry.as_bytes().to_vec(),
-        fragment_entry: fragment_entry.as_bytes().to_vec(),
-        descriptor_set_layouts: frame
-            .descriptor_sets
-            .iter()
-            .map(|set| {
-                set.bindings
-                    .iter()
-                    .map(|binding| MtoonDescriptorLayoutBindingKey {
-                        binding: binding.binding,
-                        descriptor_type: binding.descriptor_type,
-                        stage_flags: binding.stage_flags,
-                    })
-                    .collect()
-            })
-            .collect(),
-        pipelines: frame.pipelines.clone(),
-    }
-}
-
-fn mtoon_persistent_descriptor_set_cache_key(
-    frame: &AshRendererFrame,
-) -> MtoonPersistentDescriptorSetCacheKey {
-    MtoonPersistentDescriptorSetCacheKey {
-        descriptor_set_layouts: frame
-            .descriptor_sets
-            .iter()
-            .map(|set| {
-                set.bindings
-                    .iter()
-                    .map(|binding| MtoonDescriptorLayoutBindingKey {
-                        binding: binding.binding,
-                        descriptor_type: binding.descriptor_type,
-                        stage_flags: binding.stage_flags,
-                    })
-                    .collect()
-            })
-            .collect(),
-    }
-}
-
-fn mtoon_persistent_sampler_cache_key(frame: &AshRendererFrame) -> MtoonPersistentSamplerCacheKey {
-    MtoonPersistentSamplerCacheKey {
-        samplers: frame
-            .descriptor_sets
-            .iter()
-            .enumerate()
-            .flat_map(|(descriptor_set_index, set)| {
-                set.bindings
-                    .iter()
-                    .filter(|binding| {
-                        matches!(
-                            binding.descriptor_type,
-                            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-                                | vk::DescriptorType::SAMPLER
-                        )
-                    })
-                    .map(move |binding| MtoonSamplerBindingKey {
-                        descriptor_set_index,
-                        binding: binding.binding,
-                        descriptor_type: binding.descriptor_type,
-                        sampler: binding.sampler.unwrap_or(default_sampler_plan()),
-                    })
-            })
-            .collect(),
-    }
-}
-
-fn mtoon_persistent_buffer_cache_key(frame: &AshRendererFrame) -> MtoonPersistentBufferCacheKey {
-    MtoonPersistentBufferCacheKey {
-        buffers: frame
-            .buffers
-            .iter()
-            .map(|buffer| MtoonBufferResourceKey {
-                role: buffer.role,
-                usage: buffer.usage.as_raw(),
-                stride: buffer.stride,
-                count: buffer.count,
-                byte_len: buffer.bytes.len(),
-            })
-            .collect(),
-    }
-}
-
-fn mtoon_persistent_uniform_cache_key(frame: &AshRendererFrame) -> MtoonPersistentUniformCacheKey {
-    MtoonPersistentUniformCacheKey {
-        uniforms: frame
-            .uniforms
-            .iter()
-            .map(|uniform| MtoonUniformResourceKey {
-                scope: uniform.scope,
-                binding: uniform.binding,
-                byte_len: uniform.bytes.len(),
-            })
-            .collect(),
-    }
-}
-
-fn mtoon_persistent_texture_cache_key(frame: &AshRendererFrame) -> MtoonPersistentTextureCacheKey {
-    MtoonPersistentTextureCacheKey {
-        textures: frame
-            .textures
-            .iter()
-            .map(|texture| {
-                let mut hasher = DefaultHasher::new();
-                hasher.write(&texture.upload.rgba);
-                MtoonTextureResourceKey {
-                    texture: texture.upload.texture,
-                    color_space: texture.upload.color_space,
-                    format: texture.upload.format.as_raw(),
-                    extent: [
-                        texture.upload.extent.width,
-                        texture.upload.extent.height,
-                        texture.upload.extent.depth,
-                    ],
-                    image_usage: texture.image_usage.as_raw(),
-                    image_layout_after_upload: texture.image_layout_after_upload.as_raw(),
-                    aspect_mask: texture.aspect_mask.as_raw(),
-                    rgba_len: texture.upload.rgba.len(),
-                    rgba_hash: hasher.finish(),
-                }
-            })
-            .collect(),
-    }
-}
-
 fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
     let byte_len = mip_levels.iter().map(|level| level.rgba.len()).sum();
     let mut bytes = Vec::with_capacity(byte_len);
@@ -2652,19 +2456,6 @@ fn mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::BufferImageCopy> {
             region
         })
         .collect()
-}
-
-fn default_sampler_plan() -> AshSamplerPlan {
-    AshSamplerPlan {
-        mag_filter: vk::Filter::LINEAR,
-        min_filter: vk::Filter::LINEAR,
-        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-        address_mode_u: vk::SamplerAddressMode::REPEAT,
-        address_mode_v: vk::SamplerAddressMode::REPEAT,
-        min_lod: 0.0,
-        max_lod: 32.0,
-        normal_map_decode: false,
-    }
 }
 
 fn fallback_rgba(fallback: GltfMaterialTextureFallback) -> &'static [u8; 4] {

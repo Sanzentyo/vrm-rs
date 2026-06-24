@@ -578,6 +578,21 @@ pub struct AshSamplerPlan {
     pub normal_map_decode: bool,
 }
 
+impl Default for AshSamplerPlan {
+    fn default() -> Self {
+        Self {
+            mag_filter: vk::Filter::LINEAR,
+            min_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::REPEAT,
+            address_mode_v: vk::SamplerAddressMode::REPEAT,
+            min_lod: 0.0,
+            max_lod: 32.0,
+            normal_map_decode: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshMtoonPipelinePlan {
     pub material: MaterialRef,
@@ -1115,7 +1130,7 @@ fn empty_ash_owner_sample_override_record() -> AshOwnerSampleOverrideRecord {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AshBufferRole {
     Vertex,
     Index,
@@ -1433,7 +1448,7 @@ pub enum AshSkippedDrawReason {
     EmptyIndexRange,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AshUniformScope {
     Material {
         material: MaterialRef,
@@ -1534,6 +1549,417 @@ pub struct AshVertexAttributePlan {
     pub binding: u32,
     pub format: vk::Format,
     pub offset: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonRenderTargetCacheKey {
+    pub extent: [u32; 2],
+}
+
+impl AshMtoonRenderTargetCacheKey {
+    pub const fn from_extent(extent: vk::Extent2D) -> Self {
+        Self {
+            extent: [extent.width, extent.height],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonShaderCacheKey {
+    pub vertex_entry: String,
+    pub fragment_entry: String,
+    pub vertex_spirv_hash: Option<u64>,
+    pub fragment_spirv_hash: Option<u64>,
+}
+
+impl AshMtoonShaderCacheKey {
+    pub fn from_entries(
+        vertex_entry: impl Into<String>,
+        fragment_entry: impl Into<String>,
+    ) -> Self {
+        Self {
+            vertex_entry: vertex_entry.into(),
+            fragment_entry: fragment_entry.into(),
+            vertex_spirv_hash: None,
+            fragment_spirv_hash: None,
+        }
+    }
+
+    pub fn from_spirv_words(
+        vertex_entry: impl Into<String>,
+        fragment_entry: impl Into<String>,
+        vertex_words: &[u32],
+        fragment_words: &[u32],
+    ) -> Self {
+        Self {
+            vertex_entry: vertex_entry.into(),
+            fragment_entry: fragment_entry.into(),
+            vertex_spirv_hash: Some(ash_mtoon_spirv_words_hash(vertex_words)),
+            fragment_spirv_hash: Some(ash_mtoon_spirv_words_hash(fragment_words)),
+        }
+    }
+}
+
+impl Default for AshMtoonShaderCacheKey {
+    fn default() -> Self {
+        let abi = AshMtoonWgslShaderAbi::default();
+        Self::from_entries(abi.vertex_entry, abi.fragment_entry)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonRendererCacheKeys {
+    pub pipeline: AshMtoonPipelineCacheKey,
+    pub descriptor_sets: AshMtoonDescriptorSetCacheKey,
+    pub samplers: AshMtoonSamplerCacheKey,
+    pub buffers: AshMtoonBufferCacheKey,
+    pub uniforms: AshMtoonUniformCacheKey,
+    pub textures: AshMtoonTextureCacheKey,
+}
+
+impl AshMtoonRendererCacheKeys {
+    pub fn from_frame(
+        frame: &AshRendererFrame,
+        render_target: AshMtoonRenderTargetCacheKey,
+        shader: AshMtoonShaderCacheKey,
+    ) -> Self {
+        let descriptor_set_layouts = ash_mtoon_descriptor_set_layout_cache_records(frame);
+        let pipeline = AshMtoonPipelineCacheKey {
+            render_target,
+            shader,
+            descriptor_set_layouts: descriptor_set_layouts.clone(),
+            pipelines: frame
+                .pipelines
+                .iter()
+                .map(AshMtoonGraphicsPipelineCacheKey::from_pipeline)
+                .collect(),
+        };
+        Self {
+            pipeline,
+            descriptor_sets: AshMtoonDescriptorSetCacheKey {
+                descriptor_set_layouts,
+            },
+            samplers: AshMtoonSamplerCacheKey::from_frame(frame),
+            buffers: AshMtoonBufferCacheKey::from_frame(frame),
+            uniforms: AshMtoonUniformCacheKey::from_frame(frame),
+            textures: AshMtoonTextureCacheKey::from_frame(frame),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonPipelineCacheKey {
+    pub render_target: AshMtoonRenderTargetCacheKey,
+    pub shader: AshMtoonShaderCacheKey,
+    pub descriptor_set_layouts: Vec<Vec<AshMtoonDescriptorLayoutBindingCacheKey>>,
+    pub pipelines: Vec<AshMtoonGraphicsPipelineCacheKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonDescriptorSetCacheKey {
+    pub descriptor_set_layouts: Vec<Vec<AshMtoonDescriptorLayoutBindingCacheKey>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonDescriptorLayoutBindingCacheKey {
+    pub binding: u32,
+    pub descriptor_type: i32,
+    pub stage_flags: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonGraphicsPipelineCacheKey {
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub descriptor_set_index: usize,
+    pub pass: AshMtoonPass,
+    pub render_order: i32,
+    pub phase_order: i32,
+    pub topology: i32,
+    pub cull_mode: u32,
+    pub front_face: i32,
+    pub depth_test_enable: bool,
+    pub depth_write_enable: bool,
+    pub depth_compare_op: i32,
+    pub blend_enable: bool,
+    pub vertex_stride: u32,
+    pub vertex_attributes: Vec<AshMtoonVertexAttributeCacheKey>,
+    pub color_format: i32,
+    pub depth_format: Option<i32>,
+}
+
+impl AshMtoonGraphicsPipelineCacheKey {
+    pub fn from_pipeline(pipeline: &AshGraphicsPipelinePlan) -> Self {
+        Self {
+            material: pipeline.material,
+            pipeline_plan_index: pipeline.pipeline_plan_index,
+            descriptor_set_index: pipeline.descriptor_set_index,
+            pass: pipeline.key.pass,
+            render_order: pipeline.key.render_order,
+            phase_order: pipeline.key.phase_order,
+            topology: pipeline.key.topology.as_raw(),
+            cull_mode: pipeline.key.cull_mode.as_raw(),
+            front_face: pipeline.key.front_face.as_raw(),
+            depth_test_enable: pipeline.key.depth_test_enable,
+            depth_write_enable: pipeline.key.depth_write_enable,
+            depth_compare_op: pipeline.key.depth_compare_op.as_raw(),
+            blend_enable: pipeline.key.blend_enable,
+            vertex_stride: pipeline.vertex_stride,
+            vertex_attributes: pipeline
+                .vertex_attributes
+                .iter()
+                .map(AshMtoonVertexAttributeCacheKey::from_attribute)
+                .collect(),
+            color_format: pipeline.color_format.as_raw(),
+            depth_format: pipeline.depth_format.map(vk::Format::as_raw),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonVertexAttributeCacheKey {
+    pub location: u32,
+    pub binding: u32,
+    pub format: i32,
+    pub offset: u32,
+}
+
+impl AshMtoonVertexAttributeCacheKey {
+    pub fn from_attribute(attribute: &AshVertexAttributePlan) -> Self {
+        Self {
+            location: attribute.location,
+            binding: attribute.binding,
+            format: attribute.format.as_raw(),
+            offset: attribute.offset,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonSamplerCacheKey {
+    pub samplers: Vec<AshMtoonSamplerBindingCacheKey>,
+}
+
+impl AshMtoonSamplerCacheKey {
+    pub fn from_frame(frame: &AshRendererFrame) -> Self {
+        Self {
+            samplers: frame
+                .descriptor_sets
+                .iter()
+                .enumerate()
+                .flat_map(|(descriptor_set_index, set)| {
+                    set.bindings
+                        .iter()
+                        .filter(|binding| {
+                            matches!(
+                                binding.descriptor_type,
+                                vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                                    | vk::DescriptorType::SAMPLER
+                            )
+                        })
+                        .map(move |binding| AshMtoonSamplerBindingCacheKey {
+                            descriptor_set_index,
+                            binding: binding.binding,
+                            descriptor_type: binding.descriptor_type.as_raw(),
+                            sampler: AshMtoonSamplerPlanCacheKey::from_sampler(
+                                binding.sampler.unwrap_or_default(),
+                            ),
+                        })
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonSamplerBindingCacheKey {
+    pub descriptor_set_index: usize,
+    pub binding: u32,
+    pub descriptor_type: i32,
+    pub sampler: AshMtoonSamplerPlanCacheKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonSamplerPlanCacheKey {
+    pub mag_filter: i32,
+    pub min_filter: i32,
+    pub mipmap_mode: i32,
+    pub address_mode_u: i32,
+    pub address_mode_v: i32,
+    pub min_lod_bits: u32,
+    pub max_lod_bits: u32,
+    pub normal_map_decode: bool,
+}
+
+impl AshMtoonSamplerPlanCacheKey {
+    pub fn from_sampler(sampler: AshSamplerPlan) -> Self {
+        Self {
+            mag_filter: sampler.mag_filter.as_raw(),
+            min_filter: sampler.min_filter.as_raw(),
+            mipmap_mode: sampler.mipmap_mode.as_raw(),
+            address_mode_u: sampler.address_mode_u.as_raw(),
+            address_mode_v: sampler.address_mode_v.as_raw(),
+            min_lod_bits: sampler.min_lod.to_bits(),
+            max_lod_bits: sampler.max_lod.to_bits(),
+            normal_map_decode: sampler.normal_map_decode,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonBufferCacheKey {
+    pub buffers: Vec<AshMtoonBufferResourceCacheKey>,
+}
+
+impl AshMtoonBufferCacheKey {
+    pub fn from_frame(frame: &AshRendererFrame) -> Self {
+        Self {
+            buffers: frame
+                .buffers
+                .iter()
+                .map(|buffer| AshMtoonBufferResourceCacheKey {
+                    role: buffer.role,
+                    usage: buffer.usage.as_raw(),
+                    stride: buffer.stride,
+                    count: buffer.count,
+                    byte_len: buffer.bytes.len(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonBufferResourceCacheKey {
+    pub role: AshBufferRole,
+    pub usage: u32,
+    pub stride: u32,
+    pub count: u32,
+    pub byte_len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonUniformCacheKey {
+    pub uniforms: Vec<AshMtoonUniformResourceCacheKey>,
+}
+
+impl AshMtoonUniformCacheKey {
+    pub fn from_frame(frame: &AshRendererFrame) -> Self {
+        Self {
+            uniforms: frame
+                .uniforms
+                .iter()
+                .map(|uniform| AshMtoonUniformResourceCacheKey {
+                    scope: uniform.scope,
+                    binding: uniform.binding,
+                    byte_len: uniform.bytes.len(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonUniformResourceCacheKey {
+    pub scope: AshUniformScope,
+    pub binding: u32,
+    pub byte_len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonTextureCacheKey {
+    pub textures: Vec<AshMtoonTextureResourceCacheKey>,
+}
+
+impl AshMtoonTextureCacheKey {
+    pub fn from_frame(frame: &AshRendererFrame) -> Self {
+        Self {
+            textures: frame
+                .textures
+                .iter()
+                .map(|texture| AshMtoonTextureResourceCacheKey {
+                    texture: texture.upload.texture,
+                    color_space: texture.upload.color_space,
+                    format: texture.upload.format.as_raw(),
+                    extent: [
+                        texture.upload.extent.width,
+                        texture.upload.extent.height,
+                        texture.upload.extent.depth,
+                    ],
+                    image_usage: texture.image_usage.as_raw(),
+                    image_layout_after_upload: texture.image_layout_after_upload.as_raw(),
+                    aspect_mask: texture.aspect_mask.as_raw(),
+                    rgba_len: texture.upload.rgba.len(),
+                    rgba_hash: ash_mtoon_bytes_hash(&texture.upload.rgba),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshMtoonTextureResourceCacheKey {
+    pub texture: Option<TextureRef>,
+    pub color_space: GltfMaterialTextureColorSpace,
+    pub format: i32,
+    pub extent: [u32; 3],
+    pub image_usage: u32,
+    pub image_layout_after_upload: i32,
+    pub aspect_mask: u32,
+    pub rgba_len: usize,
+    pub rgba_hash: u64,
+}
+
+pub fn ash_mtoon_renderer_cache_keys(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+    shader: AshMtoonShaderCacheKey,
+) -> AshMtoonRendererCacheKeys {
+    AshMtoonRendererCacheKeys::from_frame(
+        frame,
+        AshMtoonRenderTargetCacheKey::from_extent(extent),
+        shader,
+    )
+}
+
+pub fn ash_mtoon_spirv_words_hash(words: &[u32]) -> u64 {
+    words
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .fold(FNV_OFFSET_BASIS_64, ash_mtoon_fnv1a_byte)
+}
+
+pub fn ash_mtoon_bytes_hash(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .copied()
+        .fold(FNV_OFFSET_BASIS_64, ash_mtoon_fnv1a_byte)
+}
+
+const FNV_OFFSET_BASIS_64: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME_64: u64 = 0x0000_0100_0000_01b3;
+
+fn ash_mtoon_fnv1a_byte(hash: u64, byte: u8) -> u64 {
+    (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME_64)
+}
+
+fn ash_mtoon_descriptor_set_layout_cache_records(
+    frame: &AshRendererFrame,
+) -> Vec<Vec<AshMtoonDescriptorLayoutBindingCacheKey>> {
+    frame
+        .descriptor_sets
+        .iter()
+        .map(|set| {
+            set.bindings
+                .iter()
+                .map(|binding| AshMtoonDescriptorLayoutBindingCacheKey {
+                    binding: binding.binding,
+                    descriptor_type: binding.descriptor_type.as_raw(),
+                    stage_flags: binding.stage_flags.as_raw(),
+                })
+                .collect()
+        })
+        .collect()
 }
 
 pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererResourceManifest {
@@ -5078,6 +5504,159 @@ mod tests {
             stats.to_string(),
             "pipeline(hits=1,rebuilds=1); descriptors(hits=1,rebuilds=0); samplers(hits=1,rebuilds=0); buffers(hits=1,rebuilds=0); uniforms(hits=1,rebuilds=0); textures(hits=1,rebuilds=0); fallback_textures(hits=1,rebuilds=0); command_buffers(hits=1,rebuilds=0)"
         );
+    }
+
+    #[test]
+    fn mtoon_renderer_cache_keys_split_shape_and_payload_lifetimes() {
+        let frame = cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        let extent = vk::Extent2D {
+            width: 640,
+            height: 360,
+        };
+        let shader = AshMtoonShaderCacheKey::from_spirv_words(
+            "vs_main",
+            "fs_main",
+            &[0x0723_0203, 1, 2, 3, 4],
+            &[0x0723_0203, 5, 6, 7, 8],
+        );
+        let keys = ash_mtoon_renderer_cache_keys(&frame, extent, shader.clone());
+
+        let dynamic_payload_frame =
+            cache_key_test_frame(vec![9, 9, 9, 9], vec![8, 8, 8, 8], vec![255, 0, 0, 255]);
+        let dynamic_payload_keys =
+            ash_mtoon_renderer_cache_keys(&dynamic_payload_frame, extent, shader.clone());
+        assert_eq!(keys.buffers, dynamic_payload_keys.buffers);
+        assert_eq!(keys.uniforms, dynamic_payload_keys.uniforms);
+        assert_eq!(keys.descriptor_sets, dynamic_payload_keys.descriptor_sets);
+        assert_eq!(keys.pipeline, dynamic_payload_keys.pipeline);
+        assert_eq!(keys.textures, dynamic_payload_keys.textures);
+
+        let texture_payload_frame =
+            cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![0, 255, 0, 255]);
+        let texture_payload_keys =
+            ash_mtoon_renderer_cache_keys(&texture_payload_frame, extent, shader.clone());
+        assert_eq!(keys.buffers, texture_payload_keys.buffers);
+        assert_eq!(keys.uniforms, texture_payload_keys.uniforms);
+        assert_ne!(keys.textures, texture_payload_keys.textures);
+
+        let changed_shader = AshMtoonShaderCacheKey::from_spirv_words(
+            "vs_main",
+            "fs_main",
+            &[0x0723_0203, 1, 2, 3, 9],
+            &[0x0723_0203, 5, 6, 7, 8],
+        );
+        let changed_shader_keys = ash_mtoon_renderer_cache_keys(&frame, extent, changed_shader);
+        assert_ne!(keys.pipeline, changed_shader_keys.pipeline);
+        assert_eq!(keys.descriptor_sets, changed_shader_keys.descriptor_sets);
+
+        let resized_keys = ash_mtoon_renderer_cache_keys(
+            &frame,
+            vk::Extent2D {
+                width: 800,
+                height: 450,
+            },
+            shader,
+        );
+        assert_ne!(keys.pipeline, resized_keys.pipeline);
+        assert_eq!(keys.descriptor_sets, resized_keys.descriptor_sets);
+        assert_eq!(keys.samplers, resized_keys.samplers);
+    }
+
+    fn cache_key_test_frame(
+        buffer_bytes: Vec<u8>,
+        uniform_bytes: Vec<u8>,
+        texture_rgba: Vec<u8>,
+    ) -> AshRendererFrame {
+        AshRendererFrame {
+            buffers: vec![AshBufferUpload {
+                role: AshBufferRole::Vertex,
+                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                stride: 4,
+                count: 1,
+                bytes: buffer_bytes,
+            }],
+            textures: vec![AshTextureResourcePlan {
+                upload: AshTextureUpload {
+                    texture: Some(TextureRef(3)),
+                    color_space: GltfMaterialTextureColorSpace::Srgb,
+                    format: vk::Format::R8G8B8A8_SRGB,
+                    extent: vk::Extent3D {
+                        width: 1,
+                        height: 1,
+                        depth: 1,
+                    },
+                    rgba: texture_rgba,
+                },
+                image_usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                image_layout_after_upload: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+            }],
+            uniforms: vec![AshUniformUpload {
+                scope: AshUniformScope::Scene,
+                binding: ash_mtoon_wgsl_scene_binding(),
+                bytes: uniform_bytes,
+            }],
+            pipelines: vec![AshGraphicsPipelinePlan {
+                material: MaterialRef(0),
+                pipeline_plan_index: 0,
+                descriptor_set_index: 0,
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                vertex_stride: 4,
+                vertex_attributes: vec![AshVertexAttributePlan {
+                    location: 0,
+                    binding: 0,
+                    format: vk::Format::R32_SFLOAT,
+                    offset: 0,
+                }],
+                color_format: vk::Format::R8G8B8A8_UNORM,
+                depth_format: Some(ash_reference_depth_format()),
+            }],
+            descriptor_sets: vec![AshDescriptorSetPlan {
+                material: MaterialRef(0),
+                pipeline_plan_index: 0,
+                bindings: vec![
+                    AshResolvedDescriptorBinding {
+                        binding: ash_mtoon_wgsl_scene_binding(),
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        uniform_upload_index: Some(0),
+                        texture_upload_index: None,
+                        buffer_upload_index: None,
+                        sampler: None,
+                    },
+                    AshResolvedDescriptorBinding {
+                        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::Main),
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        uniform_upload_index: None,
+                        texture_upload_index: Some(0),
+                        buffer_upload_index: None,
+                        sampler: Some(AshSamplerPlan::default()),
+                    },
+                    AshResolvedDescriptorBinding {
+                        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
+                        descriptor_type: vk::DescriptorType::SAMPLER,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        uniform_upload_index: None,
+                        texture_upload_index: Some(0),
+                        buffer_upload_index: None,
+                        sampler: Some(AshSamplerPlan::default()),
+                    },
+                ],
+            }],
+            draw_calls: Vec::new(),
+        }
     }
 
     #[test]
