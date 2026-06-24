@@ -29,19 +29,19 @@ use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
     ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout,
-    AshCommandPlan, AshDescriptorImageResource, AshDescriptorWriteResource,
-    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMtoonBufferCacheKey,
-    AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
-    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
-    AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
-    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
-    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameSyncPlan,
-    AshWindowedResizeValidation, AshWindowedRunValidation, ash_depth_attachment_plan,
-    ash_descriptor_pool_plan, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_swapchain_surface_plan,
+    AshCommandPlan, AshDescriptorImageResource, AshDescriptorSetLayoutPlan,
+    AshDescriptorWriteResource, AshDrawableFrameOptions, AshGraphicsPipelinePlan,
+    AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
+    AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
+    AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
+    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
+    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
+    AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys,
+    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1137,23 +1137,15 @@ impl MtoonWindowedAshRenderer {
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
-        let descriptor_set_layouts = frame
-            .descriptor_sets
+        let descriptor_set_layout_plans = ash_descriptor_set_layout_plans(frame);
+        let descriptor_set_layouts = descriptor_set_layout_plans
             .iter()
-            .map(|set| {
-                self.create_descriptor_set_layout(set.bindings.iter().map(|binding| {
-                    vk::DescriptorSetLayoutBinding::default()
-                        .binding(binding.binding)
-                        .descriptor_type(binding.descriptor_type)
-                        .descriptor_count(1)
-                        .stage_flags(binding.stage_flags)
-                }))
-            })
+            .map(|plan| self.create_descriptor_set_layout(plan))
             .collect::<Result<Vec<_>, _>>()?;
-        let pipeline_layouts = descriptor_set_layouts
+        let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
             .iter()
-            .map(|layout| {
-                let layouts = [*layout];
+            .map(|plan| {
+                let layouts = [descriptor_set_layouts[plan.descriptor_set_layout_index]];
                 let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
                 unsafe { self.device.create_pipeline_layout(&info, None) }
             })
@@ -1627,14 +1619,11 @@ impl MtoonWindowedAshRenderer {
         result.map_err(Into::into)
     }
 
-    fn create_descriptor_set_layout<I>(
+    fn create_descriptor_set_layout(
         &self,
-        bindings: I,
-    ) -> Result<vk::DescriptorSetLayout, vk::Result>
-    where
-        I: IntoIterator<Item = vk::DescriptorSetLayoutBinding<'static>>,
-    {
-        let bindings = bindings.into_iter().collect::<Vec<_>>();
+        plan: &AshDescriptorSetLayoutPlan,
+    ) -> Result<vk::DescriptorSetLayout, vk::Result> {
+        let bindings = plan.vk_bindings();
         let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
         unsafe { self.device.create_descriptor_set_layout(&info, None) }
     }

@@ -1635,6 +1635,34 @@ pub struct AshDescriptorPoolSizePlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshDescriptorSetLayoutPlan {
+    pub descriptor_set_index: usize,
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub bindings: Vec<AshDescriptorBindingLayoutKey>,
+}
+
+impl AshDescriptorSetLayoutPlan {
+    pub fn vk_bindings(&self) -> Vec<vk::DescriptorSetLayoutBinding<'static>> {
+        self.bindings
+            .iter()
+            .map(|binding| {
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(binding.binding)
+                    .descriptor_type(binding.descriptor_type)
+                    .descriptor_count(1)
+                    .stage_flags(binding.stage_flags)
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshPipelineLayoutPlan {
+    pub descriptor_set_layout_index: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorWritePlan {
     pub descriptor_set_index: usize,
     pub binding: u32,
@@ -2645,6 +2673,41 @@ pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPl
             },
         ],
     }
+}
+
+pub fn ash_descriptor_set_layout_plans(
+    frame: &AshRendererFrame,
+) -> Vec<AshDescriptorSetLayoutPlan> {
+    frame
+        .descriptor_sets
+        .iter()
+        .enumerate()
+        .map(|(descriptor_set_index, set)| AshDescriptorSetLayoutPlan {
+            descriptor_set_index,
+            material: set.material,
+            pipeline_plan_index: set.pipeline_plan_index,
+            bindings: set
+                .bindings
+                .iter()
+                .map(|binding| AshDescriptorBindingLayoutKey {
+                    binding: binding.binding,
+                    descriptor_type: binding.descriptor_type,
+                    stage_flags: binding.stage_flags,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+pub fn ash_pipeline_layout_plans(
+    descriptor_set_layouts: &[AshDescriptorSetLayoutPlan],
+) -> Vec<AshPipelineLayoutPlan> {
+    descriptor_set_layouts
+        .iter()
+        .map(|layout| AshPipelineLayoutPlan {
+            descriptor_set_layout_index: layout.descriptor_set_index,
+        })
+        .collect()
 }
 
 pub fn ash_descriptor_write_plans(
@@ -6407,6 +6470,41 @@ mod tests {
         assert_eq!(
             ash_descriptor_pool_plan(&AshRendererFrame::default()).max_sets,
             1
+        );
+    }
+
+    #[test]
+    fn descriptor_set_and_pipeline_layout_plans_expose_vk_layout_contract() {
+        let frame = cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        let plans = ash_descriptor_set_layout_plans(&frame);
+
+        assert_eq!(plans.len(), frame.descriptor_sets.len());
+        assert_eq!(plans[0].descriptor_set_index, 0);
+        assert_eq!(plans[0].material, frame.descriptor_sets[0].material);
+        assert_eq!(
+            plans[0].pipeline_plan_index,
+            frame.descriptor_sets[0].pipeline_plan_index
+        );
+        assert_eq!(
+            plans[0].bindings.len(),
+            frame.descriptor_sets[0].bindings.len()
+        );
+
+        let vk_bindings = plans[0].vk_bindings();
+        assert_eq!(vk_bindings.len(), plans[0].bindings.len());
+        assert_eq!(vk_bindings[0].binding, plans[0].bindings[0].binding);
+        assert_eq!(
+            vk_bindings[0].descriptor_type,
+            plans[0].bindings[0].descriptor_type
+        );
+        assert_eq!(vk_bindings[0].descriptor_count, 1);
+        assert_eq!(vk_bindings[0].stage_flags, plans[0].bindings[0].stage_flags);
+
+        assert_eq!(
+            ash_pipeline_layout_plans(&plans),
+            vec![AshPipelineLayoutPlan {
+                descriptor_set_layout_index: 0
+            }]
         );
     }
 

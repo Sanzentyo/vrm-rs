@@ -19,14 +19,15 @@ use vrm_adapter::{
 };
 use vrm_adapter_ash::{
     AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorImageResource,
-    AshDescriptorWriteResource, AshDiagnosticOwnerId, AshDrawableFrameOptions,
-    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
-    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
-    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    AshDescriptorSetLayoutPlan, AshDescriptorWriteResource, AshDiagnosticOwnerId,
+    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
+    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRenderPassCreationPlan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
+    AshVrmPrimitive, ash_depth_attachment_plan, ash_descriptor_pool_plan,
+    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
     ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
     ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
-    ash_reference_depth_format, ash_render_pass_creation_plan,
+    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection,
     frame_plan_from_options_with_viewport,
 };
@@ -456,18 +457,10 @@ impl UnsafeAshDeviceRenderer {
             vk::BufferUsageFlags::TRANSFER_DST,
             &vec![0_u8; readback_len],
         )?;
-        let descriptor_set_layouts = frame
-            .descriptor_sets
+        let descriptor_set_layout_plans = ash_descriptor_set_layout_plans(frame);
+        let descriptor_set_layouts = descriptor_set_layout_plans
             .iter()
-            .map(|set| {
-                self.create_descriptor_set_layout(set.bindings.iter().map(|binding| {
-                    vk::DescriptorSetLayoutBinding::default()
-                        .binding(binding.binding)
-                        .descriptor_type(binding.descriptor_type)
-                        .descriptor_count(1)
-                        .stage_flags(binding.stage_flags)
-                }))
-            })
+            .map(|plan| self.create_descriptor_set_layout(plan))
             .collect::<Result<Vec<_>, _>>()?;
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let descriptor_sets =
@@ -484,10 +477,10 @@ impl UnsafeAshDeviceRenderer {
                 samplers: &samplers,
             },
         )?;
-        let pipeline_layouts = descriptor_set_layouts
+        let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
             .iter()
-            .map(|layout| {
-                let layouts = [*layout];
+            .map(|plan| {
+                let layouts = [descriptor_set_layouts[plan.descriptor_set_layout_index]];
                 let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
                 unsafe { self.device.create_pipeline_layout(&info, None) }
             })
@@ -707,14 +700,11 @@ impl UnsafeAshDeviceRenderer {
         self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, fallback_rgba(fallback))
     }
 
-    fn create_descriptor_set_layout<I>(
+    fn create_descriptor_set_layout(
         &self,
-        bindings: I,
-    ) -> Result<vk::DescriptorSetLayout, vk::Result>
-    where
-        I: IntoIterator<Item = vk::DescriptorSetLayoutBinding<'static>>,
-    {
-        let bindings = bindings.into_iter().collect::<Vec<_>>();
+        plan: &AshDescriptorSetLayoutPlan,
+    ) -> Result<vk::DescriptorSetLayout, vk::Result> {
+        let bindings = plan.vk_bindings();
         let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
         unsafe { self.device.create_descriptor_set_layout(&info, None) }
     }
