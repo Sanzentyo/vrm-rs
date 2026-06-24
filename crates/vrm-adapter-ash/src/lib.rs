@@ -1001,6 +1001,137 @@ pub struct AshRendererFrame {
     pub draw_calls: Vec<AshDrawCallPlan>,
 }
 
+impl AshRendererFrame {
+    pub fn resource_manifest(&self) -> AshRendererResourceManifest {
+        ash_renderer_resource_manifest(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshRendererResourceLifetime {
+    /// Resource shape is expected to be stable across animation frames for the same asset,
+    /// shader ABI, render target format, and render options.
+    Persistent,
+    /// Resource contents or shape can change every sampled frame.
+    FrameDynamic,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AshRendererResourceManifest {
+    pub buffers: Vec<AshRendererBufferResource>,
+    pub textures: Vec<AshRendererTextureResource>,
+    pub uniforms: Vec<AshRendererUniformResource>,
+    pub samplers: Vec<AshRendererSamplerResource>,
+    pub descriptor_set_layouts: Vec<AshRendererDescriptorSetLayoutResource>,
+    pub descriptor_sets: Vec<AshRendererDescriptorSetResource>,
+    pub pipelines: Vec<AshRendererPipelineResource>,
+}
+
+impl AshRendererResourceManifest {
+    pub fn persistent_resource_count(&self) -> usize {
+        self.textures.len()
+            + self.samplers.len()
+            + self.descriptor_set_layouts.len()
+            + self.pipelines.len()
+    }
+
+    pub fn dynamic_resource_count(&self) -> usize {
+        self.buffers.len() + self.uniforms.len() + self.descriptor_sets.len()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererBufferResource {
+    pub index: usize,
+    pub role: AshBufferRole,
+    pub usage: vk::BufferUsageFlags,
+    pub stride: u32,
+    pub count: u32,
+    pub byte_len: usize,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererTextureResource {
+    pub index: usize,
+    pub texture: Option<TextureRef>,
+    pub color_space: GltfMaterialTextureColorSpace,
+    pub format: vk::Format,
+    pub extent: vk::Extent3D,
+    pub image_usage: vk::ImageUsageFlags,
+    pub image_layout_after_upload: vk::ImageLayout,
+    pub aspect_mask: vk::ImageAspectFlags,
+    pub byte_len: usize,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererUniformResource {
+    pub index: usize,
+    pub scope: AshUniformScope,
+    pub binding: u32,
+    pub byte_len: usize,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererSamplerResource {
+    pub descriptor_set_index: usize,
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub sampler: Option<AshSamplerPlan>,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshDescriptorBindingLayoutKey {
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub stage_flags: vk::ShaderStageFlags,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererDescriptorSetLayoutResource {
+    pub descriptor_set_index: usize,
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub bindings: Vec<AshDescriptorBindingLayoutKey>,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererDescriptorBindingResource {
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub uniform_upload_index: Option<usize>,
+    pub texture_upload_index: Option<usize>,
+    pub buffer_upload_index: Option<usize>,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererDescriptorSetResource {
+    pub index: usize,
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub bindings: Vec<AshRendererDescriptorBindingResource>,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AshRendererPipelineResource {
+    pub index: usize,
+    pub material: MaterialRef,
+    pub pipeline_plan_index: usize,
+    pub descriptor_set_index: usize,
+    pub key: AshPipelineKey,
+    pub vertex_stride: u32,
+    pub vertex_attributes: Vec<AshVertexAttributePlan>,
+    pub color_format: vk::Format,
+    pub depth_format: Option<vk::Format>,
+    pub lifetime: AshRendererResourceLifetime,
+}
+
 #[derive(Clone, Debug)]
 pub struct AshDrawableFramePlan {
     pub render_pass: AshRenderPassPlan,
@@ -1168,6 +1299,156 @@ pub struct AshVertexAttributePlan {
     pub binding: u32,
     pub format: vk::Format,
     pub offset: u32,
+}
+
+pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererResourceManifest {
+    let buffers = frame
+        .buffers
+        .iter()
+        .enumerate()
+        .map(|(index, buffer)| AshRendererBufferResource {
+            index,
+            role: buffer.role,
+            usage: buffer.usage,
+            stride: buffer.stride,
+            count: buffer.count,
+            byte_len: buffer.bytes.len(),
+            lifetime: AshRendererResourceLifetime::FrameDynamic,
+        })
+        .collect();
+    let textures = frame
+        .textures
+        .iter()
+        .enumerate()
+        .map(|(index, texture)| AshRendererTextureResource {
+            index,
+            texture: texture.upload.texture,
+            color_space: texture.upload.color_space,
+            format: texture.upload.format,
+            extent: texture.upload.extent,
+            image_usage: texture.image_usage,
+            image_layout_after_upload: texture.image_layout_after_upload,
+            aspect_mask: texture.aspect_mask,
+            byte_len: texture.upload.rgba.len(),
+            lifetime: AshRendererResourceLifetime::Persistent,
+        })
+        .collect();
+    let uniforms = frame
+        .uniforms
+        .iter()
+        .enumerate()
+        .map(|(index, uniform)| AshRendererUniformResource {
+            index,
+            scope: uniform.scope,
+            binding: uniform.binding,
+            byte_len: uniform.bytes.len(),
+            lifetime: AshRendererResourceLifetime::FrameDynamic,
+        })
+        .collect();
+    let samplers = frame
+        .descriptor_sets
+        .iter()
+        .enumerate()
+        .flat_map(|(descriptor_set_index, set)| {
+            set.bindings
+                .iter()
+                .filter(|binding| {
+                    matches!(
+                        binding.descriptor_type,
+                        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                    )
+                })
+                .map(move |binding| AshRendererSamplerResource {
+                    descriptor_set_index,
+                    binding: binding.binding,
+                    descriptor_type: binding.descriptor_type,
+                    sampler: binding.sampler,
+                    lifetime: AshRendererResourceLifetime::Persistent,
+                })
+        })
+        .collect();
+    let descriptor_set_layouts = frame
+        .descriptor_sets
+        .iter()
+        .enumerate()
+        .map(
+            |(descriptor_set_index, set)| AshRendererDescriptorSetLayoutResource {
+                descriptor_set_index,
+                material: set.material,
+                pipeline_plan_index: set.pipeline_plan_index,
+                bindings: set
+                    .bindings
+                    .iter()
+                    .map(|binding| AshDescriptorBindingLayoutKey {
+                        binding: binding.binding,
+                        descriptor_type: binding.descriptor_type,
+                        stage_flags: binding.stage_flags,
+                    })
+                    .collect(),
+                lifetime: AshRendererResourceLifetime::Persistent,
+            },
+        )
+        .collect();
+    let descriptor_sets = frame
+        .descriptor_sets
+        .iter()
+        .enumerate()
+        .map(|(index, set)| AshRendererDescriptorSetResource {
+            index,
+            material: set.material,
+            pipeline_plan_index: set.pipeline_plan_index,
+            bindings: set
+                .bindings
+                .iter()
+                .map(|binding| AshRendererDescriptorBindingResource {
+                    binding: binding.binding,
+                    descriptor_type: binding.descriptor_type,
+                    uniform_upload_index: binding.uniform_upload_index,
+                    texture_upload_index: binding.texture_upload_index,
+                    buffer_upload_index: binding.buffer_upload_index,
+                    lifetime: ash_descriptor_binding_lifetime(binding.descriptor_type),
+                })
+                .collect(),
+            lifetime: AshRendererResourceLifetime::FrameDynamic,
+        })
+        .collect();
+    let pipelines = frame
+        .pipelines
+        .iter()
+        .enumerate()
+        .map(|(index, pipeline)| AshRendererPipelineResource {
+            index,
+            material: pipeline.material,
+            pipeline_plan_index: pipeline.pipeline_plan_index,
+            descriptor_set_index: pipeline.descriptor_set_index,
+            key: pipeline.key,
+            vertex_stride: pipeline.vertex_stride,
+            vertex_attributes: pipeline.vertex_attributes.clone(),
+            color_format: pipeline.color_format,
+            depth_format: pipeline.depth_format,
+            lifetime: AshRendererResourceLifetime::Persistent,
+        })
+        .collect();
+    AshRendererResourceManifest {
+        buffers,
+        textures,
+        uniforms,
+        samplers,
+        descriptor_set_layouts,
+        descriptor_sets,
+        pipelines,
+    }
+}
+
+fn ash_descriptor_binding_lifetime(
+    descriptor_type: vk::DescriptorType,
+) -> AshRendererResourceLifetime {
+    match descriptor_type {
+        vk::DescriptorType::SAMPLED_IMAGE
+        | vk::DescriptorType::SAMPLER
+        | vk::DescriptorType::COMBINED_IMAGE_SAMPLER => AshRendererResourceLifetime::Persistent,
+        _ => AshRendererResourceLifetime::FrameDynamic,
+    }
 }
 
 pub fn ash_drawable_frame_from_renderer_frame(
@@ -4748,6 +5029,57 @@ mod tests {
         assert_eq!(renderer_frame.buffers[0].count, 1);
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
         assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+
+        let manifest = renderer_frame.resource_manifest();
+        assert_eq!(manifest.buffers.len(), renderer_frame.buffers.len());
+        assert_eq!(manifest.uniforms.len(), renderer_frame.uniforms.len());
+        assert_eq!(
+            manifest.descriptor_set_layouts.len(),
+            renderer_frame.descriptor_sets.len()
+        );
+        assert_eq!(
+            manifest.descriptor_sets.len(),
+            renderer_frame.descriptor_sets.len()
+        );
+        assert_eq!(manifest.pipelines.len(), renderer_frame.pipelines.len());
+        assert!(manifest.textures.is_empty());
+        assert!(manifest.samplers.iter().all(|resource| {
+            resource.lifetime == AshRendererResourceLifetime::Persistent
+                && resource.descriptor_type == vk::DescriptorType::SAMPLER
+        }));
+        assert!(
+            manifest
+                .buffers
+                .iter()
+                .all(|resource| { resource.lifetime == AshRendererResourceLifetime::FrameDynamic })
+        );
+        assert!(
+            manifest
+                .uniforms
+                .iter()
+                .all(|resource| { resource.lifetime == AshRendererResourceLifetime::FrameDynamic })
+        );
+        assert!(manifest.pipelines.iter().all(|resource| {
+            resource.lifetime == AshRendererResourceLifetime::Persistent
+                && resource.depth_format == Some(ash_reference_depth_format())
+        }));
+        assert_eq!(manifest.buffers[0].role, AshBufferRole::OwnerSampleOverride);
+        assert_eq!(manifest.buffers[1].role, AshBufferRole::Vertex);
+        assert_eq!(manifest.buffers[2].role, AshBufferRole::Index);
+        assert_eq!(manifest.uniforms[3].scope, AshUniformScope::Scene);
+        assert_eq!(
+            manifest.descriptor_sets[0].bindings[0].lifetime,
+            AshRendererResourceLifetime::FrameDynamic
+        );
+        assert!(manifest.descriptor_sets[0].bindings.iter().any(|binding| {
+            binding.descriptor_type == vk::DescriptorType::SAMPLED_IMAGE
+                && binding.lifetime == AshRendererResourceLifetime::Persistent
+        }));
+        assert!(manifest.persistent_resource_count() > 0);
+        assert_eq!(
+            manifest.dynamic_resource_count(),
+            manifest.buffers.len() + manifest.uniforms.len() + manifest.descriptor_sets.len()
+        );
 
         let drawable = ash_drawable_frame_from_renderer_frame(
             &renderer_frame,

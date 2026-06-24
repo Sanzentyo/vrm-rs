@@ -4,7 +4,7 @@ use std::error::Error;
 use vrm_adapter_ash::{
     AshBufferRole, AshCommandPlan, AshDrawableFramePlan, AshRendererFrame, AshSamplerPlan,
     AshVrmFramePlanOptions, ash_drawable_frame_from_renderer_frame, ash_renderer_frame_from_plan,
-    frame_plan_from_options,
+    ash_renderer_resource_manifest, frame_plan_from_options,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -176,6 +176,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut renderer = MockAshRenderer::default();
     renderer.upload_frame(&renderer_frame, &drawable);
+    let manifest = ash_renderer_resource_manifest(&renderer_frame);
     let total_indices = renderer
         .draws
         .iter()
@@ -203,7 +204,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ^ (plan.max_lod.to_bits() as u64)
     });
     println!(
-        "ash renderer example: {} buffers, {} images, {} samplers, {} descriptor sets, {} commands, {} skipped, {} draws, {} indices, checksum {}, sampler checksum {}",
+        "ash renderer example: {} buffers, {} images, {} samplers, {} descriptor sets, {} commands, {} skipped, {} draws, {} indices, {} persistent resources, {} dynamic resources, checksum {}, sampler checksum {}",
         renderer.buffers.len(),
         renderer.images.len(),
         renderer.samplers.len(),
@@ -212,6 +213,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         drawable.skipped_draws.len(),
         renderer.draws.len(),
         total_indices,
+        manifest.persistent_resource_count(),
+        manifest.dynamic_resource_count(),
         command_checksum,
         sampler_policy_checksum
     );
