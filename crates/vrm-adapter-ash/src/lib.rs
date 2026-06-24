@@ -1481,6 +1481,50 @@ pub fn ash_texture_mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::Buff
         .collect()
 }
 
+#[derive(Clone, Debug)]
+pub struct AshColorAttachmentReadbackPlan {
+    pub subresource_range: vk::ImageSubresourceRange,
+    pub copy_region: vk::BufferImageCopy,
+}
+
+impl AshColorAttachmentReadbackPlan {
+    pub fn transfer_src_barrier(&self, image: vk::Image) -> vk::ImageMemoryBarrier<'static> {
+        vk::ImageMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .image(image)
+            .subresource_range(self.subresource_range)
+    }
+
+    pub fn copy_regions(&self) -> [vk::BufferImageCopy; 1] {
+        [self.copy_region]
+    }
+}
+
+pub fn ash_color_attachment_readback_plan(extent: vk::Extent2D) -> AshColorAttachmentReadbackPlan {
+    let subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .layer_count(1);
+    let copy_region = vk::BufferImageCopy::default()
+        .image_subresource(
+            vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .layer_count(1),
+        )
+        .image_extent(vk::Extent3D {
+            width: extent.width,
+            height: extent.height,
+            depth: 1,
+        });
+    AshColorAttachmentReadbackPlan {
+        subresource_range,
+        copy_region,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshDepthAttachmentPlan {
     pub format: vk::Format,
@@ -7127,6 +7171,43 @@ mod tests {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         );
         assert_eq!(to_shader.image, image);
+    }
+
+    #[test]
+    fn color_attachment_readback_plan_exposes_barrier_and_copy_region() {
+        let plan = ash_color_attachment_readback_plan(vk::Extent2D {
+            width: 64,
+            height: 32,
+        });
+        let image = vk::Image::null();
+        let barrier = plan.transfer_src_barrier(image);
+        let regions = plan.copy_regions();
+
+        assert_eq!(
+            plan.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(plan.subresource_range.level_count, 1);
+        assert_eq!(plan.subresource_range.layer_count, 1);
+        assert_eq!(
+            barrier.src_access_mask,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+        );
+        assert_eq!(barrier.dst_access_mask, vk::AccessFlags::TRANSFER_READ);
+        assert_eq!(
+            barrier.old_layout,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        );
+        assert_eq!(barrier.new_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        assert_eq!(barrier.image, image);
+        assert_eq!(
+            regions[0].image_subresource.aspect_mask,
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(regions[0].image_subresource.layer_count, 1);
+        assert_eq!(regions[0].image_extent.width, 64);
+        assert_eq!(regions[0].image_extent.height, 32);
+        assert_eq!(regions[0].image_extent.depth, 1);
     }
 
     #[test]

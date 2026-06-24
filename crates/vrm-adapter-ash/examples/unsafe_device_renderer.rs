@@ -23,12 +23,13 @@ use vrm_adapter_ash::{
     AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
     AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
     AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_memory_type_index,
-    ash_mtoon_texture_binding, ash_pipeline_layout_plans, ash_render_pass_begin_plan,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_descriptor_pool_plan,
+    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_material_texture_binding,
+    ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
+    ash_render_pass_begin_plan, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
     ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_texture_mip_upload_bytes,
     ash_texture_upload_command_plan, frame_plan_from_options_with_viewport,
 };
@@ -1094,6 +1095,8 @@ impl UnsafeAshDeviceRenderer {
                 }
             }
             self.device.cmd_end_render_pass(command_buffer);
+            let readback_plan = ash_color_attachment_readback_plan(context.extent);
+            let readback_barriers = [readback_plan.transfer_src_barrier(context.color_target)];
             self.device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
@@ -1101,35 +1104,15 @@ impl UnsafeAshDeviceRenderer {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                &[vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .image(context.color_target)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::default()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .level_count(1)
-                            .layer_count(1),
-                    )],
+                &readback_barriers,
             );
+            let copy_regions = readback_plan.copy_regions();
             self.device.cmd_copy_image_to_buffer(
                 command_buffer,
                 context.color_target,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 context.readback_buffer,
-                &[vk::BufferImageCopy::default()
-                    .image_subresource(
-                        vk::ImageSubresourceLayers::default()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .layer_count(1),
-                    )
-                    .image_extent(vk::Extent3D {
-                        width: context.extent.width,
-                        height: context.extent.height,
-                        depth: 1,
-                    })],
+                &copy_regions,
             );
             self.device.end_command_buffer(command_buffer)?;
         }
