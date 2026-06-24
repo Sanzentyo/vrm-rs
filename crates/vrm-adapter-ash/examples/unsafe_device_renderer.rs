@@ -18,17 +18,17 @@ use vrm_adapter::{
     RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorImageResource,
-    AshDescriptorSetLayoutPlan, AshDescriptorWriteResource, AshDiagnosticOwnerId,
-    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
-    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRenderPassCreationPlan,
-    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
-    AshVrmPrimitive, ash_depth_attachment_plan, ash_descriptor_pool_plan,
-    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_material_texture_binding,
-    ash_mtoon_texture_binding, ash_pipeline_layout_plans, ash_reference_depth_format,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorSetLayoutPlan,
+    AshDescriptorWriteResource, AshDiagnosticOwnerId, AshDrawableFrameOptions,
+    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
+    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
+    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
+    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
+    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -205,23 +205,6 @@ struct DescriptorUpdateResources<'a> {
     images: &'a [VulkanImage],
     fallback_textures: &'a VulkanFallbackTextures,
     samplers: &'a [vk::Sampler],
-}
-
-fn descriptor_image_resource<'a>(
-    resources: DescriptorUpdateResources<'a>,
-    image: AshDescriptorImageResource,
-) -> Result<&'a VulkanImage, Box<dyn Error>> {
-    match image {
-        AshDescriptorImageResource::TextureUpload {
-            texture_upload_index,
-        } => resources
-            .images
-            .get(texture_upload_index)
-            .ok_or_else(|| "descriptor write references a missing texture image".into()),
-        AshDescriptorImageResource::Fallback { fallback } => {
-            Ok(resources.fallback_textures.get(fallback))
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -805,10 +788,14 @@ impl UnsafeAshDeviceRenderer {
                         .resource
                         .sampler(resources.samplers)
                         .map_err(io::Error::other)?;
-                    let image = descriptor_image_resource(
-                        resources,
-                        plan.resource.image_resource().map_err(io::Error::other)?,
-                    )?;
+                    let image = plan
+                        .resource
+                        .image_resource()
+                        .map_err(io::Error::other)?
+                        .resolve_resource(resources.images, |fallback| {
+                            resources.fallback_textures.get(fallback)
+                        })
+                        .map_err(io::Error::other)?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .sampler(sampler)
                         .image_view(image.view)
@@ -823,10 +810,14 @@ impl UnsafeAshDeviceRenderer {
                     }
                 }
                 AshDescriptorWriteResource::SampledImage { image: _ } => {
-                    let image = descriptor_image_resource(
-                        resources,
-                        plan.resource.image_resource().map_err(io::Error::other)?,
-                    )?;
+                    let image = plan
+                        .resource
+                        .image_resource()
+                        .map_err(io::Error::other)?
+                        .resolve_resource(resources.images, |fallback| {
+                            resources.fallback_textures.get(fallback)
+                        })
+                        .map_err(io::Error::other)?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .image_view(image.view)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];

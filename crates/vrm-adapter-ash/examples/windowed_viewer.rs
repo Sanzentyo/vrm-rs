@@ -29,19 +29,18 @@ use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
     ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout,
-    AshCommandPlan, AshDescriptorImageResource, AshDescriptorSetLayoutPlan,
-    AshDescriptorWriteResource, AshDrawableFrameOptions, AshGraphicsPipelinePlan,
-    AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
-    AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
-    AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
-    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
-    AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_pipeline_layout_plans,
-    ash_reference_depth_format, ash_render_pass_creation_plan,
+    AshCommandPlan, AshDescriptorSetLayoutPlan, AshDescriptorWriteResource,
+    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMtoonBufferCacheKey,
+    AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
+    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
+    AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
+    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameSyncPlan,
+    AshWindowedResizeValidation, AshWindowedRunValidation, ash_depth_attachment_plan,
+    ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys,
+    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
 };
 
@@ -1713,12 +1712,14 @@ impl MtoonWindowedAshRenderer {
                         .resource
                         .sampler(resources.samplers)
                         .map_err(std::io::Error::other)?;
-                    let image = mtoon_descriptor_image_resource(
-                        resources,
-                        plan.resource
-                            .image_resource()
-                            .map_err(std::io::Error::other)?,
-                    )?;
+                    let image = plan
+                        .resource
+                        .image_resource()
+                        .map_err(std::io::Error::other)?
+                        .resolve_resource(resources.images, |fallback| {
+                            resources.fallback_textures.get(fallback)
+                        })
+                        .map_err(std::io::Error::other)?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .sampler(sampler)
                         .image_view(image.view)
@@ -1733,12 +1734,14 @@ impl MtoonWindowedAshRenderer {
                     }
                 }
                 AshDescriptorWriteResource::SampledImage { image: _ } => {
-                    let image = mtoon_descriptor_image_resource(
-                        resources,
-                        plan.resource
-                            .image_resource()
-                            .map_err(std::io::Error::other)?,
-                    )?;
+                    let image = plan
+                        .resource
+                        .image_resource()
+                        .map_err(std::io::Error::other)?
+                        .resolve_resource(resources.images, |fallback| {
+                            resources.fallback_textures.get(fallback)
+                        })
+                        .map_err(std::io::Error::other)?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .image_view(image.view)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
@@ -2185,23 +2188,6 @@ struct MtoonDescriptorUpdateResources<'a> {
     images: &'a [MtoonVulkanImage],
     fallback_textures: &'a MtoonVulkanFallbackTextures,
     samplers: &'a [vk::Sampler],
-}
-
-fn mtoon_descriptor_image_resource<'a>(
-    resources: MtoonDescriptorUpdateResources<'a>,
-    image: AshDescriptorImageResource,
-) -> Result<&'a MtoonVulkanImage, Box<dyn Error>> {
-    match image {
-        AshDescriptorImageResource::TextureUpload {
-            texture_upload_index,
-        } => resources
-            .images
-            .get(texture_upload_index)
-            .ok_or_else(|| "descriptor write references a missing texture image".into()),
-        AshDescriptorImageResource::Fallback { fallback } => {
-            Ok(resources.fallback_textures.get(fallback))
-        }
-    }
 }
 
 struct MtoonSwapchainDrawContext<'a> {

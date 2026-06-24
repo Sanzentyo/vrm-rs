@@ -1810,6 +1810,44 @@ pub enum AshDescriptorImageResource {
     },
 }
 
+impl AshDescriptorImageResource {
+    pub fn texture_upload_resource<'a, T>(
+        &self,
+        texture_uploads: &'a [T],
+    ) -> Result<&'a T, String> {
+        match self {
+            Self::TextureUpload {
+                texture_upload_index,
+            } => texture_uploads.get(*texture_upload_index).ok_or_else(|| {
+                format!("descriptor image references missing texture upload {texture_upload_index}")
+            }),
+            other => Err(format!(
+                "descriptor image resource is not a texture upload: {other:?}"
+            )),
+        }
+    }
+
+    pub fn fallback(&self) -> Result<GltfMaterialTextureFallback, String> {
+        match self {
+            Self::Fallback { fallback } => Ok(*fallback),
+            other => Err(format!(
+                "descriptor image resource is not a fallback texture: {other:?}"
+            )),
+        }
+    }
+
+    pub fn resolve_resource<'a, T>(
+        &self,
+        texture_uploads: &'a [T],
+        fallback_resource: impl FnOnce(GltfMaterialTextureFallback) -> &'a T,
+    ) -> Result<&'a T, String> {
+        match self {
+            Self::TextureUpload { .. } => self.texture_upload_resource(texture_uploads),
+            Self::Fallback { fallback } => Ok(fallback_resource(*fallback)),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AshDrawableFramePlan {
     pub render_pass: AshRenderPassPlan,
@@ -6908,6 +6946,34 @@ mod tests {
         assert_eq!(
             AshDescriptorWriteResource::SampledImage { image }.image_resource(),
             Ok(image)
+        );
+        assert_eq!(
+            image.resolve_resource(&[1_u32], |fallback| match fallback {
+                GltfMaterialTextureFallback::White => &9_u32,
+                GltfMaterialTextureFallback::Black => &8_u32,
+                GltfMaterialTextureFallback::NeutralNormal => &7_u32,
+            }),
+            Ok(&9_u32)
+        );
+        let uploaded = AshDescriptorImageResource::TextureUpload {
+            texture_upload_index: 0,
+        };
+        assert_eq!(uploaded.texture_upload_resource(&[55_u32]), Ok(&55_u32));
+        assert_eq!(
+            uploaded.resolve_resource(&[55_u32], |_| &0_u32),
+            Ok(&55_u32)
+        );
+        let empty_textures: [u32; 0] = [];
+        assert_eq!(
+            uploaded.texture_upload_resource(&empty_textures),
+            Err("descriptor image references missing texture upload 0".to_owned())
+        );
+        assert_eq!(
+            uploaded.fallback(),
+            Err(
+                "descriptor image resource is not a fallback texture: TextureUpload { texture_upload_index: 0 }"
+                    .to_owned()
+            )
         );
         assert_eq!(
             plan.resource.image_resource(),
