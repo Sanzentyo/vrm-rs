@@ -833,19 +833,9 @@ impl UnsafeAshDeviceRenderer {
         &self,
         plan: AshRenderPassCreationPlan,
     ) -> Result<vk::RenderPass, vk::Result> {
-        let attachments = plan.attachment_descriptions();
-        let color_attachment = plan.color_attachment_references();
-        let depth_attachment = plan.depth_attachment_reference();
-        let subpass = [vk::SubpassDescription::default()
-            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(&color_attachment)
-            .depth_stencil_attachment(&depth_attachment)];
-        let dependency = [plan.subpass_dependency()];
-        let info = vk::RenderPassCreateInfo::default()
-            .attachments(&attachments)
-            .subpasses(&subpass)
-            .dependencies(&dependency);
-        unsafe { self.device.create_render_pass(&info, None) }
+        plan.with_render_pass_create_info(|info| unsafe {
+            self.device.create_render_pass(&info, None)
+        })
     }
 
     fn create_framebuffer(

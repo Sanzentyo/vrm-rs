@@ -2812,19 +2812,7 @@ fn create_render_pass(
     device: &ash::Device,
     plan: AshRenderPassCreationPlan,
 ) -> Result<vk::RenderPass, vk::Result> {
-    let attachments = plan.attachment_descriptions();
-    let color_ref = plan.color_attachment_references();
-    let depth_ref = plan.depth_attachment_reference();
-    let subpass = [vk::SubpassDescription::default()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_ref)
-        .depth_stencil_attachment(&depth_ref)];
-    let dependency = [plan.subpass_dependency()];
-    let info = vk::RenderPassCreateInfo::default()
-        .attachments(&attachments)
-        .subpasses(&subpass)
-        .dependencies(&dependency);
-    unsafe { device.create_render_pass(&info, None) }
+    plan.with_render_pass_create_info(|info| unsafe { device.create_render_pass(&info, None) })
 }
 
 fn create_simple_pipeline(

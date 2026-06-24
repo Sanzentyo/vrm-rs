@@ -1816,6 +1816,25 @@ impl AshRenderPassCreationPlan {
             .dst_stage_mask(self.dependency_policy.dst_stage_mask())
             .dst_access_mask(self.dependency_policy.dst_access_mask())
     }
+
+    pub fn with_render_pass_create_info<R>(
+        self,
+        f: impl FnOnce(vk::RenderPassCreateInfo<'_>) -> R,
+    ) -> R {
+        let attachments = self.attachment_descriptions();
+        let color_attachment = self.color_attachment_references();
+        let depth_attachment = self.depth_attachment_reference();
+        let subpass = [vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachment)
+            .depth_stencil_attachment(&depth_attachment)];
+        let dependency = [self.subpass_dependency()];
+        let info = vk::RenderPassCreateInfo::default()
+            .attachments(&attachments)
+            .subpasses(&subpass)
+            .dependencies(&dependency);
+        f(info)
+    }
 }
 
 pub const fn ash_render_pass_creation_plan(
@@ -8105,6 +8124,14 @@ mod tests {
             offscreen.depth_attachment_reference().layout,
             vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         );
+        offscreen.with_render_pass_create_info(|info| {
+            assert_eq!(info.attachment_count, 2);
+            assert_eq!(info.subpass_count, 1);
+            assert_eq!(info.dependency_count, 1);
+            assert!(!info.p_attachments.is_null());
+            assert!(!info.p_subpasses.is_null());
+            assert!(!info.p_dependencies.is_null());
+        });
     }
 
     #[test]
