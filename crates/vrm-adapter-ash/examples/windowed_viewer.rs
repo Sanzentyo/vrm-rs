@@ -101,6 +101,9 @@ struct Options {
     /// Treat a smoke run as failed unless a requested resize recreates the swapchain.
     #[arg(long)]
     require_resize_recreate: bool,
+    /// Number of queued MToon frames allowed before waiting. Ignored by `--simple-preview`.
+    #[arg(long, default_value_t = 2)]
+    frames_in_flight: usize,
     /// Print renderer cache hit/rebuild counters before exiting.
     #[arg(long)]
     print_cache_stats: bool,
@@ -244,8 +247,12 @@ impl ApplicationHandler for App {
             ActiveRenderer::Simple(Box::new(renderer))
         } else {
             ActiveRenderer::Mtoon(Box::new(
-                MtoonWindowedAshRenderer::new(&window, &self.shaders)
-                    .expect("initialize ash mtoon windowed renderer"),
+                MtoonWindowedAshRenderer::new(
+                    &window,
+                    &self.shaders,
+                    self.avatar.options.frames_in_flight,
+                )
+                .expect("initialize ash mtoon windowed renderer"),
             ))
         };
         self.active_renderer = Some(active_renderer);
@@ -370,6 +377,11 @@ impl App {
             && let Some(ActiveRenderer::Mtoon(renderer)) = self.active_renderer.as_ref()
         {
             println!("ash windowed cache stats: {}", renderer.cache_stats());
+            println!(
+                "ash windowed sync stats: frames_in_flight={}, swapchain_images={}",
+                renderer.frames_in_flight(),
+                renderer.swapchain_image_count()
+            );
         }
         if self.avatar.options.print_cache_stats {
             println!(
@@ -432,6 +444,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if options.require_resize_recreate && options.resize_after_frames.is_none() {
         return Err("--require-resize-recreate requires --resize-after-frames".into());
+    }
+    if options.frames_in_flight == 0 {
+        return Err("--frames-in-flight must be at least 1".into());
     }
     let avatar = WindowedAvatar::new(options)?;
     let shaders = ShaderModules {
@@ -860,6 +875,12 @@ struct MtoonPersistentFallbackTextureCache {
     textures: MtoonVulkanFallbackTextures,
 }
 
+struct MtoonFrameSync {
+    image_available: vk::Semaphore,
+    render_finished: vk::Semaphore,
+    in_flight: vk::Fence,
+}
+
 struct MtoonSwapchainShell {
     swapchain: vk::SwapchainKHR,
     image_views: Vec<vk::ImageView>,
@@ -904,9 +925,9 @@ struct MtoonWindowedAshRenderer {
     vertex_entry: CString,
     fragment_entry: CString,
     depth_format: vk::Format,
-    image_available: vk::Semaphore,
-    render_finished: vk::Semaphore,
-    in_flight: vk::Fence,
+    frame_sync: Vec<MtoonFrameSync>,
+    current_frame: usize,
+    images_in_flight: Vec<vk::Fence>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
     persistent_descriptors: Option<MtoonPersistentDescriptorSetCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
@@ -918,7 +939,11 @@ struct MtoonWindowedAshRenderer {
 }
 
 impl MtoonWindowedAshRenderer {
-    fn new(window: &Window, shaders: &ShaderModules) -> Result<Self, Box<dyn Error>> {
+    fn new(
+        window: &Window,
+        shaders: &ShaderModules,
+        frames_in_flight: usize,
+    ) -> Result<Self, Box<dyn Error>> {
         let entry = unsafe { Entry::load()? };
         let app_name = CString::new("vrm-rs ash windowed mtoon viewer")?;
         let engine_name = CString::new("vrm-rs")?;
@@ -976,16 +1001,8 @@ impl MtoonWindowedAshRenderer {
             },
             window,
         )?;
-        let image_available =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
-        let render_finished =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
-        let in_flight = unsafe {
-            device.create_fence(
-                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            )?
-        };
+        let frame_sync = create_mtoon_frame_sync(&device, frames_in_flight)?;
+        let images_in_flight = vec![vk::Fence::null(); swapchain.image_views.len()];
         Ok(Self {
             _entry: entry,
             instance,
@@ -1003,9 +1020,9 @@ impl MtoonWindowedAshRenderer {
             vertex_entry: CString::new(shaders.vertex_entry.as_str())?,
             fragment_entry: CString::new(shaders.fragment_entry.as_str())?,
             depth_format,
-            image_available,
-            render_finished,
-            in_flight,
+            frame_sync,
+            current_frame: 0,
+            images_in_flight,
             persistent_cache: None,
             persistent_descriptors: None,
             persistent_samplers: None,
@@ -1021,6 +1038,14 @@ impl MtoonWindowedAshRenderer {
         self.cache_stats
     }
 
+    fn frames_in_flight(&self) -> usize {
+        self.frame_sync.len()
+    }
+
+    fn swapchain_image_count(&self) -> usize {
+        self.swapchain.image_views.len()
+    }
+
     fn render(
         &mut self,
         window: &Window,
@@ -1029,15 +1054,21 @@ impl MtoonWindowedAshRenderer {
         if window.inner_size().width == 0 || window.inner_size().height == 0 {
             return Ok(RenderStatus::Ok);
         }
+        let sync = self
+            .frame_sync
+            .get(self.current_frame)
+            .ok_or("ash windowed mtoon renderer has no frame sync object")?;
+        let image_available = sync.image_available;
+        let render_finished = sync.render_finished;
+        let in_flight = sync.in_flight;
         unsafe {
-            self.device
-                .wait_for_fences(&[self.in_flight], true, u64::MAX)?;
+            self.device.wait_for_fences(&[in_flight], true, u64::MAX)?;
         }
         let acquired = unsafe {
             self.swapchain_loader.acquire_next_image(
                 self.swapchain.swapchain,
                 u64::MAX,
-                self.image_available,
+                image_available,
                 vk::Fence::null(),
             )
         };
@@ -1046,16 +1077,24 @@ impl MtoonWindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
             Err(error) => return Err(error.into()),
         };
+        let image_index = image_index as usize;
+        let image_fence = *self
+            .images_in_flight
+            .get(image_index)
+            .ok_or("swapchain image has no matching in-flight fence slot")?;
+        if image_fence != vk::Fence::null() {
+            unsafe {
+                self.device
+                    .wait_for_fences(&[image_fence], true, u64::MAX)?;
+            }
+        }
         let vertex_entry = self.vertex_entry.clone();
         let fragment_entry = self.fragment_entry.clone();
-        let command_buffer = self.materialize_swapchain_frame(
-            frame,
-            image_index as usize,
-            &vertex_entry,
-            &fragment_entry,
-        )?;
-        let wait_semaphores = [self.image_available];
-        let signal_semaphores = [self.render_finished];
+        let command_buffer =
+            self.materialize_swapchain_frame(frame, image_index, &vertex_entry, &fragment_entry)?;
+        self.images_in_flight[image_index] = in_flight;
+        let wait_semaphores = [image_available];
+        let signal_semaphores = [render_finished];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = [command_buffer];
         let submit = [vk::SubmitInfo::default()
@@ -1064,25 +1103,26 @@ impl MtoonWindowedAshRenderer {
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
         unsafe {
-            self.device.reset_fences(&[self.in_flight])?;
-            self.device
-                .queue_submit(self.queue, &submit, self.in_flight)?;
+            self.device.reset_fences(&[in_flight])?;
+            self.device.queue_submit(self.queue, &submit, in_flight)?;
         }
         let swapchains = [self.swapchain.swapchain];
-        let image_indices = [image_index];
+        let image_indices = [u32::try_from(image_index)?];
         let present = vk::PresentInfoKHR::default()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
-        match present_result {
+        let status = match present_result {
             Ok(present_suboptimal) if suboptimal || present_suboptimal => {
                 Ok(RenderStatus::NeedsRecreate)
             }
             Ok(_) => Ok(RenderStatus::Ok),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
             Err(error) => Err(error.into()),
-        }
+        };
+        self.current_frame = (self.current_frame + 1) % self.frame_sync.len();
+        status
     }
 
     fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
@@ -1118,6 +1158,7 @@ impl MtoonWindowedAshRenderer {
         );
         destroy_swapchain_handle(&self.swapchain_loader, old_swapchain);
         self.swapchain = new_swapchain?;
+        self.images_in_flight = vec![vk::Fence::null(); self.swapchain.image_views.len()];
         Ok(())
     }
 
@@ -2311,10 +2352,8 @@ impl Drop for MtoonWindowedAshRenderer {
         }
         let shell = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
         self.destroy_swapchain_shell(shell, true);
+        destroy_mtoon_frame_sync(&self.device, std::mem::take(&mut self.frame_sync));
         unsafe {
-            self.device.destroy_fence(self.in_flight, None);
-            self.device.destroy_semaphore(self.render_finished, None);
-            self.device.destroy_semaphore(self.image_available, None);
             self.device
                 .destroy_shader_module(self.fragment_shader, None);
             self.device.destroy_shader_module(self.vertex_shader, None);
@@ -3555,6 +3594,66 @@ fn create_shader_module(
 ) -> Result<vk::ShaderModule, vk::Result> {
     let info = vk::ShaderModuleCreateInfo::default().code(words);
     unsafe { device.create_shader_module(&info, None) }
+}
+
+fn create_mtoon_frame_sync(
+    device: &ash::Device,
+    frames_in_flight: usize,
+) -> Result<Vec<MtoonFrameSync>, vk::Result> {
+    let mut sync_objects = Vec::with_capacity(frames_in_flight);
+    for _ in 0..frames_in_flight {
+        let image_available =
+            match unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
+                Ok(semaphore) => semaphore,
+                Err(error) => {
+                    destroy_mtoon_frame_sync(device, sync_objects);
+                    return Err(error);
+                }
+            };
+        let render_finished =
+            match unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
+                Ok(semaphore) => semaphore,
+                Err(error) => {
+                    unsafe {
+                        device.destroy_semaphore(image_available, None);
+                    }
+                    destroy_mtoon_frame_sync(device, sync_objects);
+                    return Err(error);
+                }
+            };
+        let in_flight = match unsafe {
+            device.create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )
+        } {
+            Ok(fence) => fence,
+            Err(error) => {
+                unsafe {
+                    device.destroy_semaphore(render_finished, None);
+                    device.destroy_semaphore(image_available, None);
+                }
+                destroy_mtoon_frame_sync(device, sync_objects);
+                return Err(error);
+            }
+        };
+        sync_objects.push(MtoonFrameSync {
+            image_available,
+            render_finished,
+            in_flight,
+        });
+    }
+    Ok(sync_objects)
+}
+
+fn destroy_mtoon_frame_sync(device: &ash::Device, sync_objects: Vec<MtoonFrameSync>) {
+    unsafe {
+        for sync in sync_objects {
+            device.destroy_fence(sync.in_flight, None);
+            device.destroy_semaphore(sync.render_finished, None);
+            device.destroy_semaphore(sync.image_available, None);
+        }
+    }
 }
 
 fn allocate_swapchain_command_buffers(
