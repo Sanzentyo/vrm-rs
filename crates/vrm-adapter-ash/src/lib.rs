@@ -3077,6 +3077,16 @@ impl AshCommandPlan {
         }
     }
 
+    pub fn bind_graphics_pipeline_command(
+        &self,
+        pipelines: &[vk::Pipeline],
+    ) -> Result<AshBindGraphicsPipelineCommand, String> {
+        Ok(AshBindGraphicsPipelineCommand {
+            bind_point: vk::PipelineBindPoint::GRAPHICS,
+            pipeline: self.vk_graphics_pipeline(pipelines)?,
+        })
+    }
+
     pub fn vk_pipeline_layout(
         &self,
         pipeline_plans: &[AshGraphicsPipelinePlan],
@@ -3125,6 +3135,21 @@ impl AshCommandPlan {
         }
     }
 
+    pub fn bind_descriptor_set_command(
+        &self,
+        pipeline_plans: &[AshGraphicsPipelinePlan],
+        pipeline_layouts: &[vk::PipelineLayout],
+        descriptor_sets: &[vk::DescriptorSet],
+    ) -> Result<AshBindDescriptorSetCommand, String> {
+        Ok(AshBindDescriptorSetCommand {
+            bind_point: vk::PipelineBindPoint::GRAPHICS,
+            layout: self.vk_pipeline_layout(pipeline_plans, pipeline_layouts)?,
+            first_set: 0,
+            descriptor_sets: [self.vk_descriptor_set(descriptor_sets)?],
+            dynamic_offsets: [],
+        })
+    }
+
     pub fn vertex_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
         match self {
             Self::BindVertexBuffer { buffer_index, .. } => {
@@ -3138,6 +3163,24 @@ impl AshCommandPlan {
         }
     }
 
+    pub fn bind_vertex_buffer_command(
+        &self,
+        buffer: vk::Buffer,
+    ) -> Result<AshBindVertexBufferCommand, String> {
+        match self {
+            Self::BindVertexBuffer {
+                binding, offset, ..
+            } => Ok(AshBindVertexBufferCommand {
+                first_binding: *binding,
+                buffers: [buffer],
+                offsets: [*offset],
+            }),
+            other => Err(format!(
+                "drawable command is not a vertex-buffer bind: {other:?}"
+            )),
+        }
+    }
+
     pub fn index_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
         match self {
             Self::BindIndexBuffer { buffer_index, .. } => {
@@ -3145,6 +3188,24 @@ impl AshCommandPlan {
                     format!("drawable command references missing index buffer {buffer_index}")
                 })
             }
+            other => Err(format!(
+                "drawable command is not an index-buffer bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn bind_index_buffer_command(
+        &self,
+        buffer: vk::Buffer,
+    ) -> Result<AshBindIndexBufferCommand, String> {
+        match self {
+            Self::BindIndexBuffer {
+                offset, index_type, ..
+            } => Ok(AshBindIndexBufferCommand {
+                buffer,
+                offset: *offset,
+                index_type: *index_type,
+            }),
             other => Err(format!(
                 "drawable command is not an index-buffer bind: {other:?}"
             )),
@@ -3172,6 +3233,35 @@ impl AshCommandPlan {
             )),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshBindGraphicsPipelineCommand {
+    pub bind_point: vk::PipelineBindPoint,
+    pub pipeline: vk::Pipeline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshBindDescriptorSetCommand {
+    pub bind_point: vk::PipelineBindPoint,
+    pub layout: vk::PipelineLayout,
+    pub first_set: u32,
+    pub descriptor_sets: [vk::DescriptorSet; 1],
+    pub dynamic_offsets: [u32; 0],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshBindVertexBufferCommand {
+    pub first_binding: u32,
+    pub buffers: [vk::Buffer; 1],
+    pub offsets: [vk::DeviceSize; 1],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshBindIndexBufferCommand {
+    pub buffer: vk::Buffer,
+    pub offset: vk::DeviceSize,
+    pub index_type: vk::IndexType,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9842,6 +9932,13 @@ mod tests {
             Ok(vk::Pipeline::null())
         );
         assert_eq!(
+            bind_pipeline.bind_graphics_pipeline_command(&pipeline_handles),
+            Ok(AshBindGraphicsPipelineCommand {
+                bind_point: vk::PipelineBindPoint::GRAPHICS,
+                pipeline: vk::Pipeline::null(),
+            })
+        );
+        assert_eq!(
             AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }
                 .vk_graphics_pipeline(&pipeline_handles),
             Err("drawable command references missing graphics pipeline 2".to_owned())
@@ -9858,6 +9955,20 @@ mod tests {
         assert_eq!(
             bind_descriptor.vk_descriptor_set(&descriptor_sets),
             Ok(vk::DescriptorSet::null())
+        );
+        assert_eq!(
+            bind_descriptor.bind_descriptor_set_command(
+                &frame.pipelines,
+                &pipeline_layouts,
+                &descriptor_sets
+            ),
+            Ok(AshBindDescriptorSetCommand {
+                bind_point: vk::PipelineBindPoint::GRAPHICS,
+                layout: vk::PipelineLayout::null(),
+                first_set: 0,
+                descriptor_sets: [vk::DescriptorSet::null()],
+                dynamic_offsets: [],
+            })
         );
         assert_eq!(
             AshCommandPlan::BindDescriptorSet {
@@ -9887,6 +9998,14 @@ mod tests {
         };
         assert_eq!(vertex.vertex_buffer_resource(&[11_u32, 22]), Ok(&22));
         assert_eq!(
+            vertex.bind_vertex_buffer_command(vk::Buffer::null()),
+            Ok(AshBindVertexBufferCommand {
+                first_binding: 0,
+                buffers: [vk::Buffer::null()],
+                offsets: [16],
+            })
+        );
+        assert_eq!(
             vertex.vertex_buffer_resource::<u32>(&[]),
             Err("drawable command references missing vertex buffer 1".to_owned())
         );
@@ -9897,6 +10016,14 @@ mod tests {
             index_type: vk::IndexType::UINT32,
         };
         assert_eq!(index.index_buffer_resource(&[33_u32]), Ok(&33));
+        assert_eq!(
+            index.bind_index_buffer_command(vk::Buffer::null()),
+            Ok(AshBindIndexBufferCommand {
+                buffer: vk::Buffer::null(),
+                offset: 4,
+                index_type: vk::IndexType::UINT32,
+            })
+        );
         assert_eq!(
             index.index_buffer_resource::<u32>(&[]),
             Err("drawable command references missing index buffer 0".to_owned())

@@ -904,57 +904,60 @@ impl UnsafeAshDeviceRenderer {
             for command in &drawable.commands {
                 match command {
                     AshCommandPlan::BindGraphicsPipeline { .. } => {
-                        let pipeline = command
-                            .vk_graphics_pipeline(context.pipelines)
+                        let bind = command
+                            .bind_graphics_pipeline_command(context.pipelines)
                             .map_err(io::Error::other)?;
                         self.device.cmd_bind_pipeline(
                             command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            pipeline,
+                            bind.bind_point,
+                            bind.pipeline,
                         );
                     }
                     AshCommandPlan::BindDescriptorSet { .. } => {
-                        let layout = command
-                            .vk_pipeline_layout(&frame.pipelines, context.pipeline_layouts)
-                            .map_err(io::Error::other)?;
-                        let descriptor_set = command
-                            .vk_descriptor_set(context.descriptor_sets)
+                        let bind = command
+                            .bind_descriptor_set_command(
+                                &frame.pipelines,
+                                context.pipeline_layouts,
+                                context.descriptor_sets,
+                            )
                             .map_err(io::Error::other)?;
                         self.device.cmd_bind_descriptor_sets(
                             command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            layout,
-                            0,
-                            &[descriptor_set],
-                            &[],
+                            bind.bind_point,
+                            bind.layout,
+                            bind.first_set,
+                            &bind.descriptor_sets,
+                            &bind.dynamic_offsets,
                         );
                     }
-                    AshCommandPlan::BindVertexBuffer {
-                        binding, offset, ..
-                    } => {
+                    AshCommandPlan::BindVertexBuffer { .. } => {
                         let buffer = command
                             .vertex_buffer_resource(context.buffers)
                             .map_err(io::Error::other)?
                             .buffer;
+                        let bind = command
+                            .bind_vertex_buffer_command(buffer)
+                            .map_err(io::Error::other)?;
                         self.device.cmd_bind_vertex_buffers(
                             command_buffer,
-                            *binding,
-                            &[buffer],
-                            &[*offset],
+                            bind.first_binding,
+                            &bind.buffers,
+                            &bind.offsets,
                         );
                     }
-                    AshCommandPlan::BindIndexBuffer {
-                        offset, index_type, ..
-                    } => {
+                    AshCommandPlan::BindIndexBuffer { .. } => {
                         let buffer = command
                             .index_buffer_resource(context.buffers)
                             .map_err(io::Error::other)?
                             .buffer;
+                        let bind = command
+                            .bind_index_buffer_command(buffer)
+                            .map_err(io::Error::other)?;
                         self.device.cmd_bind_index_buffer(
                             command_buffer,
-                            buffer,
-                            *offset,
-                            *index_type,
+                            bind.buffer,
+                            bind.offset,
+                            bind.index_type,
                         );
                     }
                     AshCommandPlan::DrawIndexed { .. } => {
