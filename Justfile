@@ -84,6 +84,11 @@ ash-mtoon-base-readback avatar=".external-fixtures/official/Seed-san.vrm" out_di
 ash-windowed-simple-shaders out_dir="target/ash-windowed-simple-shaders":
     cargo +nightly -Zscript tools/ash/compile-ash-mtoon-base-shaders.rs --vertex crates/vrm-adapter-ash/shaders/windowed_simple.vert.glsl --fragment crates/vrm-adapter-ash/shaders/windowed_simple.frag.glsl --out-dir "{{ out_dir }}"
 
+# Probe whether naga can compile the shared WGSL MToon reference into Vulkan SPIR-V.
+ash-mtoon-naga-probe out_dir="target/ash-mtoon-naga-probe":
+    cargo +nightly -Zscript tools/ash/compile-wgsl-to-spirv.rs --prelude crates/vrm-adapter/src/mtoon_reference.wgsl --source crates/vrm-adapter-ash/shaders/mtoon_base_naga_probe.wgsl --entry vs_main --stage vertex --out "{{ out_dir }}/mtoon_probe.vert.spv" --print-reflection
+    cargo +nightly -Zscript tools/ash/compile-wgsl-to-spirv.rs --prelude crates/vrm-adapter/src/mtoon_reference.wgsl --source crates/vrm-adapter-ash/shaders/mtoon_base_naga_probe.wgsl --entry fs_main --stage fragment --out "{{ out_dir }}/mtoon_probe.frag.spv" --print-reflection
+
 # Open a real Vulkan window and draw the CPU-baked VRM mesh through ash + swapchain.
 ash-windowed-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-windowed-simple-shaders":
     just ash-windowed-simple-shaders "{{ shader_dir }}"

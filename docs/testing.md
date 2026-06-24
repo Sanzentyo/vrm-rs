@@ -74,6 +74,7 @@ Recommended stable entrypoints:
 | wgpu browser viewer release wasm-pack build | `just wasm-wgpu-web-build` |
 | ash frame-plan smoke without Vulkan device setup | `just ash-vrma-frame-plan` |
 | ash renderer-edge mock integration | `just ash-renderer-integration` |
+| ash WGSL-to-SPIR-V MToon naga probe | `just ash-mtoon-naga-probe` |
 | ash real Vulkan offscreen submit/readback smoke | `just ash-unsafe-device-renderer` |
 | ash real Vulkan window/swapchain smoke | `just ash-windowed-viewer-smoke` |
 | ash readback artifact smoke | `just ash-render-parity-readback` |

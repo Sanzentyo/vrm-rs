@@ -2,6 +2,20 @@
 
 ## 2026-06-23
 
+- Added a naga-based WGSL-to-Vulkan-SPIR-V probe for the ash MToon shader path.
+  `tools/ash/compile-wgsl-to-spirv.rs` compiles WGSL entry points with
+  `naga 29.0.3`, validates the generated SPIR-V header, and can print entry
+  point/resource binding reflection. `just ash-mtoon-naga-probe` successfully
+  compiles `MTOON_REFERENCE_WGSL` plus
+  `crates/vrm-adapter-ash/shaders/mtoon_base_naga_probe.wgsl` into vertex and
+  fragment SPIR-V under `target/ash-mtoon-naga-probe/`. The important remaining
+  integration mismatch is descriptor shape: WGSL/WebGPU exposes the texture and
+  sampler as separate bindings (`texture_2d` + `sampler`), while the current ash
+  MToon materialization path uses Vulkan `COMBINED_IMAGE_SAMPLER` bindings. The
+  conversion path is therefore viable, but full shader replacement should first
+  add either a WGSL-compatible separate texture/sampler descriptor plan for ash
+  or a deliberate binding-generation layer that keeps the shared MToon ABI and
+  Vulkan descriptor layout in sync.
 - Extended `tools/render-parity/import-acceptance-bundle.rs` so returned
   strict evidence can arrive either as a bundle directory or as a `.zip`.
   Zip imports are dry-run safe, locate the unique `bundle-manifest.json` root,
