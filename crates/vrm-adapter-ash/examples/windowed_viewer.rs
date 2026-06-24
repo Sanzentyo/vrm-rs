@@ -564,7 +564,6 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
 
 struct MtoonTransientFrameResources {
     shader_modules: Vec<vk::ShaderModule>,
-    descriptor_pool: vk::DescriptorPool,
     command_buffer: vk::CommandBuffer,
 }
 
@@ -589,6 +588,17 @@ struct MtoonPersistentPipelineCache {
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonPersistentDescriptorSetCacheKey {
+    descriptor_set_layouts: Vec<Vec<MtoonDescriptorLayoutBindingKey>>,
+}
+
+struct MtoonPersistentDescriptorSetCache {
+    key: MtoonPersistentDescriptorSetCacheKey,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -719,6 +729,7 @@ struct MtoonWindowedAshRenderer {
     in_flight: vk::Fence,
     pending_frame: Option<MtoonTransientFrameResources>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
+    persistent_descriptors: Option<MtoonPersistentDescriptorSetCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
     persistent_buffers: Option<MtoonPersistentBufferCache>,
     persistent_uniforms: Option<MtoonPersistentUniformCache>,
@@ -816,6 +827,7 @@ impl MtoonWindowedAshRenderer {
             in_flight,
             pending_frame: None,
             persistent_cache: None,
+            persistent_descriptors: None,
             persistent_samplers: None,
             persistent_buffers: None,
             persistent_uniforms: None,
@@ -903,6 +915,9 @@ impl MtoonWindowedAshRenderer {
         if let Some(pending) = self.pending_frame.take() {
             self.destroy_transient_frame(pending);
         }
+        if let Some(cache) = self.persistent_descriptors.take() {
+            self.destroy_persistent_descriptor_set_cache(cache);
+        }
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
@@ -950,10 +965,16 @@ impl MtoonWindowedAshRenderer {
         self.ensure_persistent_uniform_cache(frame)?;
         self.ensure_persistent_texture_cache(frame)?;
         self.ensure_persistent_fallback_textures()?;
+        self.ensure_persistent_descriptor_set_cache(frame)?;
         let persistent = self
             .persistent_cache
             .as_ref()
             .ok_or("missing ash windowed persistent pipeline cache")?;
+        let descriptor_sets = &self
+            .persistent_descriptors
+            .as_ref()
+            .ok_or("missing ash windowed persistent descriptor set cache")?
+            .descriptor_sets;
         let buffers = &self
             .persistent_buffers
             .as_ref()
@@ -974,9 +995,6 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .ok_or("missing ash windowed persistent fallback texture cache")?
             .textures;
-        let descriptor_pool = self.create_descriptor_pool(frame)?;
-        let descriptor_sets =
-            self.allocate_descriptor_sets(descriptor_pool, &persistent.descriptor_set_layouts)?;
         let samplers = &self
             .persistent_samplers
             .as_ref()
@@ -984,7 +1002,7 @@ impl MtoonWindowedAshRenderer {
             .samplers;
         self.update_descriptor_sets(
             frame,
-            &descriptor_sets,
+            descriptor_sets,
             MtoonDescriptorUpdateResources {
                 buffers,
                 uniform_buffers,
@@ -1002,12 +1020,11 @@ impl MtoonWindowedAshRenderer {
                 pipelines: &persistent.pipelines,
                 pipeline_layouts: &persistent.pipeline_layouts,
                 buffers,
-                descriptor_sets: &descriptor_sets,
+                descriptor_sets,
             },
         )?;
         Ok(MtoonTransientFrameResources {
             shader_modules: Vec::new(),
-            descriptor_pool,
             command_buffer,
         })
     }
@@ -1027,6 +1044,9 @@ impl MtoonWindowedAshRenderer {
             .is_some_and(|cache| cache.key == key)
         {
             return Ok(());
+        }
+        if let Some(cache) = self.persistent_descriptors.take() {
+            self.destroy_persistent_descriptor_set_cache(cache);
         }
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
@@ -1065,6 +1085,37 @@ impl MtoonWindowedAshRenderer {
             descriptor_set_layouts,
             pipeline_layouts,
             pipelines,
+        });
+        Ok(())
+    }
+
+    fn ensure_persistent_descriptor_set_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_descriptor_set_cache_key(frame);
+        if self
+            .persistent_descriptors
+            .as_ref()
+            .is_some_and(|cache| cache.key == key)
+        {
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_descriptors.take() {
+            self.destroy_persistent_descriptor_set_cache(cache);
+        }
+        let layouts = self
+            .persistent_cache
+            .as_ref()
+            .ok_or("missing ash windowed persistent pipeline cache")?
+            .descriptor_set_layouts
+            .as_slice();
+        let descriptor_pool = self.create_descriptor_pool(frame)?;
+        let descriptor_sets = self.allocate_descriptor_sets(descriptor_pool, layouts)?;
+        self.persistent_descriptors = Some(MtoonPersistentDescriptorSetCache {
+            key,
+            descriptor_pool,
+            descriptor_sets,
         });
         Ok(())
     }
@@ -1936,8 +1987,6 @@ impl MtoonWindowedAshRenderer {
             for module in resources.shader_modules {
                 self.device.destroy_shader_module(module, None);
             }
-            self.device
-                .destroy_descriptor_pool(resources.descriptor_pool, None);
         }
     }
 
@@ -1960,6 +2009,13 @@ impl MtoonWindowedAshRenderer {
             for sampler in cache.samplers {
                 self.device.destroy_sampler(sampler, None);
             }
+        }
+    }
+
+    fn destroy_persistent_descriptor_set_cache(&self, cache: MtoonPersistentDescriptorSetCache) {
+        unsafe {
+            self.device
+                .destroy_descriptor_pool(cache.descriptor_pool, None);
         }
     }
 
@@ -2047,6 +2103,9 @@ impl Drop for MtoonWindowedAshRenderer {
         }
         if let Some(pending) = self.pending_frame.take() {
             self.destroy_transient_frame(pending);
+        }
+        if let Some(cache) = self.persistent_descriptors.take() {
+            self.destroy_persistent_descriptor_set_cache(cache);
         }
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
@@ -2304,6 +2363,27 @@ fn mtoon_persistent_pipeline_cache_key(
             })
             .collect(),
         pipelines: frame.pipelines.clone(),
+    }
+}
+
+fn mtoon_persistent_descriptor_set_cache_key(
+    frame: &AshRendererFrame,
+) -> MtoonPersistentDescriptorSetCacheKey {
+    MtoonPersistentDescriptorSetCacheKey {
+        descriptor_set_layouts: frame
+            .descriptor_sets
+            .iter()
+            .map(|set| {
+                set.bindings
+                    .iter()
+                    .map(|binding| MtoonDescriptorLayoutBindingKey {
+                        binding: binding.binding,
+                        descriptor_type: binding.descriptor_type,
+                        stage_flags: binding.stage_flags,
+                    })
+                    .collect()
+            })
+            .collect(),
     }
 }
 
