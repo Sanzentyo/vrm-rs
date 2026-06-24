@@ -2598,6 +2598,30 @@ pub fn ash_2d_image_resource_plan(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshMemoryAllocationPlan {
+    pub allocation_size: vk::DeviceSize,
+    pub memory_type_index: u32,
+}
+
+impl AshMemoryAllocationPlan {
+    pub fn memory_allocate_info(self) -> vk::MemoryAllocateInfo<'static> {
+        vk::MemoryAllocateInfo::default()
+            .allocation_size(self.allocation_size)
+            .memory_type_index(self.memory_type_index)
+    }
+}
+
+pub const fn ash_memory_allocation_plan(
+    requirements: vk::MemoryRequirements,
+    memory_type_index: u32,
+) -> AshMemoryAllocationPlan {
+    AshMemoryAllocationPlan {
+        allocation_size: requirements.size,
+        memory_type_index,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshQueueSubmitPlan {
     pub command_buffers: Vec<vk::CommandBuffer>,
@@ -7581,6 +7605,19 @@ mod tests {
         assert_eq!(buffer_info.size, 1);
         assert_eq!(buffer_info.usage, buffer.usage);
         assert_eq!(buffer_info.sharing_mode, vk::SharingMode::EXCLUSIVE);
+        let memory = ash_memory_allocation_plan(
+            vk::MemoryRequirements {
+                size: 4096,
+                alignment: 256,
+                memory_type_bits: 0b101,
+            },
+            2,
+        );
+        assert_eq!(memory.allocation_size, 4096);
+        assert_eq!(memory.memory_type_index, 2);
+        let memory_info = memory.memory_allocate_info();
+        assert_eq!(memory_info.allocation_size, 4096);
+        assert_eq!(memory_info.memory_type_index, 2);
 
         let image = ash_2d_image_resource_plan(
             vk::Format::R8G8B8A8_UNORM,

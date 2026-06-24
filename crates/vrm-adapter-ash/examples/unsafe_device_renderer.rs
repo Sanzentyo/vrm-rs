@@ -27,8 +27,8 @@ use vrm_adapter_ash::{
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
-    ash_host_buffer_plan, ash_material_texture_binding, ash_memory_type_index,
-    ash_mtoon_texture_binding, ash_pipeline_layout_plans,
+    ash_host_buffer_plan, ash_material_texture_binding, ash_memory_allocation_plan,
+    ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
     ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
@@ -556,9 +556,8 @@ impl UnsafeAshDeviceRenderer {
         let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let memory_type_index =
             self.find_memory_type(requirements.memory_type_bits, plan.memory_property_flags)?;
-        let allocate_info = vk::MemoryAllocateInfo::default()
-            .allocation_size(requirements.size)
-            .memory_type_index(memory_type_index);
+        let allocate_info =
+            ash_memory_allocation_plan(requirements, memory_type_index).memory_allocate_info();
         let memory = unsafe { self.device.allocate_memory(&allocate_info, None)? };
         unsafe {
             self.device.bind_buffer_memory(buffer, memory, 0)?;
@@ -595,9 +594,8 @@ impl UnsafeAshDeviceRenderer {
         let requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let memory_type_index =
             self.find_memory_type(requirements.memory_type_bits, plan.memory_property_flags)?;
-        let allocate_info = vk::MemoryAllocateInfo::default()
-            .allocation_size(requirements.size)
-            .memory_type_index(memory_type_index);
+        let allocate_info =
+            ash_memory_allocation_plan(requirements, memory_type_index).memory_allocate_info();
         let memory = unsafe { self.device.allocate_memory(&allocate_info, None)? };
         unsafe {
             self.device.bind_image_memory(image, memory, 0)?;
