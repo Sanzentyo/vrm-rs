@@ -18,13 +18,15 @@ use vrm_adapter::{
     RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    AshCommandPlan, AshDescriptorImageResource, AshDescriptorWriteResource, AshDiagnosticOwnerId,
-    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMaterialExtraUniform,
-    AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRendererFrame,
-    AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_depth_attachment_plan,
-    ash_descriptor_pool_plan, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_graphics_pipeline_state_plan,
-    ash_material_texture_binding, ash_mtoon_texture_binding, ash_reference_depth_format,
+    AshColorAttachmentFinalLayout, AshCommandPlan, AshDescriptorImageResource,
+    AshDescriptorWriteResource, AshDiagnosticOwnerId, AshDrawableFrameOptions,
+    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
+    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
+    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
+    ash_reference_depth_format, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection,
     frame_plan_from_options_with_viewport,
 };
@@ -490,7 +492,12 @@ impl UnsafeAshDeviceRenderer {
                 unsafe { self.device.create_pipeline_layout(&info, None) }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let render_pass = self.create_render_pass(color_format, depth_format)?;
+        let render_pass = self.create_render_pass(ash_render_pass_creation_plan(
+            color_format,
+            depth_format,
+            AshColorAttachmentFinalLayout::ColorAttachment,
+            AshRenderPassDependencyPolicy::ColorAndDepth,
+        ))?;
         let framebuffer =
             self.create_framebuffer(render_pass, color_target.view, depth_target.view, extent)?;
         let vertex_shader = self.create_shader_module(&shaders.vertex)?;
@@ -872,54 +879,16 @@ impl UnsafeAshDeviceRenderer {
 
     fn create_render_pass(
         &self,
-        color_format: vk::Format,
-        depth_format: vk::Format,
+        plan: AshRenderPassCreationPlan,
     ) -> Result<vk::RenderPass, vk::Result> {
-        let attachments = [
-            vk::AttachmentDescription::default()
-                .format(color_format)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
-            vk::AttachmentDescription::default()
-                .format(depth_format)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
-        ];
-        let color_attachment = [vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        }];
-        let depth_attachment = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
+        let attachments = plan.attachment_descriptions();
+        let color_attachment = plan.color_attachment_references();
+        let depth_attachment = plan.depth_attachment_reference();
         let subpass = [vk::SubpassDescription::default()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&color_attachment)
             .depth_stencil_attachment(&depth_attachment)];
-        let dependency = [vk::SubpassDependency::default()
-            .src_subpass(vk::SUBPASS_EXTERNAL)
-            .dst_subpass(0)
-            .src_stage_mask(
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-            )
-            .dst_stage_mask(
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-            )
-            .dst_access_mask(
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            )];
+        let dependency = [plan.subpass_dependency()];
         let info = vk::RenderPassCreateInfo::default()
             .attachments(&attachments)
             .subpasses(&subpass)
@@ -935,12 +904,13 @@ impl UnsafeAshDeviceRenderer {
         extent: vk::Extent2D,
     ) -> Result<vk::Framebuffer, vk::Result> {
         let attachments = [color_view, depth_view];
+        let plan = ash_framebuffer_plan(extent);
         let info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
             .attachments(&attachments)
-            .width(extent.width)
-            .height(extent.height)
-            .layers(1);
+            .width(plan.width())
+            .height(plan.height())
+            .layers(plan.layers);
         unsafe { self.device.create_framebuffer(&info, None) }
     }
 

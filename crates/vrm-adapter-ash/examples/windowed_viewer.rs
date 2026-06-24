@@ -28,17 +28,20 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
-    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshCommandPlan,
-    AshDescriptorImageResource, AshDescriptorWriteResource, AshDrawableFrameOptions,
-    AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
-    AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
-    AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
-    AshVrmVertex, AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_graphics_pipeline_state_plan,
-    ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
-    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
+    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout,
+    AshCommandPlan, AshDescriptorImageResource, AshDescriptorWriteResource,
+    AshDrawableFrameOptions, AshGraphicsPipelinePlan, AshMtoonBufferCacheKey,
+    AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
+    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
+    AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
+    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameSyncPlan,
+    AshWindowedResizeValidation, AshWindowedRunValidation, ash_depth_attachment_plan,
+    ash_descriptor_pool_plan, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
+    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_swapchain_surface_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -2266,8 +2269,14 @@ fn create_mtoon_swapchain_shell(
         depth_plan.image_usage,
         depth_plan.aspect_mask,
     )?;
-    let render_pass =
-        create_render_pass(context.device, support.format.format, context.depth_format)?;
+    let render_pass_plan = ash_render_pass_creation_plan(
+        support.format.format,
+        context.depth_format,
+        AshColorAttachmentFinalLayout::Present,
+        AshRenderPassDependencyPolicy::ColorOnly,
+    );
+    let render_pass = create_render_pass(context.device, render_pass_plan)?;
+    let framebuffer_plan = ash_framebuffer_plan(support.extent);
     let framebuffers = image_views
         .iter()
         .map(|view| {
@@ -2275,9 +2284,9 @@ fn create_mtoon_swapchain_shell(
             let info = vk::FramebufferCreateInfo::default()
                 .render_pass(render_pass)
                 .attachments(&attachments)
-                .width(support.extent.width)
-                .height(support.extent.height)
-                .layers(1);
+                .width(framebuffer_plan.width())
+                .height(framebuffer_plan.height())
+                .layers(framebuffer_plan.layers);
             unsafe { context.device.create_framebuffer(&info, None) }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -2862,8 +2871,13 @@ fn create_swapchain_resources(
         depth_plan.image_usage,
         depth_plan.aspect_mask,
     )?;
-    let render_pass =
-        create_render_pass(context.device, support.format.format, context.depth_format)?;
+    let render_pass_plan = ash_render_pass_creation_plan(
+        support.format.format,
+        context.depth_format,
+        AshColorAttachmentFinalLayout::Present,
+        AshRenderPassDependencyPolicy::ColorOnly,
+    );
+    let render_pass = create_render_pass(context.device, render_pass_plan)?;
     let (pipeline_layout, pipeline) = create_simple_pipeline(
         context.device,
         render_pass,
@@ -2873,6 +2887,7 @@ fn create_swapchain_resources(
         context.vertex_entry,
         context.fragment_entry,
     )?;
+    let framebuffer_plan = ash_framebuffer_plan(support.extent);
     let framebuffers = image_views
         .iter()
         .map(|view| {
@@ -2880,9 +2895,9 @@ fn create_swapchain_resources(
             let info = vk::FramebufferCreateInfo::default()
                 .render_pass(render_pass)
                 .attachments(&attachments)
-                .width(support.extent.width)
-                .height(support.extent.height)
-                .layers(1);
+                .width(framebuffer_plan.width())
+                .height(framebuffer_plan.height())
+                .layers(framebuffer_plan.layers);
             unsafe { context.device.create_framebuffer(&info, None) }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -2996,45 +3011,16 @@ fn destroy_swapchain_handle(loader: &swapchain::Device, swapchain: vk::Swapchain
 
 fn create_render_pass(
     device: &ash::Device,
-    color_format: vk::Format,
-    depth_format: vk::Format,
+    plan: AshRenderPassCreationPlan,
 ) -> Result<vk::RenderPass, vk::Result> {
-    let attachments = [
-        vk::AttachmentDescription::default()
-            .format(color_format)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR),
-        vk::AttachmentDescription::default()
-            .format(depth_format)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
-    ];
-    let color_ref = [vk::AttachmentReference {
-        attachment: 0,
-        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-    }];
-    let depth_ref = vk::AttachmentReference {
-        attachment: 1,
-        layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    };
+    let attachments = plan.attachment_descriptions();
+    let color_ref = plan.color_attachment_references();
+    let depth_ref = plan.depth_attachment_reference();
     let subpass = [vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_ref)
         .depth_stencil_attachment(&depth_ref)];
-    let dependency = [vk::SubpassDependency::default()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+    let dependency = [plan.subpass_dependency()];
     let info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpass)

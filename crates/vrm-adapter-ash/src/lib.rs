@@ -1251,6 +1251,137 @@ pub fn ash_depth_attachment_plan(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshColorAttachmentFinalLayout {
+    Present,
+    ColorAttachment,
+}
+
+impl AshColorAttachmentFinalLayout {
+    pub const fn vk_layout(self) -> vk::ImageLayout {
+        match self {
+            Self::Present => vk::ImageLayout::PRESENT_SRC_KHR,
+            Self::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshRenderPassDependencyPolicy {
+    ColorOnly,
+    ColorAndDepth,
+}
+
+impl AshRenderPassDependencyPolicy {
+    pub fn dst_stage_mask(self) -> vk::PipelineStageFlags {
+        match self {
+            Self::ColorOnly => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            Self::ColorAndDepth => {
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+            }
+        }
+    }
+
+    pub fn dst_access_mask(self) -> vk::AccessFlags {
+        match self {
+            Self::ColorOnly => vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            Self::ColorAndDepth => {
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshRenderPassCreationPlan {
+    pub color_format: vk::Format,
+    pub depth_format: vk::Format,
+    pub color_final_layout: AshColorAttachmentFinalLayout,
+    pub dependency_policy: AshRenderPassDependencyPolicy,
+}
+
+impl AshRenderPassCreationPlan {
+    pub fn attachment_descriptions(self) -> [vk::AttachmentDescription; 2] {
+        [
+            vk::AttachmentDescription::default()
+                .format(self.color_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(self.color_final_layout.vk_layout()),
+            vk::AttachmentDescription::default()
+                .format(self.depth_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+        ]
+    }
+
+    pub const fn color_attachment_references(self) -> [vk::AttachmentReference; 1] {
+        [vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        }]
+    }
+
+    pub const fn depth_attachment_reference(self) -> vk::AttachmentReference {
+        vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        }
+    }
+
+    pub fn subpass_dependency(self) -> vk::SubpassDependency {
+        vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(self.dependency_policy.dst_stage_mask())
+            .dst_stage_mask(self.dependency_policy.dst_stage_mask())
+            .dst_access_mask(self.dependency_policy.dst_access_mask())
+    }
+}
+
+pub const fn ash_render_pass_creation_plan(
+    color_format: vk::Format,
+    depth_format: vk::Format,
+    color_final_layout: AshColorAttachmentFinalLayout,
+    dependency_policy: AshRenderPassDependencyPolicy,
+) -> AshRenderPassCreationPlan {
+    AshRenderPassCreationPlan {
+        color_format,
+        depth_format,
+        color_final_layout,
+        dependency_policy,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshFramebufferPlan {
+    pub extent: vk::Extent2D,
+    pub layers: u32,
+}
+
+impl AshFramebufferPlan {
+    pub const fn width(self) -> u32 {
+        self.extent.width
+    }
+
+    pub const fn height(self) -> u32 {
+        self.extent.height
+    }
+}
+
+pub const fn ash_framebuffer_plan(extent: vk::Extent2D) -> AshFramebufferPlan {
+    AshFramebufferPlan { extent, layers: 1 }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshDescriptorSetPlan {
     pub material: MaterialRef,
@@ -6020,6 +6151,79 @@ mod tests {
             ash_depth_attachment_plan(vk::Format::D32_SFLOAT, extent).aspect_mask,
             vk::ImageAspectFlags::DEPTH
         );
+    }
+
+    #[test]
+    fn render_pass_creation_plan_exposes_target_specific_layouts_and_dependencies() {
+        let windowed = ash_render_pass_creation_plan(
+            vk::Format::B8G8R8A8_UNORM,
+            ash_reference_depth_format(),
+            AshColorAttachmentFinalLayout::Present,
+            AshRenderPassDependencyPolicy::ColorOnly,
+        );
+        let windowed_attachments = windowed.attachment_descriptions();
+
+        assert_eq!(windowed_attachments[0].format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(
+            windowed_attachments[0].final_layout,
+            vk::ImageLayout::PRESENT_SRC_KHR
+        );
+        assert_eq!(
+            windowed_attachments[1].final_layout,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        );
+        assert_eq!(
+            windowed.subpass_dependency().dst_stage_mask,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+        );
+        assert_eq!(
+            windowed.subpass_dependency().dst_access_mask,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+        );
+
+        let offscreen = ash_render_pass_creation_plan(
+            vk::Format::R8G8B8A8_UNORM,
+            ash_reference_depth_format(),
+            AshColorAttachmentFinalLayout::ColorAttachment,
+            AshRenderPassDependencyPolicy::ColorAndDepth,
+        );
+        let offscreen_attachments = offscreen.attachment_descriptions();
+        let offscreen_dependency = offscreen.subpass_dependency();
+
+        assert_eq!(
+            offscreen_attachments[0].final_layout,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        );
+        assert!(
+            offscreen_dependency
+                .dst_stage_mask
+                .contains(vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+        );
+        assert!(
+            offscreen_dependency
+                .dst_access_mask
+                .contains(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+        );
+        assert_eq!(
+            offscreen.color_attachment_references()[0].layout,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        );
+        assert_eq!(
+            offscreen.depth_attachment_reference().layout,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        );
+    }
+
+    #[test]
+    fn framebuffer_plan_exposes_extent_and_single_layer_contract() {
+        let plan = ash_framebuffer_plan(vk::Extent2D {
+            width: 640,
+            height: 360,
+        });
+
+        assert_eq!(plan.width(), 640);
+        assert_eq!(plan.height(), 360);
+        assert_eq!(plan.layers, 1);
     }
 
     #[test]
