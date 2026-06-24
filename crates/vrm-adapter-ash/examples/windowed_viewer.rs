@@ -962,29 +962,17 @@ impl MtoonWindowedAshRenderer {
         )?;
         self.images_in_flight[selection.swapchain_image_slot] = sync_handles.in_flight;
         let submit_plan = selection.submit_plan(sync_handles, command_buffer);
-        let wait_semaphores = submit_plan.wait_semaphores();
-        let signal_semaphores = submit_plan.signal_semaphores();
-        let wait_stages = submit_plan.wait_stages();
-        let command_buffers = submit_plan.command_buffers();
-        let submit = [vk::SubmitInfo::default()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_stages)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)];
+        let submit_info_plan = submit_plan.submit_info_plan();
+        let submit = submit_info_plan.submit_infos();
         unsafe {
-            self.device.reset_fences(&[submit_plan.fence])?;
+            self.device.reset_fences(&[submit_info_plan.fence])?;
             self.device
-                .queue_submit(self.queue, &submit, submit_plan.fence)?;
+                .queue_submit(self.queue, &submit, submit_info_plan.fence)?;
         }
         let present_plan =
             selection.present_plan(submit_plan.signal_semaphore, self.swapchain.swapchain);
-        let present_wait_semaphores = present_plan.wait_semaphores();
-        let swapchains = present_plan.swapchains();
-        let image_indices = present_plan.image_indices();
-        let present = vk::PresentInfoKHR::default()
-            .wait_semaphores(&present_wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
+        let present_info_plan = present_plan.present_info_plan();
+        let present = present_info_plan.present_info();
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
         let status =
             match ash_classify_swapchain_present(selection.acquired_suboptimal, present_result)? {
@@ -2562,32 +2550,20 @@ impl WindowedAshRenderer {
             command_buffer,
             self.in_flight,
         );
-        let wait_semaphores = submit_plan.wait_semaphores();
-        let signal_semaphores = submit_plan.signal_semaphores();
-        let wait_stages = submit_plan.wait_stages();
-        let command_buffers = submit_plan.command_buffers();
-        let submit = [vk::SubmitInfo::default()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_stages)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)];
+        let submit_info_plan = submit_plan.submit_info_plan();
+        let submit = submit_info_plan.submit_infos();
         unsafe {
-            self.device.reset_fences(&[submit_plan.fence])?;
+            self.device.reset_fences(&[submit_info_plan.fence])?;
             self.device
-                .queue_submit(self.queue, &submit, submit_plan.fence)?;
+                .queue_submit(self.queue, &submit, submit_info_plan.fence)?;
         }
         let present_plan = ash_windowed_present_plan(
             submit_plan.signal_semaphore,
             self.swapchain.swapchain,
             image_index,
         );
-        let present_wait_semaphores = present_plan.wait_semaphores();
-        let swapchains = present_plan.swapchains();
-        let image_indices = present_plan.image_indices();
-        let present = vk::PresentInfoKHR::default()
-            .wait_semaphores(&present_wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
+        let present_info_plan = present_plan.present_info_plan();
+        let present = present_info_plan.present_info();
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
         match ash_classify_swapchain_present(suboptimal, present_result)? {
             AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),

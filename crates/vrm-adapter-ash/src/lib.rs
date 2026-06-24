@@ -510,6 +510,39 @@ impl AshWindowedSubmitPlan {
     pub const fn signal_semaphores(self) -> [vk::Semaphore; 1] {
         [self.signal_semaphore]
     }
+
+    pub const fn submit_info_plan(self) -> AshWindowedSubmitInfoPlan {
+        AshWindowedSubmitInfoPlan {
+            wait_semaphores: self.wait_semaphores(),
+            wait_stages: self.wait_stages(),
+            command_buffers: self.command_buffers(),
+            signal_semaphores: self.signal_semaphores(),
+            fence: self.fence,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedSubmitInfoPlan {
+    pub wait_semaphores: [vk::Semaphore; 1],
+    pub wait_stages: [vk::PipelineStageFlags; 1],
+    pub command_buffers: [vk::CommandBuffer; 1],
+    pub signal_semaphores: [vk::Semaphore; 1],
+    pub fence: vk::Fence,
+}
+
+impl AshWindowedSubmitInfoPlan {
+    pub fn submit_info(&self) -> vk::SubmitInfo<'_> {
+        vk::SubmitInfo::default()
+            .wait_semaphores(&self.wait_semaphores)
+            .wait_dst_stage_mask(&self.wait_stages)
+            .command_buffers(&self.command_buffers)
+            .signal_semaphores(&self.signal_semaphores)
+    }
+
+    pub fn submit_infos(&self) -> [vk::SubmitInfo<'_>; 1] {
+        [self.submit_info()]
+    }
 }
 
 pub const fn ash_windowed_submit_plan(
@@ -545,6 +578,30 @@ impl AshWindowedPresentPlan {
 
     pub const fn image_indices(self) -> [u32; 1] {
         [self.image_index]
+    }
+
+    pub const fn present_info_plan(self) -> AshWindowedPresentInfoPlan {
+        AshWindowedPresentInfoPlan {
+            wait_semaphores: self.wait_semaphores(),
+            swapchains: self.swapchains(),
+            image_indices: self.image_indices(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedPresentInfoPlan {
+    pub wait_semaphores: [vk::Semaphore; 1],
+    pub swapchains: [vk::SwapchainKHR; 1],
+    pub image_indices: [u32; 1],
+}
+
+impl AshWindowedPresentInfoPlan {
+    pub fn present_info(&self) -> vk::PresentInfoKHR<'_> {
+        vk::PresentInfoKHR::default()
+            .wait_semaphores(&self.wait_semaphores)
+            .swapchains(&self.swapchains)
+            .image_indices(&self.image_indices)
     }
 }
 
@@ -7152,11 +7209,28 @@ mod tests {
         assert_eq!(submit.command_buffers(), [vk::CommandBuffer::null()]);
         assert_eq!(submit.signal_semaphores(), [vk::Semaphore::null()]);
         assert_eq!(submit.fence, vk::Fence::null());
+        let submit_info_plan = submit.submit_info_plan();
+        let submit_info = submit_info_plan.submit_info();
+        assert_eq!(
+            submit_info.p_wait_dst_stage_mask,
+            submit_info_plan.wait_stages.as_ptr()
+        );
+        assert_eq!(submit_info.wait_semaphore_count, 1);
+        assert_eq!(submit_info.command_buffer_count, 1);
+        assert_eq!(submit_info.signal_semaphore_count, 1);
 
         let present = ash_windowed_present_plan(vk::Semaphore::null(), vk::SwapchainKHR::null(), 4);
         assert_eq!(present.wait_semaphores(), [vk::Semaphore::null()]);
         assert_eq!(present.swapchains(), [vk::SwapchainKHR::null()]);
         assert_eq!(present.image_indices(), [4]);
+        let present_info_plan = present.present_info_plan();
+        let present_info = present_info_plan.present_info();
+        assert_eq!(present_info.wait_semaphore_count, 1);
+        assert_eq!(present_info.swapchain_count, 1);
+        assert_eq!(
+            present_info.p_image_indices,
+            present_info_plan.image_indices.as_ptr()
+        );
     }
 
     #[test]
