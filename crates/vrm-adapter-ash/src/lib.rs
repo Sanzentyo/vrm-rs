@@ -2532,6 +2532,47 @@ pub const fn ash_binary_semaphore_plan() -> AshSemaphorePlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshBufferResourcePlan {
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub sharing_mode: vk::SharingMode,
+    pub memory_property_flags: vk::MemoryPropertyFlags,
+}
+
+impl AshBufferResourcePlan {
+    pub fn buffer_create_info(self) -> vk::BufferCreateInfo<'static> {
+        vk::BufferCreateInfo::default()
+            .size(self.size)
+            .usage(self.usage)
+            .sharing_mode(self.sharing_mode)
+    }
+}
+
+pub fn ash_buffer_resource_plan(
+    usage: vk::BufferUsageFlags,
+    byte_len: usize,
+    memory_property_flags: vk::MemoryPropertyFlags,
+) -> AshBufferResourcePlan {
+    AshBufferResourcePlan {
+        size: byte_len.max(1) as vk::DeviceSize,
+        usage,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        memory_property_flags,
+    }
+}
+
+pub fn ash_host_visible_buffer_plan(
+    usage: vk::BufferUsageFlags,
+    byte_len: usize,
+) -> AshBufferResourcePlan {
+    ash_buffer_resource_plan(
+        usage,
+        byte_len,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshHostBufferPlan {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
@@ -2549,12 +2590,12 @@ impl AshHostBufferPlan {
 }
 
 pub fn ash_host_buffer_plan(usage: vk::BufferUsageFlags, byte_len: usize) -> AshHostBufferPlan {
+    let plan = ash_host_visible_buffer_plan(usage | vk::BufferUsageFlags::TRANSFER_DST, byte_len);
     AshHostBufferPlan {
-        size: byte_len.max(1) as vk::DeviceSize,
-        usage: usage | vk::BufferUsageFlags::TRANSFER_DST,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
-            | vk::MemoryPropertyFlags::HOST_COHERENT,
+        size: plan.size,
+        usage: plan.usage,
+        sharing_mode: plan.sharing_mode,
+        memory_property_flags: plan.memory_property_flags,
     }
 }
 
@@ -7670,6 +7711,18 @@ mod tests {
 
     #[test]
     fn buffer_image_and_sampler_plans_expose_resource_create_infos() {
+        let host_visible = ash_host_visible_buffer_plan(vk::BufferUsageFlags::VERTEX_BUFFER, 0);
+        assert_eq!(host_visible.size, 1);
+        assert_eq!(host_visible.usage, vk::BufferUsageFlags::VERTEX_BUFFER);
+        assert_eq!(
+            host_visible.memory_property_flags,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        );
+        let host_visible_info = host_visible.buffer_create_info();
+        assert_eq!(host_visible_info.size, 1);
+        assert_eq!(host_visible_info.usage, vk::BufferUsageFlags::VERTEX_BUFFER);
+        assert_eq!(host_visible_info.sharing_mode, vk::SharingMode::EXCLUSIVE);
+
         let buffer = ash_host_buffer_plan(vk::BufferUsageFlags::UNIFORM_BUFFER, 0);
         assert_eq!(buffer.size, 1);
         assert!(buffer.usage.contains(vk::BufferUsageFlags::UNIFORM_BUFFER));
