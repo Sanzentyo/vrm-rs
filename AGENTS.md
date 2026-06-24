@@ -37,8 +37,9 @@ The default script run covers `cargo fmt --all -- --check`, `cargo test --worksp
 ## Coverage Refresh Delegation
 
 - Treat coverage table/progress updates as routine mechanical work suitable for delegation.
-- Prefer a Codex subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
-- The delegated subagent must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
+- Use a Codex subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
+- Do not use the local `agent` CLI for repository automation or coverage refreshes.
+- The delegated `gpt-5.4-codex-mini` subagent must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
 - Preferred flow:
 
 ```powershell
@@ -51,9 +52,9 @@ git diff docs/testing.md docs/progress.md
 - The first script run should be a dry run unless the user explicitly asked for direct application or the main agent has already reviewed the generated block.
 - Keep `docs/testing.md` coverage snapshots and the newest relevant `docs/progress.md` coverage line synchronized.
 
-## Main Agent Responsibility
+## Primary Codex Responsibility
 
-- The main agent still owns the implementation gate and final verification.
+- The primary Codex turn still owns the implementation gate and final verification.
 - Review delegated diffs and run gates before staging or committing; delegation does not transfer ownership of verification.
 - Run `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` locally before commits that affect tests, coverage, runtime paths, adapters, IO, or protocol behavior.
 - If a delegated subagent updates coverage docs, review its diff before staging.
