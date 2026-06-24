@@ -15,6 +15,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
+use std::fmt;
 use std::fs;
 use std::hash::Hasher;
 use std::path::PathBuf;
@@ -88,6 +89,12 @@ struct Options {
     /// Exit after rendering this many frames. Useful for smoke tests.
     #[arg(long)]
     max_frames: Option<u64>,
+    /// Print renderer cache hit/rebuild counters before exiting.
+    #[arg(long)]
+    print_cache_stats: bool,
+    /// Treat a smoke run as failed unless the MToon renderer reports steady-state cache hits.
+    #[arg(long)]
+    require_cache_hits: bool,
 }
 
 #[repr(C)]
@@ -242,7 +249,9 @@ impl ApplicationHandler for App {
             return;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.finish_windowed_run(event_loop);
+            }
             WindowEvent::Resized(size) => {
                 self.recreate_swapchain = size.width > 0 && size.height > 0;
             }
@@ -299,7 +308,7 @@ impl ApplicationHandler for App {
                             .max_frames
                             .is_some_and(|max| self.rendered_frames >= max)
                         {
-                            event_loop.exit();
+                            self.finish_windowed_run(event_loop);
                         }
                     }
                     Ok(RenderStatus::NeedsRecreate) => self.recreate_swapchain = true,
@@ -323,8 +332,29 @@ impl ApplicationHandler for App {
     }
 }
 
+impl App {
+    fn finish_windowed_run(&mut self, event_loop: &ActiveEventLoop) {
+        if self.avatar.options.print_cache_stats
+            && let Some(ActiveRenderer::Mtoon(renderer)) = self.active_renderer.as_ref()
+        {
+            println!("ash windowed cache stats: {}", renderer.cache_stats());
+        }
+        if self.avatar.options.require_cache_hits
+            && let Some(ActiveRenderer::Mtoon(renderer)) = self.active_renderer.as_ref()
+            && let Err(error) = renderer.cache_stats().validate_steady_state_hits()
+        {
+            eprintln!("ash windowed cache validation failed: {error}");
+            std::process::exit(1);
+        }
+        event_loop.exit();
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
+    if options.simple_preview && options.require_cache_hits {
+        return Err("--require-cache-hits is only supported by the MToon renderer path".into());
+    }
     let avatar = WindowedAvatar::new(options)?;
     let shaders = ShaderModules {
         vertex: read_spirv_words(&avatar.options.vertex_spv, avatar.options.simple_preview)?,
@@ -509,6 +539,74 @@ fn write_host_buffer(
 enum RenderStatus {
     Ok,
     NeedsRecreate,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CacheCounter {
+    hits: u64,
+    rebuilds: u64,
+}
+
+impl CacheCounter {
+    fn hit(&mut self) {
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    fn rebuild(&mut self) {
+        self.rebuilds = self.rebuilds.saturating_add(1);
+    }
+
+    fn validate_hits(self, name: &'static str) -> Result<(), String> {
+        (self.hits > 0)
+            .then_some(())
+            .ok_or_else(|| format!("{name} cache reported no hits; run at least two MToon frames"))
+    }
+}
+
+impl fmt::Display for CacheCounter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "hits={},rebuilds={}", self.hits, self.rebuilds)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MtoonWindowedCacheStats {
+    pipeline: CacheCounter,
+    descriptors: CacheCounter,
+    samplers: CacheCounter,
+    buffers: CacheCounter,
+    uniforms: CacheCounter,
+    textures: CacheCounter,
+    fallback_textures: CacheCounter,
+}
+
+impl MtoonWindowedCacheStats {
+    fn validate_steady_state_hits(self) -> Result<(), String> {
+        self.pipeline.validate_hits("pipeline")?;
+        self.descriptors.validate_hits("descriptor")?;
+        self.samplers.validate_hits("sampler")?;
+        self.buffers.validate_hits("buffer")?;
+        self.uniforms.validate_hits("uniform")?;
+        self.textures.validate_hits("texture")?;
+        self.fallback_textures.validate_hits("fallback texture")?;
+        Ok(())
+    }
+}
+
+impl fmt::Display for MtoonWindowedCacheStats {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "pipeline({}); descriptors({}); samplers({}); buffers({}); uniforms({}); textures({}); fallback_textures({})",
+            self.pipeline,
+            self.descriptors,
+            self.samplers,
+            self.buffers,
+            self.uniforms,
+            self.textures,
+            self.fallback_textures
+        )
+    }
 }
 
 struct MtoonVulkanBuffer {
@@ -735,6 +833,7 @@ struct MtoonWindowedAshRenderer {
     persistent_uniforms: Option<MtoonPersistentUniformCache>,
     persistent_textures: Option<MtoonPersistentTextureCache>,
     persistent_fallback_textures: Option<MtoonPersistentFallbackTextureCache>,
+    cache_stats: MtoonWindowedCacheStats,
 }
 
 impl MtoonWindowedAshRenderer {
@@ -833,7 +932,12 @@ impl MtoonWindowedAshRenderer {
             persistent_uniforms: None,
             persistent_textures: None,
             persistent_fallback_textures: None,
+            cache_stats: MtoonWindowedCacheStats::default(),
         })
+    }
+
+    fn cache_stats(&self) -> MtoonWindowedCacheStats {
+        self.cache_stats
     }
 
     fn render(
@@ -1043,8 +1147,10 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .is_some_and(|cache| cache.key == key)
         {
+            self.cache_stats.pipeline.hit();
             return Ok(());
         }
+        self.cache_stats.pipeline.rebuild();
         if let Some(cache) = self.persistent_descriptors.take() {
             self.destroy_persistent_descriptor_set_cache(cache);
         }
@@ -1099,8 +1205,10 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .is_some_and(|cache| cache.key == key)
         {
+            self.cache_stats.descriptors.hit();
             return Ok(());
         }
+        self.cache_stats.descriptors.rebuild();
         if let Some(cache) = self.persistent_descriptors.take() {
             self.destroy_persistent_descriptor_set_cache(cache);
         }
@@ -1130,8 +1238,10 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .is_some_and(|cache| cache.key == key)
         {
+            self.cache_stats.samplers.hit();
             return Ok(());
         }
+        self.cache_stats.samplers.rebuild();
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
         }
@@ -1154,6 +1264,7 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .filter(|cache| cache.key == key)
         {
+            self.cache_stats.buffers.hit();
             cache
                 .buffers
                 .iter()
@@ -1161,6 +1272,7 @@ impl MtoonWindowedAshRenderer {
                 .try_for_each(|(buffer, upload)| self.write_host_buffer(buffer, &upload.bytes))?;
             return Ok(());
         }
+        self.cache_stats.buffers.rebuild();
         if let Some(cache) = self.persistent_buffers.take() {
             self.destroy_persistent_buffer_cache(cache);
         }
@@ -1183,6 +1295,7 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .filter(|cache| cache.key == key)
         {
+            self.cache_stats.uniforms.hit();
             cache
                 .buffers
                 .iter()
@@ -1190,6 +1303,7 @@ impl MtoonWindowedAshRenderer {
                 .try_for_each(|(buffer, uniform)| self.write_host_buffer(buffer, &uniform.bytes))?;
             return Ok(());
         }
+        self.cache_stats.uniforms.rebuild();
         if let Some(cache) = self.persistent_uniforms.take() {
             self.destroy_persistent_uniform_cache(cache);
         }
@@ -1214,8 +1328,10 @@ impl MtoonWindowedAshRenderer {
             .as_ref()
             .is_some_and(|cache| cache.key == key)
         {
+            self.cache_stats.textures.hit();
             return Ok(());
         }
+        self.cache_stats.textures.rebuild();
         if let Some(cache) = self.persistent_textures.take() {
             self.destroy_persistent_texture_cache(cache);
         }
@@ -1267,8 +1383,10 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_persistent_fallback_textures(&mut self) -> Result<(), Box<dyn Error>> {
         if self.persistent_fallback_textures.is_some() {
+            self.cache_stats.fallback_textures.hit();
             return Ok(());
         }
+        self.cache_stats.fallback_textures.rebuild();
         let textures = self.create_fallback_textures()?;
         let staging = self.create_fallback_staging_buffers()?;
         let upload_result = self.upload_fallback_textures_once(&textures, &staging);

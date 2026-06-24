@@ -111,6 +111,11 @@ ash-windowed-viewer-smoke avatar=".external-fixtures/official/Seed-san.vrm" anim
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}"
 
+# Smoke the animated ash windowed viewer long enough to require steady-state cache hits.
+ash-windowed-viewer-cache-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="24":
+    just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
+    cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --print-cache-stats --require-cache-hits
+
 # Backward-compatible aliases for earlier Ash shader handoff notes.
 ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-wgsl-base-shaders":
     just ash-mtoon-wgsl-base-shaders "{{ out_dir }}"

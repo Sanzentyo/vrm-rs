@@ -78,6 +78,7 @@ Recommended stable entrypoints:
 | ash WGSL/Naga MToon readback smoke | `just ash-mtoon-base-readback` |
 | ash real Vulkan offscreen submit/readback smoke | `just ash-unsafe-device-renderer` |
 | ash real Vulkan window/swapchain smoke | `just ash-windowed-viewer-smoke` |
+| ash windowed cache hit validation smoke | `just ash-windowed-viewer-cache-smoke` |
 | ash readback artifact smoke | `just ash-render-parity-readback` |
 | Current official sample render sweep | `just render-parity-samples` |
 | Seed-san render sweep plus supplemental ash readback artifacts | `just render-parity-with-ash-readback` |
