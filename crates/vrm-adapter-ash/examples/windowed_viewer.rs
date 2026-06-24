@@ -660,6 +660,7 @@ struct MtoonWindowedCacheStats {
     uniforms: CacheCounter,
     textures: CacheCounter,
     fallback_textures: CacheCounter,
+    command_buffers: CacheCounter,
 }
 
 impl MtoonWindowedCacheStats {
@@ -671,6 +672,7 @@ impl MtoonWindowedCacheStats {
         self.uniforms.validate_hits("uniform")?;
         self.textures.validate_hits("texture")?;
         self.fallback_textures.validate_hits("fallback texture")?;
+        self.command_buffers.validate_hits("draw command buffer")?;
         Ok(())
     }
 }
@@ -679,14 +681,15 @@ impl fmt::Display for MtoonWindowedCacheStats {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "pipeline({}); descriptors({}); samplers({}); buffers({}); uniforms({}); textures({}); fallback_textures({})",
+            "pipeline({}); descriptors({}); samplers({}); buffers({}); uniforms({}); textures({}); fallback_textures({}); command_buffers({})",
             self.pipeline,
             self.descriptors,
             self.samplers,
             self.buffers,
             self.uniforms,
             self.textures,
-            self.fallback_textures
+            self.fallback_textures,
+            self.command_buffers
         )
     }
 }
@@ -740,11 +743,6 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
     fn into_iter(self) -> Self::IntoIter {
         [self.white, self.black, self.neutral_normal].into_iter()
     }
-}
-
-struct MtoonTransientFrameResources {
-    shader_modules: Vec<vk::ShaderModule>,
-    command_buffer: vk::CommandBuffer,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -868,6 +866,7 @@ struct MtoonSwapchainShell {
     depth: VulkanImage,
     render_pass: vk::RenderPass,
     framebuffers: Vec<vk::Framebuffer>,
+    command_buffers: Vec<vk::CommandBuffer>,
     extent: vk::Extent2D,
 }
 
@@ -879,6 +878,7 @@ impl MtoonSwapchainShell {
             depth: VulkanImage::empty(),
             render_pass: vk::RenderPass::null(),
             framebuffers: Vec::new(),
+            command_buffers: Vec::new(),
             extent: vk::Extent2D {
                 width: 0,
                 height: 0,
@@ -907,7 +907,6 @@ struct MtoonWindowedAshRenderer {
     image_available: vk::Semaphore,
     render_finished: vk::Semaphore,
     in_flight: vk::Fence,
-    pending_frame: Option<MtoonTransientFrameResources>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
     persistent_descriptors: Option<MtoonPersistentDescriptorSetCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
@@ -970,6 +969,7 @@ impl MtoonWindowedAshRenderer {
                 surface_loader: &surface_loader,
                 surface,
                 swapchain_loader: &swapchain_loader,
+                command_pool,
                 memory_properties,
                 depth_format,
                 old_swapchain: vk::SwapchainKHR::null(),
@@ -1006,7 +1006,6 @@ impl MtoonWindowedAshRenderer {
             image_available,
             render_finished,
             in_flight,
-            pending_frame: None,
             persistent_cache: None,
             persistent_descriptors: None,
             persistent_samplers: None,
@@ -1034,9 +1033,6 @@ impl MtoonWindowedAshRenderer {
             self.device
                 .wait_for_fences(&[self.in_flight], true, u64::MAX)?;
         }
-        if let Some(pending) = self.pending_frame.take() {
-            self.destroy_transient_frame(pending);
-        }
         let acquired = unsafe {
             self.swapchain_loader.acquire_next_image(
                 self.swapchain.swapchain,
@@ -1052,13 +1048,12 @@ impl MtoonWindowedAshRenderer {
         };
         let vertex_entry = self.vertex_entry.clone();
         let fragment_entry = self.fragment_entry.clone();
-        let transient = self.materialize_swapchain_frame(
+        let command_buffer = self.materialize_swapchain_frame(
             frame,
             image_index as usize,
             &vertex_entry,
             &fragment_entry,
         )?;
-        let command_buffer = transient.command_buffer;
         let wait_semaphores = [self.image_available];
         let signal_semaphores = [self.render_finished];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -1080,7 +1075,6 @@ impl MtoonWindowedAshRenderer {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
-        self.pending_frame = Some(transient);
         match present_result {
             Ok(present_suboptimal) if suboptimal || present_suboptimal => {
                 Ok(RenderStatus::NeedsRecreate)
@@ -1097,9 +1091,6 @@ impl MtoonWindowedAshRenderer {
         }
         unsafe {
             self.device.device_wait_idle()?;
-        }
-        if let Some(pending) = self.pending_frame.take() {
-            self.destroy_transient_frame(pending);
         }
         if let Some(cache) = self.persistent_descriptors.take() {
             self.destroy_persistent_descriptor_set_cache(cache);
@@ -1118,6 +1109,7 @@ impl MtoonWindowedAshRenderer {
                 surface_loader: &self.surface_loader,
                 surface: self.surface,
                 swapchain_loader: &self.swapchain_loader,
+                command_pool: self.command_pool,
                 memory_properties: self.memory_properties,
                 depth_format: self.depth_format,
                 old_swapchain,
@@ -1135,10 +1127,15 @@ impl MtoonWindowedAshRenderer {
         image_index: usize,
         vertex_entry: &CString,
         fragment_entry: &CString,
-    ) -> Result<MtoonTransientFrameResources, Box<dyn Error>> {
+    ) -> Result<vk::CommandBuffer, Box<dyn Error>> {
         let extent = self.swapchain.extent;
         let framebuffer = self.swapchain.framebuffers[image_index];
         let render_pass = self.swapchain.render_pass;
+        let command_buffer = *self
+            .swapchain
+            .command_buffers
+            .get(image_index)
+            .ok_or("swapchain image has no matching draw command buffer")?;
         self.ensure_persistent_pipeline_cache(
             frame,
             extent,
@@ -1197,7 +1194,9 @@ impl MtoonWindowedAshRenderer {
                 samplers,
             },
         )?;
-        let command_buffer = self.record_mtoon_swapchain_draws(
+        self.cache_stats.command_buffers.hit();
+        self.record_mtoon_swapchain_draws(
+            command_buffer,
             frame,
             MtoonSwapchainDrawContext {
                 render_pass,
@@ -1209,10 +1208,7 @@ impl MtoonWindowedAshRenderer {
                 descriptor_sets,
             },
         )?;
-        Ok(MtoonTransientFrameResources {
-            shader_modules: Vec::new(),
-            command_buffer,
-        })
+        Ok(command_buffer)
     }
 
     fn ensure_persistent_pipeline_cache(
@@ -2077,15 +2073,10 @@ impl MtoonWindowedAshRenderer {
 
     fn record_mtoon_swapchain_draws(
         &self,
+        command_buffer: vk::CommandBuffer,
         frame: &AshRendererFrame,
         context: MtoonSwapchainDrawContext<'_>,
-    ) -> Result<vk::CommandBuffer, Box<dyn Error>> {
-        let allocate_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(self.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-        let command_buffers = unsafe { self.device.allocate_command_buffers(&allocate_info)? };
-        let command_buffer = command_buffers[0];
+    ) -> Result<(), Box<dyn Error>> {
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         let clear_values = [
@@ -2111,6 +2102,8 @@ impl MtoonWindowedAshRenderer {
             .render_area(render_area)
             .clear_values(&clear_values);
         unsafe {
+            self.device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
             self.device.cmd_begin_render_pass(
@@ -2163,7 +2156,7 @@ impl MtoonWindowedAshRenderer {
             self.device.cmd_end_render_pass(command_buffer);
             self.device.end_command_buffer(command_buffer)?;
         }
-        Ok(command_buffer)
+        Ok(())
     }
 
     fn find_memory_type(
@@ -2178,16 +2171,6 @@ impl MtoonWindowedAshRenderer {
                 type_supported && memory_type.property_flags.contains(properties)
             })
             .ok_or_else(|| format!("no Vulkan memory type supports {properties:?}").into())
-    }
-
-    fn destroy_transient_frame(&self, resources: MtoonTransientFrameResources) {
-        unsafe {
-            self.device
-                .free_command_buffers(self.command_pool, &[resources.command_buffer]);
-            for module in resources.shader_modules {
-                self.device.destroy_shader_module(module, None);
-            }
-        }
     }
 
     fn destroy_persistent_cache(&self, cache: MtoonPersistentPipelineCache) {
@@ -2278,6 +2261,10 @@ impl MtoonWindowedAshRenderer {
 
     fn destroy_swapchain_shell(&self, resources: MtoonSwapchainShell, destroy_swapchain: bool) {
         unsafe {
+            if !resources.command_buffers.is_empty() {
+                self.device
+                    .free_command_buffers(self.command_pool, &resources.command_buffers);
+            }
             for framebuffer in resources.framebuffers {
                 self.device.destroy_framebuffer(framebuffer, None);
             }
@@ -2300,9 +2287,6 @@ impl Drop for MtoonWindowedAshRenderer {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device.device_wait_idle();
-        }
-        if let Some(pending) = self.pending_frame.take() {
-            self.destroy_transient_frame(pending);
         }
         if let Some(cache) = self.persistent_descriptors.take() {
             self.destroy_persistent_descriptor_set_cache(cache);
@@ -2367,6 +2351,7 @@ struct MtoonSwapchainCreateContext<'a> {
     surface_loader: &'a surface::Instance,
     surface: vk::SurfaceKHR,
     swapchain_loader: &'a swapchain::Device,
+    command_pool: vk::CommandPool,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     depth_format: vk::Format,
     old_swapchain: vk::SwapchainKHR,
@@ -2432,12 +2417,18 @@ fn create_mtoon_swapchain_shell(
             unsafe { context.device.create_framebuffer(&info, None) }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let command_buffers = allocate_swapchain_command_buffers(
+        context.device,
+        context.command_pool,
+        u32::try_from(framebuffers.len())?,
+    )?;
     Ok(MtoonSwapchainShell {
         swapchain,
         image_views,
         depth,
         render_pass,
         framebuffers,
+        command_buffers,
         extent: support.extent,
     })
 }
@@ -3564,6 +3555,18 @@ fn create_shader_module(
 ) -> Result<vk::ShaderModule, vk::Result> {
     let info = vk::ShaderModuleCreateInfo::default().code(words);
     unsafe { device.create_shader_module(&info, None) }
+}
+
+fn allocate_swapchain_command_buffers(
+    device: &ash::Device,
+    command_pool: vk::CommandPool,
+    command_buffer_count: u32,
+) -> Result<Vec<vk::CommandBuffer>, vk::Result> {
+    let allocate_info = vk::CommandBufferAllocateInfo::default()
+        .command_pool(command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(command_buffer_count);
+    unsafe { device.allocate_command_buffers(&allocate_info) }
 }
 
 struct CommandRecordContext<'a> {
