@@ -656,35 +656,9 @@ fn run_example_smokes() -> Result<(), String> {
         [
             "+nightly",
             "-Zscript",
-            "tools/ash/compile-wgsl-to-spirv.rs",
-            "--prelude",
-            "crates/vrm-adapter/src/mtoon_reference.wgsl",
-            "--source",
-            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
-            "--entry",
-            "vs_main",
-            "--stage",
-            "vertex",
-            "--out",
-            "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.vert.spv",
-        ],
-    )?;
-    run_cmd(
-        "cargo",
-        [
-            "+nightly",
-            "-Zscript",
-            "tools/ash/compile-wgsl-to-spirv.rs",
-            "--prelude",
-            "crates/vrm-adapter/src/mtoon_reference.wgsl",
-            "--source",
-            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
-            "--entry",
-            "fs_main",
-            "--stage",
-            "fragment",
-            "--out",
-            "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv",
+            "tools/ash/compile-ash-mtoon-wgsl-shaders.rs",
+            "--out-dir",
+            "target/ash-mtoon-wgsl-base-shaders",
         ],
     )?;
     Ok(())
@@ -720,45 +694,15 @@ fn run_ash_windowed_ci(options: &Options) -> Result<(), String> {
 fn compile_ash_windowed_mtoon_shaders(options: &Options) -> Result<(), String> {
     fs::create_dir_all(&options.ash_windowed_shader_dir)
         .map_err(|err| format!("failed to create ash shader dir: {err}"))?;
-    compile_ash_windowed_mtoon_shader(
-        "vertex",
-        "vs_main",
-        &options
-            .ash_windowed_shader_dir
-            .join("mtoon_base.wgsl.vert.spv"),
-    )?;
-    compile_ash_windowed_mtoon_shader(
-        "fragment",
-        "fs_main",
-        &options
-            .ash_windowed_shader_dir
-            .join("mtoon_base.wgsl.frag.spv"),
-    )
-}
-
-fn compile_ash_windowed_mtoon_shader(
-    stage: &str,
-    entry: &str,
-    out: &Path,
-) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command
         .args([
             "+nightly",
             "-Zscript",
-            "tools/ash/compile-wgsl-to-spirv.rs",
-            "--prelude",
-            "crates/vrm-adapter/src/mtoon_reference.wgsl",
-            "--source",
-            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
-            "--entry",
-            entry,
-            "--stage",
-            stage,
-            "--out",
+            "tools/ash/compile-ash-mtoon-wgsl-shaders.rs",
+            "--out-dir",
         ])
-        .arg(out)
-        .arg("--no-adjust-coordinate-space");
+        .arg(&options.ash_windowed_shader_dir);
     run_command(command)
 }
 
@@ -1084,6 +1028,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
 
 const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
     "tools/ash/compile-ash-mtoon-base-shaders.rs",
+    "tools/ash/compile-ash-mtoon-wgsl-shaders.rs",
     "tools/ash/compile-wgsl-to-spirv.rs",
     "tools/render-parity/apply-owner-sample-correction.rs",
     "tools/render-parity/audit-goal-readiness.rs",
@@ -1285,27 +1230,15 @@ fn compile_ash_mtoon_base_shaders(options: &Options) -> Result<AshMtoonShaderPat
     let out_dir = options.render_parity_dir.join("ash-shaders");
     let vertex_spv = out_dir.join("mtoon_base.wgsl.vert.spv");
     let fragment_spv = out_dir.join("mtoon_base.wgsl.frag.spv");
-    for (entry, stage, out) in [
-        ("vs_main", "vertex", &vertex_spv),
-        ("fs_main", "fragment", &fragment_spv),
-    ] {
-        let mut command = Command::new("cargo");
-        command.args([
-            "+nightly",
-            "-Zscript",
-            "tools/ash/compile-wgsl-to-spirv.rs",
-            "--prelude",
-            "crates/vrm-adapter/src/mtoon_reference.wgsl",
-            "--source",
-            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
-            "--entry",
-            entry,
-            "--stage",
-            stage,
-        ]);
-        command.arg("--out").arg(path(out));
-        run_command(command)?;
-    }
+    let mut command = Command::new("cargo");
+    command.args([
+        "+nightly",
+        "-Zscript",
+        "tools/ash/compile-ash-mtoon-wgsl-shaders.rs",
+        "--out-dir",
+    ]);
+    command.arg(path(&out_dir));
+    run_command(command)?;
     Ok(AshMtoonShaderPaths {
         vertex_spv,
         fragment_spv,

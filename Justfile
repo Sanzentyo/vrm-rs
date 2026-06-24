@@ -79,10 +79,9 @@ ash-mtoon-base-shaders out_dir="target/ash-mtoon-base-shaders":
     cargo +nightly -Zscript tools/ash/compile-ash-mtoon-base-shaders.rs --out-dir "{{ out_dir }}"
 
 # Compile the source-controlled ash MToon base WGSL shader to local Vulkan SPIR-V artifacts through naga.
-# Ash scene matrices are already authored for Vulkan clip space, so naga coordinate adjustment must stay disabled.
+# The script reads vrm-adapter-ash's AshMtoonWgslShaderAbi for source paths, entry points, descriptor model, and coordinate-space policy.
 ash-mtoon-wgsl-base-shaders out_dir="target/ash-mtoon-wgsl-base-shaders":
-    cargo +nightly -Zscript tools/ash/compile-wgsl-to-spirv.rs --prelude crates/vrm-adapter/src/mtoon_reference.wgsl --source crates/vrm-adapter-ash/shaders/mtoon_base.wgsl --entry vs_main --stage vertex --out "{{ out_dir }}/mtoon_base.wgsl.vert.spv" --no-adjust-coordinate-space --print-reflection
-    cargo +nightly -Zscript tools/ash/compile-wgsl-to-spirv.rs --prelude crates/vrm-adapter/src/mtoon_reference.wgsl --source crates/vrm-adapter-ash/shaders/mtoon_base.wgsl --entry fs_main --stage fragment --out "{{ out_dir }}/mtoon_base.wgsl.frag.spv" --no-adjust-coordinate-space --print-reflection
+    cargo +nightly -Zscript tools/ash/compile-ash-mtoon-wgsl-shaders.rs --out-dir "{{ out_dir }}" --print-reflection
 
 # Compile the ash MToon base WGSL shader, run it through the unsafe renderer handoff, and verify raw artifacts.
 ash-mtoon-base-readback avatar=".external-fixtures/official/Seed-san.vrm" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san.external-base" width="32" height="32" shader_dir="target/ash-mtoon-wgsl-base-shaders":
