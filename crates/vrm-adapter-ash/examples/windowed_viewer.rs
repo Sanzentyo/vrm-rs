@@ -36,7 +36,8 @@ use vrm_adapter_ash::{
     AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
     AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshSwapchainAcquireStatus,
     AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
-    AshVrmVertex, AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
+    AshVrmVertex, AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles,
+    AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
     ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
@@ -917,45 +918,47 @@ impl MtoonWindowedAshRenderer {
             .frame_sync
             .get(current_frame)
             .ok_or("ash windowed mtoon renderer has no frame sync object")?;
-        let image_available = sync.image_available;
-        let render_finished = sync.render_finished;
-        let in_flight = sync.in_flight;
+        let sync_handles = AshWindowedFrameSyncHandles {
+            image_available: sync.image_available,
+            render_finished: sync.render_finished,
+            in_flight: sync.in_flight,
+        };
         unsafe {
-            self.device.wait_for_fences(&[in_flight], true, u64::MAX)?;
+            self.device
+                .wait_for_fences(&[sync_handles.in_flight], true, u64::MAX)?;
         }
         let acquired = unsafe {
             self.swapchain_loader.acquire_next_image(
                 self.swapchain.swapchain,
                 u64::MAX,
-                image_available,
+                sync_handles.image_available,
                 vk::Fence::null(),
             )
         };
-        let (image_index, suboptimal) = match ash_classify_swapchain_acquire(acquired)? {
-            AshSwapchainAcquireStatus::Acquired {
-                image_index,
-                suboptimal,
-            } => (image_index, suboptimal),
-            AshSwapchainAcquireStatus::NeedsRecreate => return Ok(RenderStatus::NeedsRecreate),
+        let selection = match sync_plan.select_acquired_frame(
+            self.current_frame,
+            ash_classify_swapchain_acquire(acquired)?,
+            &self.images_in_flight,
+        )? {
+            AshWindowedFrameAcquirePlan::Acquired(selection) => selection,
+            AshWindowedFrameAcquirePlan::NeedsRecreate => return Ok(RenderStatus::NeedsRecreate),
         };
-        let image_index = sync_plan.image_index_to_slot(image_index)?;
-        let image_fence = *self
-            .images_in_flight
-            .get(image_index)
-            .ok_or("swapchain image has no matching in-flight fence slot")?;
-        if image_fence != vk::Fence::null() {
+        if selection.previous_image_fence != vk::Fence::null() {
             unsafe {
                 self.device
-                    .wait_for_fences(&[image_fence], true, u64::MAX)?;
+                    .wait_for_fences(&[selection.previous_image_fence], true, u64::MAX)?;
             }
         }
         let vertex_entry = self.vertex_entry.clone();
         let fragment_entry = self.fragment_entry.clone();
-        let command_buffer =
-            self.materialize_swapchain_frame(frame, image_index, &vertex_entry, &fragment_entry)?;
-        self.images_in_flight[image_index] = in_flight;
-        let submit_plan =
-            ash_windowed_submit_plan(image_available, render_finished, command_buffer, in_flight);
+        let command_buffer = self.materialize_swapchain_frame(
+            frame,
+            selection.swapchain_image_slot,
+            &vertex_entry,
+            &fragment_entry,
+        )?;
+        self.images_in_flight[selection.swapchain_image_slot] = sync_handles.in_flight;
+        let submit_plan = selection.submit_plan(sync_handles, command_buffer);
         let wait_semaphores = submit_plan.wait_semaphores();
         let signal_semaphores = submit_plan.signal_semaphores();
         let wait_stages = submit_plan.wait_stages();
@@ -970,11 +973,8 @@ impl MtoonWindowedAshRenderer {
             self.device
                 .queue_submit(self.queue, &submit, submit_plan.fence)?;
         }
-        let present_plan = ash_windowed_present_plan(
-            submit_plan.signal_semaphore,
-            self.swapchain.swapchain,
-            u32::try_from(image_index)?,
-        );
+        let present_plan =
+            selection.present_plan(submit_plan.signal_semaphore, self.swapchain.swapchain);
         let present_wait_semaphores = present_plan.wait_semaphores();
         let swapchains = present_plan.swapchains();
         let image_indices = present_plan.image_indices();
@@ -983,11 +983,12 @@ impl MtoonWindowedAshRenderer {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
-        let status = match ash_classify_swapchain_present(suboptimal, present_result)? {
-            AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),
-            AshSwapchainPresentStatus::NeedsRecreate => Ok(RenderStatus::NeedsRecreate),
-        };
-        self.current_frame = sync_plan.next_frame_index(self.current_frame)?;
+        let status =
+            match ash_classify_swapchain_present(selection.acquired_suboptimal, present_result)? {
+                AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),
+                AshSwapchainPresentStatus::NeedsRecreate => Ok(RenderStatus::NeedsRecreate),
+            };
+        self.current_frame = selection.next_frame_index;
         status
     }
 

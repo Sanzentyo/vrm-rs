@@ -402,6 +402,87 @@ impl AshWindowedFrameSyncPlan {
         }
         Ok(slot)
     }
+
+    pub fn select_acquired_frame(
+        self,
+        current_frame: usize,
+        acquired: AshSwapchainAcquireStatus,
+        image_fences: &[vk::Fence],
+    ) -> Result<AshWindowedFrameAcquirePlan, String> {
+        match acquired {
+            AshSwapchainAcquireStatus::NeedsRecreate => {
+                Ok(AshWindowedFrameAcquirePlan::NeedsRecreate)
+            }
+            AshSwapchainAcquireStatus::Acquired {
+                image_index,
+                suboptimal,
+            } => {
+                let frame_slot = self.frame_slot(current_frame)?;
+                let image_slot = self.image_index_to_slot(image_index)?;
+                let previous_image_fence = *image_fences.get(image_slot).ok_or_else(|| {
+                    format!(
+                        "swapchain image slot {image_slot} has no matching in-flight fence entry"
+                    )
+                })?;
+                Ok(AshWindowedFrameAcquirePlan::Acquired(
+                    AshWindowedFrameSyncSelection {
+                        frame_slot,
+                        swapchain_image_slot: image_slot,
+                        image_index,
+                        acquired_suboptimal: suboptimal,
+                        previous_image_fence,
+                        next_frame_index: self.next_frame_index(current_frame)?,
+                    },
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshWindowedFrameAcquirePlan {
+    Acquired(AshWindowedFrameSyncSelection),
+    NeedsRecreate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedFrameSyncSelection {
+    pub frame_slot: usize,
+    pub swapchain_image_slot: usize,
+    pub image_index: u32,
+    pub acquired_suboptimal: bool,
+    pub previous_image_fence: vk::Fence,
+    pub next_frame_index: usize,
+}
+
+impl AshWindowedFrameSyncSelection {
+    pub const fn submit_plan(
+        self,
+        sync_handles: AshWindowedFrameSyncHandles,
+        command_buffer: vk::CommandBuffer,
+    ) -> AshWindowedSubmitPlan {
+        ash_windowed_submit_plan(
+            sync_handles.image_available,
+            sync_handles.render_finished,
+            command_buffer,
+            sync_handles.in_flight,
+        )
+    }
+
+    pub const fn present_plan(
+        self,
+        render_finished: vk::Semaphore,
+        swapchain: vk::SwapchainKHR,
+    ) -> AshWindowedPresentPlan {
+        ash_windowed_present_plan(render_finished, swapchain, self.image_index)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedFrameSyncHandles {
+    pub image_available: vk::Semaphore,
+    pub render_finished: vk::Semaphore,
+    pub in_flight: vk::Fence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6702,6 +6783,44 @@ mod tests {
     }
 
     #[test]
+    fn windowed_frame_sync_selection_exposes_acquire_slots_and_payloads() {
+        let plan = AshWindowedFrameSyncPlan::new(2, 3).unwrap();
+        let selection = match plan
+            .select_acquired_frame(
+                1,
+                AshSwapchainAcquireStatus::Acquired {
+                    image_index: 2,
+                    suboptimal: true,
+                },
+                &[vk::Fence::null(), vk::Fence::null(), vk::Fence::null()],
+            )
+            .unwrap()
+        {
+            AshWindowedFrameAcquirePlan::Acquired(selection) => selection,
+            AshWindowedFrameAcquirePlan::NeedsRecreate => panic!("expected acquired frame"),
+        };
+
+        assert_eq!(selection.frame_slot, 1);
+        assert_eq!(selection.swapchain_image_slot, 2);
+        assert_eq!(selection.image_index, 2);
+        assert!(selection.acquired_suboptimal);
+        assert_eq!(selection.previous_image_fence, vk::Fence::null());
+        assert_eq!(selection.next_frame_index, 0);
+
+        let sync_handles = AshWindowedFrameSyncHandles {
+            image_available: vk::Semaphore::null(),
+            render_finished: vk::Semaphore::null(),
+            in_flight: vk::Fence::null(),
+        };
+        let submit = selection.submit_plan(sync_handles, vk::CommandBuffer::null());
+        assert_eq!(submit.wait_semaphore, sync_handles.image_available);
+        assert_eq!(submit.signal_semaphore, sync_handles.render_finished);
+        assert_eq!(submit.fence, sync_handles.in_flight);
+        let present = selection.present_plan(submit.signal_semaphore, vk::SwapchainKHR::null());
+        assert_eq!(present.image_index, 2);
+    }
+
+    #[test]
     fn windowed_frame_sync_plan_rejects_invalid_counts_and_indices() {
         assert_eq!(
             AshWindowedFrameSyncPlan::new(0, 3),
@@ -6719,6 +6838,25 @@ mod tests {
         assert_eq!(
             plan.image_index_to_slot(3),
             Err("swapchain image index 3 is outside swapchain_images 3".to_owned())
+        );
+        assert_eq!(
+            plan.select_acquired_frame(
+                0,
+                AshSwapchainAcquireStatus::NeedsRecreate,
+                &[vk::Fence::null()]
+            ),
+            Ok(AshWindowedFrameAcquirePlan::NeedsRecreate)
+        );
+        assert_eq!(
+            plan.select_acquired_frame(
+                0,
+                AshSwapchainAcquireStatus::Acquired {
+                    image_index: 2,
+                    suboptimal: false,
+                },
+                &[vk::Fence::null()]
+            ),
+            Err("swapchain image slot 2 has no matching in-flight fence entry".to_owned())
         );
     }
 
