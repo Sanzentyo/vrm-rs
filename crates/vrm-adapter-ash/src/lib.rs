@@ -1888,6 +1888,128 @@ pub enum AshCommandPlan {
     },
 }
 
+impl AshCommandPlan {
+    pub fn vk_graphics_pipeline(&self, pipelines: &[vk::Pipeline]) -> Result<vk::Pipeline, String> {
+        match self {
+            Self::BindGraphicsPipeline { pipeline_index } => {
+                pipelines.get(*pipeline_index).copied().ok_or_else(|| {
+                    format!(
+                        "drawable command references missing graphics pipeline {pipeline_index}"
+                    )
+                })
+            }
+            other => Err(format!(
+                "drawable command is not a graphics-pipeline bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn vk_pipeline_layout(
+        &self,
+        pipeline_plans: &[AshGraphicsPipelinePlan],
+        pipeline_layouts: &[vk::PipelineLayout],
+    ) -> Result<vk::PipelineLayout, String> {
+        match self {
+            Self::BindDescriptorSet { pipeline_index, .. } => {
+                let pipeline = pipeline_plans.get(*pipeline_index).ok_or_else(|| {
+                    format!("drawable command references missing pipeline plan {pipeline_index}")
+                })?;
+                pipeline_layouts
+                    .get(pipeline.descriptor_set_index)
+                    .copied()
+                    .ok_or_else(|| {
+                        format!(
+                            "drawable command references missing pipeline layout {}",
+                            pipeline.descriptor_set_index
+                        )
+                    })
+            }
+            other => Err(format!(
+                "drawable command is not a descriptor-set bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn vk_descriptor_set(
+        &self,
+        descriptor_sets: &[vk::DescriptorSet],
+    ) -> Result<vk::DescriptorSet, String> {
+        match self {
+            Self::BindDescriptorSet {
+                descriptor_set_index,
+                ..
+            } => descriptor_sets
+                .get(*descriptor_set_index)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "drawable command references missing descriptor set {descriptor_set_index}"
+                    )
+                }),
+            other => Err(format!(
+                "drawable command is not a descriptor-set bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn vertex_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
+        match self {
+            Self::BindVertexBuffer { buffer_index, .. } => {
+                buffers.get(*buffer_index).ok_or_else(|| {
+                    format!("drawable command references missing vertex buffer {buffer_index}")
+                })
+            }
+            other => Err(format!(
+                "drawable command is not a vertex-buffer bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn index_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
+        match self {
+            Self::BindIndexBuffer { buffer_index, .. } => {
+                buffers.get(*buffer_index).ok_or_else(|| {
+                    format!("drawable command references missing index buffer {buffer_index}")
+                })
+            }
+            other => Err(format!(
+                "drawable command is not an index-buffer bind: {other:?}"
+            )),
+        }
+    }
+
+    pub fn draw_indexed_args(&self) -> Result<AshDrawIndexedCommand, String> {
+        match self {
+            Self::DrawIndexed {
+                index_count,
+                instance_count,
+                first_index,
+                vertex_offset,
+                first_instance,
+                ..
+            } => Ok(AshDrawIndexedCommand {
+                index_count: *index_count,
+                instance_count: *instance_count,
+                first_index: *first_index,
+                vertex_offset: *vertex_offset,
+                first_instance: *first_instance,
+            }),
+            other => Err(format!(
+                "drawable command is not an indexed draw: {other:?}"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshDrawIndexedCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshSkippedDraw {
     pub primitive_index: usize,
@@ -7695,6 +7817,104 @@ mod tests {
                 primitive_index: 7,
                 reason: AshSkippedDrawReason::MissingPipeline,
             }]
+        );
+    }
+
+    #[test]
+    fn command_plan_helpers_resolve_engine_owned_handles_with_checked_errors() {
+        let frame = cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        let pipeline_handles = [vk::Pipeline::null()];
+        let pipeline_layouts = [vk::PipelineLayout::null()];
+        let descriptor_sets = [vk::DescriptorSet::null()];
+
+        let bind_pipeline = AshCommandPlan::BindGraphicsPipeline { pipeline_index: 0 };
+        assert_eq!(
+            bind_pipeline.vk_graphics_pipeline(&pipeline_handles),
+            Ok(vk::Pipeline::null())
+        );
+        assert_eq!(
+            AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }
+                .vk_graphics_pipeline(&pipeline_handles),
+            Err("drawable command references missing graphics pipeline 2".to_owned())
+        );
+
+        let bind_descriptor = AshCommandPlan::BindDescriptorSet {
+            pipeline_index: 0,
+            descriptor_set_index: 0,
+        };
+        assert_eq!(
+            bind_descriptor.vk_pipeline_layout(&frame.pipelines, &pipeline_layouts),
+            Ok(vk::PipelineLayout::null())
+        );
+        assert_eq!(
+            bind_descriptor.vk_descriptor_set(&descriptor_sets),
+            Ok(vk::DescriptorSet::null())
+        );
+        assert_eq!(
+            AshCommandPlan::BindDescriptorSet {
+                pipeline_index: 3,
+                descriptor_set_index: 0,
+            }
+            .vk_pipeline_layout(&frame.pipelines, &pipeline_layouts),
+            Err("drawable command references missing pipeline plan 3".to_owned())
+        );
+        assert_eq!(
+            bind_descriptor.vk_pipeline_layout(&frame.pipelines, &[]),
+            Err("drawable command references missing pipeline layout 0".to_owned())
+        );
+        assert_eq!(
+            AshCommandPlan::BindDescriptorSet {
+                pipeline_index: 0,
+                descriptor_set_index: 4,
+            }
+            .vk_descriptor_set(&descriptor_sets),
+            Err("drawable command references missing descriptor set 4".to_owned())
+        );
+
+        let vertex = AshCommandPlan::BindVertexBuffer {
+            buffer_index: 1,
+            binding: 0,
+            offset: 16,
+        };
+        assert_eq!(vertex.vertex_buffer_resource(&[11_u32, 22]), Ok(&22));
+        assert_eq!(
+            vertex.vertex_buffer_resource::<u32>(&[]),
+            Err("drawable command references missing vertex buffer 1".to_owned())
+        );
+
+        let index = AshCommandPlan::BindIndexBuffer {
+            buffer_index: 0,
+            offset: 4,
+            index_type: vk::IndexType::UINT32,
+        };
+        assert_eq!(index.index_buffer_resource(&[33_u32]), Ok(&33));
+        assert_eq!(
+            index.index_buffer_resource::<u32>(&[]),
+            Err("drawable command references missing index buffer 0".to_owned())
+        );
+
+        let draw = AshCommandPlan::DrawIndexed {
+            primitive_index: 7,
+            index_count: 12,
+            instance_count: 1,
+            first_index: 2,
+            vertex_offset: -3,
+            first_instance: 4,
+        };
+        assert_eq!(
+            draw.draw_indexed_args(),
+            Ok(AshDrawIndexedCommand {
+                index_count: 12,
+                instance_count: 1,
+                first_index: 2,
+                vertex_offset: -3,
+                first_instance: 4,
+            })
+        );
+        assert_eq!(
+            bind_pipeline.draw_indexed_args(),
+            Err("drawable command is not an indexed draw: BindGraphicsPipeline { pipeline_index: 0 }"
+                .to_owned())
         );
     }
 

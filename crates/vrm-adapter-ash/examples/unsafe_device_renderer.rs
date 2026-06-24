@@ -1057,34 +1057,24 @@ impl UnsafeAshDeviceRenderer {
                 vk::SubpassContents::INLINE,
             );
             for command in &drawable.commands {
-                match *command {
-                    AshCommandPlan::BindGraphicsPipeline { pipeline_index } => {
-                        let pipeline = *context
-                            .pipelines
-                            .get(pipeline_index)
-                            .ok_or("drawable command references a missing graphics pipeline")?;
+                match command {
+                    AshCommandPlan::BindGraphicsPipeline { .. } => {
+                        let pipeline = command
+                            .vk_graphics_pipeline(context.pipelines)
+                            .map_err(io::Error::other)?;
                         self.device.cmd_bind_pipeline(
                             command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
                             pipeline,
                         );
                     }
-                    AshCommandPlan::BindDescriptorSet {
-                        pipeline_index,
-                        descriptor_set_index,
-                    } => {
-                        let pipeline = frame
-                            .pipelines
-                            .get(pipeline_index)
-                            .ok_or("drawable command references a missing pipeline plan")?;
-                        let layout = *context
-                            .pipeline_layouts
-                            .get(pipeline.descriptor_set_index)
-                            .ok_or("drawable command references a missing pipeline layout")?;
-                        let descriptor_set = *context
-                            .descriptor_sets
-                            .get(descriptor_set_index)
-                            .ok_or("drawable command references a missing descriptor set")?;
+                    AshCommandPlan::BindDescriptorSet { .. } => {
+                        let layout = command
+                            .vk_pipeline_layout(&frame.pipelines, context.pipeline_layouts)
+                            .map_err(io::Error::other)?;
+                        let descriptor_set = command
+                            .vk_descriptor_set(context.descriptor_sets)
+                            .map_err(io::Error::other)?;
                         self.device.cmd_bind_descriptor_sets(
                             command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
@@ -1095,54 +1085,42 @@ impl UnsafeAshDeviceRenderer {
                         );
                     }
                     AshCommandPlan::BindVertexBuffer {
-                        buffer_index,
-                        binding,
-                        offset,
+                        binding, offset, ..
                     } => {
-                        let buffer = context
-                            .buffers
-                            .get(buffer_index)
-                            .ok_or("drawable command references a missing vertex buffer")?
+                        let buffer = command
+                            .vertex_buffer_resource(context.buffers)
+                            .map_err(io::Error::other)?
                             .buffer;
                         self.device.cmd_bind_vertex_buffers(
                             command_buffer,
-                            binding,
+                            *binding,
                             &[buffer],
-                            &[offset],
+                            &[*offset],
                         );
                     }
                     AshCommandPlan::BindIndexBuffer {
-                        buffer_index,
-                        offset,
-                        index_type,
+                        offset, index_type, ..
                     } => {
-                        let buffer = context
-                            .buffers
-                            .get(buffer_index)
-                            .ok_or("drawable command references a missing index buffer")?
+                        let buffer = command
+                            .index_buffer_resource(context.buffers)
+                            .map_err(io::Error::other)?
                             .buffer;
                         self.device.cmd_bind_index_buffer(
                             command_buffer,
                             buffer,
-                            offset,
-                            index_type,
+                            *offset,
+                            *index_type,
                         );
                     }
-                    AshCommandPlan::DrawIndexed {
-                        index_count,
-                        instance_count,
-                        first_index,
-                        vertex_offset,
-                        first_instance,
-                        ..
-                    } => {
+                    AshCommandPlan::DrawIndexed { .. } => {
+                        let draw = command.draw_indexed_args().map_err(io::Error::other)?;
                         self.device.cmd_draw_indexed(
                             command_buffer,
-                            index_count,
-                            instance_count,
-                            first_index,
-                            vertex_offset,
-                            first_instance,
+                            draw.index_count,
+                            draw.instance_count,
+                            draw.first_index,
+                            draw.vertex_offset,
+                            draw.first_instance,
                         );
                     }
                 }
