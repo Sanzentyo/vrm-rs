@@ -35,15 +35,8 @@ The default script run covers `cargo fmt --all -- --check`, `cargo test --worksp
 ## Coverage Refresh Delegation
 
 - Treat coverage table/progress updates as routine mechanical work suitable for delegation.
-- Prefer the local `agent` CLI when available for routine coverage refreshes and other simple bulk mechanical edits, using `composer-2.5-fast` for clearly specified non-judgmental edits.
-- Example:
-
-```powershell
-agent --print --trust --force --model composer-2.5-fast --workspace "D:\git\vrm-rs" "..."
-```
-
-- The delegated agent must follow `docs/agents/coverage-spark.md` and use `tools/coverage/update-coverage-docs.ps1`.
-- Use Codex subagents only when the user explicitly requests them or when the `agent` CLI is unavailable.
+- Prefer a Codex subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
+- The delegated subagent must follow `docs/agents/coverage-spark.md` and use `tools/coverage/update-coverage-docs.ps1`.
 - Preferred flow:
 
 ```powershell
@@ -61,14 +54,13 @@ git diff docs/testing.md docs/progress.md
 - The main agent still owns the implementation gate and final verification.
 - Review delegated diffs and run gates before staging or committing; delegation does not transfer ownership of verification.
 - Run `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` locally before commits that affect tests, coverage, runtime paths, adapters, IO, or protocol behavior.
-- If a delegated agent updates coverage docs, review its diff before staging.
-- If the `agent` CLI is unavailable and Codex subagent spawning is unavailable because the thread is at its agent limit, reuse an existing completed subagent when possible. If reuse is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
+- If a delegated subagent updates coverage docs, review its diff before staging.
+- If Codex subagent spawning is unavailable because the thread is at its agent limit, reuse an existing completed subagent when possible. If reuse is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
 
 ## Subagent Usage
 
-- Prefer the local `agent` CLI for routine mechanical work (coverage refreshes, bulk edits) when available.
-- Use Codex subagents only when the user explicitly requests them, for clearly parallel routine tasks requested by the user, or when the `agent` CLI is unavailable.
-- For coverage refreshes via Codex subagent, use a `worker` subagent with `gpt-5.3-codex-spark` when available.
+- Use Codex subagents for delegated routine mechanical work such as coverage refreshes and narrow bulk edits.
+- For coverage refreshes and non-judgmental mechanical edits, use a `worker` subagent with `gpt-5.4-codex-mini` when available.
 - For pessimistic reviews, use the model and reasoning level requested by the user, and ask for findings focused on regressions, missing tests, and API hazards.
 - Delegated agents should not make broad unrelated edits. Give them narrow ownership, ask them to report changed files, and review their output before integration.
 

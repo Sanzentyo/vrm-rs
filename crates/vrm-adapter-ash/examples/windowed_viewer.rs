@@ -2,7 +2,9 @@
 //!
 //! This example deliberately keeps the crate boundary intact: `vrm-adapter-ash`
 //! plans and CPU-bakes VRM geometry, while the example owns the unsafe Vulkan
-//! instance/device/surface/swapchain edge.
+//! instance/device/surface/swapchain edge. The default path materializes a full
+//! `AshRendererFrame` with WGSL/Naga MToon SPIR-V and presents directly to the
+//! swapchain; `--simple-preview` keeps the older CPU-projected mesh preview.
 
 use ash::khr::{surface, swapchain};
 use ash::{Entry, vk};
@@ -13,9 +15,10 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::error::Error;
 use std::ffi::CString;
 use std::fs;
-use std::io::Cursor;
 use std::path::PathBuf;
+use std::ptr;
 use std::time::Instant;
+use vrm_io::{GltfMaterialTextureFallback, RgbaMipLevel, generate_rgba_mip_chain};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -24,7 +27,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
-    AshRenderOptions, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
+    AshGraphicsPipelinePlan, AshRenderOptions, AshRendererFrame, AshSamplerPlan,
+    AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
+    AshVrmVertex, ash_reference_depth_format,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -54,18 +60,27 @@ struct Options {
     /// Initial window height.
     #[arg(long, default_value_t = 720)]
     height: u32,
-    /// Vertex SPIR-V compiled from `shaders/windowed_simple.vert.glsl`.
+    /// Use the legacy CPU-projected simple mesh preview instead of full MToon swapchain rendering.
+    #[arg(long)]
+    simple_preview: bool,
+    /// Vertex SPIR-V for the active viewer path.
     #[arg(
         long,
-        default_value = "target/ash-windowed-simple-shaders/mtoon_base.vert.spv"
+        default_value = "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.vert.spv"
     )]
     vertex_spv: PathBuf,
-    /// Fragment SPIR-V compiled from `shaders/windowed_simple.frag.glsl`.
+    /// Fragment SPIR-V for the active viewer path.
     #[arg(
         long,
-        default_value = "target/ash-windowed-simple-shaders/mtoon_base.frag.spv"
+        default_value = "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv"
     )]
     fragment_spv: PathBuf,
+    /// Entry point name for `--vertex-spv`.
+    #[arg(long, default_value = "vs_main")]
+    vertex_entry: String,
+    /// Entry point name for `--fragment-spv`.
+    #[arg(long, default_value = "fs_main")]
+    fragment_entry: String,
     /// Exit after rendering this many frames. Useful for smoke tests.
     #[arg(long)]
     max_frames: Option<u64>,
@@ -119,20 +134,61 @@ impl WindowedAvatar {
             size.height,
         )
     }
+
+    fn sample_renderer_frame(
+        &mut self,
+        size: PhysicalSize<u32>,
+    ) -> Result<AshRendererFrame, Box<dyn Error>> {
+        let time = self.sample_time();
+        let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
+        let mut frame_options = AshVrmFramePlanOptions::parse_from(["ash-windowed-viewer"]);
+        frame_options.avatar = self.options.avatar.clone();
+        frame_options.animation = self.options.animation.clone();
+        frame_options.no_animation = self.options.no_animation;
+        frame_options.time = time;
+        let scene_options = frame_options.scene_options_with_screen_size(
+            aspect,
+            ScreenProjectionSize {
+                width: size.width.max(1) as f32,
+                height: size.height.max(1) as f32,
+            },
+        );
+        let plan = self.planner.sample_frame_with_full_render_options(
+            time,
+            scene_options,
+            AshRenderOptions {
+                diagnostic_render: frame_options.diagnostic_render,
+                disable_outlines: frame_options.disable_outlines,
+                outline_width_scale: frame_options.outline_width_scale,
+                disable_normal_maps: frame_options.disable_normal_maps,
+                normal_map_mode: frame_options.normal_map_mode,
+                normal_map_scale: frame_options.normal_map_scale,
+                descriptor_binding_model: frame_options.descriptor_binding_model,
+            },
+        )?;
+        ash_renderer_frame_from_plan_with_owner_sample_selection(&plan, None)
+            .map_err(|error| format!("failed to build ash renderer frame: {error:?}").into())
+    }
 }
 
 #[derive(Clone, Debug)]
 struct ShaderModules {
     vertex: Vec<u32>,
     fragment: Vec<u32>,
+    vertex_entry: String,
+    fragment_entry: String,
+}
+
+enum ActiveRenderer {
+    Simple(Box<WindowedAshRenderer>),
+    Mtoon(Box<MtoonWindowedAshRenderer>),
 }
 
 struct App {
     avatar: WindowedAvatar,
-    initial_mesh: SimpleMesh,
     shaders: ShaderModules,
+    active_renderer: Option<ActiveRenderer>,
     window: Option<Window>,
-    renderer: Option<WindowedAshRenderer>,
     recreate_swapchain: bool,
     rendered_frames: u64,
 }
@@ -149,9 +205,23 @@ impl ApplicationHandler for App {
                 self.avatar.options.height,
             ));
         let window = event_loop.create_window(attributes).expect("create window");
-        let renderer = WindowedAshRenderer::new(&window, &self.initial_mesh, &self.shaders)
-            .expect("initialize ash windowed renderer");
-        self.renderer = Some(renderer);
+        let active_renderer = if self.avatar.options.simple_preview {
+            let initial_size =
+                PhysicalSize::new(self.avatar.options.width, self.avatar.options.height);
+            let initial_mesh = self
+                .avatar
+                .sample_mesh(initial_size)
+                .expect("sample initial simple preview mesh");
+            let renderer = WindowedAshRenderer::new(&window, &initial_mesh, &self.shaders)
+                .expect("initialize ash simple preview renderer");
+            ActiveRenderer::Simple(Box::new(renderer))
+        } else {
+            ActiveRenderer::Mtoon(Box::new(
+                MtoonWindowedAshRenderer::new(&window, &self.shaders)
+                    .expect("initialize ash mtoon windowed renderer"),
+            ))
+        };
+        self.active_renderer = Some(active_renderer);
         self.window = Some(window);
     }
 
@@ -174,40 +244,64 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let size = window.inner_size();
-                let frame_mesh = match self.avatar.sample_mesh(size) {
-                    Ok(mesh) => mesh,
-                    Err(error) => {
-                        eprintln!("ash windowed animation sample failed: {error}");
-                        event_loop.exit();
-                        return;
-                    }
-                };
-                if let Some(renderer) = &mut self.renderer {
-                    if let Err(error) = renderer.update_mesh(&frame_mesh) {
-                        eprintln!("ash windowed mesh update failed: {error}");
-                        event_loop.exit();
-                        return;
-                    }
-                    if self.recreate_swapchain {
-                        renderer
-                            .recreate_swapchain(window)
-                            .expect("recreate swapchain");
-                        self.recreate_swapchain = false;
-                    }
-                    match renderer.render(window) {
-                        Ok(RenderStatus::Ok) => {
-                            self.rendered_frames = self.rendered_frames.saturating_add(1);
-                            if self
-                                .avatar
-                                .options
-                                .max_frames
-                                .is_some_and(|max| self.rendered_frames >= max)
-                            {
+                let render_status = match self.active_renderer.as_mut() {
+                    Some(ActiveRenderer::Simple(renderer)) => {
+                        let frame_mesh = match self.avatar.sample_mesh(size) {
+                            Ok(mesh) => mesh,
+                            Err(error) => {
+                                eprintln!("ash windowed animation sample failed: {error}");
                                 event_loop.exit();
+                                return;
                             }
+                        };
+                        if let Err(error) = renderer.update_mesh(&frame_mesh) {
+                            eprintln!("ash windowed mesh update failed: {error}");
+                            event_loop.exit();
+                            return;
                         }
-                        Ok(RenderStatus::NeedsRecreate) => self.recreate_swapchain = true,
-                        Err(error) => eprintln!("ash windowed render failed: {error}"),
+                        if self.recreate_swapchain {
+                            renderer
+                                .recreate_swapchain(window)
+                                .expect("recreate swapchain");
+                            self.recreate_swapchain = false;
+                        }
+                        renderer.render(window)
+                    }
+                    Some(ActiveRenderer::Mtoon(renderer)) => {
+                        let frame = match self.avatar.sample_renderer_frame(size) {
+                            Ok(frame) => frame,
+                            Err(error) => {
+                                eprintln!("ash windowed animation sample failed: {error}");
+                                event_loop.exit();
+                                return;
+                            }
+                        };
+                        if self.recreate_swapchain {
+                            renderer
+                                .recreate_swapchain(window)
+                                .expect("recreate swapchain");
+                            self.recreate_swapchain = false;
+                        }
+                        renderer.render(window, &frame)
+                    }
+                    None => return,
+                };
+                match render_status {
+                    Ok(RenderStatus::Ok) => {
+                        self.rendered_frames = self.rendered_frames.saturating_add(1);
+                        if self
+                            .avatar
+                            .options
+                            .max_frames
+                            .is_some_and(|max| self.rendered_frames >= max)
+                        {
+                            event_loop.exit();
+                        }
+                    }
+                    Ok(RenderStatus::NeedsRecreate) => self.recreate_swapchain = true,
+                    Err(error) => {
+                        eprintln!("ash windowed render failed: {error}");
+                        event_loop.exit();
                     }
                 }
             }
@@ -217,27 +311,37 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(window) = &self.window {
-            window.request_redraw();
+            let size = window.inner_size();
+            if size.width > 0 && size.height > 0 {
+                window.request_redraw();
+            }
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
-    let mut avatar = WindowedAvatar::new(options)?;
-    let initial_size = PhysicalSize::new(avatar.options.width, avatar.options.height);
-    let initial_mesh = avatar.sample_mesh(initial_size)?;
+    let avatar = WindowedAvatar::new(options)?;
     let shaders = ShaderModules {
-        vertex: read_spirv_words(&avatar.options.vertex_spv)?,
-        fragment: read_spirv_words(&avatar.options.fragment_spv)?,
+        vertex: read_spirv_words(&avatar.options.vertex_spv, avatar.options.simple_preview)?,
+        fragment: read_spirv_words(&avatar.options.fragment_spv, avatar.options.simple_preview)?,
+        vertex_entry: if avatar.options.simple_preview {
+            "main".to_owned()
+        } else {
+            avatar.options.vertex_entry.clone()
+        },
+        fragment_entry: if avatar.options.simple_preview {
+            "main".to_owned()
+        } else {
+            avatar.options.fragment_entry.clone()
+        },
     };
     let event_loop = EventLoop::new()?;
     let mut app = App {
         avatar,
-        initial_mesh,
         shaders,
+        active_renderer: None,
         window: None,
-        renderer: None,
         recreate_swapchain: false,
         rendered_frames: 0,
     };
@@ -343,14 +447,28 @@ fn simple_vertex(vertex: &AshVrmVertex, view_projection: Mat4, light: Vec3) -> S
     }
 }
 
-fn read_spirv_words(path: &PathBuf) -> Result<Vec<u32>, Box<dyn Error>> {
-    let bytes = fs::read(path).map_err(|error| {
-        format!(
-            "failed to read {}: {error}; run `just ash-windowed-simple-shaders` first",
+fn read_spirv_words(path: &PathBuf, simple_preview: bool) -> Result<Vec<u32>, Box<dyn Error>> {
+    let hint = if simple_preview {
+        "run `just ash-windowed-simple-shaders` first"
+    } else {
+        "run `just ash-mtoon-wgsl-base-shaders` first"
+    };
+    let bytes = fs::read(path)
+        .map_err(|error| format!("failed to read {}: {error}; {hint}", path.display()))?;
+    if bytes.len() % std::mem::size_of::<u32>() != 0 {
+        return Err(format!(
+            "{} is not valid SPIR-V: byte length is not a multiple of 4",
             path.display()
         )
-    })?;
-    let words = ash::util::read_spv(&mut Cursor::new(bytes))?;
+        .into());
+    }
+    let words = bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect::<Vec<_>>();
+    if words.first().copied() != Some(0x0723_0203) {
+        return Err(format!("{} is not valid SPIR-V: missing magic", path.display()).into());
+    }
     Ok(words)
 }
 
@@ -389,6 +507,1521 @@ enum RenderStatus {
     NeedsRecreate,
 }
 
+struct MtoonVulkanBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+}
+
+struct MtoonVulkanImage {
+    image: vk::Image,
+    memory: vk::DeviceMemory,
+    view: vk::ImageView,
+}
+
+struct MtoonVulkanFallbackTextures {
+    white: MtoonVulkanImage,
+    black: MtoonVulkanImage,
+    neutral_normal: MtoonVulkanImage,
+}
+
+impl MtoonVulkanFallbackTextures {
+    fn get(&self, fallback: GltfMaterialTextureFallback) -> &MtoonVulkanImage {
+        match fallback {
+            GltfMaterialTextureFallback::White => &self.white,
+            GltfMaterialTextureFallback::Black => &self.black,
+            GltfMaterialTextureFallback::NeutralNormal => &self.neutral_normal,
+        }
+    }
+}
+
+impl IntoIterator for MtoonVulkanFallbackTextures {
+    type IntoIter = std::array::IntoIter<MtoonVulkanImage, 3>;
+    type Item = MtoonVulkanImage;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [self.white, self.black, self.neutral_normal].into_iter()
+    }
+}
+
+struct MtoonVulkanFallbackBuffers {
+    white: MtoonVulkanBuffer,
+    black: MtoonVulkanBuffer,
+    neutral_normal: MtoonVulkanBuffer,
+}
+
+impl IntoIterator for MtoonVulkanFallbackBuffers {
+    type IntoIter = std::array::IntoIter<MtoonVulkanBuffer, 3>;
+    type Item = MtoonVulkanBuffer;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [self.white, self.black, self.neutral_normal].into_iter()
+    }
+}
+
+struct MtoonTransientFrameResources {
+    buffers: Vec<MtoonVulkanBuffer>,
+    images: Vec<MtoonVulkanImage>,
+    texture_staging_buffers: Vec<MtoonVulkanBuffer>,
+    fallback_textures: MtoonVulkanFallbackTextures,
+    fallback_texture_staging: MtoonVulkanFallbackBuffers,
+    uniform_buffers: Vec<MtoonVulkanBuffer>,
+    samplers: Vec<vk::Sampler>,
+    shader_modules: Vec<vk::ShaderModule>,
+    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
+    descriptor_pool: vk::DescriptorPool,
+    pipeline_layouts: Vec<vk::PipelineLayout>,
+    pipelines: Vec<vk::Pipeline>,
+    command_buffer: vk::CommandBuffer,
+}
+
+struct MtoonSwapchainShell {
+    swapchain: vk::SwapchainKHR,
+    image_views: Vec<vk::ImageView>,
+    depth: VulkanImage,
+    render_pass: vk::RenderPass,
+    framebuffers: Vec<vk::Framebuffer>,
+    extent: vk::Extent2D,
+}
+
+impl MtoonSwapchainShell {
+    fn empty() -> Self {
+        Self {
+            swapchain: vk::SwapchainKHR::null(),
+            image_views: Vec::new(),
+            depth: VulkanImage::empty(),
+            render_pass: vk::RenderPass::null(),
+            framebuffers: Vec::new(),
+            extent: vk::Extent2D {
+                width: 0,
+                height: 0,
+            },
+        }
+    }
+}
+
+struct MtoonWindowedAshRenderer {
+    _entry: Entry,
+    instance: ash::Instance,
+    surface_loader: surface::Instance,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+    device: ash::Device,
+    swapchain_loader: swapchain::Device,
+    queue: vk::Queue,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    command_pool: vk::CommandPool,
+    swapchain: MtoonSwapchainShell,
+    vertex_shader: vk::ShaderModule,
+    fragment_shader: vk::ShaderModule,
+    vertex_entry: CString,
+    fragment_entry: CString,
+    depth_format: vk::Format,
+    image_available: vk::Semaphore,
+    render_finished: vk::Semaphore,
+    in_flight: vk::Fence,
+    pending_frame: Option<MtoonTransientFrameResources>,
+}
+
+impl MtoonWindowedAshRenderer {
+    fn new(window: &Window, shaders: &ShaderModules) -> Result<Self, Box<dyn Error>> {
+        let entry = unsafe { Entry::load()? };
+        let app_name = CString::new("vrm-rs ash windowed mtoon viewer")?;
+        let engine_name = CString::new("vrm-rs")?;
+        let app_info = vk::ApplicationInfo::default()
+            .application_name(&app_name)
+            .application_version(1)
+            .engine_name(&engine_name)
+            .engine_version(1)
+            .api_version(vk::API_VERSION_1_0);
+        let display_handle = window.display_handle()?.as_raw();
+        let window_handle = window.window_handle()?.as_raw();
+        let instance_extensions = ash_window::enumerate_required_extensions(display_handle)?;
+        let instance_info = vk::InstanceCreateInfo::default()
+            .application_info(&app_info)
+            .enabled_extension_names(instance_extensions);
+        let instance = unsafe { entry.create_instance(&instance_info, None)? };
+        let surface = unsafe {
+            ash_window::create_surface(&entry, &instance, display_handle, window_handle, None)?
+        };
+        let surface_loader = surface::Instance::new(&entry, &instance);
+        let (physical_device, queue_family_index) =
+            select_physical_device(&instance, &surface_loader, surface)?;
+        let queue_priorities = [1.0_f32];
+        let queue_infos = [vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&queue_priorities)];
+        let device_extensions = [swapchain::NAME.as_ptr()];
+        let device_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_infos)
+            .enabled_extension_names(&device_extensions);
+        let device = unsafe { instance.create_device(physical_device, &device_info, None)? };
+        let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+        let swapchain_loader = swapchain::Device::new(&instance, &device);
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        let command_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
+        let depth_format = select_depth_format(&instance, physical_device)?;
+        let vertex_shader = create_shader_module(&device, &shaders.vertex)?;
+        let fragment_shader = create_shader_module(&device, &shaders.fragment)?;
+        let swapchain = create_mtoon_swapchain_shell(
+            MtoonSwapchainCreateContext {
+                instance: &instance,
+                physical_device,
+                device: &device,
+                surface_loader: &surface_loader,
+                surface,
+                swapchain_loader: &swapchain_loader,
+                memory_properties,
+                depth_format,
+                old_swapchain: vk::SwapchainKHR::null(),
+            },
+            window,
+        )?;
+        let image_available =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
+        let render_finished =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
+        let in_flight = unsafe {
+            device.create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )?
+        };
+        Ok(Self {
+            _entry: entry,
+            instance,
+            surface_loader,
+            surface,
+            physical_device,
+            device,
+            swapchain_loader,
+            queue,
+            memory_properties,
+            command_pool,
+            swapchain,
+            vertex_shader,
+            fragment_shader,
+            vertex_entry: CString::new(shaders.vertex_entry.as_str())?,
+            fragment_entry: CString::new(shaders.fragment_entry.as_str())?,
+            depth_format,
+            image_available,
+            render_finished,
+            in_flight,
+            pending_frame: None,
+        })
+    }
+
+    fn render(
+        &mut self,
+        window: &Window,
+        frame: &AshRendererFrame,
+    ) -> Result<RenderStatus, Box<dyn Error>> {
+        if window.inner_size().width == 0 || window.inner_size().height == 0 {
+            return Ok(RenderStatus::Ok);
+        }
+        unsafe {
+            self.device
+                .wait_for_fences(&[self.in_flight], true, u64::MAX)?;
+        }
+        if let Some(pending) = self.pending_frame.take() {
+            self.destroy_transient_frame(pending);
+        }
+        let acquired = unsafe {
+            self.swapchain_loader.acquire_next_image(
+                self.swapchain.swapchain,
+                u64::MAX,
+                self.image_available,
+                vk::Fence::null(),
+            )
+        };
+        let (image_index, suboptimal) = match acquired {
+            Ok(value) => value,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
+            Err(error) => return Err(error.into()),
+        };
+        let transient = self.materialize_swapchain_frame(
+            frame,
+            image_index as usize,
+            &self.vertex_entry,
+            &self.fragment_entry,
+        )?;
+        let command_buffer = transient.command_buffer;
+        let wait_semaphores = [self.image_available];
+        let signal_semaphores = [self.render_finished];
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = [command_buffer];
+        let submit = [vk::SubmitInfo::default()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)];
+        unsafe {
+            self.device.reset_fences(&[self.in_flight])?;
+            self.device
+                .queue_submit(self.queue, &submit, self.in_flight)?;
+        }
+        let swapchains = [self.swapchain.swapchain];
+        let image_indices = [image_index];
+        let present = vk::PresentInfoKHR::default()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+        let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
+        self.pending_frame = Some(transient);
+        match present_result {
+            Ok(present_suboptimal) if suboptimal || present_suboptimal => {
+                Ok(RenderStatus::NeedsRecreate)
+            }
+            Ok(_) => Ok(RenderStatus::Ok),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
+        if window.inner_size().width == 0 || window.inner_size().height == 0 {
+            return Ok(());
+        }
+        unsafe {
+            self.device.device_wait_idle()?;
+        }
+        if let Some(pending) = self.pending_frame.take() {
+            self.destroy_transient_frame(pending);
+        }
+        let old_swapchain = self.swapchain.swapchain;
+        let old = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
+        self.destroy_swapchain_shell(old, false);
+        let new_swapchain = create_mtoon_swapchain_shell(
+            MtoonSwapchainCreateContext {
+                instance: &self.instance,
+                physical_device: self.physical_device,
+                device: &self.device,
+                surface_loader: &self.surface_loader,
+                surface: self.surface,
+                swapchain_loader: &self.swapchain_loader,
+                memory_properties: self.memory_properties,
+                depth_format: self.depth_format,
+                old_swapchain,
+            },
+            window,
+        );
+        destroy_swapchain_handle(&self.swapchain_loader, old_swapchain);
+        self.swapchain = new_swapchain?;
+        Ok(())
+    }
+
+    fn materialize_swapchain_frame(
+        &self,
+        frame: &AshRendererFrame,
+        image_index: usize,
+        vertex_entry: &CString,
+        fragment_entry: &CString,
+    ) -> Result<MtoonTransientFrameResources, Box<dyn Error>> {
+        let extent = self.swapchain.extent;
+        let framebuffer = self.swapchain.framebuffers[image_index];
+        let render_pass = self.swapchain.render_pass;
+        let buffers = frame
+            .buffers
+            .iter()
+            .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        let texture_mip_levels = frame
+            .textures
+            .iter()
+            .map(|texture| {
+                generate_rgba_mip_chain(
+                    texture.upload.extent.width,
+                    texture.upload.extent.height,
+                    &texture.upload.rgba,
+                )
+                .map_err(|err| format!("failed to build ash texture mip chain: {err}").into())
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        let images = frame
+            .textures
+            .iter()
+            .zip(&texture_mip_levels)
+            .map(|(texture, mip_levels)| {
+                self.create_image(
+                    texture.upload.format,
+                    texture.upload.extent,
+                    u32::try_from(mip_levels.len()).unwrap_or(1),
+                    texture.image_usage,
+                    vk::ImageAspectFlags::COLOR,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let texture_staging_buffers = frame
+            .textures
+            .iter()
+            .zip(&texture_mip_levels)
+            .map(|(_, mip_levels)| {
+                self.create_host_buffer(
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    &flatten_mip_level_rgba(mip_levels),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fallback_textures = self.create_fallback_textures()?;
+        let fallback_texture_staging = self.create_fallback_staging_buffers()?;
+        let uniform_buffers = frame
+            .uniforms
+            .iter()
+            .map(|uniform| {
+                self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let descriptor_set_layouts = frame
+            .descriptor_sets
+            .iter()
+            .map(|set| {
+                self.create_descriptor_set_layout(set.bindings.iter().map(|binding| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(binding.binding)
+                        .descriptor_type(binding.descriptor_type)
+                        .descriptor_count(1)
+                        .stage_flags(binding.stage_flags)
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let descriptor_pool = self.create_descriptor_pool(frame)?;
+        let descriptor_sets =
+            self.allocate_descriptor_sets(descriptor_pool, &descriptor_set_layouts)?;
+        let samplers = self.create_samplers(frame)?;
+        self.update_descriptor_sets(
+            frame,
+            &descriptor_sets,
+            MtoonDescriptorUpdateResources {
+                buffers: &buffers,
+                uniform_buffers: &uniform_buffers,
+                images: &images,
+                fallback_textures: &fallback_textures,
+                samplers: &samplers,
+            },
+        )?;
+        let pipeline_layouts = descriptor_set_layouts
+            .iter()
+            .map(|layout| {
+                let layouts = [*layout];
+                let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
+                unsafe { self.device.create_pipeline_layout(&info, None) }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let pipelines = self.create_mtoon_graphics_pipelines(
+            frame,
+            render_pass,
+            extent,
+            &pipeline_layouts,
+            vertex_entry,
+            fragment_entry,
+        )?;
+        let command_buffer = self.record_mtoon_swapchain_draws(
+            frame,
+            MtoonSwapchainDrawContext {
+                render_pass,
+                framebuffer,
+                extent,
+                pipelines: &pipelines,
+                pipeline_layouts: &pipeline_layouts,
+                buffers: &buffers,
+                descriptor_sets: &descriptor_sets,
+                texture_images: &images,
+                texture_staging_buffers: &texture_staging_buffers,
+                texture_mip_levels: &texture_mip_levels,
+                fallback_textures: &fallback_textures,
+                fallback_texture_staging: &fallback_texture_staging,
+            },
+        )?;
+        Ok(MtoonTransientFrameResources {
+            buffers,
+            images,
+            texture_staging_buffers,
+            fallback_textures,
+            fallback_texture_staging,
+            uniform_buffers,
+            samplers,
+            shader_modules: Vec::new(),
+            descriptor_set_layouts,
+            descriptor_pool,
+            pipeline_layouts,
+            pipelines,
+            command_buffer,
+        })
+    }
+
+    fn create_host_buffer(
+        &self,
+        usage: vk::BufferUsageFlags,
+        bytes: &[u8],
+    ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
+        let size = bytes.len().max(1) as vk::DeviceSize;
+        let info = vk::BufferCreateInfo::default()
+            .size(size)
+            .usage(usage | vk::BufferUsageFlags::TRANSFER_DST)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let buffer = unsafe { self.device.create_buffer(&info, None)? };
+        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        let memory_type_index = self.find_memory_type(
+            requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+        let allocate_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(requirements.size)
+            .memory_type_index(memory_type_index);
+        let memory = unsafe { self.device.allocate_memory(&allocate_info, None)? };
+        unsafe {
+            self.device.bind_buffer_memory(buffer, memory, 0)?;
+            if !bytes.is_empty() {
+                let mapped =
+                    self.device
+                        .map_memory(memory, 0, size, vk::MemoryMapFlags::empty())?;
+                ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+                self.device.unmap_memory(memory);
+            }
+        }
+        Ok(MtoonVulkanBuffer { buffer, memory })
+    }
+
+    fn create_upload_buffer(
+        &self,
+        usage: vk::BufferUsageFlags,
+        bytes: &[u8],
+    ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
+        self.create_host_buffer(usage | vk::BufferUsageFlags::TRANSFER_DST, bytes)
+    }
+
+    fn create_image(
+        &self,
+        format: vk::Format,
+        extent: vk::Extent3D,
+        mip_levels: u32,
+        usage: vk::ImageUsageFlags,
+        aspect_mask: vk::ImageAspectFlags,
+    ) -> Result<MtoonVulkanImage, Box<dyn Error>> {
+        let image_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(format)
+            .extent(extent)
+            .mip_levels(mip_levels.max(1))
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .initial_layout(vk::ImageLayout::UNDEFINED);
+        let image = unsafe { self.device.create_image(&image_info, None)? };
+        let requirements = unsafe { self.device.get_image_memory_requirements(image) };
+        let memory_type_index = self.find_memory_type(
+            requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        let allocate_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(requirements.size)
+            .memory_type_index(memory_type_index);
+        let memory = unsafe { self.device.allocate_memory(&allocate_info, None)? };
+        unsafe {
+            self.device.bind_image_memory(image, memory, 0)?;
+        }
+        let subresource_range = vk::ImageSubresourceRange::default()
+            .aspect_mask(aspect_mask)
+            .level_count(mip_levels.max(1))
+            .layer_count(1);
+        let view_info = vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(subresource_range);
+        let view = unsafe { self.device.create_image_view(&view_info, None)? };
+        Ok(MtoonVulkanImage {
+            image,
+            memory,
+            view,
+        })
+    }
+
+    fn create_fallback_textures(&self) -> Result<MtoonVulkanFallbackTextures, Box<dyn Error>> {
+        Ok(MtoonVulkanFallbackTextures {
+            white: self.create_fallback_texture_image()?,
+            black: self.create_fallback_texture_image()?,
+            neutral_normal: self.create_fallback_texture_image()?,
+        })
+    }
+
+    fn create_fallback_texture_image(&self) -> Result<MtoonVulkanImage, Box<dyn Error>> {
+        self.create_image(
+            vk::Format::R8G8B8A8_UNORM,
+            vk::Extent3D {
+                width: 1,
+                height: 1,
+                depth: 1,
+            },
+            1,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageAspectFlags::COLOR,
+        )
+    }
+
+    fn create_fallback_staging_buffers(
+        &self,
+    ) -> Result<MtoonVulkanFallbackBuffers, Box<dyn Error>> {
+        Ok(MtoonVulkanFallbackBuffers {
+            white: self.create_fallback_staging_buffer(GltfMaterialTextureFallback::White)?,
+            black: self.create_fallback_staging_buffer(GltfMaterialTextureFallback::Black)?,
+            neutral_normal: self
+                .create_fallback_staging_buffer(GltfMaterialTextureFallback::NeutralNormal)?,
+        })
+    }
+
+    fn create_fallback_staging_buffer(
+        &self,
+        fallback: GltfMaterialTextureFallback,
+    ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
+        self.create_host_buffer(vk::BufferUsageFlags::TRANSFER_SRC, fallback_rgba(fallback))
+    }
+
+    fn create_descriptor_set_layout<I>(
+        &self,
+        bindings: I,
+    ) -> Result<vk::DescriptorSetLayout, vk::Result>
+    where
+        I: IntoIterator<Item = vk::DescriptorSetLayoutBinding<'static>>,
+    {
+        let bindings = bindings.into_iter().collect::<Vec<_>>();
+        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+        unsafe { self.device.create_descriptor_set_layout(&info, None) }
+    }
+
+    fn create_descriptor_pool(
+        &self,
+        frame: &AshRendererFrame,
+    ) -> Result<vk::DescriptorPool, vk::Result> {
+        let uniform_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER)
+            .count()
+            .max(1) as u32;
+        let sampler_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| {
+                matches!(
+                    binding.descriptor_type,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                )
+            })
+            .count()
+            .max(1) as u32;
+        let sampled_image_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::SAMPLED_IMAGE)
+            .count()
+            .max(1) as u32;
+        let storage_count = frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == vk::DescriptorType::STORAGE_BUFFER)
+            .count()
+            .max(1) as u32;
+        let sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: uniform_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: sampled_image_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: storage_count,
+            },
+        ];
+        let info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(frame.descriptor_sets.len().max(1) as u32)
+            .pool_sizes(&sizes);
+        unsafe { self.device.create_descriptor_pool(&info, None) }
+    }
+
+    fn allocate_descriptor_sets(
+        &self,
+        pool: vk::DescriptorPool,
+        layouts: &[vk::DescriptorSetLayout],
+    ) -> Result<Vec<vk::DescriptorSet>, vk::Result> {
+        let info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(pool)
+            .set_layouts(layouts);
+        unsafe { self.device.allocate_descriptor_sets(&info) }
+    }
+
+    fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {
+        frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| {
+                matches!(
+                    binding.descriptor_type,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                )
+            })
+            .map(|binding| self.create_sampler(binding.sampler.unwrap_or(default_sampler_plan())))
+            .collect()
+    }
+
+    fn create_sampler(&self, plan: AshSamplerPlan) -> Result<vk::Sampler, vk::Result> {
+        let info = vk::SamplerCreateInfo::default()
+            .mag_filter(plan.mag_filter)
+            .min_filter(plan.min_filter)
+            .mipmap_mode(plan.mipmap_mode)
+            .address_mode_u(plan.address_mode_u)
+            .address_mode_v(plan.address_mode_v)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .min_lod(plan.min_lod)
+            .max_lod(plan.max_lod);
+        unsafe { self.device.create_sampler(&info, None) }
+    }
+
+    fn update_descriptor_sets(
+        &self,
+        frame: &AshRendererFrame,
+        descriptor_sets: &[vk::DescriptorSet],
+        resources: MtoonDescriptorUpdateResources<'_>,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut sampler_index = 0;
+        for (set_index, set) in frame.descriptor_sets.iter().enumerate() {
+            let descriptor_set = descriptor_sets[set_index];
+            for binding in &set.bindings {
+                match binding.descriptor_type {
+                    vk::DescriptorType::UNIFORM_BUFFER => {
+                        let uniform = resources
+                            .uniform_buffers
+                            .get(binding.uniform_upload_index.ok_or(
+                                "uniform descriptor binding is missing a uniform upload index",
+                            )?)
+                            .ok_or("descriptor set references a missing uniform buffer")?;
+                        let buffer_info = [vk::DescriptorBufferInfo::default()
+                            .buffer(uniform.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .buffer_info(&buffer_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                        let sampler = *resources
+                            .samplers
+                            .get(sampler_index)
+                            .ok_or("descriptor set references a missing sampler")?;
+                        sampler_index += 1;
+                        let image = binding
+                            .texture_upload_index
+                            .and_then(|index| resources.images.get(index))
+                            .unwrap_or_else(|| {
+                                let fallback = ash_texture_fallback_for_binding(binding.binding)
+                                    .unwrap_or(GltfMaterialTextureFallback::White);
+                                resources.fallback_textures.get(fallback)
+                            });
+                        let image_info = [vk::DescriptorImageInfo::default()
+                            .sampler(sampler)
+                            .image_view(image.view)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::SAMPLED_IMAGE => {
+                        let image = binding
+                            .texture_upload_index
+                            .and_then(|index| resources.images.get(index))
+                            .unwrap_or_else(|| {
+                                let fallback = ash_texture_fallback_for_binding(binding.binding)
+                                    .unwrap_or(GltfMaterialTextureFallback::White);
+                                resources.fallback_textures.get(fallback)
+                            });
+                        let image_info = [vk::DescriptorImageInfo::default()
+                            .image_view(image.view)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::SAMPLER => {
+                        let sampler = *resources
+                            .samplers
+                            .get(sampler_index)
+                            .ok_or("descriptor set references a missing sampler")?;
+                        sampler_index += 1;
+                        let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::SAMPLER)
+                            .image_info(&image_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    vk::DescriptorType::STORAGE_BUFFER => {
+                        let buffer = resources
+                            .buffers
+                            .get(binding.buffer_upload_index.ok_or(
+                                "storage descriptor binding is missing a buffer upload index",
+                            )?)
+                            .ok_or("descriptor set references a missing storage buffer")?;
+                        let buffer_info = [vk::DescriptorBufferInfo::default()
+                            .buffer(buffer.buffer)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)];
+                        let write = [vk::WriteDescriptorSet::default()
+                            .dst_set(descriptor_set)
+                            .dst_binding(binding.binding)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .buffer_info(&buffer_info)];
+                        unsafe {
+                            self.device.update_descriptor_sets(&write, &[]);
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unsupported ash descriptor type in windowed mtoon renderer: {other:?}"
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn create_mtoon_graphics_pipelines(
+        &self,
+        frame: &AshRendererFrame,
+        render_pass: vk::RenderPass,
+        extent: vk::Extent2D,
+        pipeline_layouts: &[vk::PipelineLayout],
+        vertex_entry: &CString,
+        fragment_entry: &CString,
+    ) -> Result<Vec<vk::Pipeline>, Box<dyn Error>> {
+        frame
+            .pipelines
+            .iter()
+            .map(|pipeline| {
+                self.create_mtoon_graphics_pipeline(
+                    pipeline,
+                    render_pass,
+                    extent,
+                    pipeline_layouts,
+                    vertex_entry,
+                    fragment_entry,
+                )
+            })
+            .collect()
+    }
+
+    fn create_mtoon_graphics_pipeline(
+        &self,
+        pipeline: &AshGraphicsPipelinePlan,
+        render_pass: vk::RenderPass,
+        extent: vk::Extent2D,
+        pipeline_layouts: &[vk::PipelineLayout],
+        vertex_entry: &CString,
+        fragment_entry: &CString,
+    ) -> Result<vk::Pipeline, Box<dyn Error>> {
+        let shader_stages = [
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .module(self.vertex_shader)
+                .name(vertex_entry),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(self.fragment_shader)
+                .name(fragment_entry),
+        ];
+        let layout = pipeline_layouts[pipeline.descriptor_set_index];
+        let vertex_binding = [vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: pipeline.vertex_stride,
+            input_rate: vk::VertexInputRate::VERTEX,
+        }];
+        let vertex_attributes = pipeline
+            .vertex_attributes
+            .iter()
+            .map(mtoon_vertex_attribute_description)
+            .collect::<Vec<_>>();
+        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&vertex_binding)
+            .vertex_attribute_descriptions(&vertex_attributes);
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(pipeline.key.topology)
+            .primitive_restart_enable(false);
+        let viewport = [vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
+        let scissor = [vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        }];
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewports(&viewport)
+            .scissors(&scissor);
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(pipeline.key.cull_mode)
+            .front_face(pipeline.key.front_face)
+            .line_width(1.0);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(pipeline.key.depth_test_enable)
+            .depth_write_enable(pipeline.key.depth_write_enable)
+            .depth_compare_op(pipeline.key.depth_compare_op);
+        let color_attachment = [vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(pipeline.key.blend_enable)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            )];
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input)
+            .input_assembly_state(&input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&rasterization)
+            .multisample_state(&multisample)
+            .depth_stencil_state(&depth_stencil)
+            .color_blend_state(&color_blend)
+            .layout(layout)
+            .render_pass(render_pass)
+            .subpass(0);
+        let pipelines = unsafe {
+            self.device
+                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+        }
+        .map_err(|(_, err)| Box::<dyn Error>::from(err))?;
+        pipelines
+            .into_iter()
+            .next()
+            .ok_or_else(|| "Vulkan returned no graphics pipeline".into())
+    }
+
+    fn record_mtoon_swapchain_draws(
+        &self,
+        frame: &AshRendererFrame,
+        context: MtoonSwapchainDrawContext<'_>,
+    ) -> Result<vk::CommandBuffer, Box<dyn Error>> {
+        let allocate_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffers = unsafe { self.device.allocate_command_buffers(&allocate_info)? };
+        let command_buffer = command_buffers[0];
+        let begin_info = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let clear_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 0.0],
+                },
+            },
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
+        let render_area = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: context.extent,
+        };
+        let render_pass_info = vk::RenderPassBeginInfo::default()
+            .render_pass(context.render_pass)
+            .framebuffer(context.framebuffer)
+            .render_area(render_area)
+            .clear_values(&clear_values);
+        unsafe {
+            self.device
+                .begin_command_buffer(command_buffer, &begin_info)?;
+            self.record_mtoon_texture_uploads(command_buffer, &context);
+            self.device.cmd_begin_render_pass(
+                command_buffer,
+                &render_pass_info,
+                vk::SubpassContents::INLINE,
+            );
+            for draw in &frame.draw_calls {
+                let Some(pipeline_plan_index) = draw.pipeline_plan_index else {
+                    continue;
+                };
+                let Some((pipeline_index, pipeline_plan)) = frame
+                    .pipelines
+                    .iter()
+                    .enumerate()
+                    .find(|(_, pipeline)| pipeline.pipeline_plan_index == pipeline_plan_index)
+                else {
+                    continue;
+                };
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    context.pipelines[pipeline_index],
+                );
+                self.device.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &[context.buffers[draw.vertex_buffer_index].buffer],
+                    &[0],
+                );
+                self.device.cmd_bind_index_buffer(
+                    command_buffer,
+                    context.buffers[draw.index_buffer_index].buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                if let Some(descriptor_set_index) = draw.descriptor_set_index {
+                    self.device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        context.pipeline_layouts[pipeline_plan.descriptor_set_index],
+                        0,
+                        &[context.descriptor_sets[descriptor_set_index]],
+                        &[],
+                    );
+                }
+                self.device
+                    .cmd_draw_indexed(command_buffer, draw.index_count, 1, 0, 0, 0);
+            }
+            self.device.cmd_end_render_pass(command_buffer);
+            self.device.end_command_buffer(command_buffer)?;
+        }
+        Ok(command_buffer)
+    }
+
+    fn record_mtoon_texture_uploads(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        context: &MtoonSwapchainDrawContext<'_>,
+    ) {
+        for ((image, staging), mip_levels) in context
+            .texture_images
+            .iter()
+            .zip(context.texture_staging_buffers)
+            .zip(context.texture_mip_levels)
+        {
+            record_mtoon_texture_upload(
+                &self.device,
+                command_buffer,
+                image.image,
+                staging.buffer,
+                mip_levels,
+            );
+        }
+        for (fallback, image, staging) in [
+            (
+                GltfMaterialTextureFallback::White,
+                &context.fallback_textures.white,
+                &context.fallback_texture_staging.white,
+            ),
+            (
+                GltfMaterialTextureFallback::Black,
+                &context.fallback_textures.black,
+                &context.fallback_texture_staging.black,
+            ),
+            (
+                GltfMaterialTextureFallback::NeutralNormal,
+                &context.fallback_textures.neutral_normal,
+                &context.fallback_texture_staging.neutral_normal,
+            ),
+        ] {
+            let level = [RgbaMipLevel {
+                width: 1,
+                height: 1,
+                rgba: fallback_rgba(fallback).to_vec(),
+            }];
+            record_mtoon_texture_upload(
+                &self.device,
+                command_buffer,
+                image.image,
+                staging.buffer,
+                &level,
+            );
+        }
+    }
+
+    fn find_memory_type(
+        &self,
+        type_bits: u32,
+        properties: vk::MemoryPropertyFlags,
+    ) -> Result<u32, Box<dyn Error>> {
+        (0..self.memory_properties.memory_type_count)
+            .find(|index| {
+                let type_supported = (type_bits & (1 << index)) != 0;
+                let memory_type = self.memory_properties.memory_types[*index as usize];
+                type_supported && memory_type.property_flags.contains(properties)
+            })
+            .ok_or_else(|| format!("no Vulkan memory type supports {properties:?}").into())
+    }
+
+    fn destroy_transient_frame(&self, resources: MtoonTransientFrameResources) {
+        unsafe {
+            self.device
+                .free_command_buffers(self.command_pool, &[resources.command_buffer]);
+            for pipeline in resources.pipelines {
+                self.device.destroy_pipeline(pipeline, None);
+            }
+            for module in resources.shader_modules {
+                self.device.destroy_shader_module(module, None);
+            }
+            for layout in resources.pipeline_layouts {
+                self.device.destroy_pipeline_layout(layout, None);
+            }
+            self.device
+                .destroy_descriptor_pool(resources.descriptor_pool, None);
+            for layout in resources.descriptor_set_layouts {
+                self.device.destroy_descriptor_set_layout(layout, None);
+            }
+            for sampler in resources.samplers {
+                self.device.destroy_sampler(sampler, None);
+            }
+            for buffer in resources.uniform_buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+            for buffer in resources.texture_staging_buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+            for image in resources.images {
+                self.device.destroy_image_view(image.view, None);
+                self.device.destroy_image(image.image, None);
+                self.device.free_memory(image.memory, None);
+            }
+            for image in resources.fallback_textures.into_iter() {
+                self.device.destroy_image_view(image.view, None);
+                self.device.destroy_image(image.image, None);
+                self.device.free_memory(image.memory, None);
+            }
+            for buffer in resources.fallback_texture_staging.into_iter() {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+            for buffer in resources.buffers {
+                self.device.destroy_buffer(buffer.buffer, None);
+                self.device.free_memory(buffer.memory, None);
+            }
+        }
+    }
+
+    fn destroy_swapchain_shell(&self, resources: MtoonSwapchainShell, destroy_swapchain: bool) {
+        unsafe {
+            for framebuffer in resources.framebuffers {
+                self.device.destroy_framebuffer(framebuffer, None);
+            }
+            self.device.destroy_render_pass(resources.render_pass, None);
+            self.device.destroy_image_view(resources.depth.view, None);
+            self.device.destroy_image(resources.depth.image, None);
+            self.device.free_memory(resources.depth.memory, None);
+            for view in resources.image_views {
+                self.device.destroy_image_view(view, None);
+            }
+            if destroy_swapchain {
+                self.swapchain_loader
+                    .destroy_swapchain(resources.swapchain, None);
+            }
+        }
+    }
+}
+
+impl Drop for MtoonWindowedAshRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.device.device_wait_idle();
+        }
+        if let Some(pending) = self.pending_frame.take() {
+            self.destroy_transient_frame(pending);
+        }
+        let shell = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
+        self.destroy_swapchain_shell(shell, true);
+        unsafe {
+            self.device.destroy_fence(self.in_flight, None);
+            self.device.destroy_semaphore(self.render_finished, None);
+            self.device.destroy_semaphore(self.image_available, None);
+            self.device
+                .destroy_shader_module(self.fragment_shader, None);
+            self.device.destroy_shader_module(self.vertex_shader, None);
+            self.device.destroy_command_pool(self.command_pool, None);
+            self.device.destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+
+struct MtoonDescriptorUpdateResources<'a> {
+    buffers: &'a [MtoonVulkanBuffer],
+    uniform_buffers: &'a [MtoonVulkanBuffer],
+    images: &'a [MtoonVulkanImage],
+    fallback_textures: &'a MtoonVulkanFallbackTextures,
+    samplers: &'a [vk::Sampler],
+}
+
+struct MtoonSwapchainDrawContext<'a> {
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    extent: vk::Extent2D,
+    pipelines: &'a [vk::Pipeline],
+    pipeline_layouts: &'a [vk::PipelineLayout],
+    buffers: &'a [MtoonVulkanBuffer],
+    descriptor_sets: &'a [vk::DescriptorSet],
+    texture_images: &'a [MtoonVulkanImage],
+    texture_staging_buffers: &'a [MtoonVulkanBuffer],
+    texture_mip_levels: &'a [Vec<RgbaMipLevel>],
+    fallback_textures: &'a MtoonVulkanFallbackTextures,
+    fallback_texture_staging: &'a MtoonVulkanFallbackBuffers,
+}
+
+struct MtoonSwapchainCreateContext<'a> {
+    instance: &'a ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    device: &'a ash::Device,
+    surface_loader: &'a surface::Instance,
+    surface: vk::SurfaceKHR,
+    swapchain_loader: &'a swapchain::Device,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    depth_format: vk::Format,
+    old_swapchain: vk::SwapchainKHR,
+}
+
+fn create_mtoon_swapchain_shell(
+    context: MtoonSwapchainCreateContext<'_>,
+    window: &Window,
+) -> Result<MtoonSwapchainShell, Box<dyn Error>> {
+    let support = mtoon_surface_support(&context, window)?;
+    let swapchain_info = vk::SwapchainCreateInfoKHR::default()
+        .surface(context.surface)
+        .min_image_count(support.image_count)
+        .image_format(support.format.format)
+        .image_color_space(support.format.color_space)
+        .image_extent(support.extent)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .pre_transform(support.capabilities.current_transform)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(support.present_mode)
+        .clipped(true)
+        .old_swapchain(context.old_swapchain);
+    let swapchain = unsafe {
+        context
+            .swapchain_loader
+            .create_swapchain(&swapchain_info, None)?
+    };
+    let images = unsafe { context.swapchain_loader.get_swapchain_images(swapchain)? };
+    let image_views = images
+        .iter()
+        .map(|image| create_image_view(context.device, *image, support.format.format))
+        .collect::<Result<Vec<_>, _>>()?;
+    let memory = MemoryContext {
+        instance: context.instance,
+        physical_device: context.physical_device,
+        device: context.device,
+        memory_properties: context.memory_properties,
+    };
+    let depth = memory.create_image(
+        context.depth_format,
+        vk::Extent3D {
+            width: support.extent.width,
+            height: support.extent.height,
+            depth: 1,
+        },
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        depth_aspect_mask(context.depth_format),
+    )?;
+    let render_pass =
+        create_render_pass(context.device, support.format.format, context.depth_format)?;
+    let framebuffers = image_views
+        .iter()
+        .map(|view| {
+            let attachments = [*view, depth.view];
+            let info = vk::FramebufferCreateInfo::default()
+                .render_pass(render_pass)
+                .attachments(&attachments)
+                .width(support.extent.width)
+                .height(support.extent.height)
+                .layers(1);
+            unsafe { context.device.create_framebuffer(&info, None) }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(MtoonSwapchainShell {
+        swapchain,
+        image_views,
+        depth,
+        render_pass,
+        framebuffers,
+        extent: support.extent,
+    })
+}
+
+fn mtoon_surface_support(
+    context: &MtoonSwapchainCreateContext<'_>,
+    window: &Window,
+) -> Result<SurfaceSupport, Box<dyn Error>> {
+    let capabilities = unsafe {
+        context
+            .surface_loader
+            .get_physical_device_surface_capabilities(context.physical_device, context.surface)?
+    };
+    let formats = unsafe {
+        context
+            .surface_loader
+            .get_physical_device_surface_formats(context.physical_device, context.surface)?
+    };
+    let present_modes = unsafe {
+        context
+            .surface_loader
+            .get_physical_device_surface_present_modes(context.physical_device, context.surface)?
+    };
+    let format = formats
+        .iter()
+        .copied()
+        .find(|format| {
+            matches!(
+                format.format,
+                vk::Format::B8G8R8A8_UNORM | vk::Format::R8G8B8A8_UNORM
+            )
+        })
+        .or_else(|| formats.first().copied())
+        .ok_or("surface reports no formats")?;
+    let present_mode = present_modes
+        .iter()
+        .copied()
+        .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or(vk::PresentModeKHR::FIFO);
+    let extent = if capabilities.current_extent.width != u32::MAX {
+        capabilities.current_extent
+    } else {
+        let size = window.inner_size();
+        vk::Extent2D {
+            width: size.width.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: size.height.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
+        }
+    };
+    let desired = capabilities.min_image_count.saturating_add(1);
+    let image_count = if capabilities.max_image_count == 0 {
+        desired
+    } else {
+        desired.min(capabilities.max_image_count)
+    };
+    Ok(SurfaceSupport {
+        capabilities,
+        format,
+        present_mode,
+        extent,
+        image_count,
+    })
+}
+
+fn select_depth_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> Result<vk::Format, Box<dyn Error>> {
+    [
+        ash_reference_depth_format(),
+        vk::Format::X8_D24_UNORM_PACK32,
+        vk::Format::D32_SFLOAT,
+    ]
+    .into_iter()
+    .find(|format| {
+        let properties =
+            unsafe { instance.get_physical_device_format_properties(physical_device, *format) };
+        properties
+            .optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+    })
+    .ok_or_else(|| "no supported Vulkan depth attachment format found".into())
+}
+
+fn mtoon_vertex_attribute_description(
+    attribute: &AshVertexAttributePlan,
+) -> vk::VertexInputAttributeDescription {
+    vk::VertexInputAttributeDescription {
+        location: attribute.location,
+        binding: attribute.binding,
+        format: attribute.format,
+        offset: attribute.offset,
+    }
+}
+
+fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
+    let byte_len = mip_levels.iter().map(|level| level.rgba.len()).sum();
+    let mut bytes = Vec::with_capacity(byte_len);
+    for level in mip_levels {
+        bytes.extend_from_slice(&level.rgba);
+    }
+    bytes
+}
+
+fn mip_copy_regions(mip_levels: &[RgbaMipLevel]) -> Vec<vk::BufferImageCopy> {
+    let mut offset = 0_u64;
+    mip_levels
+        .iter()
+        .enumerate()
+        .map(|(mip_level, level)| {
+            let region = vk::BufferImageCopy::default()
+                .buffer_offset(offset)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(u32::try_from(mip_level).unwrap_or(0))
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width: level.width,
+                    height: level.height,
+                    depth: 1,
+                });
+            offset += u64::try_from(level.rgba.len()).unwrap_or(0);
+            region
+        })
+        .collect()
+}
+
+fn default_sampler_plan() -> AshSamplerPlan {
+    AshSamplerPlan {
+        mag_filter: vk::Filter::LINEAR,
+        min_filter: vk::Filter::LINEAR,
+        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+        address_mode_u: vk::SamplerAddressMode::REPEAT,
+        address_mode_v: vk::SamplerAddressMode::REPEAT,
+        min_lod: 0.0,
+        max_lod: 32.0,
+        normal_map_decode: false,
+    }
+}
+
+fn fallback_rgba(fallback: GltfMaterialTextureFallback) -> &'static [u8; 4] {
+    match fallback {
+        GltfMaterialTextureFallback::White => &[255, 255, 255, 255],
+        GltfMaterialTextureFallback::Black => &[0, 0, 0, 255],
+        GltfMaterialTextureFallback::NeutralNormal => &[128, 128, 255, 255],
+    }
+}
+
+fn depth_aspect_mask(format: vk::Format) -> vk::ImageAspectFlags {
+    match format {
+        vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT => {
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        }
+        _ => vk::ImageAspectFlags::DEPTH,
+    }
+}
+
+fn record_mtoon_texture_upload(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+    staging_buffer: vk::Buffer,
+    mip_levels: &[RgbaMipLevel],
+) {
+    let subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(u32::try_from(mip_levels.len()).unwrap_or(1).max(1))
+        .layer_count(1);
+    let to_transfer = [vk::ImageMemoryBarrier::default()
+        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .image(image)
+        .subresource_range(subresource_range)];
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &to_transfer,
+        );
+        let regions = mip_copy_regions(mip_levels);
+        device.cmd_copy_buffer_to_image(
+            command_buffer,
+            staging_buffer,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &regions,
+        );
+        let to_shader = [vk::ImageMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image(image)
+            .subresource_range(subresource_range)];
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &to_shader,
+        );
+    }
+}
+
 struct WindowedAshRenderer {
     _entry: Entry,
     instance: ash::Instance,
@@ -405,9 +2038,12 @@ struct WindowedAshRenderer {
     index_count: u32,
     vertex_spv: Vec<u32>,
     fragment_spv: Vec<u32>,
+    vertex_entry: CString,
+    fragment_entry: CString,
     image_available: vk::Semaphore,
     render_finished: vk::Semaphore,
     in_flight: vk::Fence,
+    depth_format: vk::Format,
     swapchain: SwapchainResources,
 }
 
@@ -456,6 +2092,7 @@ impl WindowedAshRenderer {
             .queue_family_index(queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
+        let depth_format = select_depth_format(&instance, physical_device)?;
         let memory = MemoryContext {
             instance: &instance,
             physical_device,
@@ -480,6 +2117,8 @@ impl WindowedAshRenderer {
                 None,
             )?
         };
+        let vertex_entry = CString::new(shaders.vertex_entry.as_str())?;
+        let fragment_entry = CString::new(shaders.fragment_entry.as_str())?;
         let swapchain = create_swapchain_resources(
             SwapchainCreateContext {
                 instance: &instance,
@@ -490,8 +2129,11 @@ impl WindowedAshRenderer {
                 swapchain_loader: &swapchain_loader,
                 command_pool,
                 memory_properties,
+                depth_format,
                 vertex_spv: &shaders.vertex,
                 fragment_spv: &shaders.fragment,
+                vertex_entry: &vertex_entry,
+                fragment_entry: &fragment_entry,
                 vertex_buffer: vertex_buffer.buffer,
                 index_buffer: index_buffer.buffer,
                 index_count: u32::try_from(mesh.indices.len())?,
@@ -515,18 +2157,23 @@ impl WindowedAshRenderer {
             index_count: u32::try_from(mesh.indices.len())?,
             vertex_spv: shaders.vertex.clone(),
             fragment_spv: shaders.fragment.clone(),
+            vertex_entry: CString::new(shaders.vertex_entry.as_str())?,
+            fragment_entry: CString::new(shaders.fragment_entry.as_str())?,
             image_available,
             render_finished,
             in_flight,
+            depth_format,
             swapchain,
         })
     }
 
     fn render(&mut self, window: &Window) -> Result<RenderStatus, Box<dyn Error>> {
+        if window.inner_size().width == 0 || window.inner_size().height == 0 {
+            return Ok(RenderStatus::Ok);
+        }
         unsafe {
             self.device
                 .wait_for_fences(&[self.in_flight], true, u64::MAX)?;
-            self.device.reset_fences(&[self.in_flight])?;
         }
         let acquired = unsafe {
             self.swapchain_loader.acquire_next_image(
@@ -541,9 +2188,6 @@ impl WindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
             Err(error) => return Err(error.into()),
         };
-        if window.inner_size().width == 0 || window.inner_size().height == 0 {
-            return Ok(RenderStatus::Ok);
-        }
         let wait_semaphores = [self.image_available];
         let signal_semaphores = [self.render_finished];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -554,6 +2198,7 @@ impl WindowedAshRenderer {
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
         unsafe {
+            self.device.reset_fences(&[self.in_flight])?;
             self.device
                 .queue_submit(self.queue, &submit, self.in_flight)?;
         }
@@ -610,7 +2255,7 @@ impl WindowedAshRenderer {
         let old_swapchain = self.swapchain.swapchain;
         let old = std::mem::replace(&mut self.swapchain, SwapchainResources::empty());
         self.destroy_swapchain_resources(old, false);
-        self.swapchain = create_swapchain_resources(
+        let new_swapchain = create_swapchain_resources(
             SwapchainCreateContext {
                 instance: &self.instance,
                 physical_device: self.physical_device,
@@ -620,18 +2265,20 @@ impl WindowedAshRenderer {
                 swapchain_loader: &self.swapchain_loader,
                 command_pool: self.command_pool,
                 memory_properties: self.memory_properties,
+                depth_format: self.depth_format,
                 vertex_spv: &self.vertex_spv,
                 fragment_spv: &self.fragment_spv,
+                vertex_entry: &self.vertex_entry,
+                fragment_entry: &self.fragment_entry,
                 vertex_buffer: self.vertex_buffer.buffer,
                 index_buffer: self.index_buffer.buffer,
                 index_count: self.index_count,
                 old_swapchain,
             },
             window,
-        )?;
-        unsafe {
-            self.swapchain_loader.destroy_swapchain(old_swapchain, None);
-        }
+        );
+        destroy_swapchain_handle(&self.swapchain_loader, old_swapchain);
+        self.swapchain = new_swapchain?;
         Ok(())
     }
 
@@ -694,8 +2341,11 @@ struct SwapchainCreateContext<'a> {
     swapchain_loader: &'a swapchain::Device,
     command_pool: vk::CommandPool,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
+    depth_format: vk::Format,
     vertex_spv: &'a [u32],
     fragment_spv: &'a [u32],
+    vertex_entry: &'a CString,
+    fragment_entry: &'a CString,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     index_count: u32,
@@ -764,26 +2414,25 @@ fn create_swapchain_resources(
         memory_properties: context.memory_properties,
     };
     let depth = memory.create_image(
-        vk::Format::D32_SFLOAT,
+        context.depth_format,
         vk::Extent3D {
             width: support.extent.width,
             height: support.extent.height,
             depth: 1,
         },
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        vk::ImageAspectFlags::DEPTH,
+        depth_aspect_mask(context.depth_format),
     )?;
-    let render_pass = create_render_pass(
-        context.device,
-        support.format.format,
-        vk::Format::D32_SFLOAT,
-    )?;
-    let (pipeline_layout, pipeline) = create_pipeline(
+    let render_pass =
+        create_render_pass(context.device, support.format.format, context.depth_format)?;
+    let (pipeline_layout, pipeline) = create_simple_pipeline(
         context.device,
         render_pass,
         support.extent,
         context.vertex_spv,
         context.fragment_spv,
+        context.vertex_entry,
+        context.fragment_entry,
     )?;
     let framebuffers = image_views
         .iter()
@@ -939,6 +2588,14 @@ fn create_image_view(
     unsafe { device.create_image_view(&info, None) }
 }
 
+fn destroy_swapchain_handle(loader: &swapchain::Device, swapchain: vk::SwapchainKHR) {
+    if swapchain != vk::SwapchainKHR::null() {
+        unsafe {
+            loader.destroy_swapchain(swapchain, None);
+        }
+    }
+}
+
 fn create_render_pass(
     device: &ash::Device,
     color_format: vk::Format,
@@ -987,25 +2644,26 @@ fn create_render_pass(
     unsafe { device.create_render_pass(&info, None) }
 }
 
-fn create_pipeline(
+fn create_simple_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
     vertex_spv: &[u32],
     fragment_spv: &[u32],
+    vertex_entry: &CString,
+    fragment_entry: &CString,
 ) -> Result<(vk::PipelineLayout, vk::Pipeline), Box<dyn Error>> {
     let vertex_shader = create_shader_module(device, vertex_spv)?;
     let fragment_shader = create_shader_module(device, fragment_spv)?;
-    let entry_point = CString::new("main")?;
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_shader)
-            .name(&entry_point),
+            .name(vertex_entry),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_shader)
-            .name(&entry_point),
+            .name(fragment_entry),
     ];
     let binding = [vk::VertexInputBindingDescription {
         binding: 0,

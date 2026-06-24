@@ -1,11 +1,9 @@
-# coverage-spark Playbook（`agent` CLI 優先 / Codex spark フォールバック）
+# coverage-spark Playbook（Codex mini サブエージェント向け）
 
 このガイドは、カバレッジ表と進捗行の定型更新を委譲するエージェント向けに、`cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` 実行結果から
 `docs/testing.md` の `Current Coverage Snapshot` 表と `docs/progress.md` の最新カバレッジ行を反映する手順を定義します。
 
-**通常の委譲先:** ローカル `agent` CLI（`composer-2.5-fast`）。
-
-**フォールバック:** `agent` CLI が使えない場合、またはユーザーが Codex サブエージェントを明示指定した場合は `gpt-5.3-codex-spark` の worker サブエージェント。
+**通常の委譲先:** Codex worker サブエージェント（`gpt-5.4-codex-mini`）。
 
 ## 使う対象ファイル
 
@@ -49,34 +47,20 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 - `docs/testing.md` と `docs/progress.md` は本業務で触らない前提なので、反映後は差分を一度確認してからコミットしてください。
 - 最初のスクリプト実行はドライラン（`-Apply` なし）を推奨します。ユーザーが直接反映を求めた場合、または親エージェントが生成ブロックを確認済みの場合のみ `-Apply` を使います。
 
-## 主経路: ローカル `agent` CLI（`composer-2.5-fast`）
+## 主経路: Codex サブエージェント（`gpt-5.4-codex-mini`）
 
-親エージェントは、利用可能なら次の形式で委譲します。
-
-```powershell
-agent --print --trust --force --model composer-2.5-fast --workspace "D:\git\vrm-rs" "..."
-```
-
-プロンプト例（`"..."` の中身）:
+親エージェントは、coverage 更新を narrow な worker タスクとして委譲します。プロンプトには必ず次を含めます。
 
 - このファイル（`docs/agents/coverage-spark.md`）に従うこと。
 - `tools/coverage/update-coverage-docs.ps1` のみを使い、`docs/testing.md` と `docs/progress.md` だけを更新すること。
 - 日付は CI 実行日（`YYYY-MM-DD`）に合わせること。
+- 他のファイルや本体コードには触らないこと。
 
-委譲エージェントの作業手順:
+委譲サブエージェントの作業手順:
 
 1. `cargo llvm-cov ...` を実行（または保存済み JSON を準備）。
 2. `pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath ...` でプレビュー。
 3. 内容確認後、`pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath ... -Apply` を実行。
-4. `git diff docs/testing.md docs/progress.md` で更新内容を報告し、同日に対応する開発ログを記録。
-
-## フォールバック: Codex サブエージェント（`gpt-5.3-codex-spark`）
-
-`agent` CLI が使えない、またはユーザーが Codex サブエージェントを明示指定した場合は、worker サブエージェント（`gpt-5.3-codex-spark`）に同じ手順を委譲します。
-
-1. `cargo llvm-cov ...` を実行（または保存済み JSON を準備）。
-2. `pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath ... -Apply` を実行。
-3. 変更点を確認し、必要なら `-Date` を CI 日付に合わせて再実行。
 4. `git diff docs/testing.md docs/progress.md` で更新内容を報告し、同日に対応する開発ログを記録。
 
 ## 既知の制約
