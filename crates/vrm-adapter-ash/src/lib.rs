@@ -1726,6 +1726,93 @@ pub fn ash_graphics_pipeline_state_plan(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshSwapchainSurfacePlan {
+    pub format: vk::SurfaceFormatKHR,
+    pub present_mode: vk::PresentModeKHR,
+    pub extent: vk::Extent2D,
+    pub image_count: u32,
+    pub pre_transform: vk::SurfaceTransformFlagsKHR,
+    pub composite_alpha: vk::CompositeAlphaFlagsKHR,
+    pub image_usage: vk::ImageUsageFlags,
+}
+
+impl AshSwapchainSurfacePlan {
+    pub fn create_info(
+        self,
+        surface: vk::SurfaceKHR,
+        old_swapchain: vk::SwapchainKHR,
+    ) -> vk::SwapchainCreateInfoKHR<'static> {
+        vk::SwapchainCreateInfoKHR::default()
+            .surface(surface)
+            .min_image_count(self.image_count)
+            .image_format(self.format.format)
+            .image_color_space(self.format.color_space)
+            .image_extent(self.extent)
+            .image_array_layers(1)
+            .image_usage(self.image_usage)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(self.pre_transform)
+            .composite_alpha(self.composite_alpha)
+            .present_mode(self.present_mode)
+            .clipped(true)
+            .old_swapchain(old_swapchain)
+    }
+}
+
+pub fn ash_swapchain_surface_plan(
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    formats: &[vk::SurfaceFormatKHR],
+    present_modes: &[vk::PresentModeKHR],
+    requested_extent: vk::Extent2D,
+) -> Result<AshSwapchainSurfacePlan, String> {
+    let format = formats
+        .iter()
+        .copied()
+        .find(|format| {
+            matches!(
+                format.format,
+                vk::Format::B8G8R8A8_UNORM | vk::Format::R8G8B8A8_UNORM
+            )
+        })
+        .or_else(|| formats.first().copied())
+        .ok_or_else(|| "surface reports no formats".to_owned())?;
+    let present_mode = present_modes
+        .iter()
+        .copied()
+        .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or(vk::PresentModeKHR::FIFO);
+    let extent = if capabilities.current_extent.width != u32::MAX {
+        capabilities.current_extent
+    } else {
+        vk::Extent2D {
+            width: requested_extent.width.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: requested_extent.height.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
+        }
+    };
+    let desired = capabilities.min_image_count.saturating_add(1);
+    let image_count = if capabilities.max_image_count == 0 {
+        desired
+    } else {
+        desired.min(capabilities.max_image_count)
+    };
+    Ok(AshSwapchainSurfacePlan {
+        format,
+        present_mode,
+        extent,
+        image_count,
+        pre_transform: capabilities.current_transform,
+        composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+        image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AshMtoonRenderTargetCacheKey {
     pub extent: [u32; 2],
@@ -7007,6 +7094,94 @@ mod tests {
             state.color_blend_attachment.src_color_blend_factor,
             vk::BlendFactor::SRC_ALPHA
         );
+    }
+
+    #[test]
+    fn swapchain_surface_plan_prefers_unorm_mailbox_and_clamps_extent() {
+        let capabilities = vk::SurfaceCapabilitiesKHR {
+            min_image_count: 2,
+            max_image_count: 3,
+            current_extent: vk::Extent2D {
+                width: u32::MAX,
+                height: u32::MAX,
+            },
+            min_image_extent: vk::Extent2D {
+                width: 320,
+                height: 200,
+            },
+            max_image_extent: vk::Extent2D {
+                width: 1280,
+                height: 720,
+            },
+            current_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
+            ..Default::default()
+        };
+        let formats = [
+            vk::SurfaceFormatKHR {
+                format: vk::Format::R8G8B8A8_SRGB,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+        ];
+        let plan = ash_swapchain_surface_plan(
+            capabilities,
+            &formats,
+            &[vk::PresentModeKHR::FIFO, vk::PresentModeKHR::MAILBOX],
+            vk::Extent2D {
+                width: 2048,
+                height: 128,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(plan.format.format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(plan.present_mode, vk::PresentModeKHR::MAILBOX);
+        assert_eq!(plan.extent.width, 1280);
+        assert_eq!(plan.extent.height, 200);
+        assert_eq!(plan.image_count, 3);
+        assert_eq!(plan.pre_transform, vk::SurfaceTransformFlagsKHR::IDENTITY);
+        assert_eq!(plan.composite_alpha, vk::CompositeAlphaFlagsKHR::OPAQUE);
+        assert_eq!(plan.image_usage, vk::ImageUsageFlags::COLOR_ATTACHMENT);
+    }
+
+    #[test]
+    fn swapchain_surface_plan_uses_fixed_current_extent_and_fifo_fallback() {
+        let capabilities = vk::SurfaceCapabilitiesKHR {
+            min_image_count: 1,
+            max_image_count: 0,
+            current_extent: vk::Extent2D {
+                width: 640,
+                height: 480,
+            },
+            current_transform: vk::SurfaceTransformFlagsKHR::ROTATE_90,
+            ..Default::default()
+        };
+        let formats = [vk::SurfaceFormatKHR {
+            format: vk::Format::A2B10G10R10_UNORM_PACK32,
+            color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
+        }];
+
+        let plan = ash_swapchain_surface_plan(
+            capabilities,
+            &formats,
+            &[vk::PresentModeKHR::IMMEDIATE],
+            vk::Extent2D {
+                width: 100,
+                height: 100,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(plan.format.format, vk::Format::A2B10G10R10_UNORM_PACK32);
+        assert_eq!(plan.present_mode, vk::PresentModeKHR::FIFO);
+        assert_eq!(plan.extent.width, 640);
+        assert_eq!(plan.extent.height, 480);
+        assert_eq!(plan.image_count, 2);
+        assert_eq!(plan.pre_transform, vk::SurfaceTransformFlagsKHR::ROTATE_90);
+        assert!(ash_swapchain_surface_plan(capabilities, &[], &[], plan.extent).is_err());
     }
 
     #[test]

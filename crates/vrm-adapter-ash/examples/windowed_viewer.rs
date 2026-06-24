@@ -37,7 +37,7 @@ use vrm_adapter_ash::{
     AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation, ash_descriptor_pool_plan,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
-    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -2234,20 +2234,7 @@ fn create_mtoon_swapchain_shell(
     window: &Window,
 ) -> Result<MtoonSwapchainShell, Box<dyn Error>> {
     let support = mtoon_surface_support(&context, window)?;
-    let swapchain_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(context.surface)
-        .min_image_count(support.image_count)
-        .image_format(support.format.format)
-        .image_color_space(support.format.color_space)
-        .image_extent(support.extent)
-        .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(support.capabilities.current_transform)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(support.present_mode)
-        .clipped(true)
-        .old_swapchain(context.old_swapchain);
+    let swapchain_info = support.create_info(context.surface, context.old_swapchain);
     let swapchain = unsafe {
         context
             .swapchain_loader
@@ -2308,7 +2295,7 @@ fn create_mtoon_swapchain_shell(
 fn mtoon_surface_support(
     context: &MtoonSwapchainCreateContext<'_>,
     window: &Window,
-) -> Result<SurfaceSupport, Box<dyn Error>> {
+) -> Result<vrm_adapter_ash::AshSwapchainSurfacePlan, Box<dyn Error>> {
     let capabilities = unsafe {
         context
             .surface_loader
@@ -2324,50 +2311,17 @@ fn mtoon_surface_support(
             .surface_loader
             .get_physical_device_surface_present_modes(context.physical_device, context.surface)?
     };
-    let format = formats
-        .iter()
-        .copied()
-        .find(|format| {
-            matches!(
-                format.format,
-                vk::Format::B8G8R8A8_UNORM | vk::Format::R8G8B8A8_UNORM
-            )
-        })
-        .or_else(|| formats.first().copied())
-        .ok_or("surface reports no formats")?;
-    let present_mode = present_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
-        .unwrap_or(vk::PresentModeKHR::FIFO);
-    let extent = if capabilities.current_extent.width != u32::MAX {
-        capabilities.current_extent
-    } else {
-        let size = window.inner_size();
-        vk::Extent2D {
-            width: size.width.clamp(
-                capabilities.min_image_extent.width,
-                capabilities.max_image_extent.width,
-            ),
-            height: size.height.clamp(
-                capabilities.min_image_extent.height,
-                capabilities.max_image_extent.height,
-            ),
-        }
-    };
-    let desired = capabilities.min_image_count.saturating_add(1);
-    let image_count = if capabilities.max_image_count == 0 {
-        desired
-    } else {
-        desired.min(capabilities.max_image_count)
-    };
-    Ok(SurfaceSupport {
+    let size = window.inner_size();
+    ash_swapchain_surface_plan(
         capabilities,
-        format,
-        present_mode,
-        extent,
-        image_count,
-    })
+        &formats,
+        &present_modes,
+        vk::Extent2D {
+            width: size.width,
+            height: size.height,
+        },
+    )
+    .map_err(Into::into)
 }
 
 fn select_depth_format(
@@ -2888,20 +2842,7 @@ fn create_swapchain_resources(
     window: &Window,
 ) -> Result<SwapchainResources, Box<dyn Error>> {
     let support = surface_support(&context, window)?;
-    let swapchain_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(context.surface)
-        .min_image_count(support.image_count)
-        .image_format(support.format.format)
-        .image_color_space(support.format.color_space)
-        .image_extent(support.extent)
-        .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(support.capabilities.current_transform)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(support.present_mode)
-        .clipped(true)
-        .old_swapchain(context.old_swapchain);
+    let swapchain_info = support.create_info(context.surface, context.old_swapchain);
     let swapchain = unsafe {
         context
             .swapchain_loader
@@ -2975,18 +2916,10 @@ fn create_swapchain_resources(
     })
 }
 
-struct SurfaceSupport {
-    capabilities: vk::SurfaceCapabilitiesKHR,
-    format: vk::SurfaceFormatKHR,
-    present_mode: vk::PresentModeKHR,
-    extent: vk::Extent2D,
-    image_count: u32,
-}
-
 fn surface_support(
     context: &SwapchainCreateContext<'_>,
     window: &Window,
-) -> Result<SurfaceSupport, Box<dyn Error>> {
+) -> Result<vrm_adapter_ash::AshSwapchainSurfacePlan, Box<dyn Error>> {
     let capabilities = unsafe {
         context
             .surface_loader
@@ -3002,50 +2935,17 @@ fn surface_support(
             .surface_loader
             .get_physical_device_surface_present_modes(context.physical_device, context.surface)?
     };
-    let format = formats
-        .iter()
-        .copied()
-        .find(|format| {
-            matches!(
-                format.format,
-                vk::Format::B8G8R8A8_UNORM | vk::Format::R8G8B8A8_UNORM
-            )
-        })
-        .or_else(|| formats.first().copied())
-        .ok_or("surface reports no formats")?;
-    let present_mode = present_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
-        .unwrap_or(vk::PresentModeKHR::FIFO);
-    let extent = if capabilities.current_extent.width != u32::MAX {
-        capabilities.current_extent
-    } else {
-        let size = window.inner_size();
-        vk::Extent2D {
-            width: size.width.clamp(
-                capabilities.min_image_extent.width,
-                capabilities.max_image_extent.width,
-            ),
-            height: size.height.clamp(
-                capabilities.min_image_extent.height,
-                capabilities.max_image_extent.height,
-            ),
-        }
-    };
-    let desired = capabilities.min_image_count.saturating_add(1);
-    let image_count = if capabilities.max_image_count == 0 {
-        desired
-    } else {
-        desired.min(capabilities.max_image_count)
-    };
-    Ok(SurfaceSupport {
+    let size = window.inner_size();
+    ash_swapchain_surface_plan(
         capabilities,
-        format,
-        present_mode,
-        extent,
-        image_count,
-    })
+        &formats,
+        &present_modes,
+        vk::Extent2D {
+            width: size.width,
+            height: size.height,
+        },
+    )
+    .map_err(Into::into)
 }
 
 fn select_physical_device(
