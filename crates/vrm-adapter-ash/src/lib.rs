@@ -3251,6 +3251,72 @@ pub fn ash_graphics_pipeline_state_plan(
     }
 }
 
+pub fn ash_position_color_pipeline_state_plan(
+    extent: vk::Extent2D,
+    vertex_stride: u32,
+    position_offset: u32,
+    color_offset: u32,
+) -> AshGraphicsPipelineStatePlan {
+    AshGraphicsPipelineStatePlan {
+        descriptor_set_index: 0,
+        vertex_binding: vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: vertex_stride,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vertex_attributes: vec![
+            vk::VertexInputAttributeDescription {
+                location: 0,
+                binding: 0,
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: position_offset,
+            },
+            vk::VertexInputAttributeDescription {
+                location: 1,
+                binding: 0,
+                format: vk::Format::R32G32B32A32_SFLOAT,
+                offset: color_offset,
+            },
+        ],
+        topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+        primitive_restart_enable: false,
+        viewport: vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        },
+        scissor: vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        },
+        polygon_mode: vk::PolygonMode::FILL,
+        cull_mode: vk::CullModeFlags::NONE,
+        front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+        line_width: 1.0,
+        rasterization_samples: vk::SampleCountFlags::TYPE_1,
+        depth_test_enable: true,
+        depth_write_enable: true,
+        depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+        color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            ),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AshGraphicsPipelineCreateInfoPlan<'a> {
     pub shader_stages: [vk::PipelineShaderStageCreateInfo<'a>; 2],
@@ -9761,6 +9827,33 @@ mod tests {
             state.color_blend_attachment.src_color_blend_factor,
             vk::BlendFactor::SRC_ALPHA
         );
+
+        let debug_state = ash_position_color_pipeline_state_plan(
+            vk::Extent2D {
+                width: 64,
+                height: 32,
+            },
+            28,
+            0,
+            12,
+        );
+        assert_eq!(debug_state.vertex_binding.stride, 28);
+        assert_eq!(debug_state.vertex_attributes.len(), 2);
+        assert_eq!(debug_state.vertex_attributes[0].location, 0);
+        assert_eq!(
+            debug_state.vertex_attributes[0].format,
+            vk::Format::R32G32B32_SFLOAT
+        );
+        assert_eq!(debug_state.vertex_attributes[1].location, 1);
+        assert_eq!(debug_state.vertex_attributes[1].offset, 12);
+        assert_eq!(
+            debug_state.vertex_attributes[1].format,
+            vk::Format::R32G32B32A32_SFLOAT
+        );
+        assert_eq!(debug_state.viewport.width, 64.0);
+        assert_eq!(debug_state.scissor.extent.height, 32);
+        assert_eq!(debug_state.cull_mode, vk::CullModeFlags::NONE);
+        assert_eq!(debug_state.depth_compare_op, vk::CompareOp::LESS_OR_EQUAL);
     }
 
     #[test]
