@@ -43,7 +43,7 @@ use vrm_adapter_ash::{
     ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_memory_type_index,
     ash_mtoon_renderer_cache_keys, ash_pipeline_layout_plans, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_select_depth_format,
-    ash_swapchain_surface_plan,
+    ash_swapchain_surface_plan, ash_windowed_present_plan, ash_windowed_submit_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -953,23 +953,32 @@ impl MtoonWindowedAshRenderer {
         let command_buffer =
             self.materialize_swapchain_frame(frame, image_index, &vertex_entry, &fragment_entry)?;
         self.images_in_flight[image_index] = in_flight;
-        let wait_semaphores = [image_available];
-        let signal_semaphores = [render_finished];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = [command_buffer];
+        let submit_plan =
+            ash_windowed_submit_plan(image_available, render_finished, command_buffer, in_flight);
+        let wait_semaphores = submit_plan.wait_semaphores();
+        let signal_semaphores = submit_plan.signal_semaphores();
+        let wait_stages = submit_plan.wait_stages();
+        let command_buffers = submit_plan.command_buffers();
         let submit = [vk::SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
         unsafe {
-            self.device.reset_fences(&[in_flight])?;
-            self.device.queue_submit(self.queue, &submit, in_flight)?;
+            self.device.reset_fences(&[submit_plan.fence])?;
+            self.device
+                .queue_submit(self.queue, &submit, submit_plan.fence)?;
         }
-        let swapchains = [self.swapchain.swapchain];
-        let image_indices = [u32::try_from(image_index)?];
+        let present_plan = ash_windowed_present_plan(
+            submit_plan.signal_semaphore,
+            self.swapchain.swapchain,
+            u32::try_from(image_index)?,
+        );
+        let present_wait_semaphores = present_plan.wait_semaphores();
+        let swapchains = present_plan.swapchains();
+        let image_indices = present_plan.image_indices();
         let present = vk::PresentInfoKHR::default()
-            .wait_semaphores(&signal_semaphores)
+            .wait_semaphores(&present_wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };
@@ -2611,24 +2620,37 @@ impl WindowedAshRenderer {
             } => (image_index, suboptimal),
             AshSwapchainAcquireStatus::NeedsRecreate => return Ok(RenderStatus::NeedsRecreate),
         };
-        let wait_semaphores = [self.image_available];
-        let signal_semaphores = [self.render_finished];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = [self.swapchain.command_buffers[image_index as usize]];
+        let command_buffer = self.swapchain.command_buffers[image_index as usize];
+        let submit_plan = ash_windowed_submit_plan(
+            self.image_available,
+            self.render_finished,
+            command_buffer,
+            self.in_flight,
+        );
+        let wait_semaphores = submit_plan.wait_semaphores();
+        let signal_semaphores = submit_plan.signal_semaphores();
+        let wait_stages = submit_plan.wait_stages();
+        let command_buffers = submit_plan.command_buffers();
         let submit = [vk::SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
         unsafe {
-            self.device.reset_fences(&[self.in_flight])?;
+            self.device.reset_fences(&[submit_plan.fence])?;
             self.device
-                .queue_submit(self.queue, &submit, self.in_flight)?;
+                .queue_submit(self.queue, &submit, submit_plan.fence)?;
         }
-        let swapchains = [self.swapchain.swapchain];
-        let image_indices = [image_index];
+        let present_plan = ash_windowed_present_plan(
+            submit_plan.signal_semaphore,
+            self.swapchain.swapchain,
+            image_index,
+        );
+        let present_wait_semaphores = present_plan.wait_semaphores();
+        let swapchains = present_plan.swapchains();
+        let image_indices = present_plan.image_indices();
         let present = vk::PresentInfoKHR::default()
-            .wait_semaphores(&signal_semaphores)
+            .wait_semaphores(&present_wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe { self.swapchain_loader.queue_present(self.queue, &present) };

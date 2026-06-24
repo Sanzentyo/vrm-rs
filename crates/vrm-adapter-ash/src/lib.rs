@@ -405,6 +405,81 @@ impl AshWindowedFrameSyncPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedSubmitPlan {
+    pub wait_semaphore: vk::Semaphore,
+    pub wait_stage: vk::PipelineStageFlags,
+    pub command_buffer: vk::CommandBuffer,
+    pub signal_semaphore: vk::Semaphore,
+    pub fence: vk::Fence,
+}
+
+impl AshWindowedSubmitPlan {
+    pub const fn wait_semaphores(self) -> [vk::Semaphore; 1] {
+        [self.wait_semaphore]
+    }
+
+    pub const fn wait_stages(self) -> [vk::PipelineStageFlags; 1] {
+        [self.wait_stage]
+    }
+
+    pub const fn command_buffers(self) -> [vk::CommandBuffer; 1] {
+        [self.command_buffer]
+    }
+
+    pub const fn signal_semaphores(self) -> [vk::Semaphore; 1] {
+        [self.signal_semaphore]
+    }
+}
+
+pub const fn ash_windowed_submit_plan(
+    image_available: vk::Semaphore,
+    render_finished: vk::Semaphore,
+    command_buffer: vk::CommandBuffer,
+    in_flight: vk::Fence,
+) -> AshWindowedSubmitPlan {
+    AshWindowedSubmitPlan {
+        wait_semaphore: image_available,
+        wait_stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        command_buffer,
+        signal_semaphore: render_finished,
+        fence: in_flight,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedPresentPlan {
+    pub wait_semaphore: vk::Semaphore,
+    pub swapchain: vk::SwapchainKHR,
+    pub image_index: u32,
+}
+
+impl AshWindowedPresentPlan {
+    pub const fn wait_semaphores(self) -> [vk::Semaphore; 1] {
+        [self.wait_semaphore]
+    }
+
+    pub const fn swapchains(self) -> [vk::SwapchainKHR; 1] {
+        [self.swapchain]
+    }
+
+    pub const fn image_indices(self) -> [u32; 1] {
+        [self.image_index]
+    }
+}
+
+pub const fn ash_windowed_present_plan(
+    render_finished: vk::Semaphore,
+    swapchain: vk::SwapchainKHR,
+    image_index: u32,
+) -> AshWindowedPresentPlan {
+    AshWindowedPresentPlan {
+        wait_semaphore: render_finished,
+        swapchain,
+        image_index,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshSwapchainAcquireStatus {
     Acquired { image_index: u32, suboptimal: bool },
     NeedsRecreate,
@@ -6616,6 +6691,30 @@ mod tests {
             ash_classify_swapchain_present(false, Err(vk::Result::ERROR_DEVICE_LOST)),
             Err(vk::Result::ERROR_DEVICE_LOST)
         );
+    }
+
+    #[test]
+    fn windowed_submit_and_present_plans_expose_vk_sync_inputs() {
+        let submit = ash_windowed_submit_plan(
+            vk::Semaphore::null(),
+            vk::Semaphore::null(),
+            vk::CommandBuffer::null(),
+            vk::Fence::null(),
+        );
+
+        assert_eq!(submit.wait_semaphores(), [vk::Semaphore::null()]);
+        assert_eq!(
+            submit.wait_stages(),
+            [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT]
+        );
+        assert_eq!(submit.command_buffers(), [vk::CommandBuffer::null()]);
+        assert_eq!(submit.signal_semaphores(), [vk::Semaphore::null()]);
+        assert_eq!(submit.fence, vk::Fence::null());
+
+        let present = ash_windowed_present_plan(vk::Semaphore::null(), vk::SwapchainKHR::null(), 4);
+        assert_eq!(present.wait_semaphores(), [vk::Semaphore::null()]);
+        assert_eq!(present.swapchains(), [vk::SwapchainKHR::null()]);
+        assert_eq!(present.image_indices(), [4]);
     }
 
     #[test]
