@@ -2212,6 +2212,19 @@ impl AshPipelineLayoutPlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshEmptyPipelineLayoutPlan;
+
+impl AshEmptyPipelineLayoutPlan {
+    pub fn pipeline_layout_create_info(self) -> vk::PipelineLayoutCreateInfo<'static> {
+        vk::PipelineLayoutCreateInfo::default()
+    }
+}
+
+pub const fn ash_empty_pipeline_layout_plan() -> AshEmptyPipelineLayoutPlan {
+    AshEmptyPipelineLayoutPlan
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorSetAllocationPlan {
     pub descriptor_set_layout_indices: Vec<usize>,
@@ -8455,6 +8468,9 @@ mod tests {
             assert_eq!(info.set_layout_count, 1);
         })
         .unwrap();
+        let empty_layout_info = ash_empty_pipeline_layout_plan().pipeline_layout_create_info();
+        assert_eq!(empty_layout_info.set_layout_count, 0);
+        assert!(empty_layout_info.p_set_layouts.is_null());
         assert_eq!(
             AshPipelineLayoutPlan {
                 descriptor_set_layout_index: 3

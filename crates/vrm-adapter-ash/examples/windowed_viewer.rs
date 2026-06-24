@@ -42,16 +42,17 @@ use vrm_adapter_ash::{
     ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
-    ash_host_buffer_plan, ash_host_visible_buffer_plan, ash_memory_allocation_plan,
-    ash_memory_type_index, ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
-    ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
-    ash_render_pass_begin_plan, ash_render_pass_begin_plan_from_clear_values,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
-    ash_select_depth_format, ash_shader_module_plan, ash_signaled_fence_plan,
-    ash_swapchain_surface_plan, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
-    ash_unsignaled_fence_plan, ash_windowed_present_plan, ash_windowed_submit_plan,
+    ash_empty_pipeline_layout_plan, ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan,
+    ash_graphics_shader_stages_plan, ash_host_buffer_plan, ash_host_visible_buffer_plan,
+    ash_memory_allocation_plan, ash_memory_type_index, ash_mtoon_renderer_cache_keys,
+    ash_one_time_command_buffer_begin_plan, ash_pipeline_layout_plans,
+    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
+    ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
+    ash_signaled_fence_plan, ash_swapchain_surface_plan, ash_texture_mip_upload_bytes,
+    ash_texture_upload_command_plan, ash_unsignaled_fence_plan, ash_windowed_present_plan,
+    ash_windowed_submit_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -2894,7 +2895,7 @@ fn create_simple_pipeline(
         )];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
-    let layout_info = vk::PipelineLayoutCreateInfo::default();
+    let layout_info = ash_empty_pipeline_layout_plan().pipeline_layout_create_info();
     let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
     let info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
