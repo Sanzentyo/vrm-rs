@@ -452,9 +452,8 @@ impl UnsafeAshDeviceRenderer {
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let descriptor_sets = self.allocate_descriptor_sets(
             descriptor_pool,
-            &ash_descriptor_set_allocation_plan(&descriptor_set_layout_plans)
-                .vk_set_layouts(&descriptor_set_layouts)
-                .map_err(io::Error::other)?,
+            &ash_descriptor_set_allocation_plan(&descriptor_set_layout_plans),
+            &descriptor_set_layouts,
         )?;
         let samplers = self.create_samplers(frame)?;
         self.update_descriptor_sets(
@@ -471,11 +470,11 @@ impl UnsafeAshDeviceRenderer {
         let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
             .iter()
             .map(|plan| {
-                let layouts = plan
-                    .vk_set_layouts(&descriptor_set_layouts)
-                    .map_err(io::Error::other)?;
-                let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
-                unsafe { self.device.create_pipeline_layout(&info, None) }.map_err(Into::into)
+                plan.with_pipeline_layout_create_info(&descriptor_set_layouts, |info| unsafe {
+                    self.device.create_pipeline_layout(&info, None)
+                })
+                .map_err(io::Error::other)?
+                .map_err(Into::into)
             })
             .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
         let render_pass = self.create_render_pass(ash_render_pass_creation_plan(
@@ -662,9 +661,9 @@ impl UnsafeAshDeviceRenderer {
         &self,
         plan: &AshDescriptorSetLayoutPlan,
     ) -> Result<vk::DescriptorSetLayout, vk::Result> {
-        let bindings = plan.vk_bindings();
-        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
-        unsafe { self.device.create_descriptor_set_layout(&info, None) }
+        plan.with_descriptor_set_layout_create_info(|info| unsafe {
+            self.device.create_descriptor_set_layout(&info, None)
+        })
     }
 
     fn create_descriptor_pool(
@@ -672,22 +671,23 @@ impl UnsafeAshDeviceRenderer {
         frame: &AshRendererFrame,
     ) -> Result<vk::DescriptorPool, vk::Result> {
         let plan = ash_descriptor_pool_plan(frame);
-        let sizes = plan.vk_pool_sizes();
-        let info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(plan.max_sets)
-            .pool_sizes(&sizes);
-        unsafe { self.device.create_descriptor_pool(&info, None) }
+        plan.with_descriptor_pool_create_info(|info| unsafe {
+            self.device.create_descriptor_pool(&info, None)
+        })
     }
 
     fn allocate_descriptor_sets(
         &self,
         pool: vk::DescriptorPool,
+        allocation: &vrm_adapter_ash::AshDescriptorSetAllocationPlan,
         layouts: &[vk::DescriptorSetLayout],
-    ) -> Result<Vec<vk::DescriptorSet>, vk::Result> {
-        let info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(pool)
-            .set_layouts(layouts);
-        unsafe { self.device.allocate_descriptor_sets(&info) }
+    ) -> Result<Vec<vk::DescriptorSet>, Box<dyn Error>> {
+        allocation
+            .with_descriptor_set_allocate_info(pool, layouts, |info| unsafe {
+                self.device.allocate_descriptor_sets(&info)
+            })
+            .map_err(io::Error::other)?
+            .map_err(Into::into)
     }
 
     fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {

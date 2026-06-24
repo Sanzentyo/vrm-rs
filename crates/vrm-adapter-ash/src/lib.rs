@@ -2096,6 +2096,17 @@ impl AshDescriptorPoolPlan {
             })
             .collect()
     }
+
+    pub fn with_descriptor_pool_create_info<R>(
+        &self,
+        f: impl FnOnce(vk::DescriptorPoolCreateInfo<'_>) -> R,
+    ) -> R {
+        let sizes = self.vk_pool_sizes();
+        let info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(self.max_sets)
+            .pool_sizes(&sizes);
+        f(info)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2125,6 +2136,15 @@ impl AshDescriptorSetLayoutPlan {
             })
             .collect()
     }
+
+    pub fn with_descriptor_set_layout_create_info<R>(
+        &self,
+        f: impl FnOnce(vk::DescriptorSetLayoutCreateInfo<'_>) -> R,
+    ) -> R {
+        let bindings = self.vk_bindings();
+        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+        f(info)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2147,6 +2167,16 @@ impl AshPipelineLayoutPlan {
                     self.descriptor_set_layout_index
                 )
             })
+    }
+
+    pub fn with_pipeline_layout_create_info<R>(
+        self,
+        descriptor_set_layouts: &[vk::DescriptorSetLayout],
+        f: impl FnOnce(vk::PipelineLayoutCreateInfo<'_>) -> R,
+    ) -> Result<R, String> {
+        let layouts = self.vk_set_layouts(descriptor_set_layouts)?;
+        let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
+        Ok(f(info))
     }
 }
 
@@ -2172,6 +2202,19 @@ impl AshDescriptorSetAllocationPlan {
                 })
             })
             .collect()
+    }
+
+    pub fn with_descriptor_set_allocate_info<R>(
+        &self,
+        descriptor_pool: vk::DescriptorPool,
+        descriptor_set_layouts: &[vk::DescriptorSetLayout],
+        f: impl FnOnce(vk::DescriptorSetAllocateInfo<'_>) -> R,
+    ) -> Result<R, String> {
+        let layouts = self.vk_set_layouts(descriptor_set_layouts)?;
+        let info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(&layouts);
+        Ok(f(info))
     }
 }
 
@@ -8134,6 +8177,10 @@ mod tests {
                 .map(|size| (size.descriptor_type, size.descriptor_count))
                 .collect::<Vec<_>>()
         );
+        plan.with_descriptor_pool_create_info(|info| {
+            assert_eq!(info.max_sets, plan.max_sets);
+            assert_eq!(info.pool_size_count, plan.pool_sizes.len() as u32);
+        });
         assert_eq!(
             ash_descriptor_pool_plan(&AshRendererFrame::default()).max_sets,
             1
@@ -8166,6 +8213,9 @@ mod tests {
         );
         assert_eq!(vk_bindings[0].descriptor_count, 1);
         assert_eq!(vk_bindings[0].stage_flags, plans[0].bindings[0].stage_flags);
+        plans[0].with_descriptor_set_layout_create_info(|info| {
+            assert_eq!(info.binding_count, plans[0].bindings.len() as u32);
+        });
 
         assert_eq!(
             ash_pipeline_layout_plans(&plans),
@@ -8181,6 +8231,16 @@ mod tests {
             allocation.vk_set_layouts(&layout_handles),
             Ok(layout_handles.clone())
         );
+        allocation
+            .with_descriptor_set_allocate_info(
+                vk::DescriptorPool::null(),
+                &layout_handles,
+                |info| {
+                    assert_eq!(info.descriptor_pool, vk::DescriptorPool::null());
+                    assert_eq!(info.descriptor_set_count, 1);
+                },
+            )
+            .unwrap();
         assert_eq!(
             AshPipelineLayoutPlan {
                 descriptor_set_layout_index: 0
@@ -8188,6 +8248,13 @@ mod tests {
             .vk_set_layouts(&layout_handles),
             Ok([vk::DescriptorSetLayout::null()])
         );
+        AshPipelineLayoutPlan {
+            descriptor_set_layout_index: 0,
+        }
+        .with_pipeline_layout_create_info(&layout_handles, |info| {
+            assert_eq!(info.set_layout_count, 1);
+        })
+        .unwrap();
         assert_eq!(
             AshPipelineLayoutPlan {
                 descriptor_set_layout_index: 3

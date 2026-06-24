@@ -1149,11 +1149,11 @@ impl MtoonWindowedAshRenderer {
         let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
             .iter()
             .map(|plan| {
-                let layouts = plan
-                    .vk_set_layouts(&descriptor_set_layouts)
-                    .map_err(std::io::Error::other)?;
-                let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
-                unsafe { self.device.create_pipeline_layout(&info, None) }.map_err(Into::into)
+                plan.with_pipeline_layout_create_info(&descriptor_set_layouts, |info| unsafe {
+                    self.device.create_pipeline_layout(&info, None)
+                })
+                .map_err(std::io::Error::other)?
+                .map_err(Into::into)
             })
             .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
         let pipelines = self.create_mtoon_graphics_pipelines(
@@ -1199,12 +1199,8 @@ impl MtoonWindowedAshRenderer {
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let allocation_plan =
             ash_descriptor_set_allocation_plan(&ash_descriptor_set_layout_plans(frame));
-        let descriptor_sets = self.allocate_descriptor_sets(
-            descriptor_pool,
-            &allocation_plan
-                .vk_set_layouts(layouts)
-                .map_err(std::io::Error::other)?,
-        )?;
+        let descriptor_sets =
+            self.allocate_descriptor_sets(descriptor_pool, &allocation_plan, layouts)?;
         self.persistent_descriptors = Some(MtoonPersistentDescriptorSetCache {
             key,
             descriptor_pool,
@@ -1609,9 +1605,9 @@ impl MtoonWindowedAshRenderer {
         &self,
         plan: &AshDescriptorSetLayoutPlan,
     ) -> Result<vk::DescriptorSetLayout, vk::Result> {
-        let bindings = plan.vk_bindings();
-        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
-        unsafe { self.device.create_descriptor_set_layout(&info, None) }
+        plan.with_descriptor_set_layout_create_info(|info| unsafe {
+            self.device.create_descriptor_set_layout(&info, None)
+        })
     }
 
     fn create_descriptor_pool(
@@ -1619,22 +1615,23 @@ impl MtoonWindowedAshRenderer {
         frame: &AshRendererFrame,
     ) -> Result<vk::DescriptorPool, vk::Result> {
         let plan = ash_descriptor_pool_plan(frame);
-        let sizes = plan.vk_pool_sizes();
-        let info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(plan.max_sets)
-            .pool_sizes(&sizes);
-        unsafe { self.device.create_descriptor_pool(&info, None) }
+        plan.with_descriptor_pool_create_info(|info| unsafe {
+            self.device.create_descriptor_pool(&info, None)
+        })
     }
 
     fn allocate_descriptor_sets(
         &self,
         pool: vk::DescriptorPool,
+        allocation: &vrm_adapter_ash::AshDescriptorSetAllocationPlan,
         layouts: &[vk::DescriptorSetLayout],
-    ) -> Result<Vec<vk::DescriptorSet>, vk::Result> {
-        let info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(pool)
-            .set_layouts(layouts);
-        unsafe { self.device.allocate_descriptor_sets(&info) }
+    ) -> Result<Vec<vk::DescriptorSet>, Box<dyn Error>> {
+        allocation
+            .with_descriptor_set_allocate_info(pool, layouts, |info| unsafe {
+                self.device.allocate_descriptor_sets(&info)
+            })
+            .map_err(std::io::Error::other)?
+            .map_err(Into::into)
     }
 
     fn create_sampler(&self, plan: AshSamplerPlan) -> Result<vk::Sampler, vk::Result> {
