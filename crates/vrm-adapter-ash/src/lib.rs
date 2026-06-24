@@ -956,6 +956,20 @@ impl Default for AshSamplerPlan {
     }
 }
 
+impl AshSamplerPlan {
+    pub fn sampler_create_info(self) -> vk::SamplerCreateInfo<'static> {
+        vk::SamplerCreateInfo::default()
+            .mag_filter(self.mag_filter)
+            .min_filter(self.min_filter)
+            .mipmap_mode(self.mipmap_mode)
+            .address_mode_u(self.address_mode_u)
+            .address_mode_v(self.address_mode_v)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .min_lod(self.min_lod)
+            .max_lod(self.max_lod)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshMtoonPipelinePlan {
     pub material: MaterialRef,
@@ -2440,6 +2454,105 @@ impl AshSemaphorePlan {
 
 pub const fn ash_binary_semaphore_plan() -> AshSemaphorePlan {
     AshSemaphorePlan
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshHostBufferPlan {
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub sharing_mode: vk::SharingMode,
+    pub memory_property_flags: vk::MemoryPropertyFlags,
+}
+
+impl AshHostBufferPlan {
+    pub fn buffer_create_info(self) -> vk::BufferCreateInfo<'static> {
+        vk::BufferCreateInfo::default()
+            .size(self.size)
+            .usage(self.usage)
+            .sharing_mode(self.sharing_mode)
+    }
+}
+
+pub fn ash_host_buffer_plan(usage: vk::BufferUsageFlags, byte_len: usize) -> AshHostBufferPlan {
+    AshHostBufferPlan {
+        size: byte_len.max(1) as vk::DeviceSize,
+        usage: usage | vk::BufferUsageFlags::TRANSFER_DST,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+            | vk::MemoryPropertyFlags::HOST_COHERENT,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshImageResourcePlan {
+    pub format: vk::Format,
+    pub extent: vk::Extent3D,
+    pub mip_levels: u32,
+    pub usage: vk::ImageUsageFlags,
+    pub aspect_mask: vk::ImageAspectFlags,
+    pub image_type: vk::ImageType,
+    pub view_type: vk::ImageViewType,
+    pub array_layers: u32,
+    pub samples: vk::SampleCountFlags,
+    pub tiling: vk::ImageTiling,
+    pub sharing_mode: vk::SharingMode,
+    pub initial_layout: vk::ImageLayout,
+    pub memory_property_flags: vk::MemoryPropertyFlags,
+}
+
+impl AshImageResourcePlan {
+    pub fn image_create_info(self) -> vk::ImageCreateInfo<'static> {
+        vk::ImageCreateInfo::default()
+            .image_type(self.image_type)
+            .format(self.format)
+            .extent(self.extent)
+            .mip_levels(self.mip_levels)
+            .array_layers(self.array_layers)
+            .samples(self.samples)
+            .tiling(self.tiling)
+            .usage(self.usage)
+            .sharing_mode(self.sharing_mode)
+            .initial_layout(self.initial_layout)
+    }
+
+    pub fn subresource_range(self) -> vk::ImageSubresourceRange {
+        vk::ImageSubresourceRange::default()
+            .aspect_mask(self.aspect_mask)
+            .level_count(self.mip_levels)
+            .layer_count(self.array_layers)
+    }
+
+    pub fn image_view_create_info(self, image: vk::Image) -> vk::ImageViewCreateInfo<'static> {
+        vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(self.view_type)
+            .format(self.format)
+            .subresource_range(self.subresource_range())
+    }
+}
+
+pub fn ash_2d_image_resource_plan(
+    format: vk::Format,
+    extent: vk::Extent3D,
+    mip_levels: u32,
+    usage: vk::ImageUsageFlags,
+    aspect_mask: vk::ImageAspectFlags,
+) -> AshImageResourcePlan {
+    AshImageResourcePlan {
+        format,
+        extent,
+        mip_levels: mip_levels.max(1),
+        usage,
+        aspect_mask,
+        image_type: vk::ImageType::TYPE_2D,
+        view_type: vk::ImageViewType::TYPE_2D,
+        array_layers: 1,
+        samples: vk::SampleCountFlags::TYPE_1,
+        tiling: vk::ImageTiling::OPTIMAL,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        memory_property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7409,6 +7522,81 @@ mod tests {
             present_info.p_image_indices,
             present_info_plan.image_indices.as_ptr()
         );
+    }
+
+    #[test]
+    fn buffer_image_and_sampler_plans_expose_resource_create_infos() {
+        let buffer = ash_host_buffer_plan(vk::BufferUsageFlags::UNIFORM_BUFFER, 0);
+        assert_eq!(buffer.size, 1);
+        assert!(buffer.usage.contains(vk::BufferUsageFlags::UNIFORM_BUFFER));
+        assert!(buffer.usage.contains(vk::BufferUsageFlags::TRANSFER_DST));
+        assert_eq!(
+            buffer.memory_property_flags,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        );
+        let buffer_info = buffer.buffer_create_info();
+        assert_eq!(buffer_info.size, 1);
+        assert_eq!(buffer_info.usage, buffer.usage);
+        assert_eq!(buffer_info.sharing_mode, vk::SharingMode::EXCLUSIVE);
+
+        let image = ash_2d_image_resource_plan(
+            vk::Format::R8G8B8A8_UNORM,
+            vk::Extent3D {
+                width: 16,
+                height: 8,
+                depth: 1,
+            },
+            0,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+        );
+        assert_eq!(image.mip_levels, 1);
+        assert_eq!(
+            image.memory_property_flags,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL
+        );
+        let image_info = image.image_create_info();
+        assert_eq!(image_info.image_type, vk::ImageType::TYPE_2D);
+        assert_eq!(image_info.format, vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(image_info.mip_levels, 1);
+        assert_eq!(image_info.array_layers, 1);
+        assert_eq!(image_info.tiling, vk::ImageTiling::OPTIMAL);
+        assert_eq!(image_info.initial_layout, vk::ImageLayout::UNDEFINED);
+        let view_info = image.image_view_create_info(vk::Image::null());
+        assert_eq!(view_info.image, vk::Image::null());
+        assert_eq!(view_info.view_type, vk::ImageViewType::TYPE_2D);
+        assert_eq!(
+            view_info.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(view_info.subresource_range.level_count, 1);
+        assert_eq!(view_info.subresource_range.layer_count, 1);
+
+        let sampler = AshSamplerPlan {
+            mag_filter: vk::Filter::NEAREST,
+            min_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_v: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            min_lod: 0.25,
+            max_lod: 4.0,
+            normal_map_decode: true,
+        };
+        let sampler_info = sampler.sampler_create_info();
+        assert_eq!(sampler_info.mag_filter, vk::Filter::NEAREST);
+        assert_eq!(sampler_info.min_filter, vk::Filter::LINEAR);
+        assert_eq!(sampler_info.mipmap_mode, vk::SamplerMipmapMode::NEAREST);
+        assert_eq!(
+            sampler_info.address_mode_u,
+            vk::SamplerAddressMode::CLAMP_TO_EDGE
+        );
+        assert_eq!(
+            sampler_info.address_mode_v,
+            vk::SamplerAddressMode::MIRRORED_REPEAT
+        );
+        assert_eq!(sampler_info.address_mode_w, vk::SamplerAddressMode::REPEAT);
+        assert_eq!(sampler_info.min_lod, 0.25);
+        assert_eq!(sampler_info.max_lod, 4.0);
     }
 
     #[test]

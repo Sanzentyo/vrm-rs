@@ -38,19 +38,20 @@ use vrm_adapter_ash::{
     AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
     AshVrmVertex, AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles,
     AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_binary_semaphore_plan, ash_classify_swapchain_acquire, ash_classify_swapchain_present,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_memory_type_index,
-    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
-    ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
-    ash_render_pass_begin_plan, ash_render_pass_begin_plan_from_clear_values,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
-    ash_select_depth_format, ash_shader_module_plan, ash_signaled_fence_plan,
-    ash_swapchain_surface_plan, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
-    ash_unsignaled_fence_plan, ash_windowed_present_plan, ash_windowed_submit_plan,
+    ash_2d_image_resource_plan, ash_binary_semaphore_plan, ash_classify_swapchain_acquire,
+    ash_classify_swapchain_present, ash_depth_attachment_plan, ash_descriptor_pool_plan,
+    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
+    ash_host_buffer_plan, ash_memory_type_index, ash_mtoon_renderer_cache_keys,
+    ash_one_time_command_buffer_begin_plan, ash_pipeline_layout_plans,
+    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
+    ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
+    ash_signaled_fence_plan, ash_swapchain_surface_plan, ash_texture_mip_upload_bytes,
+    ash_texture_upload_command_plan, ash_unsignaled_fence_plan, ash_windowed_present_plan,
+    ash_windowed_submit_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1396,17 +1397,12 @@ impl MtoonWindowedAshRenderer {
         usage: vk::BufferUsageFlags,
         bytes: &[u8],
     ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
-        let size = bytes.len().max(1) as vk::DeviceSize;
-        let info = vk::BufferCreateInfo::default()
-            .size(size)
-            .usage(usage | vk::BufferUsageFlags::TRANSFER_DST)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let plan = ash_host_buffer_plan(usage, bytes.len());
+        let info = plan.buffer_create_info();
         let buffer = unsafe { self.device.create_buffer(&info, None)? };
         let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
-        let memory_type_index = self.find_memory_type(
-            requirements.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )?;
+        let memory_type_index =
+            self.find_memory_type(requirements.memory_type_bits, plan.memory_property_flags)?;
         let allocate_info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type_index);
@@ -1416,7 +1412,7 @@ impl MtoonWindowedAshRenderer {
             if !bytes.is_empty() {
                 let mapped =
                     self.device
-                        .map_memory(memory, 0, size, vk::MemoryMapFlags::empty())?;
+                        .map_memory(memory, 0, plan.size, vk::MemoryMapFlags::empty())?;
                 ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
                 self.device.unmap_memory(memory);
             }
@@ -1461,23 +1457,12 @@ impl MtoonWindowedAshRenderer {
         usage: vk::ImageUsageFlags,
         aspect_mask: vk::ImageAspectFlags,
     ) -> Result<MtoonVulkanImage, Box<dyn Error>> {
-        let image_info = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(extent)
-            .mip_levels(mip_levels.max(1))
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .initial_layout(vk::ImageLayout::UNDEFINED);
+        let plan = ash_2d_image_resource_plan(format, extent, mip_levels, usage, aspect_mask);
+        let image_info = plan.image_create_info();
         let image = unsafe { self.device.create_image(&image_info, None)? };
         let requirements = unsafe { self.device.get_image_memory_requirements(image) };
-        let memory_type_index = self.find_memory_type(
-            requirements.memory_type_bits,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        )?;
+        let memory_type_index =
+            self.find_memory_type(requirements.memory_type_bits, plan.memory_property_flags)?;
         let allocate_info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type_index);
@@ -1485,15 +1470,7 @@ impl MtoonWindowedAshRenderer {
         unsafe {
             self.device.bind_image_memory(image, memory, 0)?;
         }
-        let subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(aspect_mask)
-            .level_count(mip_levels.max(1))
-            .layer_count(1);
-        let view_info = vk::ImageViewCreateInfo::default()
-            .image(image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(format)
-            .subresource_range(subresource_range);
+        let view_info = plan.image_view_create_info(image);
         let view = unsafe { self.device.create_image_view(&view_info, None)? };
         Ok(MtoonVulkanImage {
             image,
@@ -1661,15 +1638,7 @@ impl MtoonWindowedAshRenderer {
     }
 
     fn create_sampler(&self, plan: AshSamplerPlan) -> Result<vk::Sampler, vk::Result> {
-        let info = vk::SamplerCreateInfo::default()
-            .mag_filter(plan.mag_filter)
-            .min_filter(plan.min_filter)
-            .mipmap_mode(plan.mipmap_mode)
-            .address_mode_u(plan.address_mode_u)
-            .address_mode_v(plan.address_mode_v)
-            .address_mode_w(vk::SamplerAddressMode::REPEAT)
-            .min_lod(plan.min_lod)
-            .max_lod(plan.max_lod);
+        let info = plan.sampler_create_info();
         unsafe { self.device.create_sampler(&info, None) }
     }
 
