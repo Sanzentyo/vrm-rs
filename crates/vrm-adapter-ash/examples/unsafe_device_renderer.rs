@@ -30,9 +30,9 @@ use vrm_adapter_ash::{
     ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_texture_mip_upload_bytes,
-    ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
-    frame_plan_from_options_with_viewport,
+    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
+    ash_select_depth_format, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
+    ash_unsignaled_fence_plan, frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
     GltfAlphaMode, GltfMaterialTextureFallback, GltfMaterialTextureSlot, RgbaMipLevel,
@@ -361,9 +361,8 @@ impl UnsafeAshDeviceRenderer {
         shaders: &ShaderModuleSources,
         clear_alpha: f32,
     ) -> Result<VulkanFrameResources, Box<dyn Error>> {
-        let command_pool_info = vk::CommandPoolCreateInfo::default()
-            .queue_family_index(self.queue_family_index)
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool_info =
+            ash_resettable_command_pool_plan(self.queue_family_index).command_pool_create_info();
         let command_pool = unsafe { self.device.create_command_pool(&command_pool_info, None)? };
 
         let buffers = frame

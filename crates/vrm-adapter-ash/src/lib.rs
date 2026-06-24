@@ -2286,6 +2286,37 @@ pub const fn ash_one_time_command_buffer_begin_plan() -> AshCommandBufferBeginPl
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshCommandPoolPlan {
+    pub queue_family_index: u32,
+    pub flags: vk::CommandPoolCreateFlags,
+}
+
+impl AshCommandPoolPlan {
+    pub fn command_pool_create_info(self) -> vk::CommandPoolCreateInfo<'static> {
+        vk::CommandPoolCreateInfo::default()
+            .queue_family_index(self.queue_family_index)
+            .flags(self.flags)
+    }
+}
+
+pub const fn ash_command_pool_plan(
+    queue_family_index: u32,
+    flags: vk::CommandPoolCreateFlags,
+) -> AshCommandPoolPlan {
+    AshCommandPoolPlan {
+        queue_family_index,
+        flags,
+    }
+}
+
+pub const fn ash_resettable_command_pool_plan(queue_family_index: u32) -> AshCommandPoolPlan {
+    ash_command_pool_plan(
+        queue_family_index,
+        vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshCommandBufferAllocationPlan {
     pub command_pool: vk::CommandPool,
     pub level: vk::CommandBufferLevel,
@@ -2345,6 +2376,19 @@ pub const fn ash_unsignaled_fence_plan() -> AshFencePlan {
 
 pub const fn ash_signaled_fence_plan() -> AshFencePlan {
     ash_fence_plan(vk::FenceCreateFlags::SIGNALED)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshSemaphorePlan;
+
+impl AshSemaphorePlan {
+    pub fn semaphore_create_info(self) -> vk::SemaphoreCreateInfo<'static> {
+        vk::SemaphoreCreateInfo::default()
+    }
+}
+
+pub const fn ash_binary_semaphore_plan() -> AshSemaphorePlan {
+    AshSemaphorePlan
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7248,6 +7292,19 @@ mod tests {
             vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
         );
 
+        let command_pool = ash_resettable_command_pool_plan(7);
+        let command_pool_info = command_pool.command_pool_create_info();
+        assert_eq!(command_pool.queue_family_index, 7);
+        assert_eq!(
+            command_pool.flags,
+            vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
+        );
+        assert_eq!(command_pool_info.queue_family_index, 7);
+        assert_eq!(
+            command_pool_info.flags,
+            vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
+        );
+
         let allocation = ash_primary_command_buffer_allocation_plan(vk::CommandPool::null(), 3);
         let allocation_info = allocation.command_buffer_allocate_info();
         assert_eq!(allocation.command_pool, vk::CommandPool::null());
@@ -7267,6 +7324,8 @@ mod tests {
             ash_unsignaled_fence_plan().fence_create_info().flags,
             vk::FenceCreateFlags::empty()
         );
+        let semaphore_info = ash_binary_semaphore_plan().semaphore_create_info();
+        assert_eq!(semaphore_info.flags, vk::SemaphoreCreateFlags::empty());
 
         let submit = ash_queue_submit_plan(
             vec![vk::CommandBuffer::null(), vk::CommandBuffer::null()],

@@ -38,14 +38,15 @@ use vrm_adapter_ash::{
     AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
     AshVrmVertex, AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles,
     AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
-    ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_memory_type_index,
-    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
-    ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
-    ash_render_pass_begin_plan, ash_render_pass_begin_plan_from_clear_values,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_binary_semaphore_plan, ash_classify_swapchain_acquire, ash_classify_swapchain_present,
+    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
+    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
+    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
+    ash_graphics_pipeline_state_plan, ash_memory_type_index, ash_mtoon_renderer_cache_keys,
+    ash_one_time_command_buffer_begin_plan, ash_pipeline_layout_plans,
+    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
+    ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
     ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_signaled_fence_plan,
     ash_swapchain_surface_plan, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
     ash_unsignaled_fence_plan, ash_windowed_present_plan, ash_windowed_submit_plan,
@@ -831,9 +832,8 @@ impl MtoonWindowedAshRenderer {
         let swapchain_loader = swapchain::Device::new(&instance, &device);
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        let command_pool_info = vk::CommandPoolCreateInfo::default()
-            .queue_family_index(queue_family_index)
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool_info =
+            ash_resettable_command_pool_plan(queue_family_index).command_pool_create_info();
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
         let depth_format = select_depth_format(&instance, physical_device)?;
         let vertex_shader = create_shader_module(&device, &shaders.vertex)?;
@@ -2445,9 +2445,8 @@ impl WindowedAshRenderer {
         let swapchain_loader = swapchain::Device::new(&instance, &device);
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        let command_pool_info = vk::CommandPoolCreateInfo::default()
-            .queue_family_index(queue_family_index)
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool_info =
+            ash_resettable_command_pool_plan(queue_family_index).command_pool_create_info();
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
         let depth_format = select_depth_format(&instance, physical_device)?;
         let memory = MemoryContext {
@@ -2464,10 +2463,9 @@ impl WindowedAshRenderer {
             vk::BufferUsageFlags::INDEX_BUFFER,
             bytemuck::cast_slice(&mesh.indices),
         )?;
-        let image_available =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
-        let render_finished =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
+        let semaphore_info = ash_binary_semaphore_plan().semaphore_create_info();
+        let image_available = unsafe { device.create_semaphore(&semaphore_info, None)? };
+        let render_finished = unsafe { device.create_semaphore(&semaphore_info, None)? };
         let in_flight =
             unsafe { device.create_fence(&ash_signaled_fence_plan().fence_create_info(), None)? };
         let vertex_entry = CString::new(shaders.vertex_entry.as_str())?;
@@ -3043,26 +3041,25 @@ fn create_mtoon_frame_sync(
     plan: AshWindowedFrameSyncPlan,
 ) -> Result<Vec<MtoonFrameSync>, vk::Result> {
     let mut sync_objects = Vec::with_capacity(plan.fence_count());
+    let semaphore_info = ash_binary_semaphore_plan().semaphore_create_info();
     for _ in 0..plan.fence_count() {
-        let image_available =
-            match unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
-                Ok(semaphore) => semaphore,
-                Err(error) => {
-                    destroy_mtoon_frame_sync(device, sync_objects);
-                    return Err(error);
+        let image_available = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+            Ok(semaphore) => semaphore,
+            Err(error) => {
+                destroy_mtoon_frame_sync(device, sync_objects);
+                return Err(error);
+            }
+        };
+        let render_finished = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+            Ok(semaphore) => semaphore,
+            Err(error) => {
+                unsafe {
+                    device.destroy_semaphore(image_available, None);
                 }
-            };
-        let render_finished =
-            match unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
-                Ok(semaphore) => semaphore,
-                Err(error) => {
-                    unsafe {
-                        device.destroy_semaphore(image_available, None);
-                    }
-                    destroy_mtoon_frame_sync(device, sync_objects);
-                    return Err(error);
-                }
-            };
+                destroy_mtoon_frame_sync(device, sync_objects);
+                return Err(error);
+            }
+        };
         let in_flight = match unsafe {
             device.create_fence(&ash_signaled_fence_plan().fence_create_info(), None)
         } {
