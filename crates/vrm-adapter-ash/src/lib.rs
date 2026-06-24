@@ -1382,6 +1382,30 @@ pub struct AshRendererPipelineResource {
     pub lifetime: AshRendererResourceLifetime,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AshDescriptorPoolPlan {
+    pub max_sets: u32,
+    pub pool_sizes: Vec<AshDescriptorPoolSizePlan>,
+}
+
+impl AshDescriptorPoolPlan {
+    pub fn vk_pool_sizes(&self) -> Vec<vk::DescriptorPoolSize> {
+        self.pool_sizes
+            .iter()
+            .map(|size| vk::DescriptorPoolSize {
+                ty: size.descriptor_type,
+                descriptor_count: size.descriptor_count,
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshDescriptorPoolSizePlan {
+    pub descriptor_type: vk::DescriptorType,
+    pub descriptor_count: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct AshDrawableFramePlan {
     pub render_pass: AshRenderPassPlan,
@@ -2105,6 +2129,55 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         descriptor_set_layouts,
         descriptor_sets,
         pipelines,
+    }
+}
+
+pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPlan {
+    let descriptor_binding_count = |descriptor_type| {
+        frame
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == descriptor_type)
+            .count()
+            .max(1) as u32
+    };
+    let sampler_count = frame
+        .descriptor_sets
+        .iter()
+        .flat_map(|set| &set.bindings)
+        .filter(|binding| {
+            matches!(
+                binding.descriptor_type,
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+            )
+        })
+        .count()
+        .max(1) as u32;
+    AshDescriptorPoolPlan {
+        max_sets: frame.descriptor_sets.len().max(1) as u32,
+        pool_sizes: vec![
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::UNIFORM_BUFFER),
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::SAMPLED_IMAGE),
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::STORAGE_BUFFER),
+            },
+        ],
     }
 }
 
@@ -5560,6 +5633,65 @@ mod tests {
         assert_ne!(keys.pipeline, resized_keys.pipeline);
         assert_eq!(keys.descriptor_sets, resized_keys.descriptor_sets);
         assert_eq!(keys.samplers, resized_keys.samplers);
+    }
+
+    #[test]
+    fn descriptor_pool_plan_counts_renderer_frame_bindings() {
+        let mut frame =
+            cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        frame.descriptor_sets[0]
+            .bindings
+            .push(AshResolvedDescriptorBinding {
+                binding: ash_mtoon_wgsl_owner_sample_override_binding(),
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                uniform_upload_index: None,
+                texture_upload_index: None,
+                buffer_upload_index: Some(0),
+                sampler: None,
+            });
+
+        let plan = ash_descriptor_pool_plan(&frame);
+        assert_eq!(plan.max_sets, 1);
+        assert_eq!(
+            plan.pool_sizes,
+            vec![
+                AshDescriptorPoolSizePlan {
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                },
+                AshDescriptorPoolSizePlan {
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    descriptor_count: 1,
+                },
+                AshDescriptorPoolSizePlan {
+                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 1,
+                },
+                AshDescriptorPoolSizePlan {
+                    descriptor_type: vk::DescriptorType::SAMPLER,
+                    descriptor_count: 1,
+                },
+                AshDescriptorPoolSizePlan {
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            plan.vk_pool_sizes()
+                .iter()
+                .map(|size| (size.ty, size.descriptor_count))
+                .collect::<Vec<_>>(),
+            plan.pool_sizes
+                .iter()
+                .map(|size| (size.descriptor_type, size.descriptor_count))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            ash_descriptor_pool_plan(&AshRendererFrame::default()).max_sets,
+            1
+        );
     }
 
     fn cache_key_test_frame(

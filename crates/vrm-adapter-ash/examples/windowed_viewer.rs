@@ -34,7 +34,7 @@ use vrm_adapter_ash::{
     AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions, AshRendererFrame,
     AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner,
     AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
+    ash_descriptor_pool_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
 
@@ -1630,63 +1630,10 @@ impl MtoonWindowedAshRenderer {
         &self,
         frame: &AshRendererFrame,
     ) -> Result<vk::DescriptorPool, vk::Result> {
-        let uniform_count = frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER)
-            .count()
-            .max(1) as u32;
-        let sampler_count = frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| {
-                matches!(
-                    binding.descriptor_type,
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-                )
-            })
-            .count()
-            .max(1) as u32;
-        let sampled_image_count = frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| binding.descriptor_type == vk::DescriptorType::SAMPLED_IMAGE)
-            .count()
-            .max(1) as u32;
-        let storage_count = frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| binding.descriptor_type == vk::DescriptorType::STORAGE_BUFFER)
-            .count()
-            .max(1) as u32;
-        let sizes = [
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: uniform_count,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: sampler_count,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: sampled_image_count,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLER,
-                descriptor_count: sampler_count,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: storage_count,
-            },
-        ];
+        let plan = ash_descriptor_pool_plan(frame);
+        let sizes = plan.vk_pool_sizes();
         let info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(frame.descriptor_sets.len().max(1) as u32)
+            .max_sets(plan.max_sets)
             .pool_sizes(&sizes);
         unsafe { self.device.create_descriptor_pool(&info, None) }
     }
