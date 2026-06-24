@@ -24,11 +24,11 @@ use vrm_adapter_ash::{
     AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan, AshRenderPassCreationPlan,
     AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions,
     AshVrmPrimitive, ash_depth_attachment_plan, ash_descriptor_pool_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
-    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_material_texture_binding,
+    ash_mtoon_texture_binding, ash_pipeline_layout_plans, ash_reference_depth_format,
+    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -463,8 +463,12 @@ impl UnsafeAshDeviceRenderer {
             .map(|plan| self.create_descriptor_set_layout(plan))
             .collect::<Result<Vec<_>, _>>()?;
         let descriptor_pool = self.create_descriptor_pool(frame)?;
-        let descriptor_sets =
-            self.allocate_descriptor_sets(descriptor_pool, &descriptor_set_layouts)?;
+        let descriptor_sets = self.allocate_descriptor_sets(
+            descriptor_pool,
+            &ash_descriptor_set_allocation_plan(&descriptor_set_layout_plans)
+                .vk_set_layouts(&descriptor_set_layouts)
+                .map_err(io::Error::other)?,
+        )?;
         let samplers = self.create_samplers(frame)?;
         self.update_descriptor_sets(
             frame,
@@ -480,11 +484,13 @@ impl UnsafeAshDeviceRenderer {
         let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
             .iter()
             .map(|plan| {
-                let layouts = [descriptor_set_layouts[plan.descriptor_set_layout_index]];
+                let layouts = plan
+                    .vk_set_layouts(&descriptor_set_layouts)
+                    .map_err(io::Error::other)?;
                 let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
-                unsafe { self.device.create_pipeline_layout(&info, None) }
+                unsafe { self.device.create_pipeline_layout(&info, None) }.map_err(Into::into)
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
         let render_pass = self.create_render_pass(ash_render_pass_creation_plan(
             color_format,
             depth_format,
