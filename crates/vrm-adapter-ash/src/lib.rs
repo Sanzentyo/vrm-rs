@@ -2323,6 +2323,37 @@ impl AshSwapchainSurfacePlan {
     }
 }
 
+pub const fn ash_swapchain_composite_alpha_candidates() -> [vk::CompositeAlphaFlagsKHR; 4] {
+    [
+        vk::CompositeAlphaFlagsKHR::OPAQUE,
+        vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
+    ]
+}
+
+pub fn ash_select_swapchain_composite_alpha(
+    supported: vk::CompositeAlphaFlagsKHR,
+) -> Result<vk::CompositeAlphaFlagsKHR, String> {
+    ash_swapchain_composite_alpha_candidates()
+        .into_iter()
+        .find(|candidate| supported.contains(*candidate))
+        .ok_or_else(|| "surface reports no supported composite alpha mode".to_owned())
+}
+
+pub fn ash_validate_swapchain_image_usage(
+    supported: vk::ImageUsageFlags,
+    required: vk::ImageUsageFlags,
+) -> Result<vk::ImageUsageFlags, String> {
+    if supported.contains(required) {
+        Ok(required)
+    } else {
+        Err(format!(
+            "surface image usage {supported:?} does not support required {required:?}"
+        ))
+    }
+}
+
 pub fn ash_swapchain_surface_plan(
     capabilities: vk::SurfaceCapabilitiesKHR,
     formats: &[vk::SurfaceFormatKHR],
@@ -2365,14 +2396,20 @@ pub fn ash_swapchain_surface_plan(
     } else {
         desired.min(capabilities.max_image_count)
     };
+    let image_usage = ash_validate_swapchain_image_usage(
+        capabilities.supported_usage_flags,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT,
+    )?;
+    let composite_alpha =
+        ash_select_swapchain_composite_alpha(capabilities.supported_composite_alpha)?;
     Ok(AshSwapchainSurfacePlan {
         format,
         present_mode,
         extent,
         image_count,
         pre_transform: capabilities.current_transform,
-        composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-        image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        composite_alpha,
+        image_usage,
     })
 }
 
@@ -8185,6 +8222,10 @@ mod tests {
                 height: 720,
             },
             current_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
+            supported_usage_flags: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::TRANSFER_DST,
+            supported_composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE
+                | vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
             ..Default::default()
         };
         let formats = [
@@ -8228,6 +8269,8 @@ mod tests {
                 height: 480,
             },
             current_transform: vk::SurfaceTransformFlagsKHR::ROTATE_90,
+            supported_usage_flags: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            supported_composite_alpha: vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
             ..Default::default()
         };
         let formats = [vk::SurfaceFormatKHR {
@@ -8252,7 +8295,75 @@ mod tests {
         assert_eq!(plan.extent.height, 480);
         assert_eq!(plan.image_count, 2);
         assert_eq!(plan.pre_transform, vk::SurfaceTransformFlagsKHR::ROTATE_90);
+        assert_eq!(
+            plan.composite_alpha,
+            vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+        );
         assert!(ash_swapchain_surface_plan(capabilities, &[], &[], plan.extent).is_err());
+    }
+
+    #[test]
+    fn swapchain_surface_plan_rejects_unsupported_color_attachment_usage() {
+        let capabilities = vk::SurfaceCapabilitiesKHR {
+            min_image_count: 1,
+            max_image_count: 2,
+            current_extent: vk::Extent2D {
+                width: 320,
+                height: 240,
+            },
+            supported_usage_flags: vk::ImageUsageFlags::TRANSFER_DST,
+            supported_composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+            ..Default::default()
+        };
+        let formats = [vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }];
+
+        let err = ash_swapchain_surface_plan(
+            capabilities,
+            &formats,
+            &[vk::PresentModeKHR::FIFO],
+            vk::Extent2D {
+                width: 320,
+                height: 240,
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.contains("does not support required"));
+    }
+
+    #[test]
+    fn swapchain_surface_plan_rejects_missing_composite_alpha_support() {
+        let capabilities = vk::SurfaceCapabilitiesKHR {
+            min_image_count: 1,
+            max_image_count: 2,
+            current_extent: vk::Extent2D {
+                width: 320,
+                height: 240,
+            },
+            supported_usage_flags: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            supported_composite_alpha: vk::CompositeAlphaFlagsKHR::empty(),
+            ..Default::default()
+        };
+        let formats = [vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }];
+
+        assert_eq!(
+            ash_swapchain_surface_plan(
+                capabilities,
+                &formats,
+                &[vk::PresentModeKHR::FIFO],
+                vk::Extent2D {
+                    width: 320,
+                    height: 240,
+                },
+            ),
+            Err("surface reports no supported composite alpha mode".to_owned())
+        );
     }
 
     #[test]
