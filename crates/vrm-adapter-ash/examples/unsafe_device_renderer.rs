@@ -773,17 +773,17 @@ impl UnsafeAshDeviceRenderer {
         resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
         for plan in ash_descriptor_write_plans(frame)? {
-            let descriptor_set = *descriptor_sets
-                .get(plan.descriptor_set_index)
-                .ok_or("descriptor write references a missing descriptor set")?;
-            match plan.resource {
+            let descriptor_set = plan
+                .vk_descriptor_set(descriptor_sets)
+                .map_err(io::Error::other)?;
+            match &plan.resource {
                 AshDescriptorWriteResource::UniformBuffer {
-                    uniform_upload_index,
+                    uniform_upload_index: _,
                 } => {
-                    let uniform = resources
-                        .uniform_buffers
-                        .get(uniform_upload_index)
-                        .ok_or("descriptor write references a missing uniform buffer")?;
+                    let uniform = plan
+                        .resource
+                        .uniform_resource(resources.uniform_buffers)
+                        .map_err(io::Error::other)?;
                     let buffer_info = [vk::DescriptorBufferInfo::default()
                         .buffer(uniform.buffer)
                         .offset(0)
@@ -798,14 +798,17 @@ impl UnsafeAshDeviceRenderer {
                     }
                 }
                 AshDescriptorWriteResource::CombinedImageSampler {
-                    sampler_index,
-                    image,
+                    sampler_index: _,
+                    image: _,
                 } => {
-                    let sampler = *resources
-                        .samplers
-                        .get(sampler_index)
-                        .ok_or("descriptor write references a missing sampler")?;
-                    let image = descriptor_image_resource(resources, image)?;
+                    let sampler = plan
+                        .resource
+                        .sampler(resources.samplers)
+                        .map_err(io::Error::other)?;
+                    let image = descriptor_image_resource(
+                        resources,
+                        plan.resource.image_resource().map_err(io::Error::other)?,
+                    )?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .sampler(sampler)
                         .image_view(image.view)
@@ -819,8 +822,11 @@ impl UnsafeAshDeviceRenderer {
                         self.device.update_descriptor_sets(&write, &[]);
                     }
                 }
-                AshDescriptorWriteResource::SampledImage { image } => {
-                    let image = descriptor_image_resource(resources, image)?;
+                AshDescriptorWriteResource::SampledImage { image: _ } => {
+                    let image = descriptor_image_resource(
+                        resources,
+                        plan.resource.image_resource().map_err(io::Error::other)?,
+                    )?;
                     let image_info = [vk::DescriptorImageInfo::default()
                         .image_view(image.view)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
@@ -833,11 +839,11 @@ impl UnsafeAshDeviceRenderer {
                         self.device.update_descriptor_sets(&write, &[]);
                     }
                 }
-                AshDescriptorWriteResource::Sampler { sampler_index } => {
-                    let sampler = *resources
-                        .samplers
-                        .get(sampler_index)
-                        .ok_or("descriptor write references a missing sampler")?;
+                AshDescriptorWriteResource::Sampler { sampler_index: _ } => {
+                    let sampler = plan
+                        .resource
+                        .sampler(resources.samplers)
+                        .map_err(io::Error::other)?;
                     let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
                     let write = [vk::WriteDescriptorSet::default()
                         .dst_set(descriptor_set)
@@ -849,12 +855,12 @@ impl UnsafeAshDeviceRenderer {
                     }
                 }
                 AshDescriptorWriteResource::StorageBuffer {
-                    buffer_upload_index,
+                    buffer_upload_index: _,
                 } => {
-                    let buffer = resources
-                        .buffers
-                        .get(buffer_upload_index)
-                        .ok_or("descriptor write references a missing storage buffer")?;
+                    let buffer = plan
+                        .resource
+                        .storage_buffer_resource(resources.buffers)
+                        .map_err(io::Error::other)?;
                     let buffer_info = [vk::DescriptorBufferInfo::default()
                         .buffer(buffer.buffer)
                         .offset(0)

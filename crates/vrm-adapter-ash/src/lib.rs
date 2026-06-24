@@ -1713,6 +1713,23 @@ pub struct AshDescriptorWritePlan {
     pub resource: AshDescriptorWriteResource,
 }
 
+impl AshDescriptorWritePlan {
+    pub fn vk_descriptor_set(
+        &self,
+        descriptor_sets: &[vk::DescriptorSet],
+    ) -> Result<vk::DescriptorSet, String> {
+        descriptor_sets
+            .get(self.descriptor_set_index)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "descriptor write references missing descriptor set {}",
+                    self.descriptor_set_index
+                )
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AshDescriptorWriteResource {
     UniformBuffer {
@@ -1731,6 +1748,56 @@ pub enum AshDescriptorWriteResource {
     Sampler {
         sampler_index: usize,
     },
+}
+
+impl AshDescriptorWriteResource {
+    pub fn uniform_resource<'a, T>(&self, resources: &'a [T]) -> Result<&'a T, String> {
+        match self {
+            Self::UniformBuffer {
+                uniform_upload_index,
+            } => resources.get(*uniform_upload_index).ok_or_else(|| {
+                format!("descriptor write references missing uniform buffer {uniform_upload_index}")
+            }),
+            other => Err(format!(
+                "descriptor write resource is not a uniform buffer: {other:?}"
+            )),
+        }
+    }
+
+    pub fn storage_buffer_resource<'a, T>(&self, resources: &'a [T]) -> Result<&'a T, String> {
+        match self {
+            Self::StorageBuffer {
+                buffer_upload_index,
+            } => resources.get(*buffer_upload_index).ok_or_else(|| {
+                format!("descriptor write references missing storage buffer {buffer_upload_index}")
+            }),
+            other => Err(format!(
+                "descriptor write resource is not a storage buffer: {other:?}"
+            )),
+        }
+    }
+
+    pub fn sampler(&self, samplers: &[vk::Sampler]) -> Result<vk::Sampler, String> {
+        match self {
+            Self::CombinedImageSampler { sampler_index, .. } | Self::Sampler { sampler_index } => {
+                samplers.get(*sampler_index).copied().ok_or_else(|| {
+                    format!("descriptor write references missing sampler {sampler_index}")
+                })
+            }
+            other => Err(format!(
+                "descriptor write resource does not reference a sampler: {other:?}"
+            )),
+        }
+    }
+
+    pub fn image_resource(&self) -> Result<AshDescriptorImageResource, String> {
+        match self {
+            Self::CombinedImageSampler { image, .. } | Self::SampledImage { image } => Ok(*image),
+            other => Err(format!(
+                "descriptor write resource does not reference an image: {other:?}"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6658,6 +6725,74 @@ mod tests {
         assert_eq!(
             ash_descriptor_write_plans(&frame),
             Err("descriptor binding 1 references missing texture upload 99".to_owned())
+        );
+    }
+
+    #[test]
+    fn descriptor_write_helpers_resolve_engine_owned_handles_with_checked_errors() {
+        let plan = AshDescriptorWritePlan {
+            descriptor_set_index: 0,
+            binding: 7,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            resource: AshDescriptorWriteResource::UniformBuffer {
+                uniform_upload_index: 0,
+            },
+        };
+        let descriptor_sets = [vk::DescriptorSet::null()];
+
+        assert_eq!(
+            plan.vk_descriptor_set(&descriptor_sets),
+            Ok(vk::DescriptorSet::null())
+        );
+        assert_eq!(
+            AshDescriptorWritePlan {
+                descriptor_set_index: 2,
+                ..plan.clone()
+            }
+            .vk_descriptor_set(&descriptor_sets),
+            Err("descriptor write references missing descriptor set 2".to_owned())
+        );
+
+        assert_eq!(plan.resource.uniform_resource(&[42_u32]), Ok(&42_u32));
+        let empty_uniforms: [u32; 0] = [];
+        assert_eq!(
+            plan.resource.uniform_resource(&empty_uniforms),
+            Err("descriptor write references missing uniform buffer 0".to_owned())
+        );
+
+        let storage = AshDescriptorWriteResource::StorageBuffer {
+            buffer_upload_index: 1,
+        };
+        assert_eq!(storage.storage_buffer_resource(&[3_u32, 9_u32]), Ok(&9_u32));
+        let empty_buffers: [u32; 0] = [];
+        assert_eq!(
+            storage.storage_buffer_resource(&empty_buffers),
+            Err("descriptor write references missing storage buffer 1".to_owned())
+        );
+
+        let sampler = AshDescriptorWriteResource::Sampler { sampler_index: 0 };
+        assert_eq!(
+            sampler.sampler(&[vk::Sampler::null()]),
+            Ok(vk::Sampler::null())
+        );
+        assert_eq!(
+            sampler.sampler(&[]),
+            Err("descriptor write references missing sampler 0".to_owned())
+        );
+
+        let image = AshDescriptorImageResource::Fallback {
+            fallback: GltfMaterialTextureFallback::White,
+        };
+        assert_eq!(
+            AshDescriptorWriteResource::SampledImage { image }.image_resource(),
+            Ok(image)
+        );
+        assert_eq!(
+            plan.resource.image_resource(),
+            Err(
+                "descriptor write resource does not reference an image: UniformBuffer { uniform_upload_index: 0 }"
+                    .to_owned()
+            )
         );
     }
 
