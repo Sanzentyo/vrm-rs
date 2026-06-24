@@ -567,11 +567,31 @@ struct MtoonTransientFrameResources {
     uniform_buffers: Vec<MtoonVulkanBuffer>,
     samplers: Vec<vk::Sampler>,
     shader_modules: Vec<vk::ShaderModule>,
-    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     descriptor_pool: vk::DescriptorPool,
+    command_buffer: vk::CommandBuffer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonDescriptorLayoutBindingKey {
+    binding: u32,
+    descriptor_type: vk::DescriptorType,
+    stage_flags: vk::ShaderStageFlags,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MtoonPersistentPipelineCacheKey {
+    extent: vk::Extent2D,
+    vertex_entry: Vec<u8>,
+    fragment_entry: Vec<u8>,
+    descriptor_set_layouts: Vec<Vec<MtoonDescriptorLayoutBindingKey>>,
+    pipelines: Vec<AshGraphicsPipelinePlan>,
+}
+
+struct MtoonPersistentPipelineCache {
+    key: MtoonPersistentPipelineCacheKey,
+    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
-    command_buffer: vk::CommandBuffer,
 }
 
 struct MtoonSwapchainShell {
@@ -620,6 +640,7 @@ struct MtoonWindowedAshRenderer {
     render_finished: vk::Semaphore,
     in_flight: vk::Fence,
     pending_frame: Option<MtoonTransientFrameResources>,
+    persistent_cache: Option<MtoonPersistentPipelineCache>,
 }
 
 impl MtoonWindowedAshRenderer {
@@ -711,6 +732,7 @@ impl MtoonWindowedAshRenderer {
             render_finished,
             in_flight,
             pending_frame: None,
+            persistent_cache: None,
         })
     }
 
@@ -742,11 +764,13 @@ impl MtoonWindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(RenderStatus::NeedsRecreate),
             Err(error) => return Err(error.into()),
         };
+        let vertex_entry = self.vertex_entry.clone();
+        let fragment_entry = self.fragment_entry.clone();
         let transient = self.materialize_swapchain_frame(
             frame,
             image_index as usize,
-            &self.vertex_entry,
-            &self.fragment_entry,
+            &vertex_entry,
+            &fragment_entry,
         )?;
         let command_buffer = transient.command_buffer;
         let wait_semaphores = [self.image_available];
@@ -791,6 +815,9 @@ impl MtoonWindowedAshRenderer {
         if let Some(pending) = self.pending_frame.take() {
             self.destroy_transient_frame(pending);
         }
+        if let Some(cache) = self.persistent_cache.take() {
+            self.destroy_persistent_cache(cache);
+        }
         let old_swapchain = self.swapchain.swapchain;
         let old = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
         self.destroy_swapchain_shell(old, false);
@@ -814,7 +841,7 @@ impl MtoonWindowedAshRenderer {
     }
 
     fn materialize_swapchain_frame(
-        &self,
+        &mut self,
         frame: &AshRendererFrame,
         image_index: usize,
         vertex_entry: &CString,
@@ -874,22 +901,20 @@ impl MtoonWindowedAshRenderer {
                 self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let descriptor_set_layouts = frame
-            .descriptor_sets
-            .iter()
-            .map(|set| {
-                self.create_descriptor_set_layout(set.bindings.iter().map(|binding| {
-                    vk::DescriptorSetLayoutBinding::default()
-                        .binding(binding.binding)
-                        .descriptor_type(binding.descriptor_type)
-                        .descriptor_count(1)
-                        .stage_flags(binding.stage_flags)
-                }))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        self.ensure_persistent_pipeline_cache(
+            frame,
+            extent,
+            render_pass,
+            vertex_entry,
+            fragment_entry,
+        )?;
+        let persistent = self
+            .persistent_cache
+            .as_ref()
+            .ok_or("missing ash windowed persistent pipeline cache")?;
         let descriptor_pool = self.create_descriptor_pool(frame)?;
         let descriptor_sets =
-            self.allocate_descriptor_sets(descriptor_pool, &descriptor_set_layouts)?;
+            self.allocate_descriptor_sets(descriptor_pool, &persistent.descriptor_set_layouts)?;
         let samplers = self.create_samplers(frame)?;
         self.update_descriptor_sets(
             frame,
@@ -902,30 +927,14 @@ impl MtoonWindowedAshRenderer {
                 samplers: &samplers,
             },
         )?;
-        let pipeline_layouts = descriptor_set_layouts
-            .iter()
-            .map(|layout| {
-                let layouts = [*layout];
-                let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
-                unsafe { self.device.create_pipeline_layout(&info, None) }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let pipelines = self.create_mtoon_graphics_pipelines(
-            frame,
-            render_pass,
-            extent,
-            &pipeline_layouts,
-            vertex_entry,
-            fragment_entry,
-        )?;
         let command_buffer = self.record_mtoon_swapchain_draws(
             frame,
             MtoonSwapchainDrawContext {
                 render_pass,
                 framebuffer,
                 extent,
-                pipelines: &pipelines,
-                pipeline_layouts: &pipeline_layouts,
+                pipelines: &persistent.pipelines,
+                pipeline_layouts: &persistent.pipeline_layouts,
                 buffers: &buffers,
                 descriptor_sets: &descriptor_sets,
                 texture_images: &images,
@@ -944,12 +953,66 @@ impl MtoonWindowedAshRenderer {
             uniform_buffers,
             samplers,
             shader_modules: Vec::new(),
-            descriptor_set_layouts,
             descriptor_pool,
-            pipeline_layouts,
-            pipelines,
             command_buffer,
         })
+    }
+
+    fn ensure_persistent_pipeline_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+        extent: vk::Extent2D,
+        render_pass: vk::RenderPass,
+        vertex_entry: &CString,
+        fragment_entry: &CString,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_pipeline_cache_key(frame, extent, vertex_entry, fragment_entry);
+        if self
+            .persistent_cache
+            .as_ref()
+            .is_some_and(|cache| cache.key == key)
+        {
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_cache.take() {
+            self.destroy_persistent_cache(cache);
+        }
+        let descriptor_set_layouts = frame
+            .descriptor_sets
+            .iter()
+            .map(|set| {
+                self.create_descriptor_set_layout(set.bindings.iter().map(|binding| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(binding.binding)
+                        .descriptor_type(binding.descriptor_type)
+                        .descriptor_count(1)
+                        .stage_flags(binding.stage_flags)
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let pipeline_layouts = descriptor_set_layouts
+            .iter()
+            .map(|layout| {
+                let layouts = [*layout];
+                let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
+                unsafe { self.device.create_pipeline_layout(&info, None) }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let pipelines = self.create_mtoon_graphics_pipelines(
+            frame,
+            render_pass,
+            extent,
+            &pipeline_layouts,
+            vertex_entry,
+            fragment_entry,
+        )?;
+        self.persistent_cache = Some(MtoonPersistentPipelineCache {
+            key,
+            descriptor_set_layouts,
+            pipeline_layouts,
+            pipelines,
+        });
+        Ok(())
     }
 
     fn create_host_buffer(
@@ -1612,20 +1675,11 @@ impl MtoonWindowedAshRenderer {
         unsafe {
             self.device
                 .free_command_buffers(self.command_pool, &[resources.command_buffer]);
-            for pipeline in resources.pipelines {
-                self.device.destroy_pipeline(pipeline, None);
-            }
             for module in resources.shader_modules {
                 self.device.destroy_shader_module(module, None);
             }
-            for layout in resources.pipeline_layouts {
-                self.device.destroy_pipeline_layout(layout, None);
-            }
             self.device
                 .destroy_descriptor_pool(resources.descriptor_pool, None);
-            for layout in resources.descriptor_set_layouts {
-                self.device.destroy_descriptor_set_layout(layout, None);
-            }
             for sampler in resources.samplers {
                 self.device.destroy_sampler(sampler, None);
             }
@@ -1658,6 +1712,20 @@ impl MtoonWindowedAshRenderer {
         }
     }
 
+    fn destroy_persistent_cache(&self, cache: MtoonPersistentPipelineCache) {
+        unsafe {
+            for pipeline in cache.pipelines {
+                self.device.destroy_pipeline(pipeline, None);
+            }
+            for layout in cache.pipeline_layouts {
+                self.device.destroy_pipeline_layout(layout, None);
+            }
+            for layout in cache.descriptor_set_layouts {
+                self.device.destroy_descriptor_set_layout(layout, None);
+            }
+        }
+    }
+
     fn destroy_swapchain_shell(&self, resources: MtoonSwapchainShell, destroy_swapchain: bool) {
         unsafe {
             for framebuffer in resources.framebuffers {
@@ -1685,6 +1753,9 @@ impl Drop for MtoonWindowedAshRenderer {
         }
         if let Some(pending) = self.pending_frame.take() {
             self.destroy_transient_frame(pending);
+        }
+        if let Some(cache) = self.persistent_cache.take() {
+            self.destroy_persistent_cache(cache);
         }
         let shell = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
         self.destroy_swapchain_shell(shell, true);
@@ -1901,6 +1972,34 @@ fn mtoon_vertex_attribute_description(
         binding: attribute.binding,
         format: attribute.format,
         offset: attribute.offset,
+    }
+}
+
+fn mtoon_persistent_pipeline_cache_key(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+    vertex_entry: &CString,
+    fragment_entry: &CString,
+) -> MtoonPersistentPipelineCacheKey {
+    MtoonPersistentPipelineCacheKey {
+        extent,
+        vertex_entry: vertex_entry.as_bytes().to_vec(),
+        fragment_entry: fragment_entry.as_bytes().to_vec(),
+        descriptor_set_layouts: frame
+            .descriptor_sets
+            .iter()
+            .map(|set| {
+                set.bindings
+                    .iter()
+                    .map(|binding| MtoonDescriptorLayoutBindingKey {
+                        binding: binding.binding,
+                        descriptor_type: binding.descriptor_type,
+                        stage_flags: binding.stage_flags,
+                    })
+                    .collect()
+            })
+            .collect(),
+        pipelines: frame.pipelines.clone(),
     }
 }
 
