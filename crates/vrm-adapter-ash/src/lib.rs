@@ -1251,6 +1251,43 @@ pub fn ash_depth_attachment_plan(
     }
 }
 
+pub const fn ash_depth_format_candidates() -> [vk::Format; 3] {
+    [
+        ash_reference_depth_format(),
+        vk::Format::X8_D24_UNORM_PACK32,
+        vk::Format::D32_SFLOAT,
+    ]
+}
+
+pub fn ash_select_depth_format(
+    mut format_properties: impl FnMut(vk::Format) -> vk::FormatProperties,
+) -> Result<vk::Format, String> {
+    ash_depth_format_candidates()
+        .into_iter()
+        .find(|format| {
+            format_properties(*format)
+                .optimal_tiling_features
+                .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+        })
+        .ok_or_else(|| "no supported Vulkan depth attachment format found".to_owned())
+}
+
+pub fn ash_memory_type_index(
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    type_bits: u32,
+    required_properties: vk::MemoryPropertyFlags,
+) -> Result<u32, String> {
+    (0..memory_properties.memory_type_count)
+        .find(|index| {
+            let type_supported = (type_bits & (1_u32 << index)) != 0;
+            let memory_type = memory_properties.memory_types[*index as usize];
+            type_supported && memory_type.property_flags.contains(required_properties)
+        })
+        .ok_or_else(|| {
+            format!("no Vulkan memory type supports {required_properties:?} for type bits 0x{type_bits:08x}")
+        })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshColorAttachmentFinalLayout {
     Present,
@@ -6494,6 +6531,68 @@ mod tests {
         assert_eq!(
             ash_depth_attachment_plan(vk::Format::D32_SFLOAT, extent).aspect_mask,
             vk::ImageAspectFlags::DEPTH
+        );
+    }
+
+    #[test]
+    fn depth_format_selection_prefers_reference_then_fallbacks() {
+        assert_eq!(
+            ash_depth_format_candidates(),
+            [
+                ash_reference_depth_format(),
+                vk::Format::X8_D24_UNORM_PACK32,
+                vk::Format::D32_SFLOAT,
+            ]
+        );
+
+        let selected = ash_select_depth_format(|format| {
+            let supported = format == vk::Format::X8_D24_UNORM_PACK32;
+            vk::FormatProperties {
+                optimal_tiling_features: if supported {
+                    vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
+                } else {
+                    vk::FormatFeatureFlags::empty()
+                },
+                ..Default::default()
+            }
+        });
+        assert_eq!(selected, Ok(vk::Format::X8_D24_UNORM_PACK32));
+        assert_eq!(
+            ash_select_depth_format(|_| vk::FormatProperties::default()),
+            Err("no supported Vulkan depth attachment format found".to_owned())
+        );
+    }
+
+    #[test]
+    fn memory_type_selection_checks_type_bits_and_required_flags() {
+        let mut properties = vk::PhysicalDeviceMemoryProperties {
+            memory_type_count: 3,
+            ..Default::default()
+        };
+        properties.memory_types[0].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+        properties.memory_types[1].property_flags =
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        properties.memory_types[2].property_flags =
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::DEVICE_LOCAL;
+
+        assert_eq!(
+            ash_memory_type_index(
+                properties,
+                0b110,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            ash_memory_type_index(
+                properties,
+                0b100,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ),
+            Err(
+                "no Vulkan memory type supports HOST_VISIBLE | HOST_COHERENT for type bits 0x00000004"
+                    .to_owned()
+            )
         );
     }
 

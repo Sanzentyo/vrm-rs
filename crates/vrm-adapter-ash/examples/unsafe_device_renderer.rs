@@ -26,9 +26,9 @@ use vrm_adapter_ash::{
     ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
     ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
     ash_drawable_frame_from_renderer_frame_with_options, ash_framebuffer_plan,
-    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_mtoon_texture_binding,
-    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_graphics_pipeline_state_plan, ash_material_texture_binding, ash_memory_type_index,
+    ash_mtoon_texture_binding, ash_pipeline_layout_plans, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_select_depth_format,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -633,22 +633,11 @@ impl UnsafeAshDeviceRenderer {
     }
 
     fn select_depth_format(&self) -> Result<vk::Format, Box<dyn Error>> {
-        [
-            ash_reference_depth_format(),
-            vk::Format::X8_D24_UNORM_PACK32,
-            vk::Format::D32_SFLOAT,
-        ]
-        .into_iter()
-        .find(|format| {
-            let properties = unsafe {
-                self.instance
-                    .get_physical_device_format_properties(self.physical_device, *format)
-            };
-            properties
-                .optimal_tiling_features
-                .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+        ash_select_depth_format(|format| unsafe {
+            self.instance
+                .get_physical_device_format_properties(self.physical_device, format)
         })
-        .ok_or_else(|| "no supported Vulkan depth attachment format found".into())
+        .map_err(Into::into)
     }
 
     fn create_fallback_textures(&self) -> Result<VulkanFallbackTextures, Box<dyn Error>> {
@@ -1294,13 +1283,7 @@ impl UnsafeAshDeviceRenderer {
         type_bits: u32,
         properties: vk::MemoryPropertyFlags,
     ) -> Result<u32, Box<dyn Error>> {
-        (0..self.memory_properties.memory_type_count)
-            .find(|index| {
-                let type_supported = (type_bits & (1 << index)) != 0;
-                let memory_type = self.memory_properties.memory_types[*index as usize];
-                type_supported && memory_type.property_flags.contains(properties)
-            })
-            .ok_or_else(|| format!("no Vulkan memory type supports {properties:?}").into())
+        ash_memory_type_index(self.memory_properties, type_bits, properties).map_err(Into::into)
     }
 
     fn destroy_frame_resources(&self, resources: VulkanFrameResources) {

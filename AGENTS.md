@@ -37,7 +37,7 @@ The default script run covers `cargo fmt --all -- --check`, `cargo test --worksp
 ## Coverage Refresh Delegation
 
 - Treat coverage table/progress updates as routine mechanical work suitable for delegation.
-- Delegate routine coverage refreshes and other clearly specified mechanical edits to a Codex worker running `gpt-5.4-codex-mini`.
+- Delegate routine coverage refreshes and other clearly specified mechanical edits to a `gpt-5.4-mini` worker.
 - The delegated worker must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
 - Preferred flow:
 
@@ -56,13 +56,13 @@ git diff docs/testing.md docs/progress.md
 - The primary Codex turn still owns the implementation gate and final verification.
 - Review delegated diffs and run gates before staging or committing; delegation does not transfer ownership of verification.
 - Run `cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` locally before commits that affect tests, coverage, runtime paths, adapters, IO, or protocol behavior.
-- If a delegated `gpt-5.4-codex-mini` worker updates coverage docs, review its diff before staging.
-- If `gpt-5.4-codex-mini` worker delegation is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
+- If a delegated `gpt-5.4-mini` worker updates coverage docs, review its diff before staging.
+- If `gpt-5.4-mini` worker delegation is unavailable, perform the coverage refresh locally and record that limitation in the progress update.
 
 ## gpt-5.4 Mini Delegation
 
-- Use a Codex worker running `gpt-5.4-codex-mini` for delegated routine mechanical work such as coverage refreshes and narrow bulk edits.
-- For coverage refreshes and non-judgmental mechanical edits, prefer `gpt-5.4-codex-mini` when available.
+- Use a `gpt-5.4-mini` worker for delegated routine mechanical work such as coverage refreshes and narrow bulk edits.
+- For coverage refreshes and non-judgmental mechanical edits, prefer `gpt-5.4-mini` when available.
 - For pessimistic reviews, use the model and reasoning level requested by the user, and ask for findings focused on regressions, missing tests, and API hazards.
 - Delegated workers should not make broad unrelated edits. Give them narrow ownership, ask them to report changed files, and review their output before integration.
 

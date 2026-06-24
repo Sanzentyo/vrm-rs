@@ -1,9 +1,9 @@
-# coverage-mini Playbook（gpt-5.4 mini worker 向け）
+# coverage-mini Playbook（gpt-5.4-mini worker 向け）
 
 このガイドは、カバレッジ表と進捗行の定型更新を委譲する worker 向けに、`cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` 実行結果から
 `docs/testing.md` の `Current Coverage Snapshot` 表と `docs/progress.md` の最新カバレッジ行を反映する手順を定義します。
 
-**通常の委譲先:** Codex worker（`gpt-5.4-codex-mini`）。
+**通常の委譲先:** `gpt-5.4-mini` worker。
 
 ## 使う対象ファイル
 
@@ -47,7 +47,7 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 - `docs/testing.md` と `docs/progress.md` は本業務で触らない前提なので、反映後は差分を一度確認してからコミットしてください。
 - 最初のスクリプト実行はドライラン（`-Apply` なし）を推奨します。ユーザーが直接反映を求めた場合、または親 Codex が生成ブロックを確認済みの場合のみ `-Apply` を使います。
 
-## 主経路: Codex worker（`gpt-5.4-codex-mini`）
+## 主経路: `gpt-5.4-mini` worker
 
 親 Codex は、coverage 更新を narrow な worker タスクとして委譲します。プロンプトには必ず次を含めます。
 

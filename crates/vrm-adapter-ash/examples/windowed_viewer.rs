@@ -39,9 +39,10 @@ use vrm_adapter_ash::{
     AshWindowedResizeValidation, AshWindowedRunValidation, ash_depth_attachment_plan,
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys,
-    ash_pipeline_layout_plans, ash_reference_depth_format, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_swapchain_surface_plan,
+    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_memory_type_index,
+    ash_mtoon_renderer_cache_keys, ash_pipeline_layout_plans, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_select_depth_format,
+    ash_swapchain_surface_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -2021,13 +2022,7 @@ impl MtoonWindowedAshRenderer {
         type_bits: u32,
         properties: vk::MemoryPropertyFlags,
     ) -> Result<u32, Box<dyn Error>> {
-        (0..self.memory_properties.memory_type_count)
-            .find(|index| {
-                let type_supported = (type_bits & (1 << index)) != 0;
-                let memory_type = self.memory_properties.memory_types[*index as usize];
-                type_supported && memory_type.property_flags.contains(properties)
-            })
-            .ok_or_else(|| format!("no Vulkan memory type supports {properties:?}").into())
+        ash_memory_type_index(self.memory_properties, type_bits, properties).map_err(Into::into)
     }
 
     fn destroy_persistent_cache(&self, cache: MtoonPersistentPipelineCache) {
@@ -2315,20 +2310,10 @@ fn select_depth_format(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
 ) -> Result<vk::Format, Box<dyn Error>> {
-    [
-        ash_reference_depth_format(),
-        vk::Format::X8_D24_UNORM_PACK32,
-        vk::Format::D32_SFLOAT,
-    ]
-    .into_iter()
-    .find(|format| {
-        let properties =
-            unsafe { instance.get_physical_device_format_properties(physical_device, *format) };
-        properties
-            .optimal_tiling_features
-            .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+    ash_select_depth_format(|format| unsafe {
+        instance.get_physical_device_format_properties(physical_device, format)
     })
-    .ok_or_else(|| "no supported Vulkan depth attachment format found".into())
+    .map_err(Into::into)
 }
 
 fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {
@@ -3374,22 +3359,16 @@ impl MemoryContext<'_> {
         type_bits: u32,
         properties: vk::MemoryPropertyFlags,
     ) -> Result<u32, Box<dyn Error>> {
-        (0..self.memory_properties.memory_type_count)
-            .find(|index| {
-                let type_supported = (type_bits & (1 << index)) != 0;
-                let memory_type = self.memory_properties.memory_types[*index as usize];
-                type_supported && memory_type.property_flags.contains(properties)
-            })
-            .ok_or_else(|| {
-                let device_name = unsafe {
-                    self.instance
-                        .get_physical_device_properties(self.physical_device)
-                        .device_name_as_c_str()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|_| "unknown".to_owned())
-                };
-                format!("no Vulkan memory type supports {properties:?} on {device_name}").into()
-            })
+        ash_memory_type_index(self.memory_properties, type_bits, properties).map_err(|err| {
+            let device_name = unsafe {
+                self.instance
+                    .get_physical_device_properties(self.physical_device)
+                    .device_name_as_c_str()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "unknown".to_owned())
+            };
+            format!("{err} on {device_name}").into()
+        })
     }
 }
 
