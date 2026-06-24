@@ -29,9 +29,9 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
-    AshGraphicsPipelinePlan, AshRenderOptions, AshRendererFrame, AshSamplerPlan,
-    AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
-    AshVrmVertex, ash_reference_depth_format,
+    AshBufferRole, AshGraphicsPipelinePlan, AshRenderOptions, AshRendererFrame, AshSamplerPlan,
+    AshUniformScope, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner,
+    AshVrmPrimitive, AshVrmVertex, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
 use vrm_core::TextureRef;
@@ -563,8 +563,6 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
 }
 
 struct MtoonTransientFrameResources {
-    buffers: Vec<MtoonVulkanBuffer>,
-    uniform_buffers: Vec<MtoonVulkanBuffer>,
     shader_modules: Vec<vk::ShaderModule>,
     descriptor_pool: vk::DescriptorPool,
     command_buffer: vk::CommandBuffer,
@@ -609,6 +607,42 @@ struct MtoonSamplerBindingKey {
 struct MtoonPersistentSamplerCache {
     key: MtoonPersistentSamplerCacheKey,
     samplers: Vec<vk::Sampler>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonPersistentBufferCacheKey {
+    buffers: Vec<MtoonBufferResourceKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonBufferResourceKey {
+    role: AshBufferRole,
+    usage: u32,
+    stride: u32,
+    count: u32,
+    byte_len: usize,
+}
+
+struct MtoonPersistentBufferCache {
+    key: MtoonPersistentBufferCacheKey,
+    buffers: Vec<MtoonVulkanBuffer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonPersistentUniformCacheKey {
+    uniforms: Vec<MtoonUniformResourceKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MtoonUniformResourceKey {
+    scope: AshUniformScope,
+    binding: u32,
+    byte_len: usize,
+}
+
+struct MtoonPersistentUniformCache {
+    key: MtoonPersistentUniformCacheKey,
+    buffers: Vec<MtoonVulkanBuffer>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -686,6 +720,8 @@ struct MtoonWindowedAshRenderer {
     pending_frame: Option<MtoonTransientFrameResources>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
+    persistent_buffers: Option<MtoonPersistentBufferCache>,
+    persistent_uniforms: Option<MtoonPersistentUniformCache>,
     persistent_textures: Option<MtoonPersistentTextureCache>,
     persistent_fallback_textures: Option<MtoonPersistentFallbackTextureCache>,
 }
@@ -781,6 +817,8 @@ impl MtoonWindowedAshRenderer {
             pending_frame: None,
             persistent_cache: None,
             persistent_samplers: None,
+            persistent_buffers: None,
+            persistent_uniforms: None,
             persistent_textures: None,
             persistent_fallback_textures: None,
         })
@@ -900,18 +938,6 @@ impl MtoonWindowedAshRenderer {
         let extent = self.swapchain.extent;
         let framebuffer = self.swapchain.framebuffers[image_index];
         let render_pass = self.swapchain.render_pass;
-        let buffers = frame
-            .buffers
-            .iter()
-            .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        let uniform_buffers = frame
-            .uniforms
-            .iter()
-            .map(|uniform| {
-                self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         self.ensure_persistent_pipeline_cache(
             frame,
             extent,
@@ -920,12 +946,24 @@ impl MtoonWindowedAshRenderer {
             fragment_entry,
         )?;
         self.ensure_persistent_sampler_cache(frame)?;
+        self.ensure_persistent_buffer_cache(frame)?;
+        self.ensure_persistent_uniform_cache(frame)?;
         self.ensure_persistent_texture_cache(frame)?;
         self.ensure_persistent_fallback_textures()?;
         let persistent = self
             .persistent_cache
             .as_ref()
             .ok_or("missing ash windowed persistent pipeline cache")?;
+        let buffers = &self
+            .persistent_buffers
+            .as_ref()
+            .ok_or("missing ash windowed persistent buffer cache")?
+            .buffers;
+        let uniform_buffers = &self
+            .persistent_uniforms
+            .as_ref()
+            .ok_or("missing ash windowed persistent uniform cache")?
+            .buffers;
         let texture_images = &self
             .persistent_textures
             .as_ref()
@@ -948,8 +986,8 @@ impl MtoonWindowedAshRenderer {
             frame,
             &descriptor_sets,
             MtoonDescriptorUpdateResources {
-                buffers: &buffers,
-                uniform_buffers: &uniform_buffers,
+                buffers,
+                uniform_buffers,
                 images: texture_images,
                 fallback_textures,
                 samplers,
@@ -963,13 +1001,11 @@ impl MtoonWindowedAshRenderer {
                 extent,
                 pipelines: &persistent.pipelines,
                 pipeline_layouts: &persistent.pipeline_layouts,
-                buffers: &buffers,
+                buffers,
                 descriptor_sets: &descriptor_sets,
             },
         )?;
         Ok(MtoonTransientFrameResources {
-            buffers,
-            uniform_buffers,
             shader_modules: Vec::new(),
             descriptor_pool,
             command_buffer,
@@ -1054,6 +1090,66 @@ impl MtoonWindowedAshRenderer {
             .map(|binding| self.create_sampler(binding.sampler))
             .collect::<Result<Vec<_>, _>>()?;
         self.persistent_samplers = Some(MtoonPersistentSamplerCache { key, samplers });
+        Ok(())
+    }
+
+    fn ensure_persistent_buffer_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_buffer_cache_key(frame);
+        if let Some(cache) = self
+            .persistent_buffers
+            .as_ref()
+            .filter(|cache| cache.key == key)
+        {
+            cache
+                .buffers
+                .iter()
+                .zip(&frame.buffers)
+                .try_for_each(|(buffer, upload)| self.write_host_buffer(buffer, &upload.bytes))?;
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_buffers.take() {
+            self.destroy_persistent_buffer_cache(cache);
+        }
+        let buffers = frame
+            .buffers
+            .iter()
+            .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.persistent_buffers = Some(MtoonPersistentBufferCache { key, buffers });
+        Ok(())
+    }
+
+    fn ensure_persistent_uniform_cache(
+        &mut self,
+        frame: &AshRendererFrame,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = mtoon_persistent_uniform_cache_key(frame);
+        if let Some(cache) = self
+            .persistent_uniforms
+            .as_ref()
+            .filter(|cache| cache.key == key)
+        {
+            cache
+                .buffers
+                .iter()
+                .zip(&frame.uniforms)
+                .try_for_each(|(buffer, uniform)| self.write_host_buffer(buffer, &uniform.bytes))?;
+            return Ok(());
+        }
+        if let Some(cache) = self.persistent_uniforms.take() {
+            self.destroy_persistent_uniform_cache(cache);
+        }
+        let buffers = frame
+            .uniforms
+            .iter()
+            .map(|uniform| {
+                self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.persistent_uniforms = Some(MtoonPersistentUniformCache { key, buffers });
         Ok(())
     }
 
@@ -1173,6 +1269,27 @@ impl MtoonWindowedAshRenderer {
         bytes: &[u8],
     ) -> Result<MtoonVulkanBuffer, Box<dyn Error>> {
         self.create_host_buffer(usage | vk::BufferUsageFlags::TRANSFER_DST, bytes)
+    }
+
+    fn write_host_buffer(
+        &self,
+        buffer: &MtoonVulkanBuffer,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn Error>> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        unsafe {
+            let mapped = self.device.map_memory(
+                buffer.memory,
+                0,
+                bytes.len() as vk::DeviceSize,
+                vk::MemoryMapFlags::empty(),
+            )?;
+            ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+            self.device.unmap_memory(buffer.memory);
+        }
+        Ok(())
     }
 
     fn create_image(
@@ -1822,8 +1939,6 @@ impl MtoonWindowedAshRenderer {
             self.device
                 .destroy_descriptor_pool(resources.descriptor_pool, None);
         }
-        self.destroy_buffers(resources.uniform_buffers);
-        self.destroy_buffers(resources.buffers);
     }
 
     fn destroy_persistent_cache(&self, cache: MtoonPersistentPipelineCache) {
@@ -1846,6 +1961,14 @@ impl MtoonWindowedAshRenderer {
                 self.device.destroy_sampler(sampler, None);
             }
         }
+    }
+
+    fn destroy_persistent_buffer_cache(&self, cache: MtoonPersistentBufferCache) {
+        self.destroy_buffers(cache.buffers);
+    }
+
+    fn destroy_persistent_uniform_cache(&self, cache: MtoonPersistentUniformCache) {
+        self.destroy_buffers(cache.buffers);
     }
 
     fn destroy_persistent_texture_cache(&self, cache: MtoonPersistentTextureCache) {
@@ -1930,6 +2053,12 @@ impl Drop for MtoonWindowedAshRenderer {
         }
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
+        }
+        if let Some(cache) = self.persistent_buffers.take() {
+            self.destroy_persistent_buffer_cache(cache);
+        }
+        if let Some(cache) = self.persistent_uniforms.take() {
+            self.destroy_persistent_uniform_cache(cache);
         }
         if let Some(cache) = self.persistent_textures.take() {
             self.destroy_persistent_texture_cache(cache);
@@ -2200,6 +2329,36 @@ fn mtoon_persistent_sampler_cache_key(frame: &AshRendererFrame) -> MtoonPersiste
                         descriptor_type: binding.descriptor_type,
                         sampler: binding.sampler.unwrap_or(default_sampler_plan()),
                     })
+            })
+            .collect(),
+    }
+}
+
+fn mtoon_persistent_buffer_cache_key(frame: &AshRendererFrame) -> MtoonPersistentBufferCacheKey {
+    MtoonPersistentBufferCacheKey {
+        buffers: frame
+            .buffers
+            .iter()
+            .map(|buffer| MtoonBufferResourceKey {
+                role: buffer.role,
+                usage: buffer.usage.as_raw(),
+                stride: buffer.stride,
+                count: buffer.count,
+                byte_len: buffer.bytes.len(),
+            })
+            .collect(),
+    }
+}
+
+fn mtoon_persistent_uniform_cache_key(frame: &AshRendererFrame) -> MtoonPersistentUniformCacheKey {
+    MtoonPersistentUniformCacheKey {
+        uniforms: frame
+            .uniforms
+            .iter()
+            .map(|uniform| MtoonUniformResourceKey {
+                scope: uniform.scope,
+                binding: uniform.binding,
+                byte_len: uniform.bytes.len(),
             })
             .collect(),
     }
