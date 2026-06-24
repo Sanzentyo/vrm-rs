@@ -15,7 +15,6 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
-use std::fmt;
 use std::fs;
 use std::hash::Hasher;
 use std::path::PathBuf;
@@ -30,9 +29,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
-    AshBufferRole, AshGraphicsPipelinePlan, AshRenderOptions, AshRendererFrame, AshSamplerPlan,
-    AshUniformScope, AshVertexAttributePlan, AshVrmFramePlanOptions, AshVrmFramePlanner,
-    AshVrmPrimitive, AshVrmVertex, ash_reference_depth_format,
+    AshBufferRole, AshGraphicsPipelinePlan, AshMtoonWindowedCacheStats, AshRenderOptions,
+    AshRendererFrame, AshSamplerPlan, AshUniformScope, AshVertexAttributePlan,
+    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
+    AshWindowedResizeValidation, AshWindowedRunValidation, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
 use vrm_core::TextureRef;
@@ -421,33 +421,26 @@ impl App {
     }
 
     fn validate_resize_recreate(&self) -> Result<(), String> {
-        if self.avatar.options.resize_after_frames.is_none() {
-            return Err("--require-resize-recreate requires --resize-after-frames".to_owned());
+        AshWindowedResizeValidation {
+            resize_after_frames: self.avatar.options.resize_after_frames,
+            resize_requested: self.resize_requested,
+            resize_events_after_request: self.resize_events_after_request,
+            swapchain_recreates: self.swapchain_recreates,
         }
-        if !self.resize_requested {
-            return Err("resize was never requested".to_owned());
-        }
-        if self.resize_events_after_request == 0 {
-            return Err("no WindowEvent::Resized was observed after resize request".to_owned());
-        }
-        if self.swapchain_recreates == 0 {
-            return Err("renderer.recreate_swapchain was never called".to_owned());
-        }
-        Ok(())
+        .validate_recreate()
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
-    if options.simple_preview && options.require_cache_hits {
-        return Err("--require-cache-hits is only supported by the MToon renderer path".into());
+    AshWindowedRunValidation {
+        simple_preview: options.simple_preview,
+        require_cache_hits: options.require_cache_hits,
+        require_resize_recreate: options.require_resize_recreate,
+        resize_after_frames: options.resize_after_frames,
+        frames_in_flight: options.frames_in_flight,
     }
-    if options.require_resize_recreate && options.resize_after_frames.is_none() {
-        return Err("--require-resize-recreate requires --resize-after-frames".into());
-    }
-    if options.frames_in_flight == 0 {
-        return Err("--frames-in-flight must be at least 1".into());
-    }
+    .validate()?;
     let avatar = WindowedAvatar::new(options)?;
     let shaders = ShaderModules {
         vertex: read_spirv_words(&avatar.options.vertex_spv, avatar.options.simple_preview)?,
@@ -636,77 +629,6 @@ fn write_host_buffer(
 enum RenderStatus {
     Ok,
     NeedsRecreate,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct CacheCounter {
-    hits: u64,
-    rebuilds: u64,
-}
-
-impl CacheCounter {
-    fn hit(&mut self) {
-        self.hits = self.hits.saturating_add(1);
-    }
-
-    fn rebuild(&mut self) {
-        self.rebuilds = self.rebuilds.saturating_add(1);
-    }
-
-    fn validate_hits(self, name: &'static str) -> Result<(), String> {
-        (self.hits > 0)
-            .then_some(())
-            .ok_or_else(|| format!("{name} cache reported no hits; run at least two MToon frames"))
-    }
-}
-
-impl fmt::Display for CacheCounter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "hits={},rebuilds={}", self.hits, self.rebuilds)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct MtoonWindowedCacheStats {
-    pipeline: CacheCounter,
-    descriptors: CacheCounter,
-    samplers: CacheCounter,
-    buffers: CacheCounter,
-    uniforms: CacheCounter,
-    textures: CacheCounter,
-    fallback_textures: CacheCounter,
-    command_buffers: CacheCounter,
-}
-
-impl MtoonWindowedCacheStats {
-    fn validate_steady_state_hits(self) -> Result<(), String> {
-        self.pipeline.validate_hits("pipeline")?;
-        self.descriptors.validate_hits("descriptor")?;
-        self.samplers.validate_hits("sampler")?;
-        self.buffers.validate_hits("buffer")?;
-        self.uniforms.validate_hits("uniform")?;
-        self.textures.validate_hits("texture")?;
-        self.fallback_textures.validate_hits("fallback texture")?;
-        self.command_buffers.validate_hits("draw command buffer")?;
-        Ok(())
-    }
-}
-
-impl fmt::Display for MtoonWindowedCacheStats {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "pipeline({}); descriptors({}); samplers({}); buffers({}); uniforms({}); textures({}); fallback_textures({}); command_buffers({})",
-            self.pipeline,
-            self.descriptors,
-            self.samplers,
-            self.buffers,
-            self.uniforms,
-            self.textures,
-            self.fallback_textures,
-            self.command_buffers
-        )
-    }
 }
 
 struct MtoonVulkanBuffer {
@@ -935,7 +857,7 @@ struct MtoonWindowedAshRenderer {
     persistent_uniforms: Option<MtoonPersistentUniformCache>,
     persistent_textures: Option<MtoonPersistentTextureCache>,
     persistent_fallback_textures: Option<MtoonPersistentFallbackTextureCache>,
-    cache_stats: MtoonWindowedCacheStats,
+    cache_stats: AshMtoonWindowedCacheStats,
 }
 
 impl MtoonWindowedAshRenderer {
@@ -1030,11 +952,11 @@ impl MtoonWindowedAshRenderer {
             persistent_uniforms: None,
             persistent_textures: None,
             persistent_fallback_textures: None,
-            cache_stats: MtoonWindowedCacheStats::default(),
+            cache_stats: AshMtoonWindowedCacheStats::default(),
         })
     }
 
-    fn cache_stats(&self) -> MtoonWindowedCacheStats {
+    fn cache_stats(&self) -> AshMtoonWindowedCacheStats {
         self.cache_stats
     }
 

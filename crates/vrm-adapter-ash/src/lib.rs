@@ -12,6 +12,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
+    fmt,
     path::PathBuf,
     sync::Arc,
 };
@@ -259,6 +260,127 @@ impl AshDiagnosticRender {
             Self::OwnerId => 5.0,
             Self::Shaded | Self::Flat => 0.0,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshWindowedRunValidation {
+    pub simple_preview: bool,
+    pub require_cache_hits: bool,
+    pub require_resize_recreate: bool,
+    pub resize_after_frames: Option<u64>,
+    pub frames_in_flight: usize,
+}
+
+impl AshWindowedRunValidation {
+    pub fn validate(self) -> Result<(), String> {
+        if self.simple_preview && self.require_cache_hits {
+            return Err("--require-cache-hits is only supported by the MToon renderer path".into());
+        }
+        if self.require_resize_recreate && self.resize_after_frames.is_none() {
+            return Err("--require-resize-recreate requires --resize-after-frames".into());
+        }
+        if self.frames_in_flight == 0 {
+            return Err("--frames-in-flight must be at least 1".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshWindowedResizeValidation {
+    pub resize_after_frames: Option<u64>,
+    pub resize_requested: bool,
+    pub resize_events_after_request: u64,
+    pub swapchain_recreates: u64,
+}
+
+impl AshWindowedResizeValidation {
+    pub fn validate_recreate(self) -> Result<(), String> {
+        if self.resize_after_frames.is_none() {
+            return Err("--require-resize-recreate requires --resize-after-frames".to_owned());
+        }
+        if !self.resize_requested {
+            return Err("resize was never requested".to_owned());
+        }
+        if self.resize_events_after_request == 0 {
+            return Err("no WindowEvent::Resized was observed after resize request".to_owned());
+        }
+        if self.swapchain_recreates == 0 {
+            return Err("renderer.recreate_swapchain was never called".to_owned());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshWindowedCacheCounter {
+    pub hits: u64,
+    pub rebuilds: u64,
+}
+
+impl AshWindowedCacheCounter {
+    pub fn hit(&mut self) {
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    pub fn rebuild(&mut self) {
+        self.rebuilds = self.rebuilds.saturating_add(1);
+    }
+
+    pub fn validate_hits(self, name: &str) -> Result<(), String> {
+        (self.hits > 0)
+            .then_some(())
+            .ok_or_else(|| format!("{name} cache reported no hits; run at least two MToon frames"))
+    }
+}
+
+impl fmt::Display for AshWindowedCacheCounter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "hits={},rebuilds={}", self.hits, self.rebuilds)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AshMtoonWindowedCacheStats {
+    pub pipeline: AshWindowedCacheCounter,
+    pub descriptors: AshWindowedCacheCounter,
+    pub samplers: AshWindowedCacheCounter,
+    pub buffers: AshWindowedCacheCounter,
+    pub uniforms: AshWindowedCacheCounter,
+    pub textures: AshWindowedCacheCounter,
+    pub fallback_textures: AshWindowedCacheCounter,
+    pub command_buffers: AshWindowedCacheCounter,
+}
+
+impl AshMtoonWindowedCacheStats {
+    pub fn validate_steady_state_hits(self) -> Result<(), String> {
+        self.pipeline.validate_hits("pipeline")?;
+        self.descriptors.validate_hits("descriptor")?;
+        self.samplers.validate_hits("sampler")?;
+        self.buffers.validate_hits("buffer")?;
+        self.uniforms.validate_hits("uniform")?;
+        self.textures.validate_hits("texture")?;
+        self.fallback_textures.validate_hits("fallback texture")?;
+        self.command_buffers.validate_hits("draw command buffer")?;
+        Ok(())
+    }
+}
+
+impl fmt::Display for AshMtoonWindowedCacheStats {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "pipeline({}); descriptors({}); samplers({}); buffers({}); uniforms({}); textures({}); fallback_textures({}); command_buffers({})",
+            self.pipeline,
+            self.descriptors,
+            self.samplers,
+            self.buffers,
+            self.uniforms,
+            self.textures,
+            self.fallback_textures,
+            self.command_buffers
+        )
     }
 }
 
@@ -4787,6 +4909,117 @@ mod tests {
         assert_eq!(
             render_options.diagnostic_render,
             AshDiagnosticRender::OwnerId
+        );
+    }
+
+    #[test]
+    fn windowed_run_validation_matches_viewer_contract() {
+        assert_eq!(
+            AshWindowedRunValidation {
+                simple_preview: true,
+                require_cache_hits: true,
+                frames_in_flight: 1,
+                ..Default::default()
+            }
+            .validate(),
+            Err("--require-cache-hits is only supported by the MToon renderer path".to_owned())
+        );
+        assert_eq!(
+            AshWindowedRunValidation {
+                require_resize_recreate: true,
+                frames_in_flight: 1,
+                ..Default::default()
+            }
+            .validate(),
+            Err("--require-resize-recreate requires --resize-after-frames".to_owned())
+        );
+        assert_eq!(
+            AshWindowedRunValidation {
+                frames_in_flight: 0,
+                ..Default::default()
+            }
+            .validate(),
+            Err("--frames-in-flight must be at least 1".to_owned())
+        );
+        assert!(
+            AshWindowedRunValidation {
+                require_cache_hits: true,
+                require_resize_recreate: true,
+                resize_after_frames: Some(8),
+                frames_in_flight: 2,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn windowed_resize_validation_requires_observed_recreate() {
+        assert_eq!(
+            AshWindowedResizeValidation::default().validate_recreate(),
+            Err("--require-resize-recreate requires --resize-after-frames".to_owned())
+        );
+        assert_eq!(
+            AshWindowedResizeValidation {
+                resize_after_frames: Some(8),
+                ..Default::default()
+            }
+            .validate_recreate(),
+            Err("resize was never requested".to_owned())
+        );
+        assert_eq!(
+            AshWindowedResizeValidation {
+                resize_after_frames: Some(8),
+                resize_requested: true,
+                ..Default::default()
+            }
+            .validate_recreate(),
+            Err("no WindowEvent::Resized was observed after resize request".to_owned())
+        );
+        assert_eq!(
+            AshWindowedResizeValidation {
+                resize_after_frames: Some(8),
+                resize_requested: true,
+                resize_events_after_request: 1,
+                ..Default::default()
+            }
+            .validate_recreate(),
+            Err("renderer.recreate_swapchain was never called".to_owned())
+        );
+        assert!(
+            AshWindowedResizeValidation {
+                resize_after_frames: Some(8),
+                resize_requested: true,
+                resize_events_after_request: 1,
+                swapchain_recreates: 1,
+            }
+            .validate_recreate()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn windowed_cache_stats_validate_steady_state_hits() {
+        let mut stats = AshMtoonWindowedCacheStats::default();
+        assert_eq!(
+            stats.validate_steady_state_hits(),
+            Err("pipeline cache reported no hits; run at least two MToon frames".to_owned())
+        );
+        stats.pipeline.hit();
+        stats.descriptors.hit();
+        stats.samplers.hit();
+        stats.buffers.hit();
+        stats.uniforms.hit();
+        stats.textures.hit();
+        stats.fallback_textures.hit();
+        stats.command_buffers.hit();
+        stats.pipeline.rebuild();
+
+        assert!(stats.validate_steady_state_hits().is_ok());
+        assert_eq!(
+            stats.to_string(),
+            "pipeline(hits=1,rebuilds=1); descriptors(hits=1,rebuilds=0); samplers(hits=1,rebuilds=0); buffers(hits=1,rebuilds=0); uniforms(hits=1,rebuilds=0); textures(hits=1,rebuilds=0); fallback_textures(hits=1,rebuilds=0); command_buffers(hits=1,rebuilds=0)"
         );
     }
 
