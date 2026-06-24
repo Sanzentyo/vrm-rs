@@ -975,23 +975,24 @@ impl UnsafeAshDeviceRenderer {
             }
             self.device.cmd_end_render_pass(command_buffer);
             let readback_plan = ash_color_attachment_readback_plan(context.extent);
-            let readback_barriers = [readback_plan.transfer_src_barrier(context.color_target)];
+            let readback_barrier = readback_plan.transfer_src_barrier_command(context.color_target);
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
+                readback_barrier.src_stage_mask,
+                readback_barrier.dst_stage_mask,
+                readback_barrier.dependency_flags,
                 &[],
                 &[],
-                &readback_barriers,
+                &readback_barrier.image_barriers,
             );
-            let copy_regions = readback_plan.copy_regions();
+            let copy = readback_plan
+                .image_to_buffer_copy_command(context.color_target, context.readback_buffer);
             self.device.cmd_copy_image_to_buffer(
                 command_buffer,
-                context.color_target,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                context.readback_buffer,
-                &copy_regions,
+                copy.image,
+                copy.image_layout,
+                copy.buffer,
+                &copy.regions,
             );
             self.device.end_command_buffer(command_buffer)?;
         }
@@ -1046,33 +1047,34 @@ impl UnsafeAshDeviceRenderer {
         mip_levels: &[RgbaMipLevel],
     ) {
         let plan = ash_texture_upload_command_plan(mip_levels);
-        let to_transfer = [plan.transfer_dst_barrier(image)];
+        let to_transfer = plan.transfer_dst_barrier_command(image);
         unsafe {
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
+                to_transfer.src_stage_mask,
+                to_transfer.dst_stage_mask,
+                to_transfer.dependency_flags,
                 &[],
                 &[],
-                &to_transfer,
+                &to_transfer.image_barriers,
             );
+            let copy = plan.buffer_to_image_copy_command(staging_buffer, image);
             self.device.cmd_copy_buffer_to_image(
                 command_buffer,
-                staging_buffer,
-                image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &plan.copy_regions,
+                copy.buffer,
+                copy.image,
+                copy.image_layout,
+                copy.regions,
             );
-            let to_shader = [plan.shader_read_barrier(image)];
+            let to_shader = plan.shader_read_barrier_command(image);
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
+                to_shader.src_stage_mask,
+                to_shader.dst_stage_mask,
+                to_shader.dependency_flags,
                 &[],
                 &[],
-                &to_shader,
+                &to_shader.image_barriers,
             );
         }
     }

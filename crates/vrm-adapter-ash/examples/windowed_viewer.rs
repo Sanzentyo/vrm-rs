@@ -2235,33 +2235,34 @@ fn record_mtoon_texture_upload(
     mip_levels: &[RgbaMipLevel],
 ) {
     let plan = ash_texture_upload_command_plan(mip_levels);
-    let to_transfer = [plan.transfer_dst_barrier(image)];
+    let to_transfer = plan.transfer_dst_barrier_command(image);
     unsafe {
         device.cmd_pipeline_barrier(
             command_buffer,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::DependencyFlags::empty(),
+            to_transfer.src_stage_mask,
+            to_transfer.dst_stage_mask,
+            to_transfer.dependency_flags,
             &[],
             &[],
-            &to_transfer,
+            &to_transfer.image_barriers,
         );
+        let copy = plan.buffer_to_image_copy_command(staging_buffer, image);
         device.cmd_copy_buffer_to_image(
             command_buffer,
-            staging_buffer,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &plan.copy_regions,
+            copy.buffer,
+            copy.image,
+            copy.image_layout,
+            copy.regions,
         );
-        let to_shader = [plan.shader_read_barrier(image)];
+        let to_shader = plan.shader_read_barrier_command(image);
         device.cmd_pipeline_barrier(
             command_buffer,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
+            to_shader.src_stage_mask,
+            to_shader.dst_stage_mask,
+            to_shader.dependency_flags,
             &[],
             &[],
-            &to_shader,
+            &to_shader.image_barriers,
         );
     }
 }

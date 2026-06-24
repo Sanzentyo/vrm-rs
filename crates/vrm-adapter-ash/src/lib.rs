@@ -1547,6 +1547,15 @@ impl AshTextureUploadCommandPlan {
             .subresource_range(self.subresource_range)
     }
 
+    pub fn transfer_dst_barrier_command(&self, image: vk::Image) -> AshImageBarrierCommand {
+        AshImageBarrierCommand {
+            src_stage_mask: vk::PipelineStageFlags::TOP_OF_PIPE,
+            dst_stage_mask: vk::PipelineStageFlags::TRANSFER,
+            dependency_flags: vk::DependencyFlags::empty(),
+            image_barriers: [self.transfer_dst_barrier(image)],
+        }
+    }
+
     pub fn shader_read_barrier(&self, image: vk::Image) -> vk::ImageMemoryBarrier<'static> {
         vk::ImageMemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -1556,6 +1565,44 @@ impl AshTextureUploadCommandPlan {
             .image(image)
             .subresource_range(self.subresource_range)
     }
+
+    pub fn shader_read_barrier_command(&self, image: vk::Image) -> AshImageBarrierCommand {
+        AshImageBarrierCommand {
+            src_stage_mask: vk::PipelineStageFlags::TRANSFER,
+            dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            dependency_flags: vk::DependencyFlags::empty(),
+            image_barriers: [self.shader_read_barrier(image)],
+        }
+    }
+
+    pub fn buffer_to_image_copy_command(
+        &self,
+        staging_buffer: vk::Buffer,
+        image: vk::Image,
+    ) -> AshBufferToImageCopyCommand<'_> {
+        AshBufferToImageCopyCommand {
+            buffer: staging_buffer,
+            image,
+            image_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            regions: &self.copy_regions,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshImageBarrierCommand {
+    pub src_stage_mask: vk::PipelineStageFlags,
+    pub dst_stage_mask: vk::PipelineStageFlags,
+    pub dependency_flags: vk::DependencyFlags,
+    pub image_barriers: [vk::ImageMemoryBarrier<'static>; 1],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshBufferToImageCopyCommand<'a> {
+    pub buffer: vk::Buffer,
+    pub image: vk::Image,
+    pub image_layout: vk::ImageLayout,
+    pub regions: &'a [vk::BufferImageCopy],
 }
 
 pub fn ash_texture_upload_command_plan(mip_levels: &[RgbaMipLevel]) -> AshTextureUploadCommandPlan {
@@ -1620,9 +1667,39 @@ impl AshColorAttachmentReadbackPlan {
             .subresource_range(self.subresource_range)
     }
 
+    pub fn transfer_src_barrier_command(&self, image: vk::Image) -> AshImageBarrierCommand {
+        AshImageBarrierCommand {
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_stage_mask: vk::PipelineStageFlags::TRANSFER,
+            dependency_flags: vk::DependencyFlags::empty(),
+            image_barriers: [self.transfer_src_barrier(image)],
+        }
+    }
+
     pub fn copy_regions(&self) -> [vk::BufferImageCopy; 1] {
         [self.copy_region]
     }
+
+    pub fn image_to_buffer_copy_command(
+        &self,
+        image: vk::Image,
+        buffer: vk::Buffer,
+    ) -> AshImageToBufferCopyCommand {
+        AshImageToBufferCopyCommand {
+            image,
+            image_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            buffer,
+            regions: self.copy_regions(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshImageToBufferCopyCommand {
+    pub image: vk::Image,
+    pub image_layout: vk::ImageLayout,
+    pub buffer: vk::Buffer,
+    pub regions: [vk::BufferImageCopy; 1],
 }
 
 pub fn ash_color_attachment_readback_plan(extent: vk::Extent2D) -> AshColorAttachmentReadbackPlan {
@@ -8270,6 +8347,7 @@ mod tests {
 
         let image = vk::Image::null();
         let to_transfer = plan.transfer_dst_barrier(image);
+        let to_transfer_command = plan.transfer_dst_barrier_command(image);
         assert_eq!(to_transfer.dst_access_mask, vk::AccessFlags::TRANSFER_WRITE);
         assert_eq!(to_transfer.old_layout, vk::ImageLayout::UNDEFINED);
         assert_eq!(
@@ -8277,8 +8355,24 @@ mod tests {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL
         );
         assert_eq!(to_transfer.image, image);
+        assert_eq!(
+            to_transfer_command.src_stage_mask,
+            vk::PipelineStageFlags::TOP_OF_PIPE
+        );
+        assert_eq!(
+            to_transfer_command.dst_stage_mask,
+            vk::PipelineStageFlags::TRANSFER
+        );
+        assert_eq!(to_transfer_command.image_barriers[0].image, image);
+
+        let copy = plan.buffer_to_image_copy_command(vk::Buffer::null(), image);
+        assert_eq!(copy.buffer, vk::Buffer::null());
+        assert_eq!(copy.image, image);
+        assert_eq!(copy.image_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        assert_eq!(copy.regions.len(), 3);
 
         let to_shader = plan.shader_read_barrier(image);
+        let to_shader_command = plan.shader_read_barrier_command(image);
         assert_eq!(to_shader.src_access_mask, vk::AccessFlags::TRANSFER_WRITE);
         assert_eq!(to_shader.dst_access_mask, vk::AccessFlags::SHADER_READ);
         assert_eq!(to_shader.old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
@@ -8287,6 +8381,15 @@ mod tests {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         );
         assert_eq!(to_shader.image, image);
+        assert_eq!(
+            to_shader_command.src_stage_mask,
+            vk::PipelineStageFlags::TRANSFER
+        );
+        assert_eq!(
+            to_shader_command.dst_stage_mask,
+            vk::PipelineStageFlags::FRAGMENT_SHADER
+        );
+        assert_eq!(to_shader_command.image_barriers[0].image, image);
     }
 
     #[test]
@@ -8297,7 +8400,9 @@ mod tests {
         });
         let image = vk::Image::null();
         let barrier = plan.transfer_src_barrier(image);
+        let barrier_command = plan.transfer_src_barrier_command(image);
         let regions = plan.copy_regions();
+        let copy = plan.image_to_buffer_copy_command(image, vk::Buffer::null());
 
         assert_eq!(
             plan.subresource_range.aspect_mask,
@@ -8317,6 +8422,15 @@ mod tests {
         assert_eq!(barrier.new_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         assert_eq!(barrier.image, image);
         assert_eq!(
+            barrier_command.src_stage_mask,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+        );
+        assert_eq!(
+            barrier_command.dst_stage_mask,
+            vk::PipelineStageFlags::TRANSFER
+        );
+        assert_eq!(barrier_command.image_barriers[0].image, image);
+        assert_eq!(
             regions[0].image_subresource.aspect_mask,
             vk::ImageAspectFlags::COLOR
         );
@@ -8324,6 +8438,10 @@ mod tests {
         assert_eq!(regions[0].image_extent.width, 64);
         assert_eq!(regions[0].image_extent.height, 32);
         assert_eq!(regions[0].image_extent.depth, 1);
+        assert_eq!(copy.image, image);
+        assert_eq!(copy.image_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        assert_eq!(copy.buffer, vk::Buffer::null());
+        assert_eq!(copy.regions[0].image_extent.width, 64);
     }
 
     #[test]
