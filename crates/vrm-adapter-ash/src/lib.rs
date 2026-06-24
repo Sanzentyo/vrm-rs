@@ -2228,6 +2228,98 @@ pub const fn ash_one_time_command_buffer_begin_plan() -> AshCommandBufferBeginPl
     ash_command_buffer_begin_plan(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshCommandBufferAllocationPlan {
+    pub command_pool: vk::CommandPool,
+    pub level: vk::CommandBufferLevel,
+    pub command_buffer_count: u32,
+}
+
+impl AshCommandBufferAllocationPlan {
+    pub fn command_buffer_allocate_info(&self) -> vk::CommandBufferAllocateInfo<'static> {
+        vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.command_pool)
+            .level(self.level)
+            .command_buffer_count(self.command_buffer_count)
+    }
+}
+
+pub const fn ash_command_buffer_allocation_plan(
+    command_pool: vk::CommandPool,
+    level: vk::CommandBufferLevel,
+    command_buffer_count: u32,
+) -> AshCommandBufferAllocationPlan {
+    AshCommandBufferAllocationPlan {
+        command_pool,
+        level,
+        command_buffer_count,
+    }
+}
+
+pub const fn ash_primary_command_buffer_allocation_plan(
+    command_pool: vk::CommandPool,
+    command_buffer_count: u32,
+) -> AshCommandBufferAllocationPlan {
+    ash_command_buffer_allocation_plan(
+        command_pool,
+        vk::CommandBufferLevel::PRIMARY,
+        command_buffer_count,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshFencePlan {
+    pub flags: vk::FenceCreateFlags,
+}
+
+impl AshFencePlan {
+    pub fn fence_create_info(self) -> vk::FenceCreateInfo<'static> {
+        vk::FenceCreateInfo::default().flags(self.flags)
+    }
+}
+
+pub const fn ash_fence_plan(flags: vk::FenceCreateFlags) -> AshFencePlan {
+    AshFencePlan { flags }
+}
+
+pub const fn ash_unsignaled_fence_plan() -> AshFencePlan {
+    ash_fence_plan(vk::FenceCreateFlags::empty())
+}
+
+pub const fn ash_signaled_fence_plan() -> AshFencePlan {
+    ash_fence_plan(vk::FenceCreateFlags::SIGNALED)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshQueueSubmitPlan {
+    pub command_buffers: Vec<vk::CommandBuffer>,
+    pub fence: vk::Fence,
+}
+
+impl AshQueueSubmitPlan {
+    pub fn submit_info(&self) -> vk::SubmitInfo<'_> {
+        vk::SubmitInfo::default().command_buffers(&self.command_buffers)
+    }
+
+    pub fn submit_infos(&self) -> [vk::SubmitInfo<'_>; 1] {
+        [self.submit_info()]
+    }
+
+    pub const fn wait_fences(&self) -> [vk::Fence; 1] {
+        [self.fence]
+    }
+}
+
+pub fn ash_queue_submit_plan(
+    command_buffers: Vec<vk::CommandBuffer>,
+    fence: vk::Fence,
+) -> AshQueueSubmitPlan {
+    AshQueueSubmitPlan {
+        command_buffers,
+        fence,
+    }
+}
+
 #[derive(Clone)]
 pub struct AshRenderPassBeginPlan {
     pub render_pass: vk::RenderPass,
@@ -7081,6 +7173,35 @@ mod tests {
                 .flags,
             vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
         );
+
+        let allocation = ash_primary_command_buffer_allocation_plan(vk::CommandPool::null(), 3);
+        let allocation_info = allocation.command_buffer_allocate_info();
+        assert_eq!(allocation.command_pool, vk::CommandPool::null());
+        assert_eq!(allocation.level, vk::CommandBufferLevel::PRIMARY);
+        assert_eq!(allocation.command_buffer_count, 3);
+        assert_eq!(allocation_info.command_pool, vk::CommandPool::null());
+        assert_eq!(allocation_info.level, vk::CommandBufferLevel::PRIMARY);
+        assert_eq!(allocation_info.command_buffer_count, 3);
+
+        let signaled_fence = ash_signaled_fence_plan();
+        assert_eq!(signaled_fence.flags, vk::FenceCreateFlags::SIGNALED);
+        assert_eq!(
+            signaled_fence.fence_create_info().flags,
+            vk::FenceCreateFlags::SIGNALED
+        );
+        assert_eq!(
+            ash_unsignaled_fence_plan().fence_create_info().flags,
+            vk::FenceCreateFlags::empty()
+        );
+
+        let submit = ash_queue_submit_plan(
+            vec![vk::CommandBuffer::null(), vk::CommandBuffer::null()],
+            vk::Fence::null(),
+        );
+        let submit_info = submit.submit_info();
+        assert_eq!(submit.command_buffers.len(), 2);
+        assert_eq!(submit.wait_fences(), [vk::Fence::null()]);
+        assert_eq!(submit_info.command_buffer_count, 2);
 
         let render_pass_plan = AshRenderPassPlan {
             render_area: vk::Rect2D {

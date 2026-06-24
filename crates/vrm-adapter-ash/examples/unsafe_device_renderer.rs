@@ -28,10 +28,11 @@ use vrm_adapter_ash::{
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_material_texture_binding,
     ash_memory_type_index, ash_mtoon_texture_binding, ash_pipeline_layout_plans,
-    ash_render_pass_begin_plan, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
+    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
     ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_texture_mip_upload_bytes,
-    ash_texture_upload_command_plan, frame_plan_from_options_with_viewport,
+    ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
+    frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
     GltfAlphaMode, GltfMaterialTextureFallback, GltfMaterialTextureSlot, RgbaMipLevel,
@@ -1002,10 +1003,8 @@ impl UnsafeAshDeviceRenderer {
             )
             .into());
         }
-        let allocate_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(context.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
+        let allocate_plan = ash_primary_command_buffer_allocation_plan(context.command_pool, 1);
+        let allocate_info = allocate_plan.command_buffer_allocate_info();
         let command_buffers = unsafe { self.device.allocate_command_buffers(&allocate_info)? };
         let command_buffer = command_buffers[0];
         let begin_info = ash_reusable_command_buffer_begin_plan().command_buffer_begin_info();
@@ -1203,13 +1202,16 @@ impl UnsafeAshDeviceRenderer {
         resources: &VulkanFrameResources,
     ) -> Result<ReadbackFrame, Box<dyn Error>> {
         let queue = unsafe { self.device.get_device_queue(self.queue_family_index, 0) };
-        let submit_info = [vk::SubmitInfo::default().command_buffers(&resources.command_buffers)];
-        let fence_info = vk::FenceCreateInfo::default();
+        let fence_info = ash_unsignaled_fence_plan().fence_create_info();
         let fence = unsafe { self.device.create_fence(&fence_info, None)? };
+        let submit_plan = ash_queue_submit_plan(resources.command_buffers.clone(), fence);
+        let submit_info = submit_plan.submit_infos();
+        let wait_fences = submit_plan.wait_fences();
         unsafe {
-            self.device.queue_submit(queue, &submit_info, fence)?;
-            self.device.wait_for_fences(&[fence], true, u64::MAX)?;
-            self.device.destroy_fence(fence, None);
+            self.device
+                .queue_submit(queue, &submit_info, submit_plan.fence)?;
+            self.device.wait_for_fences(&wait_fences, true, u64::MAX)?;
+            self.device.destroy_fence(submit_plan.fence, None);
         }
         self.readback_summary(resources)
     }
