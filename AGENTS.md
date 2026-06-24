@@ -18,6 +18,7 @@ cargo +nightly -Zscript tools/ci/local-ci.rs
 ```powershell
 just ci
 just ci-external
+just ci-ash-windowed
 just render-parity
 just render-parity-samples
 ```
@@ -27,6 +28,7 @@ just render-parity-samples
 ```powershell
 cargo +nightly -Zscript tools/ci/local-ci.rs
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
+cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --ash-windowed-smoke --ash-windowed-resize-smoke
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
@@ -36,7 +38,7 @@ The default script run covers `cargo fmt --all -- --check`, `cargo test --worksp
 
 - Treat coverage table/progress updates as routine mechanical work suitable for delegation.
 - Prefer a Codex subagent with `gpt-5.4-codex-mini` for routine coverage refreshes and other clearly specified mechanical edits.
-- The delegated subagent must follow `docs/agents/coverage-spark.md` and use `tools/coverage/update-coverage-docs.ps1`.
+- The delegated subagent must follow `docs/agents/coverage-mini.md` and use `tools/coverage/update-coverage-docs.ps1`.
 - Preferred flow:
 
 ```powershell

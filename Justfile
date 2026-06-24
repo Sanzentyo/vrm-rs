@@ -16,6 +16,10 @@ ci:
 ci-external:
     cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 
+# Run the opt-in GPU/window Ash swapchain smoke lane through the Rust local CI script.
+ci-ash-windowed:
+    cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --ash-windowed-smoke --ash-windowed-resize-smoke
+
 # Viewer and animation examples.
 
 # Sample a VRMA clip onto a VRM avatar through the renderer-neutral headless adapter.

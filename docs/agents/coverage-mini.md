@@ -1,4 +1,4 @@
-# coverage-spark Playbook（Codex mini サブエージェント向け）
+# coverage-mini Playbook（Codex mini サブエージェント向け）
 
 このガイドは、カバレッジ表と進捗行の定型更新を委譲するエージェント向けに、`cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` 実行結果から
 `docs/testing.md` の `Current Coverage Snapshot` 表と `docs/progress.md` の最新カバレッジ行を反映する手順を定義します。
@@ -51,7 +51,7 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 
 親エージェントは、coverage 更新を narrow な worker タスクとして委譲します。プロンプトには必ず次を含めます。
 
-- このファイル（`docs/agents/coverage-spark.md`）に従うこと。
+- このファイル（`docs/agents/coverage-mini.md`）に従うこと。
 - `tools/coverage/update-coverage-docs.ps1` のみを使い、`docs/testing.md` と `docs/progress.md` だけを更新すること。
 - 日付は CI 実行日（`YYYY-MM-DD`）に合わせること。
 - 他のファイルや本体コードには触らないこと。

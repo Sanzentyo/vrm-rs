@@ -16,6 +16,7 @@ sha2 = "0.11.0"
 //! cargo +nightly -Zscript tools/ci/local-ci.rs
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures
 //! cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
+//! cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --ash-windowed-smoke
 
 use clap::{Parser, ValueEnum};
 use sha2::{Digest, Sha256};
@@ -45,7 +46,7 @@ fn script_args() -> impl Iterator<Item = OsString> {
 #[command(
     name = "local-ci",
     about = "Local vrm-rs CI runner",
-    after_help = "Examples:\n  cargo +nightly -Zscript tools/ci/local-ci.rs\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity"
+    after_help = "Examples:\n  cargo +nightly -Zscript tools/ci/local-ci.rs\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --external-fixtures\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity\n  cargo +nightly -Zscript tools/ci/local-ci.rs -- --skip-core --skip-coverage --ash-windowed-smoke"
 )]
 struct Options {
     #[arg(long, hide = true)]
@@ -58,6 +59,28 @@ struct Options {
     render_ash_readback: bool,
     #[arg(long)]
     render_ash_visual_gate: bool,
+    #[arg(long)]
+    ash_windowed_smoke: bool,
+    #[arg(long)]
+    ash_windowed_resize_smoke: bool,
+    #[arg(long, default_value = ".external-fixtures/official/Seed-san.vrm")]
+    ash_windowed_avatar: PathBuf,
+    #[arg(long, default_value = ".external-fixtures/official/idle_loop.vrma")]
+    ash_windowed_animation: PathBuf,
+    #[arg(long, default_value = "target/ash-mtoon-wgsl-base-shaders")]
+    ash_windowed_shader_dir: PathBuf,
+    #[arg(long, default_value_t = 24)]
+    ash_windowed_frames: u32,
+    #[arg(long, default_value_t = 36)]
+    ash_windowed_resize_frames: u32,
+    #[arg(long, default_value_t = 8)]
+    ash_windowed_resize_after_frames: u32,
+    #[arg(long, default_value_t = 960)]
+    ash_windowed_resize_width: u32,
+    #[arg(long, default_value_t = 540)]
+    ash_windowed_resize_height: u32,
+    #[arg(long, default_value_t = 2)]
+    ash_windowed_frames_in_flight: u32,
     #[arg(long)]
     skip_core: bool,
     #[arg(long)]
@@ -418,6 +441,10 @@ fn run(options: Options) -> Result<(), String> {
         return Err("--render-ash-visual-gate requires --render-parity".to_owned());
     }
 
+    if options.ash_windowed_smoke || options.ash_windowed_resize_smoke {
+        run_ash_windowed_ci(&options)?;
+    }
+
     Ok(())
 }
 
@@ -661,6 +688,136 @@ fn run_example_smokes() -> Result<(), String> {
         ],
     )?;
     Ok(())
+}
+
+fn run_ash_windowed_ci(options: &Options) -> Result<(), String> {
+    if options.ash_windowed_frames == 0 {
+        return Err("--ash-windowed-frames must be at least 1".to_owned());
+    }
+    if options.ash_windowed_resize_frames == 0 {
+        return Err("--ash-windowed-resize-frames must be at least 1".to_owned());
+    }
+    if options.ash_windowed_resize_after_frames >= options.ash_windowed_resize_frames {
+        return Err(
+            "--ash-windowed-resize-after-frames must be smaller than --ash-windowed-resize-frames"
+                .to_owned(),
+        );
+    }
+    if options.ash_windowed_frames_in_flight == 0 {
+        return Err("--ash-windowed-frames-in-flight must be at least 1".to_owned());
+    }
+
+    compile_ash_windowed_mtoon_shaders(options)?;
+    if options.ash_windowed_smoke {
+        run_ash_windowed_viewer_smoke(options, false)?;
+    }
+    if options.ash_windowed_resize_smoke {
+        run_ash_windowed_viewer_smoke(options, true)?;
+    }
+    Ok(())
+}
+
+fn compile_ash_windowed_mtoon_shaders(options: &Options) -> Result<(), String> {
+    fs::create_dir_all(&options.ash_windowed_shader_dir)
+        .map_err(|err| format!("failed to create ash shader dir: {err}"))?;
+    compile_ash_windowed_mtoon_shader(
+        "vertex",
+        "vs_main",
+        &options
+            .ash_windowed_shader_dir
+            .join("mtoon_base.wgsl.vert.spv"),
+    )?;
+    compile_ash_windowed_mtoon_shader(
+        "fragment",
+        "fs_main",
+        &options
+            .ash_windowed_shader_dir
+            .join("mtoon_base.wgsl.frag.spv"),
+    )
+}
+
+fn compile_ash_windowed_mtoon_shader(
+    stage: &str,
+    entry: &str,
+    out: &Path,
+) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "+nightly",
+            "-Zscript",
+            "tools/ash/compile-wgsl-to-spirv.rs",
+            "--prelude",
+            "crates/vrm-adapter/src/mtoon_reference.wgsl",
+            "--source",
+            "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
+            "--entry",
+            entry,
+            "--stage",
+            stage,
+            "--out",
+        ])
+        .arg(out)
+        .arg("--no-adjust-coordinate-space");
+    run_command(command)
+}
+
+fn run_ash_windowed_viewer_smoke(options: &Options, resize: bool) -> Result<(), String> {
+    let frames = if resize {
+        options.ash_windowed_resize_frames
+    } else {
+        options.ash_windowed_frames
+    };
+    let vertex_spv = options
+        .ash_windowed_shader_dir
+        .join("mtoon_base.wgsl.vert.spv");
+    let fragment_spv = options
+        .ash_windowed_shader_dir
+        .join("mtoon_base.wgsl.frag.spv");
+    let frames = frames.to_string();
+    let frames_in_flight = options.ash_windowed_frames_in_flight.to_string();
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "run",
+            "--release",
+            "-p",
+            "vrm-adapter-ash",
+            "--example",
+            "windowed_viewer",
+            "--",
+            "--avatar",
+        ])
+        .arg(&options.ash_windowed_avatar)
+        .arg("--animation")
+        .arg(&options.ash_windowed_animation)
+        .arg("--vertex-spv")
+        .arg(vertex_spv)
+        .arg("--fragment-spv")
+        .arg(fragment_spv)
+        .args([
+            "--vertex-entry",
+            "vs_main",
+            "--fragment-entry",
+            "fs_main",
+            "--max-frames",
+            &frames,
+            "--frames-in-flight",
+            &frames_in_flight,
+            "--print-cache-stats",
+            "--require-cache-hits",
+        ]);
+    if resize {
+        command
+            .arg("--resize-after-frames")
+            .arg(options.ash_windowed_resize_after_frames.to_string())
+            .arg("--resize-width")
+            .arg(options.ash_windowed_resize_width.to_string())
+            .arg("--resize-height")
+            .arg(options.ash_windowed_resize_height.to_string())
+            .arg("--require-resize-recreate");
+    }
+    run_command(command)
 }
 
 fn run_example_unit_tests() -> Result<(), String> {
