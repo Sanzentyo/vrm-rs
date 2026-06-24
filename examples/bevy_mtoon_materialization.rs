@@ -131,21 +131,23 @@ fn main() {
 
     let mut assets = Assets::<ExampleBevyMtoonMaterial>::default();
     let handle = assets.add(material);
-    let asset = assets.get_mut(&handle).unwrap();
-    asset.apply_vrm_material_state(
-        material_ref,
-        &BevyVrmMaterialState {
-            emissive_intensity: Some(3.0),
-            mtoon_pipeline_passes: document.materials[0]
-                .mtoon
-                .as_ref()
-                .map_or_else(Vec::new, MtoonMaterial::pipeline_passes),
-            colors: [("_Color".to_owned(), vec![0.8, 0.7, 0.6, 0.5])]
-                .into_iter()
-                .collect(),
-            texture_transform: None,
-        },
-    );
+    {
+        let mut asset = assets.get_mut(&handle).unwrap();
+        asset.apply_vrm_material_state(
+            material_ref,
+            &BevyVrmMaterialState {
+                emissive_intensity: Some(3.0),
+                mtoon_pipeline_passes: document.materials[0]
+                    .mtoon
+                    .as_ref()
+                    .map_or_else(Vec::new, MtoonMaterial::pipeline_passes),
+                colors: [("_Color".to_owned(), vec![0.8, 0.7, 0.6, 0.5])]
+                    .into_iter()
+                    .collect(),
+                texture_transform: None,
+            },
+        );
+    }
 
     let asset = assets.get(&handle).unwrap();
     assert_eq!(asset.base_pass.as_ref().unwrap().pass, BevyMtoonPass::Base);

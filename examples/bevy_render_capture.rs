@@ -29,9 +29,6 @@ use bevy::render::batching::NoAutomaticBatching;
 use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_graph::{
-    self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
-};
 use bevy::render::render_phase::ViewSortedRenderPhases;
 use bevy::render::render_resource::{
     AsBindGroup, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, CompareFunction,
@@ -39,8 +36,8 @@ use bevy::render::render_resource::{
     ShaderType, SpecializedMeshPipelineError, TexelCopyBufferInfo, TexelCopyBufferLayout,
     TextureDataOrder, TextureFormat, TextureUsages,
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
@@ -487,7 +484,7 @@ struct CaptureAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     mtoon_materials: ResMut<'w, Assets<BevyMtoonMaterial>>,
     images: ResMut<'w, Assets<Image>>,
-    storage_buffers: ResMut<'w, Assets<ShaderStorageBuffer>>,
+    storage_buffers: ResMut<'w, Assets<ShaderBuffer>>,
 }
 
 #[derive(SystemParam)]
@@ -505,9 +502,9 @@ fn spawn_vrm_meshes(
     meshes: &mut Assets<Mesh>,
     mtoon_materials: &mut Assets<BevyMtoonMaterial>,
     images: &mut Assets<Image>,
-    storage_buffers: &mut Assets<ShaderStorageBuffer>,
+    storage_buffers: &mut Assets<ShaderBuffer>,
 ) -> Result<(), Box<dyn Error>> {
-    let owner_sample_sentinel = storage_buffers.add(ShaderStorageBuffer::new(
+    let owner_sample_sentinel = storage_buffers.add(ShaderBuffer::new(
         bytemuck::bytes_of(&empty_bevy_owner_sample_override_record()),
         RenderAssetUsages::default(),
     ));
@@ -1165,17 +1162,32 @@ fn duplicate_attribute_values_in_index_order(
         reason = "Each VertexAttributeValues variant has distinct vertex-format semantics."
     )]
     match values {
+        VertexAttributeValues::Uint8(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint8(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm8(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm8(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint16(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint16(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm16(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Snorm16(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float16(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float16x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float16x4(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Float32(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Sint32(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Uint32(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Float32x2(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Sint32x2(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Uint32x2(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Float32x3(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Sint32x3(items) => *items = duplicate(items, indices)?,
-        VertexAttributeValues::Uint32x3(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Float32x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float64(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float64x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float64x3(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Float64x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Sint32x3(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Sint32x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32x2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Uint32x3(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Uint32x4(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Sint16x2(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Snorm16x2(items) => *items = duplicate(items, indices)?,
@@ -1193,6 +1205,8 @@ fn duplicate_attribute_values_in_index_order(
         VertexAttributeValues::Snorm8x4(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Uint8x4(items) => *items = duplicate(items, indices)?,
         VertexAttributeValues::Unorm8x4(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm10_10_10_2(items) => *items = duplicate(items, indices)?,
+        VertexAttributeValues::Unorm8x4Bgra(items) => *items = duplicate(items, indices)?,
     }
     Ok(())
 }
@@ -1235,7 +1249,7 @@ fn bind_owner_sample_override_buffers(
     loaded: &LoadedVrm,
     primitives: &mut [BevyPrimitive],
     selection: &vrm_adapter::RenderOwnerSampleSelectionPlan,
-    storage_buffers: &mut Assets<ShaderStorageBuffer>,
+    storage_buffers: &mut Assets<ShaderBuffer>,
     options: &CaptureOptions,
 ) -> Result<Vec<BevyPrimitive>, Box<dyn Error>> {
     let mut resolve_primitives = Vec::new();
@@ -1247,7 +1261,7 @@ fn bind_owner_sample_override_buffers(
             surfaces.iter(),
             &draw,
         )?;
-        let handle = storage_buffers.add(ShaderStorageBuffer::new(
+        let handle = storage_buffers.add(ShaderBuffer::new(
             plan.bytes(),
             RenderAssetUsages::default(),
         ));
@@ -1982,7 +1996,7 @@ struct BevyPrimitiveContext<'a> {
     skin_matrices: Option<&'a [Mat4]>,
     options: &'a CaptureOptions,
     image_handles: &'a BevyImageHandles,
-    owner_sample_overrides: Handle<ShaderStorageBuffer>,
+    owner_sample_overrides: Handle<ShaderBuffer>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2292,7 +2306,7 @@ impl BevyPrimitiveMaterial {
         }
     }
 
-    fn set_owner_sample_overrides(&mut self, handle: Handle<ShaderStorageBuffer>) {
+    fn set_owner_sample_overrides(&mut self, handle: Handle<ShaderBuffer>) {
         match self {
             Self::Mtoon(material) => {
                 material.owner_sample_overrides = handle;
@@ -2470,7 +2484,7 @@ struct BevyMtoonMaterial {
     #[sampler(18)]
     occlusion_texture: Handle<Image>,
     #[storage(20, read_only)]
-    owner_sample_overrides: Handle<ShaderStorageBuffer>,
+    owner_sample_overrides: Handle<ShaderBuffer>,
     shader_alpha_mode: AlphaMode,
     render_alpha_mode: AlphaMode,
     cull_mode: Option<Face>,
@@ -2624,8 +2638,8 @@ impl Material for BevyMtoonMaterial {
             }
         }
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
-            depth_stencil.depth_write_enabled = key.bind_group_data.depth_write;
-            depth_stencil.depth_compare = key.bind_group_data.depth_compare;
+            depth_stencil.depth_write_enabled = Some(key.bind_group_data.depth_write);
+            depth_stencil.depth_compare = Some(key.bind_group_data.depth_compare);
         }
         if key.bind_group_data.owner_id_no_blend
             && let Some(fragment) = &mut descriptor.fragment
@@ -3165,10 +3179,6 @@ impl Plugin for ImageCopyPlugin {
             .insert_resource(MainWorldReceiver(receiver))
             .sub_app_mut(RenderApp);
 
-        let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        graph.add_node(ImageCopy, ImageCopyDriver);
-        graph.add_node_edge(bevy::render::graph::CameraDriverLabel, ImageCopy);
-
         render_app
             .insert_resource(RenderWorldSender(sender))
             .add_systems(ExtractSchedule, image_copy_extract)
@@ -3180,7 +3190,8 @@ impl Plugin for ImageCopyPlugin {
                         .before(RenderSystems::PhaseSort),
                     receive_image_from_buffer.after(RenderSystems::Render),
                 ),
-            );
+            )
+            .add_systems(RenderGraph, image_copy_driver);
     }
 }
 
@@ -3189,12 +3200,13 @@ fn apply_mtoon_phase_order(
     orders: Query<&BevyMtoonPhaseOrder>,
 ) {
     for phase in phases.values_mut() {
-        for item in &mut phase.items {
-            if let Ok(order) = orders.get(item.entity.0) {
+        for mut item in &mut phase.items {
+            let transparent = &mut item.1;
+            if let Ok(order) = orders.get(transparent.entity.0) {
                 if let Some(distance) = order.distance_override {
-                    item.distance = distance;
+                    transparent.distance = distance;
                 } else {
-                    item.distance += order.offset;
+                    transparent.distance += order.offset;
                 }
             }
         }
@@ -3263,58 +3275,45 @@ fn image_copy_extract(mut commands: Commands, image_copiers: Extract<Query<&Imag
     commands.insert_resource(ImageCopiers(image_copiers.iter().cloned().collect()));
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, RenderLabel)]
-struct ImageCopy;
-
-#[derive(Default)]
-struct ImageCopyDriver;
-
-impl render_graph::Node for ImageCopyDriver {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let Some(image_copiers) = world.get_resource::<ImageCopiers>() else {
-            return Ok(());
-        };
-        let Some(gpu_images) =
-            world.get_resource::<RenderAssets<bevy::render::texture::GpuImage>>()
-        else {
-            return Ok(());
-        };
-        for image_copier in &image_copiers.0 {
-            if !image_copier.enabled.load(Ordering::Relaxed) {
-                continue;
-            }
-            let Some(src_image) = gpu_images.get(&image_copier.src_image) else {
-                continue;
-            };
-            let mut encoder = render_context
-                .render_device()
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-            let block_dimensions = src_image.texture_format.block_dimensions();
-            let block_size = src_image.texture_format.block_copy_size(None).unwrap_or(4);
-            let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row(
-                (src_image.size.width as usize / block_dimensions.0 as usize) * block_size as usize,
-            );
-            encoder.copy_texture_to_buffer(
-                src_image.texture.as_image_copy(),
-                TexelCopyBufferInfo {
-                    buffer: &image_copier.buffer,
-                    layout: TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(padded_bytes_per_row as u32),
-                        rows_per_image: None,
-                    },
-                },
-                src_image.size,
-            );
-            let render_queue = world.resource::<RenderQueue>();
-            render_queue.submit(std::iter::once(encoder.finish()));
+fn image_copy_driver(
+    render_context: RenderContext,
+    image_copiers: Res<ImageCopiers>,
+    render_queue: Res<RenderQueue>,
+    gpu_images: Res<RenderAssets<bevy::render::texture::GpuImage>>,
+) {
+    for image_copier in &image_copiers.0 {
+        if !image_copier.enabled.load(Ordering::Relaxed) {
+            continue;
         }
-        Ok(())
+        let Some(src_image) = gpu_images.get(&image_copier.src_image) else {
+            continue;
+        };
+        let mut encoder = render_context
+            .render_device()
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let block_dimensions = src_image.texture_descriptor.format.block_dimensions();
+        let block_size = src_image
+            .texture_descriptor
+            .format
+            .block_copy_size(None)
+            .unwrap_or(4);
+        let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row(
+            (src_image.texture_descriptor.size.width as usize / block_dimensions.0 as usize)
+                * block_size as usize,
+        );
+        encoder.copy_texture_to_buffer(
+            src_image.texture.as_image_copy(),
+            TexelCopyBufferInfo {
+                buffer: &image_copier.buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row as u32),
+                    rows_per_image: None,
+                },
+            },
+            src_image.texture_descriptor.size,
+        );
+        render_queue.submit(std::iter::once(encoder.finish()));
     }
 }
 

@@ -9,10 +9,9 @@ use bevy::image::Image;
 use bevy::mesh::{Indices, Mesh, Mesh3d};
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::{
-    App, Assets, Color, Commands, Component, Entity, GlobalTransform, Handle, LinearRgba, Plugin,
-    Query, Res, ResMut, Time, Transform, Update, default,
+    AlphaMode, App, Assets, Color, Commands, Component, Entity, GlobalTransform, Handle,
+    LinearRgba, Plugin, Query, Res, ResMut, Time, Transform, Update, default,
 };
-use bevy::render::alpha::AlphaMode;
 use bevy::render::render_resource::{
     Extent3d, Face, PrimitiveTopology, TextureDimension, TextureFormat,
 };
@@ -196,7 +195,7 @@ impl BevyVrmInstance {
                     skin.joint_matrices(&self.loaded.scene, &world_matrices, orientation)
                 })
             });
-            let mesh_asset = meshes
+            let mut mesh_asset = meshes
                 .get_mut(&binding.handle)
                 .ok_or(BevyVrmSceneError::MissingBevyMesh)?;
             *mesh_asset = bevy_mesh_from_primitive(

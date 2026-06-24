@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
-glam = "0.32.1"
+glam = "0.33.1"
 png = "0.18.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

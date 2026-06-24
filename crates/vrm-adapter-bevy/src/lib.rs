@@ -716,7 +716,7 @@ pub fn write_scene_state_to_morph_assets<M: VrmBevyMorphTargetAsset>(
     query: Query<BevyMorphAssetWriteItem<'_, M>>,
 ) {
     for (node, morph_asset) in &query {
-        if let Some(asset) = assets.get_mut(morph_asset.handle.id()) {
+        if let Some(mut asset) = assets.get_mut(morph_asset.handle.id()) {
             asset.apply_vrm_morph_weights(node.0, &scene.morph_weights_for_node(node.0));
         }
     }
@@ -779,7 +779,7 @@ pub fn apply_first_person_auto_to_mesh_assets<M: VrmBevyFirstPersonMeshAsset>(
         if let Some(mut headless) = assets.get(&mesh.source).cloned() {
             headless.apply_headless_mesh_plan(&plan);
             if let Some(handle) = &mesh.first_person
-                && let Some(existing) = assets.get_mut(handle.id())
+                && let Some(mut existing) = assets.get_mut(handle.id())
             {
                 *existing = headless;
             } else {
@@ -808,7 +808,7 @@ pub fn write_scene_state_to_material_assets<M: VrmBevyMaterialAsset>(
     query: Query<BevyMaterialAssetWriteItem<'_, M>>,
 ) {
     for (binding, material_asset) in &query {
-        if let Some(asset) = assets.get_mut(material_asset.handle.id()) {
+        if let Some(mut asset) = assets.get_mut(material_asset.handle.id()) {
             asset.apply_vrm_material_state(binding.0, &scene.material_state(binding.0));
         }
     }

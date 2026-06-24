@@ -47,4 +47,4 @@ Compatibility checkpoints added:
 - First-person `auto` annotations now use humanoid head topology to hide head descendants in first-person mode while keeping them visible in third-person mode.
 - MToon descriptors expose pass, texture slots, base/emissive/cutoff factors, shadow/shading/lighting factors, matcap/rim factors, outline factors, UV animation, emissive strength, debug mode, and v0 compatibility flags for renderer materialization.
 - VRM0 expression aliases now map legacy preset names (`a`, `i`, `u`, `e`, `o`, `joy`, `sorrow`, `fun`, `lookup`, `blink_l`, `blink_r`) into canonical core expression names.
-- `vrm-adapter-bevy` pins Bevy 0.18.1 and provides the first entity/asset registry skeleton plus MToon descriptor bridge.
+- `vrm-adapter-bevy` pins Bevy 0.19.0 and provides the first entity/asset registry skeleton plus MToon descriptor bridge.
