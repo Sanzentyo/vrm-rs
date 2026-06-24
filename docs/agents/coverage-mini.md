@@ -1,9 +1,9 @@
-# coverage-mini Playbook（gpt-5.4-mini worker 向け）
+# coverage-mini Playbook（gpt-5.4-mini subagent 向け）
 
-このガイドは、カバレッジ表と進捗行の定型更新を委譲する worker 向けに、`cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` 実行結果から
+このガイドは、カバレッジ表と進捗行の定型更新を委譲する subagent 向けに、`cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 70` 実行結果から
 `docs/testing.md` の `Current Coverage Snapshot` 表と `docs/progress.md` の最新カバレッジ行を反映する手順を定義します。
 
-**通常の委譲先:** `gpt-5.4-mini` worker。
+**通常の委譲先:** Codex subagent の `gpt-5.4-mini`。
 
 ## 使う対象ファイル
 
@@ -47,16 +47,16 @@ pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath target/coverage-su
 - `docs/testing.md` と `docs/progress.md` は本業務で触らない前提なので、反映後は差分を一度確認してからコミットしてください。
 - 最初のスクリプト実行はドライラン（`-Apply` なし）を推奨します。ユーザーが直接反映を求めた場合、または親 Codex が生成ブロックを確認済みの場合のみ `-Apply` を使います。
 
-## 主経路: `gpt-5.4-mini` worker
+## 主経路: `gpt-5.4-mini` subagent
 
-親 Codex は、coverage 更新を narrow な worker タスクとして委譲します。プロンプトには必ず次を含めます。
+親 Codex は、coverage 更新を narrow な subagent タスクとして委譲します。プロンプトには必ず次を含めます。
 
 - このファイル（`docs/agents/coverage-mini.md`）に従うこと。
 - `tools/coverage/update-coverage-docs.ps1` のみを使い、`docs/testing.md` と `docs/progress.md` だけを更新すること。
 - 日付は CI 実行日（`YYYY-MM-DD`）に合わせること。
 - 他のファイルや本体コードには触らないこと。
 
-委譲 worker の作業手順:
+委譲 subagent の作業手順:
 
 1. `cargo llvm-cov ...` を実行（または保存済み JSON を準備）。
 2. `pwsh tools/coverage/update-coverage-docs.ps1 -SummaryJsonPath ...` でプレビュー。

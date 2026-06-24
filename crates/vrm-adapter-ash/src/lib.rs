@@ -2940,6 +2940,89 @@ pub fn ash_graphics_pipeline_state_plan(
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct AshGraphicsPipelineCreateInfoPlan<'a> {
+    pub shader_stages: [vk::PipelineShaderStageCreateInfo<'a>; 2],
+    pub state: AshGraphicsPipelineStatePlan,
+    pub layout: vk::PipelineLayout,
+    pub render_pass: vk::RenderPass,
+    pub subpass: u32,
+}
+
+impl AshGraphicsPipelineCreateInfoPlan<'_> {
+    pub fn with_graphics_pipeline_create_info<R>(
+        &self,
+        f: impl FnOnce(vk::GraphicsPipelineCreateInfo<'_>) -> R,
+    ) -> R {
+        let vertex_binding = [self.state.vertex_binding];
+        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&vertex_binding)
+            .vertex_attribute_descriptions(&self.state.vertex_attributes);
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(self.state.topology)
+            .primitive_restart_enable(self.state.primitive_restart_enable);
+        let viewport = [self.state.viewport];
+        let scissor = [self.state.scissor];
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewports(&viewport)
+            .scissors(&scissor);
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(self.state.polygon_mode)
+            .cull_mode(self.state.cull_mode)
+            .front_face(self.state.front_face)
+            .line_width(self.state.line_width);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(self.state.rasterization_samples);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(self.state.depth_test_enable)
+            .depth_write_enable(self.state.depth_write_enable)
+            .depth_compare_op(self.state.depth_compare_op);
+        let color_attachment = [self.state.color_blend_attachment];
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
+        let info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&self.shader_stages)
+            .vertex_input_state(&vertex_input)
+            .input_assembly_state(&input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&rasterization)
+            .multisample_state(&multisample)
+            .depth_stencil_state(&depth_stencil)
+            .color_blend_state(&color_blend)
+            .layout(self.layout)
+            .render_pass(self.render_pass)
+            .subpass(self.subpass);
+        f(info)
+    }
+}
+
+pub fn ash_graphics_pipeline_create_info_plan<'a>(
+    pipeline: &AshGraphicsPipelinePlan,
+    extent: vk::Extent2D,
+    shader_stages: [vk::PipelineShaderStageCreateInfo<'a>; 2],
+    pipeline_layouts: &[vk::PipelineLayout],
+    render_pass: vk::RenderPass,
+) -> Result<AshGraphicsPipelineCreateInfoPlan<'a>, String> {
+    let state = ash_graphics_pipeline_state_plan(pipeline, extent);
+    let layout = pipeline_layouts
+        .get(state.descriptor_set_index)
+        .copied()
+        .ok_or_else(|| {
+            format!(
+                "pipeline descriptor set index {} is out of range for {} pipeline layouts",
+                state.descriptor_set_index,
+                pipeline_layouts.len()
+            )
+        })?;
+    Ok(AshGraphicsPipelineCreateInfoPlan {
+        shader_stages,
+        state,
+        layout,
+        render_pass,
+        subpass: 0,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshSwapchainSurfacePlan {
     pub format: vk::SurfaceFormatKHR,
@@ -9207,6 +9290,78 @@ mod tests {
             state.color_blend_attachment.src_color_blend_factor,
             vk::BlendFactor::SRC_ALPHA
         );
+    }
+
+    #[test]
+    fn graphics_pipeline_create_info_plan_wraps_state_and_layout_lookup() {
+        let pipeline = AshGraphicsPipelinePlan {
+            material: MaterialRef(3),
+            pipeline_plan_index: 9,
+            descriptor_set_index: 1,
+            key: AshPipelineKey {
+                pass: AshMtoonPass::Base,
+                render_order: 2000,
+                phase_order: 2000,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                cull_mode: vk::CullModeFlags::FRONT,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_test_enable: true,
+                depth_write_enable: false,
+                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                blend_enable: true,
+            },
+            vertex_stride: 64,
+            vertex_attributes: vec![AshVertexAttributePlan {
+                location: 3,
+                binding: 0,
+                format: vk::Format::R32G32_SFLOAT,
+                offset: 16,
+            }],
+            color_format: vk::Format::R8G8B8A8_UNORM,
+            depth_format: Some(ash_reference_depth_format()),
+        };
+        let vertex_entry = std::ffi::CString::new("vs_main").unwrap();
+        let fragment_entry = std::ffi::CString::new("fs_main").unwrap();
+        let shader_stages =
+            ash_graphics_shader_stages_plan(vk::ShaderModule::null(), vk::ShaderModule::null())
+                .shader_stage_create_infos(&vertex_entry, &fragment_entry);
+        let layouts = [vk::PipelineLayout::null(), vk::PipelineLayout::null()];
+        let plan = ash_graphics_pipeline_create_info_plan(
+            &pipeline,
+            vk::Extent2D {
+                width: 320,
+                height: 180,
+            },
+            shader_stages,
+            &layouts,
+            vk::RenderPass::null(),
+        )
+        .expect("valid descriptor-set layout index");
+
+        assert_eq!(plan.state.descriptor_set_index, 1);
+        assert_eq!(plan.layout, layouts[1]);
+        plan.with_graphics_pipeline_create_info(|info| {
+            assert_eq!(info.stage_count, 2);
+            assert_eq!(info.p_stages, plan.shader_stages.as_ptr());
+            assert_eq!(info.layout, layouts[1]);
+            assert_eq!(info.render_pass, vk::RenderPass::null());
+            assert_eq!(info.subpass, 0);
+        });
+
+        let mut out_of_range = pipeline.clone();
+        out_of_range.descriptor_set_index = 2;
+        let error = ash_graphics_pipeline_create_info_plan(
+            &out_of_range,
+            vk::Extent2D {
+                width: 320,
+                height: 180,
+            },
+            shader_stages,
+            &layouts,
+            vk::RenderPass::null(),
+        )
+        .expect_err("descriptor-set index should be checked");
+        assert!(error.contains("out of range"));
     }
 
     #[test]

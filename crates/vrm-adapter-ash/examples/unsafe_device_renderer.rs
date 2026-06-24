@@ -26,7 +26,7 @@ use vrm_adapter_ash::{
     ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_descriptor_pool_plan,
     ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_graphics_shader_stages_plan,
+    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
     ash_material_texture_binding, ash_memory_type_index, ash_mtoon_texture_binding,
     ash_pipeline_layout_plans, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
     ash_render_pass_begin_plan, ash_render_pass_creation_plan,
@@ -927,52 +927,23 @@ impl UnsafeAshDeviceRenderer {
                     context.vertex_entry_point,
                     context.fragment_entry_point,
                 );
-        let state = ash_graphics_pipeline_state_plan(pipeline, context.extent);
-        let layout = context.pipeline_layouts[state.descriptor_set_index];
-        let vertex_binding = [state.vertex_binding];
-        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
-            .vertex_binding_descriptions(&vertex_binding)
-            .vertex_attribute_descriptions(&state.vertex_attributes);
-        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
-            .topology(state.topology)
-            .primitive_restart_enable(state.primitive_restart_enable);
-        let viewport = [state.viewport];
-        let scissor = [state.scissor];
-        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
-            .viewports(&viewport)
-            .scissors(&scissor);
-        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
-            .polygon_mode(state.polygon_mode)
-            .cull_mode(state.cull_mode)
-            .front_face(state.front_face)
-            .line_width(state.line_width);
-        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(state.rasterization_samples);
-        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
-            .depth_test_enable(state.depth_test_enable)
-            .depth_write_enable(state.depth_write_enable)
-            .depth_compare_op(state.depth_compare_op);
-        let color_attachment = [state.color_blend_attachment];
-        let color_blend =
-            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
-            .stages(&shader_stages)
-            .vertex_input_state(&vertex_input)
-            .input_assembly_state(&input_assembly)
-            .viewport_state(&viewport_state)
-            .rasterization_state(&rasterization)
-            .multisample_state(&multisample)
-            .depth_stencil_state(&depth_stencil)
-            .color_blend_state(&color_blend)
-            .layout(layout)
-            .render_pass(context.render_pass)
-            .subpass(0);
-        let pipelines = unsafe {
-            self.device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-        }
-        .map_err(|(_, err)| Box::<dyn Error>::from(err))?;
+        let pipeline_plan = ash_graphics_pipeline_create_info_plan(
+            pipeline,
+            context.extent,
+            shader_stages,
+            context.pipeline_layouts,
+            context.render_pass,
+        )
+        .map_err(|error| -> Box<dyn Error> { error.into() })?;
+        let pipelines = pipeline_plan
+            .with_graphics_pipeline_create_info(|pipeline_info| unsafe {
+                self.device.create_graphics_pipelines(
+                    vk::PipelineCache::null(),
+                    &[pipeline_info],
+                    None,
+                )
+            })
+            .map_err(|(_, err)| Box::<dyn Error>::from(err))?;
         pipelines
             .into_iter()
             .next()
