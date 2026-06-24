@@ -29,10 +29,12 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
-    AshBufferRole, AshGraphicsPipelinePlan, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRendererFrame, AshSamplerPlan, AshUniformScope, AshVertexAttributePlan,
-    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
-    AshWindowedResizeValidation, AshWindowedRunValidation, ash_reference_depth_format,
+    ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH, ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH,
+    ASH_MTOON_WGSL_FRAGMENT_ENTRY, ASH_MTOON_WGSL_VERTEX_ENTRY, AshBufferRole,
+    AshGraphicsPipelinePlan, AshMtoonWindowedCacheStats, AshRenderOptions, AshRendererFrame,
+    AshSamplerPlan, AshUniformScope, AshVertexAttributePlan, AshVrmFramePlanOptions,
+    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation,
+    AshWindowedRunValidation, ash_reference_depth_format,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_texture_fallback_for_binding,
 };
 use vrm_core::TextureRef;
@@ -69,22 +71,16 @@ struct Options {
     #[arg(long)]
     simple_preview: bool,
     /// Vertex SPIR-V for the active viewer path.
-    #[arg(
-        long,
-        default_value = "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.vert.spv"
-    )]
+    #[arg(long, default_value = ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH)]
     vertex_spv: PathBuf,
     /// Fragment SPIR-V for the active viewer path.
-    #[arg(
-        long,
-        default_value = "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv"
-    )]
+    #[arg(long, default_value = ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH)]
     fragment_spv: PathBuf,
     /// Entry point name for `--vertex-spv`.
-    #[arg(long, default_value = "vs_main")]
+    #[arg(long, default_value = ASH_MTOON_WGSL_VERTEX_ENTRY)]
     vertex_entry: String,
     /// Entry point name for `--fragment-spv`.
-    #[arg(long, default_value = "fs_main")]
+    #[arg(long, default_value = ASH_MTOON_WGSL_FRAGMENT_ENTRY)]
     fragment_entry: String,
     /// Exit after rendering this many frames. Useful for smoke tests.
     #[arg(long)]

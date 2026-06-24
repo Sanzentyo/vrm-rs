@@ -263,6 +263,63 @@ impl AshDiagnosticRender {
     }
 }
 
+pub const ASH_MTOON_WGSL_SOURCE_PATH: &str = "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl";
+pub const ASH_MTOON_WGSL_PRELUDE_PATH: &str = "crates/vrm-adapter/src/mtoon_reference.wgsl";
+pub const ASH_MTOON_WGSL_VERTEX_ENTRY: &str = "vs_main";
+pub const ASH_MTOON_WGSL_FRAGMENT_ENTRY: &str = "fs_main";
+pub const ASH_MTOON_WGSL_VERTEX_SPIRV_FILE: &str = "mtoon_base.wgsl.vert.spv";
+pub const ASH_MTOON_WGSL_FRAGMENT_SPIRV_FILE: &str = "mtoon_base.wgsl.frag.spv";
+pub const ASH_MTOON_WGSL_DEFAULT_SPIRV_DIR: &str = "target/ash-mtoon-wgsl-base-shaders";
+pub const ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH: &str =
+    "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.vert.spv";
+pub const ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH: &str =
+    "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshMtoonWgslShaderAbi {
+    pub prelude_path: &'static str,
+    pub source_path: &'static str,
+    pub vertex_entry: &'static str,
+    pub fragment_entry: &'static str,
+    pub vertex_spirv_file: &'static str,
+    pub fragment_spirv_file: &'static str,
+    pub adjust_coordinate_space: bool,
+    pub descriptor_binding_model: AshDescriptorBindingModel,
+}
+
+impl Default for AshMtoonWgslShaderAbi {
+    fn default() -> Self {
+        Self {
+            prelude_path: ASH_MTOON_WGSL_PRELUDE_PATH,
+            source_path: ASH_MTOON_WGSL_SOURCE_PATH,
+            vertex_entry: ASH_MTOON_WGSL_VERTEX_ENTRY,
+            fragment_entry: ASH_MTOON_WGSL_FRAGMENT_ENTRY,
+            vertex_spirv_file: ASH_MTOON_WGSL_VERTEX_SPIRV_FILE,
+            fragment_spirv_file: ASH_MTOON_WGSL_FRAGMENT_SPIRV_FILE,
+            adjust_coordinate_space: false,
+            descriptor_binding_model: AshDescriptorBindingModel::SeparateImageSampler,
+        }
+    }
+}
+
+impl AshMtoonWgslShaderAbi {
+    pub fn vertex_spirv_path(self, dir: impl AsRef<std::path::Path>) -> PathBuf {
+        dir.as_ref().join(self.vertex_spirv_file)
+    }
+
+    pub fn fragment_spirv_path(self, dir: impl AsRef<std::path::Path>) -> PathBuf {
+        dir.as_ref().join(self.fragment_spirv_file)
+    }
+
+    pub fn default_vertex_spirv_path(self) -> PathBuf {
+        self.vertex_spirv_path(ASH_MTOON_WGSL_DEFAULT_SPIRV_DIR)
+    }
+
+    pub fn default_fragment_spirv_path(self) -> PathBuf {
+        self.fragment_spirv_path(ASH_MTOON_WGSL_DEFAULT_SPIRV_DIR)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AshWindowedRunValidation {
     pub simple_preview: bool,
@@ -5028,6 +5085,30 @@ mod tests {
         let vertex_shader = include_str!("../shaders/mtoon_base.vert.glsl");
         let fragment_shader = include_str!("../shaders/mtoon_base.frag.glsl");
         let wgsl_shader = include_str!("../shaders/mtoon_base.wgsl");
+        let wgsl_abi = AshMtoonWgslShaderAbi::default();
+
+        assert_eq!(wgsl_abi.prelude_path, ASH_MTOON_WGSL_PRELUDE_PATH);
+        assert_eq!(wgsl_abi.source_path, ASH_MTOON_WGSL_SOURCE_PATH);
+        assert_eq!(wgsl_abi.vertex_entry, ASH_MTOON_WGSL_VERTEX_ENTRY);
+        assert_eq!(wgsl_abi.fragment_entry, ASH_MTOON_WGSL_FRAGMENT_ENTRY);
+        assert_eq!(wgsl_abi.vertex_spirv_file, ASH_MTOON_WGSL_VERTEX_SPIRV_FILE);
+        assert_eq!(
+            wgsl_abi.fragment_spirv_file,
+            ASH_MTOON_WGSL_FRAGMENT_SPIRV_FILE
+        );
+        assert_eq!(
+            wgsl_abi.default_vertex_spirv_path(),
+            PathBuf::from(ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH)
+        );
+        assert_eq!(
+            wgsl_abi.default_fragment_spirv_path(),
+            PathBuf::from(ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH)
+        );
+        assert!(!wgsl_abi.adjust_coordinate_space);
+        assert_eq!(
+            wgsl_abi.descriptor_binding_model,
+            AshDescriptorBindingModel::SeparateImageSampler
+        );
 
         for (slot, expected_name) in [
             (MtoonTextureSlot::Main, "main_texture"),
@@ -5114,9 +5195,9 @@ mod tests {
             assert!(wgsl_shader.contains(&declaration));
         }
         assert!(wgsl_shader.contains("@vertex"));
-        assert!(wgsl_shader.contains("fn vs_main"));
+        assert!(wgsl_shader.contains(&format!("fn {}", wgsl_abi.vertex_entry)));
         assert!(wgsl_shader.contains("@fragment"));
-        assert!(wgsl_shader.contains("fn fs_main"));
+        assert!(wgsl_shader.contains(&format!("fn {}", wgsl_abi.fragment_entry)));
         assert!(wgsl_shader.contains("fn ash_mtoon_lit_shade_rate"));
         assert!(wgsl_shader.contains("fn ash_mtoon_normal"));
         assert!(wgsl_shader.contains("fn ash_pbr_direct"));
