@@ -33,11 +33,11 @@ use vrm_adapter_ash::{
     AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
     AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
     AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRendererFrame, AshSamplerPlan, AshVertexAttributePlan, AshVrmFramePlanOptions,
-    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedResizeValidation,
-    AshWindowedRunValidation, ash_descriptor_pool_plan, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_mtoon_renderer_cache_keys,
-    ash_reference_depth_format, ash_renderer_frame_from_plan_with_owner_sample_selection,
+    AshRendererFrame, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive,
+    AshVrmVertex, AshWindowedResizeValidation, AshWindowedRunValidation, ash_descriptor_pool_plan,
+    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
+    ash_graphics_pipeline_state_plan, ash_mtoon_renderer_cache_keys, ash_reference_depth_format,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1815,63 +1815,32 @@ impl MtoonWindowedAshRenderer {
                 .module(self.fragment_shader)
                 .name(fragment_entry),
         ];
-        let layout = pipeline_layouts[pipeline.descriptor_set_index];
-        let vertex_binding = [vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: pipeline.vertex_stride,
-            input_rate: vk::VertexInputRate::VERTEX,
-        }];
-        let vertex_attributes = pipeline
-            .vertex_attributes
-            .iter()
-            .map(mtoon_vertex_attribute_description)
-            .collect::<Vec<_>>();
+        let state = ash_graphics_pipeline_state_plan(pipeline, extent);
+        let layout = pipeline_layouts[state.descriptor_set_index];
+        let vertex_binding = [state.vertex_binding];
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(&vertex_binding)
-            .vertex_attribute_descriptions(&vertex_attributes);
+            .vertex_attribute_descriptions(&state.vertex_attributes);
         let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
-            .topology(pipeline.key.topology)
-            .primitive_restart_enable(false);
-        let viewport = [vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: extent.width as f32,
-            height: extent.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        }];
-        let scissor = [vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent,
-        }];
+            .topology(state.topology)
+            .primitive_restart_enable(state.primitive_restart_enable);
+        let viewport = [state.viewport];
+        let scissor = [state.scissor];
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .viewports(&viewport)
             .scissors(&scissor);
         let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
-            .polygon_mode(vk::PolygonMode::FILL)
-            .cull_mode(pipeline.key.cull_mode)
-            .front_face(pipeline.key.front_face)
-            .line_width(1.0);
+            .polygon_mode(state.polygon_mode)
+            .cull_mode(state.cull_mode)
+            .front_face(state.front_face)
+            .line_width(state.line_width);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(state.rasterization_samples);
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
-            .depth_test_enable(pipeline.key.depth_test_enable)
-            .depth_write_enable(pipeline.key.depth_write_enable)
-            .depth_compare_op(pipeline.key.depth_compare_op);
-        let color_attachment = [vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(pipeline.key.blend_enable)
-            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .alpha_blend_op(vk::BlendOp::ADD)
-            .color_write_mask(
-                vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
-            )];
+            .depth_test_enable(state.depth_test_enable)
+            .depth_write_enable(state.depth_write_enable)
+            .depth_compare_op(state.depth_compare_op);
+        let color_attachment = [state.color_blend_attachment];
         let color_blend =
             vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_attachment);
         let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
@@ -2419,17 +2388,6 @@ fn select_depth_format(
             .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
     })
     .ok_or_else(|| "no supported Vulkan depth attachment format found".into())
-}
-
-fn mtoon_vertex_attribute_description(
-    attribute: &AshVertexAttributePlan,
-) -> vk::VertexInputAttributeDescription {
-    vk::VertexInputAttributeDescription {
-        location: attribute.location,
-        binding: attribute.binding,
-        format: attribute.format,
-        offset: attribute.offset,
-    }
 }
 
 fn flatten_mip_level_rgba(mip_levels: &[RgbaMipLevel]) -> Vec<u8> {

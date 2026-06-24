@@ -1640,6 +1640,92 @@ pub struct AshVertexAttributePlan {
     pub offset: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct AshGraphicsPipelineStatePlan {
+    pub descriptor_set_index: usize,
+    pub vertex_binding: vk::VertexInputBindingDescription,
+    pub vertex_attributes: Vec<vk::VertexInputAttributeDescription>,
+    pub topology: vk::PrimitiveTopology,
+    pub primitive_restart_enable: bool,
+    pub viewport: vk::Viewport,
+    pub scissor: vk::Rect2D,
+    pub polygon_mode: vk::PolygonMode,
+    pub cull_mode: vk::CullModeFlags,
+    pub front_face: vk::FrontFace,
+    pub line_width: f32,
+    pub rasterization_samples: vk::SampleCountFlags,
+    pub depth_test_enable: bool,
+    pub depth_write_enable: bool,
+    pub depth_compare_op: vk::CompareOp,
+    pub color_blend_attachment: vk::PipelineColorBlendAttachmentState,
+}
+
+pub fn ash_vertex_attribute_description(
+    attribute: &AshVertexAttributePlan,
+) -> vk::VertexInputAttributeDescription {
+    vk::VertexInputAttributeDescription {
+        location: attribute.location,
+        binding: attribute.binding,
+        format: attribute.format,
+        offset: attribute.offset,
+    }
+}
+
+pub fn ash_graphics_pipeline_state_plan(
+    pipeline: &AshGraphicsPipelinePlan,
+    extent: vk::Extent2D,
+) -> AshGraphicsPipelineStatePlan {
+    AshGraphicsPipelineStatePlan {
+        descriptor_set_index: pipeline.descriptor_set_index,
+        vertex_binding: vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: pipeline.vertex_stride,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vertex_attributes: pipeline
+            .vertex_attributes
+            .iter()
+            .map(ash_vertex_attribute_description)
+            .collect(),
+        topology: pipeline.key.topology,
+        primitive_restart_enable: false,
+        viewport: vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        },
+        scissor: vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        },
+        polygon_mode: vk::PolygonMode::FILL,
+        cull_mode: pipeline.key.cull_mode,
+        front_face: pipeline.key.front_face,
+        line_width: 1.0,
+        rasterization_samples: vk::SampleCountFlags::TYPE_1,
+        depth_test_enable: pipeline.key.depth_test_enable,
+        depth_write_enable: pipeline.key.depth_write_enable,
+        depth_compare_op: pipeline.key.depth_compare_op,
+        color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(pipeline.key.blend_enable)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            ),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AshMtoonRenderTargetCacheKey {
     pub extent: [u32; 2],
@@ -6866,6 +6952,61 @@ mod tests {
         );
         assert_eq!(drawable.render_pass.render_area.extent.width, 4);
         assert_eq!(drawable.render_pass.render_area.extent.height, 2);
+    }
+
+    #[test]
+    fn graphics_pipeline_state_plan_exposes_fixed_function_state() {
+        let pipeline = AshGraphicsPipelinePlan {
+            material: MaterialRef(3),
+            pipeline_plan_index: 9,
+            descriptor_set_index: 2,
+            key: AshPipelineKey {
+                pass: AshMtoonPass::Base,
+                render_order: 2000,
+                phase_order: 2000,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                cull_mode: vk::CullModeFlags::FRONT,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_test_enable: true,
+                depth_write_enable: false,
+                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                blend_enable: true,
+            },
+            vertex_stride: 64,
+            vertex_attributes: vec![AshVertexAttributePlan {
+                location: 3,
+                binding: 0,
+                format: vk::Format::R32G32_SFLOAT,
+                offset: 16,
+            }],
+            color_format: vk::Format::R8G8B8A8_UNORM,
+            depth_format: Some(ash_reference_depth_format()),
+        };
+
+        let state = ash_graphics_pipeline_state_plan(
+            &pipeline,
+            vk::Extent2D {
+                width: 320,
+                height: 180,
+            },
+        );
+
+        assert_eq!(state.descriptor_set_index, 2);
+        assert_eq!(state.vertex_binding.stride, 64);
+        assert_eq!(state.vertex_attributes.len(), 1);
+        assert_eq!(state.vertex_attributes[0].location, 3);
+        assert_eq!(state.topology, vk::PrimitiveTopology::TRIANGLE_LIST);
+        assert_eq!(state.viewport.width, 320.0);
+        assert_eq!(state.viewport.height, 180.0);
+        assert_eq!(state.scissor.extent.width, 320);
+        assert_eq!(state.cull_mode, vk::CullModeFlags::FRONT);
+        assert!(state.depth_test_enable);
+        assert!(!state.depth_write_enable);
+        assert_eq!(state.color_blend_attachment.blend_enable, vk::TRUE);
+        assert_eq!(
+            state.color_blend_attachment.src_color_blend_factor,
+            vk::BlendFactor::SRC_ALPHA
+        );
     }
 
     #[test]
