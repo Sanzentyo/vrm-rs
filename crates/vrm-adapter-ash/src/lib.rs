@@ -1038,6 +1038,55 @@ impl AshRendererResourceManifest {
     pub fn dynamic_resource_count(&self) -> usize {
         self.buffers.len() + self.uniforms.len() + self.descriptor_sets.len()
     }
+
+    pub fn persistent_handle_resource_count(&self) -> usize {
+        self.buffers
+            .iter()
+            .filter(|resource| resource.handle_lifetime == AshRendererResourceLifetime::Persistent)
+            .count()
+            + self
+                .textures
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+            + self
+                .uniforms
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+            + self
+                .samplers
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+            + self
+                .descriptor_set_layouts
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+            + self
+                .descriptor_sets
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+            + self
+                .pipelines
+                .iter()
+                .filter(|resource| {
+                    resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                })
+                .count()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1048,6 +1097,7 @@ pub struct AshRendererBufferResource {
     pub stride: u32,
     pub count: u32,
     pub byte_len: usize,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1062,6 +1112,7 @@ pub struct AshRendererTextureResource {
     pub image_layout_after_upload: vk::ImageLayout,
     pub aspect_mask: vk::ImageAspectFlags,
     pub byte_len: usize,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1071,6 +1122,7 @@ pub struct AshRendererUniformResource {
     pub scope: AshUniformScope,
     pub binding: u32,
     pub byte_len: usize,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1080,6 +1132,7 @@ pub struct AshRendererSamplerResource {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub sampler: Option<AshSamplerPlan>,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1096,6 +1149,7 @@ pub struct AshRendererDescriptorSetLayoutResource {
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bindings: Vec<AshDescriptorBindingLayoutKey>,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1115,6 +1169,7 @@ pub struct AshRendererDescriptorSetResource {
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bindings: Vec<AshRendererDescriptorBindingResource>,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1129,6 +1184,7 @@ pub struct AshRendererPipelineResource {
     pub vertex_attributes: Vec<AshVertexAttributePlan>,
     pub color_format: vk::Format,
     pub depth_format: Option<vk::Format>,
+    pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -1313,6 +1369,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             stride: buffer.stride,
             count: buffer.count,
             byte_len: buffer.bytes.len(),
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
             lifetime: AshRendererResourceLifetime::FrameDynamic,
         })
         .collect();
@@ -1330,6 +1387,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             image_layout_after_upload: texture.image_layout_after_upload,
             aspect_mask: texture.aspect_mask,
             byte_len: texture.upload.rgba.len(),
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
             lifetime: AshRendererResourceLifetime::Persistent,
         })
         .collect();
@@ -1342,6 +1400,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             scope: uniform.scope,
             binding: uniform.binding,
             byte_len: uniform.bytes.len(),
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
             lifetime: AshRendererResourceLifetime::FrameDynamic,
         })
         .collect();
@@ -1363,6 +1422,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
                     binding: binding.binding,
                     descriptor_type: binding.descriptor_type,
                     sampler: binding.sampler,
+                    handle_lifetime: AshRendererResourceLifetime::Persistent,
                     lifetime: AshRendererResourceLifetime::Persistent,
                 })
         })
@@ -1385,6 +1445,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
                         stage_flags: binding.stage_flags,
                     })
                     .collect(),
+                handle_lifetime: AshRendererResourceLifetime::Persistent,
                 lifetime: AshRendererResourceLifetime::Persistent,
             },
         )
@@ -1409,6 +1470,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
                     lifetime: ash_descriptor_binding_lifetime(binding.descriptor_type),
                 })
                 .collect(),
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
             lifetime: AshRendererResourceLifetime::FrameDynamic,
         })
         .collect();
@@ -1426,6 +1488,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             vertex_attributes: pipeline.vertex_attributes.clone(),
             color_format: pipeline.color_format,
             depth_format: pipeline.depth_format,
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
             lifetime: AshRendererResourceLifetime::Persistent,
         })
         .collect();
@@ -5047,20 +5110,21 @@ mod tests {
             resource.lifetime == AshRendererResourceLifetime::Persistent
                 && resource.descriptor_type == vk::DescriptorType::SAMPLER
         }));
-        assert!(
-            manifest
-                .buffers
-                .iter()
-                .all(|resource| { resource.lifetime == AshRendererResourceLifetime::FrameDynamic })
-        );
-        assert!(
-            manifest
-                .uniforms
-                .iter()
-                .all(|resource| { resource.lifetime == AshRendererResourceLifetime::FrameDynamic })
-        );
+        assert!(manifest.buffers.iter().all(|resource| {
+            resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                && resource.lifetime == AshRendererResourceLifetime::FrameDynamic
+        }));
+        assert!(manifest.uniforms.iter().all(|resource| {
+            resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                && resource.lifetime == AshRendererResourceLifetime::FrameDynamic
+        }));
+        assert!(manifest.descriptor_sets.iter().all(|resource| {
+            resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                && resource.lifetime == AshRendererResourceLifetime::FrameDynamic
+        }));
         assert!(manifest.pipelines.iter().all(|resource| {
-            resource.lifetime == AshRendererResourceLifetime::Persistent
+            resource.handle_lifetime == AshRendererResourceLifetime::Persistent
+                && resource.lifetime == AshRendererResourceLifetime::Persistent
                 && resource.depth_format == Some(ash_reference_depth_format())
         }));
         assert_eq!(manifest.buffers[0].role, AshBufferRole::OwnerSampleOverride);
@@ -5076,6 +5140,16 @@ mod tests {
                 && binding.lifetime == AshRendererResourceLifetime::Persistent
         }));
         assert!(manifest.persistent_resource_count() > 0);
+        assert_eq!(
+            manifest.persistent_handle_resource_count(),
+            manifest.buffers.len()
+                + manifest.textures.len()
+                + manifest.uniforms.len()
+                + manifest.samplers.len()
+                + manifest.descriptor_set_layouts.len()
+                + manifest.descriptor_sets.len()
+                + manifest.pipelines.len()
+        );
         assert_eq!(
             manifest.dynamic_resource_count(),
             manifest.buffers.len() + manifest.uniforms.len() + manifest.descriptor_sets.len()
