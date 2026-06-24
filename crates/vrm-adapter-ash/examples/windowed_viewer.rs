@@ -15,6 +15,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -41,6 +42,12 @@ struct Options {
     /// Sample time in seconds.
     #[arg(long, default_value_t = 0.0)]
     time: f32,
+    /// Animation playback speed multiplier.
+    #[arg(long, default_value_t = 1.0)]
+    speed: f32,
+    /// Keep rendering the same sampled time instead of advancing playback.
+    #[arg(long)]
+    paused: bool,
     /// Initial window width.
     #[arg(long, default_value_t = 1280)]
     width: u32,
@@ -77,6 +84,43 @@ struct SimpleMesh {
     indices: Vec<u32>,
 }
 
+struct WindowedAvatar {
+    planner: AshVrmFramePlanner,
+    options: Options,
+    started_at: Instant,
+}
+
+impl WindowedAvatar {
+    fn new(options: Options) -> Result<Self, Box<dyn Error>> {
+        let animation = (!options.no_animation).then_some(options.animation.clone());
+        let planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
+        Ok(Self {
+            planner,
+            options,
+            started_at: Instant::now(),
+        })
+    }
+
+    fn sample_time(&self) -> f32 {
+        if self.options.no_animation || self.options.paused {
+            self.options.time
+        } else {
+            self.options.time + self.started_at.elapsed().as_secs_f32() * self.options.speed
+        }
+    }
+
+    fn sample_mesh(&mut self, size: PhysicalSize<u32>) -> Result<SimpleMesh, Box<dyn Error>> {
+        let time = self.sample_time();
+        build_simple_mesh(
+            &mut self.planner,
+            &self.options,
+            time,
+            size.width,
+            size.height,
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ShaderModules {
     vertex: Vec<u32>,
@@ -84,8 +128,8 @@ struct ShaderModules {
 }
 
 struct App {
-    options: Options,
-    mesh: SimpleMesh,
+    avatar: WindowedAvatar,
+    initial_mesh: SimpleMesh,
     shaders: ShaderModules,
     window: Option<Window>,
     renderer: Option<WindowedAshRenderer>,
@@ -100,9 +144,12 @@ impl ApplicationHandler for App {
         }
         let attributes = WindowAttributes::default()
             .with_title("vrm-rs ash windowed viewer")
-            .with_inner_size(PhysicalSize::new(self.options.width, self.options.height));
+            .with_inner_size(PhysicalSize::new(
+                self.avatar.options.width,
+                self.avatar.options.height,
+            ));
         let window = event_loop.create_window(attributes).expect("create window");
-        let renderer = WindowedAshRenderer::new(&window, &self.mesh, &self.shaders)
+        let renderer = WindowedAshRenderer::new(&window, &self.initial_mesh, &self.shaders)
             .expect("initialize ash windowed renderer");
         self.renderer = Some(renderer);
         self.window = Some(window);
@@ -126,7 +173,21 @@ impl ApplicationHandler for App {
                 self.recreate_swapchain = size.width > 0 && size.height > 0;
             }
             WindowEvent::RedrawRequested => {
+                let size = window.inner_size();
+                let frame_mesh = match self.avatar.sample_mesh(size) {
+                    Ok(mesh) => mesh,
+                    Err(error) => {
+                        eprintln!("ash windowed animation sample failed: {error}");
+                        event_loop.exit();
+                        return;
+                    }
+                };
                 if let Some(renderer) = &mut self.renderer {
+                    if let Err(error) = renderer.update_mesh(&frame_mesh) {
+                        eprintln!("ash windowed mesh update failed: {error}");
+                        event_loop.exit();
+                        return;
+                    }
                     if self.recreate_swapchain {
                         renderer
                             .recreate_swapchain(window)
@@ -137,6 +198,7 @@ impl ApplicationHandler for App {
                         Ok(RenderStatus::Ok) => {
                             self.rendered_frames = self.rendered_frames.saturating_add(1);
                             if self
+                                .avatar
                                 .options
                                 .max_frames
                                 .is_some_and(|max| self.rendered_frames >= max)
@@ -162,15 +224,17 @@ impl ApplicationHandler for App {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse();
-    let mesh = build_simple_mesh(&options)?;
+    let mut avatar = WindowedAvatar::new(options)?;
+    let initial_size = PhysicalSize::new(avatar.options.width, avatar.options.height);
+    let initial_mesh = avatar.sample_mesh(initial_size)?;
     let shaders = ShaderModules {
-        vertex: read_spirv_words(&options.vertex_spv)?,
-        fragment: read_spirv_words(&options.fragment_spv)?,
+        vertex: read_spirv_words(&avatar.options.vertex_spv)?,
+        fragment: read_spirv_words(&avatar.options.fragment_spv)?,
     };
     let event_loop = EventLoop::new()?;
     let mut app = App {
-        options,
-        mesh,
+        avatar,
+        initial_mesh,
         shaders,
         window: None,
         renderer: None,
@@ -181,24 +245,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn build_simple_mesh(options: &Options) -> Result<SimpleMesh, Box<dyn Error>> {
-    let animation = (!options.no_animation).then_some(options.animation.clone());
-    let mut planner = AshVrmFramePlanner::from_paths(options.avatar.clone(), animation)?;
-    let aspect = options.width.max(1) as f32 / options.height.max(1) as f32;
+fn build_simple_mesh(
+    planner: &mut AshVrmFramePlanner,
+    options: &Options,
+    time: f32,
+    width: u32,
+    height: u32,
+) -> Result<SimpleMesh, Box<dyn Error>> {
     let mut frame_options = AshVrmFramePlanOptions::parse_from(["ash-windowed-viewer"]);
     frame_options.avatar = options.avatar.clone();
     frame_options.animation = options.animation.clone();
     frame_options.no_animation = options.no_animation;
-    frame_options.time = options.time;
+    frame_options.time = time;
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
     let scene_options = frame_options.scene_options_with_screen_size(
         aspect,
         ScreenProjectionSize {
-            width: options.width.max(1) as f32,
-            height: options.height.max(1) as f32,
+            width: width.max(1) as f32,
+            height: height.max(1) as f32,
         },
     );
     let plan = planner.sample_frame_with_full_render_options(
-        options.time,
+        time,
         scene_options,
         AshRenderOptions {
             disable_outlines: true,
@@ -284,6 +352,35 @@ fn read_spirv_words(path: &PathBuf) -> Result<Vec<u32>, Box<dyn Error>> {
     })?;
     let words = ash::util::read_spv(&mut Cursor::new(bytes))?;
     Ok(words)
+}
+
+fn write_host_buffer(
+    device: &ash::Device,
+    buffer: &VulkanBuffer,
+    bytes: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let byte_len = vk::DeviceSize::try_from(bytes.len())?;
+    if byte_len > buffer.byte_size {
+        return Err(format!(
+            "animated frame needs {byte_len} bytes but the existing Vulkan buffer has {} bytes",
+            buffer.byte_size
+        )
+        .into());
+    }
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    unsafe {
+        let mapped = device.map_memory(
+            buffer.memory,
+            0,
+            buffer.byte_size,
+            vk::MemoryMapFlags::empty(),
+        )?;
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+        device.unmap_memory(buffer.memory);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -475,6 +572,32 @@ impl WindowedAshRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(RenderStatus::NeedsRecreate),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn update_mesh(&mut self, mesh: &SimpleMesh) -> Result<(), Box<dyn Error>> {
+        if u32::try_from(mesh.indices.len())? != self.index_count {
+            return Err(format!(
+                "animated frame changed index count from {} to {}; restart viewer to rebuild command buffers",
+                self.index_count,
+                mesh.indices.len()
+            )
+            .into());
+        }
+        unsafe {
+            self.device
+                .wait_for_fences(&[self.in_flight], true, u64::MAX)?;
+        }
+        write_host_buffer(
+            &self.device,
+            &self.vertex_buffer,
+            bytemuck::cast_slice(&mesh.vertices),
+        )?;
+        write_host_buffer(
+            &self.device,
+            &self.index_buffer,
+            bytemuck::cast_slice(&mesh.indices),
+        )?;
+        Ok(())
     }
 
     fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
@@ -1103,7 +1226,11 @@ impl MemoryContext<'_> {
                 self.device.unmap_memory(memory);
             }
         }
-        Ok(VulkanBuffer { buffer, memory })
+        Ok(VulkanBuffer {
+            buffer,
+            memory,
+            byte_size: size,
+        })
     }
 
     fn create_image(
@@ -1182,6 +1309,7 @@ impl MemoryContext<'_> {
 struct VulkanBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+    byte_size: vk::DeviceSize,
 }
 
 struct VulkanImage {
