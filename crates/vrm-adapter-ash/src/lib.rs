@@ -2159,6 +2159,102 @@ pub struct AshDrawableFramePlan {
     pub skipped_draws: Vec<AshSkippedDraw>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshCommandBufferBeginPlan {
+    pub flags: vk::CommandBufferUsageFlags,
+}
+
+impl AshCommandBufferBeginPlan {
+    pub fn command_buffer_begin_info(self) -> vk::CommandBufferBeginInfo<'static> {
+        vk::CommandBufferBeginInfo::default().flags(self.flags)
+    }
+}
+
+pub const fn ash_command_buffer_begin_plan(
+    flags: vk::CommandBufferUsageFlags,
+) -> AshCommandBufferBeginPlan {
+    AshCommandBufferBeginPlan { flags }
+}
+
+pub const fn ash_reusable_command_buffer_begin_plan() -> AshCommandBufferBeginPlan {
+    ash_command_buffer_begin_plan(vk::CommandBufferUsageFlags::empty())
+}
+
+pub const fn ash_one_time_command_buffer_begin_plan() -> AshCommandBufferBeginPlan {
+    ash_command_buffer_begin_plan(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+}
+
+#[derive(Clone)]
+pub struct AshRenderPassBeginPlan {
+    pub render_pass: vk::RenderPass,
+    pub framebuffer: vk::Framebuffer,
+    pub render_area: vk::Rect2D,
+    pub clear_values: Vec<vk::ClearValue>,
+}
+
+impl fmt::Debug for AshRenderPassBeginPlan {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AshRenderPassBeginPlan")
+            .field("render_pass", &self.render_pass)
+            .field("framebuffer", &self.framebuffer)
+            .field("render_area", &self.render_area)
+            .field("clear_value_count", &self.clear_values.len())
+            .finish()
+    }
+}
+
+impl AshRenderPassBeginPlan {
+    pub fn render_pass_begin_info(&self) -> vk::RenderPassBeginInfo<'_> {
+        vk::RenderPassBeginInfo::default()
+            .render_pass(self.render_pass)
+            .framebuffer(self.framebuffer)
+            .render_area(self.render_area)
+            .clear_values(&self.clear_values)
+    }
+}
+
+pub fn ash_render_pass_begin_plan(
+    plan: &AshRenderPassPlan,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+) -> AshRenderPassBeginPlan {
+    let mut clear_values = Vec::with_capacity(2);
+    clear_values.push(vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: plan.color_clear,
+        },
+    });
+    if let Some(depth_clear) = plan.depth_stencil_clear {
+        clear_values.push(vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: depth_clear.depth,
+                stencil: depth_clear.stencil,
+            },
+        });
+    }
+    ash_render_pass_begin_plan_from_clear_values(
+        render_pass,
+        framebuffer,
+        plan.render_area,
+        clear_values,
+    )
+}
+
+pub fn ash_render_pass_begin_plan_from_clear_values(
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    render_area: vk::Rect2D,
+    clear_values: Vec<vk::ClearValue>,
+) -> AshRenderPassBeginPlan {
+    AshRenderPassBeginPlan {
+        render_pass,
+        framebuffer,
+        render_area,
+        clear_values,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AshDrawableFrameOptions {
     pub color_clear: [f32; 4],
@@ -6925,6 +7021,52 @@ mod tests {
         assert_eq!(present.wait_semaphores(), [vk::Semaphore::null()]);
         assert_eq!(present.swapchains(), [vk::SwapchainKHR::null()]);
         assert_eq!(present.image_indices(), [4]);
+    }
+
+    #[test]
+    fn command_buffer_and_render_pass_begin_plans_expose_vk_infos() {
+        let reusable = ash_reusable_command_buffer_begin_plan();
+        assert_eq!(reusable.flags, vk::CommandBufferUsageFlags::empty());
+        assert_eq!(
+            reusable.command_buffer_begin_info().flags,
+            vk::CommandBufferUsageFlags::empty()
+        );
+        assert_eq!(
+            ash_one_time_command_buffer_begin_plan()
+                .command_buffer_begin_info()
+                .flags,
+            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
+        );
+
+        let render_pass_plan = AshRenderPassPlan {
+            render_area: vk::Rect2D {
+                offset: vk::Offset2D { x: 4, y: 8 },
+                extent: vk::Extent2D {
+                    width: 320,
+                    height: 180,
+                },
+            },
+            color_format: vk::Format::B8G8R8A8_UNORM,
+            depth_format: Some(vk::Format::D32_SFLOAT),
+            color_clear: [0.1, 0.2, 0.3, 0.4],
+            depth_stencil_clear: Some(AshDepthStencilClear {
+                depth: 0.5,
+                stencil: 7,
+            }),
+        };
+        let begin = ash_render_pass_begin_plan(
+            &render_pass_plan,
+            vk::RenderPass::null(),
+            vk::Framebuffer::null(),
+        );
+        let info = begin.render_pass_begin_info();
+
+        assert_eq!(begin.clear_values.len(), 2);
+        assert_eq!(info.render_pass, vk::RenderPass::null());
+        assert_eq!(info.framebuffer, vk::Framebuffer::null());
+        assert_eq!(info.render_area.extent.width, 320);
+        assert_eq!(info.clear_value_count, 2);
+        assert!(!info.p_clear_values.is_null());
     }
 
     #[test]

@@ -42,10 +42,13 @@ use vrm_adapter_ash::{
     ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_framebuffer_plan, ash_graphics_pipeline_state_plan, ash_memory_type_index,
-    ash_mtoon_renderer_cache_keys, ash_pipeline_layout_plans, ash_render_pass_creation_plan,
-    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_select_depth_format,
-    ash_swapchain_surface_plan, ash_texture_mip_upload_bytes, ash_texture_upload_command_plan,
-    ash_windowed_present_plan, ash_windowed_submit_plan,
+    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
+    ash_pipeline_layout_plans, ash_render_pass_begin_plan,
+    ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_swapchain_surface_plan,
+    ash_texture_mip_upload_bytes, ash_texture_upload_command_plan, ash_windowed_present_plan,
+    ash_windowed_submit_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1590,8 +1593,7 @@ impl MtoonWindowedAshRenderer {
             .command_buffer_count(1);
         let command_buffers = unsafe { self.device.allocate_command_buffers(&allocate_info)? };
         let command_buffer = command_buffers[0];
-        let begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let begin_info = ash_one_time_command_buffer_begin_plan().command_buffer_begin_info();
         let begin_result = unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
@@ -1921,27 +1923,13 @@ impl MtoonWindowedAshRenderer {
             )
             .into());
         }
-        let begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        let depth_clear = drawable.render_pass.depth_stencil_clear.unwrap_or_default();
-        let clear_values = [
-            vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: drawable.render_pass.color_clear,
-                },
-            },
-            vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: depth_clear.depth,
-                    stencil: depth_clear.stencil,
-                },
-            },
-        ];
-        let render_pass_info = vk::RenderPassBeginInfo::default()
-            .render_pass(context.render_pass)
-            .framebuffer(context.framebuffer)
-            .render_area(drawable.render_pass.render_area)
-            .clear_values(&clear_values);
+        let begin_info = ash_one_time_command_buffer_begin_plan().command_buffer_begin_info();
+        let render_pass_begin = ash_render_pass_begin_plan(
+            &drawable.render_pass,
+            context.render_pass,
+            context.framebuffer,
+        );
+        let render_pass_info = render_pass_begin.render_pass_begin_info();
         unsafe {
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
@@ -3173,7 +3161,7 @@ fn record_command_buffers(
         .command_buffer_count(u32::try_from(context.framebuffers.len())?);
     let command_buffers = unsafe { context.device.allocate_command_buffers(&allocate_info)? };
     for (command_buffer, framebuffer) in command_buffers.iter().zip(context.framebuffers) {
-        let begin = vk::CommandBufferBeginInfo::default();
+        let begin = ash_reusable_command_buffer_begin_plan().command_buffer_begin_info();
         let clear = [
             vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -3187,14 +3175,16 @@ fn record_command_buffers(
                 },
             },
         ];
-        let render_pass_info = vk::RenderPassBeginInfo::default()
-            .render_pass(context.render_pass)
-            .framebuffer(*framebuffer)
-            .render_area(vk::Rect2D {
+        let render_pass_begin = ash_render_pass_begin_plan_from_clear_values(
+            context.render_pass,
+            *framebuffer,
+            vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: context.extent,
-            })
-            .clear_values(&clear);
+            },
+            clear.to_vec(),
+        );
+        let render_pass_info = render_pass_begin.render_pass_begin_info();
         unsafe {
             context
                 .device
