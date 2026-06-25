@@ -970,6 +970,15 @@ impl AshSamplerPlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AshSamplerResourcePlan {
+    pub sampler_index: usize,
+    pub descriptor_set_index: usize,
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub sampler: AshSamplerPlan,
+}
+
 pub const ASH_FALLBACK_TEXTURES: [GltfMaterialTextureFallback; 3] = [
     GltfMaterialTextureFallback::White,
     GltfMaterialTextureFallback::Black,
@@ -4041,28 +4050,13 @@ pub struct AshMtoonSamplerCacheKey {
 impl AshMtoonSamplerCacheKey {
     pub fn from_frame(frame: &AshRendererFrame) -> Self {
         Self {
-            samplers: frame
-                .descriptor_sets
-                .iter()
-                .enumerate()
-                .flat_map(|(descriptor_set_index, set)| {
-                    set.bindings
-                        .iter()
-                        .filter(|binding| {
-                            matches!(
-                                binding.descriptor_type,
-                                vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-                                    | vk::DescriptorType::SAMPLER
-                            )
-                        })
-                        .map(move |binding| AshMtoonSamplerBindingCacheKey {
-                            descriptor_set_index,
-                            binding: binding.binding,
-                            descriptor_type: binding.descriptor_type.as_raw(),
-                            sampler: AshMtoonSamplerPlanCacheKey::from_sampler(
-                                binding.sampler.unwrap_or_default(),
-                            ),
-                        })
+            samplers: ash_sampler_resource_plans(frame)
+                .into_iter()
+                .map(|plan| AshMtoonSamplerBindingCacheKey {
+                    descriptor_set_index: plan.descriptor_set_index,
+                    binding: plan.binding,
+                    descriptor_type: plan.descriptor_type.as_raw(),
+                    sampler: AshMtoonSamplerPlanCacheKey::from_sampler(plan.sampler),
                 })
                 .collect(),
         }
@@ -4307,27 +4301,15 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             lifetime: AshRendererResourceLifetime::FrameDynamic,
         })
         .collect();
-    let samplers = frame
-        .descriptor_sets
-        .iter()
-        .enumerate()
-        .flat_map(|(descriptor_set_index, set)| {
-            set.bindings
-                .iter()
-                .filter(|binding| {
-                    matches!(
-                        binding.descriptor_type,
-                        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-                    )
-                })
-                .map(move |binding| AshRendererSamplerResource {
-                    descriptor_set_index,
-                    binding: binding.binding,
-                    descriptor_type: binding.descriptor_type,
-                    sampler: binding.sampler,
-                    handle_lifetime: AshRendererResourceLifetime::Persistent,
-                    lifetime: AshRendererResourceLifetime::Persistent,
-                })
+    let samplers = ash_sampler_resource_plans(frame)
+        .into_iter()
+        .map(|plan| AshRendererSamplerResource {
+            descriptor_set_index: plan.descriptor_set_index,
+            binding: plan.binding,
+            descriptor_type: plan.descriptor_type,
+            sampler: Some(plan.sampler),
+            handle_lifetime: AshRendererResourceLifetime::Persistent,
+            lifetime: AshRendererResourceLifetime::Persistent,
         })
         .collect();
     let descriptor_set_layouts = frame
@@ -4499,6 +4481,35 @@ pub fn ash_descriptor_set_allocation_plan(
             .map(|layout| layout.descriptor_set_index)
             .collect(),
     }
+}
+
+pub fn ash_sampler_resource_plans(frame: &AshRendererFrame) -> Vec<AshSamplerResourcePlan> {
+    frame
+        .descriptor_sets
+        .iter()
+        .enumerate()
+        .flat_map(|(descriptor_set_index, set)| {
+            set.bindings
+                .iter()
+                .filter(|binding| {
+                    matches!(
+                        binding.descriptor_type,
+                        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+                    )
+                })
+                .map(move |binding| (descriptor_set_index, binding))
+        })
+        .enumerate()
+        .map(
+            |(sampler_index, (descriptor_set_index, binding))| AshSamplerResourcePlan {
+                sampler_index,
+                descriptor_set_index,
+                binding: binding.binding,
+                descriptor_type: binding.descriptor_type,
+                sampler: binding.sampler.unwrap_or_default(),
+            },
+        )
+        .collect()
 }
 
 pub fn ash_descriptor_write_plans(
@@ -8973,6 +8984,27 @@ mod tests {
                 buffer_upload_index: None,
                 sampler: Some(AshSamplerPlan::default()),
             });
+
+        let sampler_plans = ash_sampler_resource_plans(&frame);
+        assert_eq!(
+            sampler_plans,
+            vec![
+                AshSamplerResourcePlan {
+                    sampler_index: 0,
+                    descriptor_set_index: 0,
+                    binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
+                    descriptor_type: vk::DescriptorType::SAMPLER,
+                    sampler: AshSamplerPlan::default(),
+                },
+                AshSamplerResourcePlan {
+                    sampler_index: 1,
+                    descriptor_set_index: 0,
+                    binding: 3,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    sampler: AshSamplerPlan::default(),
+                },
+            ]
+        );
 
         let plans = ash_descriptor_write_plans(&frame).unwrap();
         assert_eq!(plans.len(), 5);

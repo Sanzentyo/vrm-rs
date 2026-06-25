@@ -34,8 +34,8 @@ use vrm_adapter_ash::{
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
     ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
-    ash_select_depth_format, ash_shader_module_plan, ash_texture_mip_upload_bytes,
-    ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
+    ash_sampler_resource_plans, ash_select_depth_format, ash_shader_module_plan,
+    ash_texture_mip_upload_bytes, ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
     frame_plan_from_options_with_viewport,
 };
 use vrm_io::{
@@ -702,17 +702,9 @@ impl UnsafeAshDeviceRenderer {
     }
 
     fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {
-        frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| &set.bindings)
-            .filter(|binding| {
-                matches!(
-                    binding.descriptor_type,
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-                )
-            })
-            .map(|binding| self.create_sampler(binding.sampler.unwrap_or_default()))
+        ash_sampler_resource_plans(frame)
+            .into_iter()
+            .map(|plan| self.create_sampler(plan.sampler))
             .collect()
     }
 
