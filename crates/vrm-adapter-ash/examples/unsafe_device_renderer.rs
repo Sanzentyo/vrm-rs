@@ -924,24 +924,23 @@ impl UnsafeAshDeviceRenderer {
             }
             self.device.cmd_end_render_pass(command_buffer);
             let readback_plan = ash_color_attachment_readback_plan(context.extent);
-            let readback_barrier = readback_plan.transfer_src_barrier_command(context.color_target);
+            let readback =
+                readback_plan.command_sequence(context.color_target, context.readback_buffer);
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                readback_barrier.src_stage_mask,
-                readback_barrier.dst_stage_mask,
-                readback_barrier.dependency_flags,
+                readback.transfer_src_barrier.src_stage_mask,
+                readback.transfer_src_barrier.dst_stage_mask,
+                readback.transfer_src_barrier.dependency_flags,
                 &[],
                 &[],
-                &readback_barrier.image_barriers,
+                &readback.transfer_src_barrier.image_barriers,
             );
-            let copy = readback_plan
-                .image_to_buffer_copy_command(context.color_target, context.readback_buffer);
             self.device.cmd_copy_image_to_buffer(
                 command_buffer,
-                copy.image,
-                copy.image_layout,
-                copy.buffer,
-                &copy.regions,
+                readback.copy.image,
+                readback.copy.image_layout,
+                readback.copy.buffer,
+                &readback.copy.regions,
             );
             self.device.end_command_buffer(command_buffer)?;
         }
@@ -978,34 +977,32 @@ impl UnsafeAshDeviceRenderer {
         mip_levels: &[RgbaMipLevel],
     ) {
         let plan = ash_texture_upload_command_plan(mip_levels);
-        let to_transfer = plan.transfer_dst_barrier_command(image);
+        let upload = plan.command_sequence(image, staging_buffer);
         unsafe {
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                to_transfer.src_stage_mask,
-                to_transfer.dst_stage_mask,
-                to_transfer.dependency_flags,
+                upload.transfer_dst_barrier.src_stage_mask,
+                upload.transfer_dst_barrier.dst_stage_mask,
+                upload.transfer_dst_barrier.dependency_flags,
                 &[],
                 &[],
-                &to_transfer.image_barriers,
+                &upload.transfer_dst_barrier.image_barriers,
             );
-            let copy = plan.buffer_to_image_copy_command(staging_buffer, image);
             self.device.cmd_copy_buffer_to_image(
                 command_buffer,
-                copy.buffer,
-                copy.image,
-                copy.image_layout,
-                copy.regions,
+                upload.copy.buffer,
+                upload.copy.image,
+                upload.copy.image_layout,
+                upload.copy.regions,
             );
-            let to_shader = plan.shader_read_barrier_command(image);
             self.device.cmd_pipeline_barrier(
                 command_buffer,
-                to_shader.src_stage_mask,
-                to_shader.dst_stage_mask,
-                to_shader.dependency_flags,
+                upload.shader_read_barrier.src_stage_mask,
+                upload.shader_read_barrier.dst_stage_mask,
+                upload.shader_read_barrier.dependency_flags,
                 &[],
                 &[],
-                &to_shader.image_barriers,
+                &upload.shader_read_barrier.image_barriers,
             );
         }
     }

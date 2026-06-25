@@ -1618,6 +1618,18 @@ impl AshTextureUploadCommandPlan {
             regions: &self.copy_regions,
         }
     }
+
+    pub fn command_sequence(
+        &self,
+        image: vk::Image,
+        staging_buffer: vk::Buffer,
+    ) -> AshTextureUploadCommandSequence<'_> {
+        AshTextureUploadCommandSequence {
+            transfer_dst_barrier: self.transfer_dst_barrier_command(image),
+            copy: self.buffer_to_image_copy_command(staging_buffer, image),
+            shader_read_barrier: self.shader_read_barrier_command(image),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1634,6 +1646,13 @@ pub struct AshBufferToImageCopyCommand<'a> {
     pub image: vk::Image,
     pub image_layout: vk::ImageLayout,
     pub regions: &'a [vk::BufferImageCopy],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshTextureUploadCommandSequence<'a> {
+    pub transfer_dst_barrier: AshImageBarrierCommand,
+    pub copy: AshBufferToImageCopyCommand<'a>,
+    pub shader_read_barrier: AshImageBarrierCommand,
 }
 
 pub fn ash_texture_upload_command_plan(mip_levels: &[RgbaMipLevel]) -> AshTextureUploadCommandPlan {
@@ -1723,6 +1742,17 @@ impl AshColorAttachmentReadbackPlan {
             regions: self.copy_regions(),
         }
     }
+
+    pub fn command_sequence(
+        &self,
+        image: vk::Image,
+        buffer: vk::Buffer,
+    ) -> AshColorAttachmentReadbackCommandSequence {
+        AshColorAttachmentReadbackCommandSequence {
+            transfer_src_barrier: self.transfer_src_barrier_command(image),
+            copy: self.image_to_buffer_copy_command(image, buffer),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1731,6 +1761,12 @@ pub struct AshImageToBufferCopyCommand {
     pub image_layout: vk::ImageLayout,
     pub buffer: vk::Buffer,
     pub regions: [vk::BufferImageCopy; 1],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshColorAttachmentReadbackCommandSequence {
+    pub transfer_src_barrier: AshImageBarrierCommand,
+    pub copy: AshImageToBufferCopyCommand,
 }
 
 pub fn ash_color_attachment_readback_plan(extent: vk::Extent2D) -> AshColorAttachmentReadbackPlan {
@@ -8664,6 +8700,19 @@ mod tests {
             vk::PipelineStageFlags::FRAGMENT_SHADER
         );
         assert_eq!(to_shader_command.image_barriers[0].image, image);
+
+        let sequence = plan.command_sequence(image, vk::Buffer::null());
+        assert_eq!(
+            sequence.transfer_dst_barrier.src_stage_mask,
+            vk::PipelineStageFlags::TOP_OF_PIPE
+        );
+        assert_eq!(sequence.copy.image, image);
+        assert_eq!(sequence.copy.buffer, vk::Buffer::null());
+        assert_eq!(sequence.copy.regions.len(), 3);
+        assert_eq!(
+            sequence.shader_read_barrier.dst_stage_mask,
+            vk::PipelineStageFlags::FRAGMENT_SHADER
+        );
     }
 
     #[test]
@@ -8716,6 +8765,19 @@ mod tests {
         assert_eq!(copy.image_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         assert_eq!(copy.buffer, vk::Buffer::null());
         assert_eq!(copy.regions[0].image_extent.width, 64);
+
+        let sequence = plan.command_sequence(image, vk::Buffer::null());
+        assert_eq!(
+            sequence.transfer_src_barrier.src_stage_mask,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+        );
+        assert_eq!(sequence.copy.image, image);
+        assert_eq!(
+            sequence.copy.image_layout,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL
+        );
+        assert_eq!(sequence.copy.buffer, vk::Buffer::null());
+        assert_eq!(sequence.copy.regions[0].image_extent.height, 32);
     }
 
     #[test]
