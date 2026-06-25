@@ -1295,8 +1295,8 @@ impl AshSamplerPlan {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AshSamplerResourcePlan {
-    pub sampler_index: usize,
-    pub descriptor_set_index: usize,
+    pub sampler_id: AshSamplerId,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub sampler: AshSamplerPlan,
@@ -3159,6 +3159,101 @@ pub struct AshDescriptorPoolSizePlan {
     pub descriptor_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshDescriptorSetId(usize);
+
+impl AshDescriptorSetId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshDescriptorSetId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshUniformUploadId(usize);
+
+impl AshUniformUploadId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshUniformUploadId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshBufferUploadId(usize);
+
+impl AshBufferUploadId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshBufferUploadId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshTextureUploadId(usize);
+
+impl AshTextureUploadId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshTextureUploadId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshSamplerId(usize);
+
+impl AshSamplerId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshSamplerId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorSetLayoutPlan {
     pub descriptor_set_index: usize,
@@ -3277,7 +3372,7 @@ impl AshDescriptorSetAllocationPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorWritePlan {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub resource: AshDescriptorWriteResource,
@@ -3335,12 +3430,12 @@ impl AshDescriptorWritePlan {
         descriptor_sets: &[vk::DescriptorSet],
     ) -> Result<vk::DescriptorSet, String> {
         descriptor_sets
-            .get(self.descriptor_set_index)
+            .get(self.descriptor_set_id.index())
             .copied()
             .ok_or_else(|| {
                 format!(
                     "descriptor write references missing descriptor set {}",
-                    self.descriptor_set_index
+                    self.descriptor_set_id
                 )
             })
     }
@@ -3611,20 +3706,30 @@ impl AshResolvedDescriptorWrite {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AshDescriptorWriteResource {
-    UniformBuffer { uniform_upload_index: usize },
-    StorageBuffer { buffer_upload_index: usize },
-    SampledImage { image: AshDescriptorImageResource },
-    Sampler { sampler_index: usize },
+    UniformBuffer {
+        uniform_upload_id: AshUniformUploadId,
+    },
+    StorageBuffer {
+        buffer_upload_id: AshBufferUploadId,
+    },
+    SampledImage {
+        image: AshDescriptorImageResource,
+    },
+    Sampler {
+        sampler_id: AshSamplerId,
+    },
 }
 
 impl AshDescriptorWriteResource {
     pub fn uniform_resource<'a, T>(&self, resources: &'a [T]) -> Result<&'a T, String> {
         match self {
-            Self::UniformBuffer {
-                uniform_upload_index,
-            } => resources.get(*uniform_upload_index).ok_or_else(|| {
-                format!("descriptor write references missing uniform buffer {uniform_upload_index}")
-            }),
+            Self::UniformBuffer { uniform_upload_id } => {
+                resources.get(uniform_upload_id.index()).ok_or_else(|| {
+                    format!(
+                        "descriptor write references missing uniform buffer {uniform_upload_id}"
+                    )
+                })
+            }
             other => Err(format!(
                 "descriptor write resource is not a uniform buffer: {other:?}"
             )),
@@ -3633,11 +3738,11 @@ impl AshDescriptorWriteResource {
 
     pub fn storage_buffer_resource<'a, T>(&self, resources: &'a [T]) -> Result<&'a T, String> {
         match self {
-            Self::StorageBuffer {
-                buffer_upload_index,
-            } => resources.get(*buffer_upload_index).ok_or_else(|| {
-                format!("descriptor write references missing storage buffer {buffer_upload_index}")
-            }),
+            Self::StorageBuffer { buffer_upload_id } => {
+                resources.get(buffer_upload_id.index()).ok_or_else(|| {
+                    format!("descriptor write references missing storage buffer {buffer_upload_id}")
+                })
+            }
             other => Err(format!(
                 "descriptor write resource is not a storage buffer: {other:?}"
             )),
@@ -3646,11 +3751,10 @@ impl AshDescriptorWriteResource {
 
     pub fn sampler(&self, samplers: &[vk::Sampler]) -> Result<vk::Sampler, String> {
         match self {
-            Self::Sampler { sampler_index } => {
-                samplers.get(*sampler_index).copied().ok_or_else(|| {
-                    format!("descriptor write references missing sampler {sampler_index}")
-                })
-            }
+            Self::Sampler { sampler_id } => samplers
+                .get(sampler_id.index())
+                .copied()
+                .ok_or_else(|| format!("descriptor write references missing sampler {sampler_id}")),
             other => Err(format!(
                 "descriptor write resource does not reference a sampler: {other:?}"
             )),
@@ -3673,14 +3777,12 @@ impl AshDescriptorWriteResource {
         fallback_image_view: impl FnOnce(GltfMaterialTextureFallback) -> vk::ImageView,
     ) -> Result<vk::ImageView, String> {
         match self.image_resource()? {
-            AshDescriptorImageResource::TextureUpload {
-                texture_upload_index,
-            } => texture_uploads
-                .get(texture_upload_index)
+            AshDescriptorImageResource::TextureUpload { texture_upload_id } => texture_uploads
+                .get(texture_upload_id.index())
                 .map(texture_image_view)
                 .ok_or_else(|| {
                     format!(
-                        "descriptor image references missing texture upload {texture_upload_index}"
+                        "descriptor image references missing texture upload {texture_upload_id}"
                     )
                 }),
             AshDescriptorImageResource::Fallback { fallback } => Ok(fallback_image_view(fallback)),
@@ -3691,7 +3793,7 @@ impl AshDescriptorWriteResource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshDescriptorImageResource {
     TextureUpload {
-        texture_upload_index: usize,
+        texture_upload_id: AshTextureUploadId,
     },
     Fallback {
         fallback: GltfMaterialTextureFallback,
@@ -3704,11 +3806,13 @@ impl AshDescriptorImageResource {
         texture_uploads: &'a [T],
     ) -> Result<&'a T, String> {
         match self {
-            Self::TextureUpload {
-                texture_upload_index,
-            } => texture_uploads.get(*texture_upload_index).ok_or_else(|| {
-                format!("descriptor image references missing texture upload {texture_upload_index}")
-            }),
+            Self::TextureUpload { texture_upload_id } => texture_uploads
+                .get(texture_upload_id.index())
+                .ok_or_else(|| {
+                    format!(
+                        "descriptor image references missing texture upload {texture_upload_id}"
+                    )
+                }),
             other => Err(format!(
                 "descriptor image resource is not a texture upload: {other:?}"
             )),
@@ -5287,7 +5391,7 @@ impl AshMtoonSamplerCacheKey {
             samplers: ash_sampler_resource_plans(frame)
                 .into_iter()
                 .map(|plan| AshMtoonSamplerBindingCacheKey {
-                    descriptor_set_index: plan.descriptor_set_index,
+                    descriptor_set_index: plan.descriptor_set_id.index(),
                     binding: plan.binding,
                     descriptor_type: plan.descriptor_type.as_raw(),
                     sampler: AshMtoonSamplerPlanCacheKey::from_sampler(plan.sampler),
@@ -5660,7 +5764,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
     let samplers = ash_sampler_resource_plans(frame)
         .into_iter()
         .map(|plan| AshRendererSamplerResource {
-            descriptor_set_index: plan.descriptor_set_index,
+            descriptor_set_index: plan.descriptor_set_id.index(),
             binding: plan.binding,
             descriptor_type: plan.descriptor_type,
             sampler: Some(plan.sampler),
@@ -5920,8 +6024,8 @@ pub fn ash_sampler_resource_plans(frame: &AshRendererFrame) -> Vec<AshSamplerRes
         .enumerate()
         .map(
             |(sampler_index, (descriptor_set_index, binding))| AshSamplerResourcePlan {
-                sampler_index,
-                descriptor_set_index,
+                sampler_id: AshSamplerId::new(sampler_index),
+                descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                 binding: binding.binding,
                 descriptor_type: binding.descriptor_type,
                 sampler: binding.sampler.unwrap_or_default(),
@@ -5952,7 +6056,7 @@ pub fn ash_descriptor_write_plans(
                         ));
                     }
                     AshDescriptorWriteResource::UniformBuffer {
-                        uniform_upload_index,
+                        uniform_upload_id: AshUniformUploadId::new(uniform_upload_index),
                     }
                 }
                 vk::DescriptorType::STORAGE_BUFFER => {
@@ -5969,7 +6073,7 @@ pub fn ash_descriptor_write_plans(
                         ));
                     }
                     AshDescriptorWriteResource::StorageBuffer {
-                        buffer_upload_index,
+                        buffer_upload_id: AshBufferUploadId::new(buffer_upload_index),
                     }
                 }
                 vk::DescriptorType::SAMPLED_IMAGE => AshDescriptorWriteResource::SampledImage {
@@ -5979,7 +6083,7 @@ pub fn ash_descriptor_write_plans(
                     let current_sampler = sampler_index;
                     sampler_index = sampler_index.saturating_add(1);
                     AshDescriptorWriteResource::Sampler {
-                        sampler_index: current_sampler,
+                        sampler_id: AshSamplerId::new(current_sampler),
                     }
                 }
                 other => {
@@ -5989,7 +6093,7 @@ pub fn ash_descriptor_write_plans(
                 }
             };
             plans.push(AshDescriptorWritePlan {
-                descriptor_set_index,
+                descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                 binding: binding.binding,
                 descriptor_type: binding.descriptor_type,
                 resource,
@@ -6011,7 +6115,7 @@ fn ash_descriptor_image_resource(
             ));
         }
         Ok(AshDescriptorImageResource::TextureUpload {
-            texture_upload_index,
+            texture_upload_id: AshTextureUploadId::new(texture_upload_index),
         })
     } else {
         Ok(AshDescriptorImageResource::Fallback {
@@ -10574,8 +10678,8 @@ mod tests {
         assert_eq!(
             sampler_plans,
             vec![AshSamplerResourcePlan {
-                sampler_index: 0,
-                descriptor_set_index: 0,
+                sampler_id: AshSamplerId::new(0),
+                descriptor_set_id: AshDescriptorSetId::new(0),
                 binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
                 descriptor_type: vk::DescriptorType::SAMPLER,
                 sampler: AshSamplerPlan::default(),
@@ -10587,25 +10691,27 @@ mod tests {
         assert_eq!(
             plans[0].resource,
             AshDescriptorWriteResource::UniformBuffer {
-                uniform_upload_index: 0,
+                uniform_upload_id: AshUniformUploadId::new(0),
             }
         );
         assert_eq!(
             plans[1].resource,
             AshDescriptorWriteResource::SampledImage {
                 image: AshDescriptorImageResource::TextureUpload {
-                    texture_upload_index: 0,
+                    texture_upload_id: AshTextureUploadId::new(0),
                 },
             }
         );
         assert_eq!(
             plans[2].resource,
-            AshDescriptorWriteResource::Sampler { sampler_index: 0 }
+            AshDescriptorWriteResource::Sampler {
+                sampler_id: AshSamplerId::new(0)
+            }
         );
         assert_eq!(
             plans[3].resource,
             AshDescriptorWriteResource::StorageBuffer {
-                buffer_upload_index: 0,
+                buffer_upload_id: AshBufferUploadId::new(0),
             }
         );
 
@@ -10639,11 +10745,11 @@ mod tests {
     #[test]
     fn descriptor_write_helpers_resolve_engine_owned_handles_with_checked_errors() {
         let plan = AshDescriptorWritePlan {
-            descriptor_set_index: 0,
+            descriptor_set_id: AshDescriptorSetId::new(0),
             binding: 7,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             resource: AshDescriptorWriteResource::UniformBuffer {
-                uniform_upload_index: 0,
+                uniform_upload_id: AshUniformUploadId::new(0),
             },
         };
         let descriptor_sets = [vk::DescriptorSet::null()];
@@ -10654,7 +10760,7 @@ mod tests {
         );
         assert_eq!(
             AshDescriptorWritePlan {
-                descriptor_set_index: 2,
+                descriptor_set_id: AshDescriptorSetId::new(2),
                 ..plan.clone()
             }
             .vk_descriptor_set(&descriptor_sets),
@@ -10669,7 +10775,7 @@ mod tests {
         );
 
         let storage = AshDescriptorWriteResource::StorageBuffer {
-            buffer_upload_index: 1,
+            buffer_upload_id: AshBufferUploadId::new(1),
         };
         assert_eq!(storage.storage_buffer_resource(&[3_u32, 9_u32]), Ok(&9_u32));
         let empty_buffers: [u32; 0] = [];
@@ -10678,7 +10784,9 @@ mod tests {
             Err("descriptor write references missing storage buffer 1".to_owned())
         );
 
-        let sampler = AshDescriptorWriteResource::Sampler { sampler_index: 0 };
+        let sampler = AshDescriptorWriteResource::Sampler {
+            sampler_id: AshSamplerId::new(0),
+        };
         assert_eq!(
             sampler.sampler(&[vk::Sampler::null()]),
             Ok(vk::Sampler::null())
@@ -10704,7 +10812,7 @@ mod tests {
             Ok(&9_u32)
         );
         let uploaded = AshDescriptorImageResource::TextureUpload {
-            texture_upload_index: 0,
+            texture_upload_id: AshTextureUploadId::new(0),
         };
         assert_eq!(uploaded.texture_upload_resource(&[55_u32]), Ok(&55_u32));
         assert_eq!(
@@ -10719,14 +10827,14 @@ mod tests {
         assert_eq!(
             uploaded.fallback(),
             Err(
-                "descriptor image resource is not a fallback texture: TextureUpload { texture_upload_index: 0 }"
+                "descriptor image resource is not a fallback texture: TextureUpload { texture_upload_id: AshTextureUploadId(0) }"
                     .to_owned()
             )
         );
         assert_eq!(
             plan.resource.image_resource(),
             Err(
-                "descriptor write resource does not reference an image: UniformBuffer { uniform_upload_index: 0 }"
+                "descriptor write resource does not reference an image: UniformBuffer { uniform_upload_id: AshUniformUploadId(0) }"
                     .to_owned()
             )
         );
@@ -10801,7 +10909,7 @@ mod tests {
         assert!(wrote_buffer);
 
         let sampled_image_plan = AshDescriptorWritePlan {
-            descriptor_set_index: 0,
+            descriptor_set_id: AshDescriptorSetId::new(0),
             binding: 11,
             descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
             resource: AshDescriptorWriteResource::SampledImage { image },

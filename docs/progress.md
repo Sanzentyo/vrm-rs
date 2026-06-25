@@ -2,6 +2,17 @@
 
 ## 2026-06-25
 
+- Started replacing raw Ash renderer-edge resource indices with typed IDs.
+  Descriptor-write and sampler-resource handoff plans now use
+  `AshDescriptorSetId`, `AshUniformUploadId`, `AshBufferUploadId`,
+  `AshTextureUploadId`, and `AshSamplerId` instead of category-ambiguous
+  `usize` fields. Existing renderer manifests still expose their historical
+  numeric summary fields, but the handle-resolution API that downstream Ash
+  engines consume now carries the index domain in the type. Verification after
+  the change included `cargo test -p vrm-adapter-ash --lib`,
+  `cargo clippy -p vrm-adapter-ash --all-targets -- -D warnings`, the lightweight
+  local CI script, and `just ci-ash-windowed`; the release-built Seed-san +
+  `idle_loop.vrma` windowed and resize smokes still pass with cache hits.
 - Removed the old combined-image-sampler descriptor write surface from
   `vrm-adapter-ash`'s normal renderer handoff. `AshDescriptorWriteResource` and
   `AshDescriptorWriteData` now model only uniform buffers, storage buffers,
