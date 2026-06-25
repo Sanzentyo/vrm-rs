@@ -21,20 +21,18 @@ use vrm_adapter_ash::{
     ASH_FALLBACK_TEXTURES, AshColorAttachmentFinalLayout, AshCommandRecordHandleAccess,
     AshCommandRecordResources, AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess,
     AshDescriptorWriteResources, AshDiagnosticOwnerId, AshDrawableFrameOptions,
-    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
-    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
-    AshRendererFrame, AshResolvedCommand, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
-    ash_2d_image_resource_plan, ash_color_attachment_readback_plan, ash_depth_attachment_plan,
-    ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
-    ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
-    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
-    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
-    ash_material_texture_binding, ash_memory_allocation_plan, ash_memory_type_index,
-    ash_mtoon_texture_binding, ash_pipeline_layout_plans,
-    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
-    ash_render_pass_creation_plan, ash_renderer_frame_from_plan_with_owner_sample_selection,
-    ash_resettable_command_pool_plan, ash_reusable_command_buffer_begin_plan,
-    ash_sampler_resource_plans, ash_select_depth_format, ash_shader_module_plan,
+    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation,
+    AshMtoonMaterializationPlan, AshMtoonPass, AshMtoonPipelinePlan, AshMtoonShaderCacheKey,
+    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand,
+    AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive, ash_2d_image_resource_plan,
+    ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_fallback_texture_mip_level,
+    ash_fallback_texture_rgba, ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan,
+    ash_graphics_shader_stages_plan, ash_host_buffer_plan, ash_material_texture_binding,
+    ash_memory_allocation_plan, ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
+    ash_mtoon_texture_binding, ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan,
+    ash_render_pass_begin_plan, ash_render_pass_creation_plan,
+    ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
     ash_texture_mip_upload_bytes, ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
     frame_plan_from_options_with_viewport,
 };
@@ -212,7 +210,6 @@ struct CommandRecordContext<'a> {
     fallback_texture_staging: &'a VulkanFallbackBuffers,
     color_target: vk::Image,
     readback_buffer: vk::Buffer,
-    clear_alpha: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -378,6 +375,22 @@ impl UnsafeAshDeviceRenderer {
         let command_pool_info =
             ash_resettable_command_pool_plan(self.queue_family_index).command_pool_create_info();
         let command_pool = unsafe { self.device.create_command_pool(&command_pool_info, None)? };
+        let shader_key = AshMtoonShaderCacheKey::from_spirv_words(
+            shaders.vertex_entry.as_str(),
+            shaders.fragment_entry.as_str(),
+            &shaders.vertex,
+            &shaders.fragment,
+        );
+        let materialization = ash_mtoon_materialization_plan_with_options(
+            frame,
+            extent,
+            shader_key,
+            AshDrawableFrameOptions {
+                color_clear: [0.0, 0.0, 0.0, clear_alpha.clamp(0.0, 1.0)],
+                ..Default::default()
+            },
+        )
+        .map_err(|error| -> Box<dyn Error> { error.into() })?;
 
         let buffers = frame
             .buffers
@@ -456,20 +469,20 @@ impl UnsafeAshDeviceRenderer {
             vk::BufferUsageFlags::TRANSFER_DST,
             &vec![0_u8; readback_len],
         )?;
-        let descriptor_set_layout_plans = ash_descriptor_set_layout_plans(frame);
-        let descriptor_set_layouts = descriptor_set_layout_plans
+        let descriptor_set_layouts = materialization
+            .descriptor_set_layouts
             .iter()
             .map(|plan| self.create_descriptor_set_layout(plan))
             .collect::<Result<Vec<_>, _>>()?;
-        let descriptor_pool = self.create_descriptor_pool(frame)?;
+        let descriptor_pool = self.create_descriptor_pool(&materialization)?;
         let descriptor_sets = self.allocate_descriptor_sets(
             descriptor_pool,
-            &ash_descriptor_set_allocation_plan(&descriptor_set_layout_plans),
+            &materialization.descriptor_set_allocation,
             &descriptor_set_layouts,
         )?;
-        let samplers = self.create_samplers(frame)?;
+        let samplers = self.create_samplers(&materialization)?;
         self.update_descriptor_sets(
-            frame,
+            &materialization,
             &descriptor_sets,
             DescriptorUpdateResources {
                 buffers: &buffers,
@@ -479,7 +492,8 @@ impl UnsafeAshDeviceRenderer {
                 samplers: &samplers,
             },
         )?;
-        let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
+        let pipeline_layouts = materialization
+            .pipeline_layouts
             .iter()
             .map(|plan| {
                 plan.with_pipeline_layout_create_info(&descriptor_set_layouts, |info| unsafe {
@@ -528,9 +542,9 @@ impl UnsafeAshDeviceRenderer {
             fallback_texture_staging: &fallback_texture_staging,
             color_target: color_target.image,
             readback_buffer: readback.buffer,
-            clear_alpha,
         };
-        let command_buffers = self.record_command_buffers(frame, &command_context)?;
+        let command_buffers =
+            self.record_command_buffers(&materialization, frame, &command_context)?;
         Ok(VulkanFrameResources {
             buffers,
             images,
@@ -679,12 +693,13 @@ impl UnsafeAshDeviceRenderer {
 
     fn create_descriptor_pool(
         &self,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
     ) -> Result<vk::DescriptorPool, vk::Result> {
-        let plan = ash_descriptor_pool_plan(frame);
-        plan.with_descriptor_pool_create_info(|info| unsafe {
-            self.device.create_descriptor_pool(&info, None)
-        })
+        materialization
+            .descriptor_pool
+            .with_descriptor_pool_create_info(|info| unsafe {
+                self.device.create_descriptor_pool(&info, None)
+            })
     }
 
     fn allocate_descriptor_sets(
@@ -701,9 +716,13 @@ impl UnsafeAshDeviceRenderer {
             .map_err(Into::into)
     }
 
-    fn create_samplers(&self, frame: &AshRendererFrame) -> Result<Vec<vk::Sampler>, vk::Result> {
-        ash_sampler_resource_plans(frame)
-            .into_iter()
+    fn create_samplers(
+        &self,
+        materialization: &AshMtoonMaterializationPlan,
+    ) -> Result<Vec<vk::Sampler>, vk::Result> {
+        materialization
+            .sampler_resources
+            .iter()
             .map(|plan| self.create_sampler(plan.sampler))
             .collect()
     }
@@ -715,11 +734,11 @@ impl UnsafeAshDeviceRenderer {
 
     fn update_descriptor_sets(
         &self,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
         descriptor_sets: &[vk::DescriptorSet],
         resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
-        for plan in ash_descriptor_write_plans(frame)? {
+        for plan in &materialization.descriptor_writes {
             let write_data = plan
                 .resolve_write_data(
                     AshDescriptorWriteResources::new(
@@ -822,17 +841,11 @@ impl UnsafeAshDeviceRenderer {
 
     fn record_command_buffers(
         &self,
+        materialization: &AshMtoonMaterializationPlan,
         frame: &AshRendererFrame,
         context: &CommandRecordContext<'_>,
     ) -> Result<Vec<vk::CommandBuffer>, Box<dyn Error>> {
-        let drawable = ash_drawable_frame_from_renderer_frame_with_options(
-            frame,
-            context.extent,
-            AshDrawableFrameOptions {
-                color_clear: [0.0, 0.0, 0.0, context.clear_alpha.clamp(0.0, 1.0)],
-                ..Default::default()
-            },
-        );
+        let drawable = &materialization.drawable;
         if !drawable.skipped_draws.is_empty() {
             return Err(format!(
                 "drawable frame has skipped draws: {:?}",

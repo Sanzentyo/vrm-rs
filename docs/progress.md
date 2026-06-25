@@ -2,6 +2,18 @@
 
 ## 2026-06-25
 
+- Routed the real Ash offscreen Vulkan readback materialization through
+  `AshMtoonMaterializationPlan` as well. `unsafe_device_renderer` now derives
+  descriptor-set layouts, descriptor-pool/allocation plans, sampler resources,
+  descriptor writes, pipeline layouts, and the drawable command stream from the
+  same facade consumed by `renderer_integration` and `windowed_viewer`; the
+  example still owns all Vulkan handles, memory allocation, queue submission,
+  texture upload commands, and readback commands.
+- Verified the offscreen facade path with `cargo check -p vrm-adapter-ash
+  --example unsafe_device_renderer`, `cargo test -p vrm-adapter-ash --lib`,
+  `cargo clippy -p vrm-adapter-ash --all-targets -- -D warnings`, and `just
+  ash-mtoon-base-readback`. The readback stayed at checksum
+  `5d2cf33222e6643c` with `.imqraw` matching the `.rgba.json` artifact.
 - Removed the legacy Ash MToon combined-image-sampler/GLSL handoff from the
   normal adapter surface. `AshVrmFramePlanOptions` no longer exposes
   `--descriptor-binding-model`, `AshRenderOptions` no longer carries a binding
