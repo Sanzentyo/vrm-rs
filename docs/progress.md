@@ -44,6 +44,15 @@
   `just ci-ash-windowed` now prints `validated Ash MToon WGSL ABI: 24 resource
   bindings, entries vs_main/fs_main` before running the release windowed cache
   and resize smokes.
+- Replaced the Ash WGSL ABI's bare coordinate-adjustment boolean with typed
+  policy data. `AshClipSpacePolicy::CpuVulkanZeroToOneYDown` now names the
+  current contract: CPU scene matrices produce Vulkan zero-to-one,
+  framebuffer-Y-down clip space, while `AshSpirvCoordinateAdjustment::Disabled`
+  prevents Naga from applying a second transform. `AshSceneOptions` carries the
+  same clip-space policy for projection construction, and
+  `AshMtoonShaderCacheKey` includes both the clip-space policy and SPIR-V
+  coordinate-adjustment policy so incompatible shader/projection conventions do
+  not share a pipeline cache entry.
 
 ## 2026-06-23
 

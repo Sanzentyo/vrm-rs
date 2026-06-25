@@ -192,6 +192,7 @@ impl AshVrmFramePlanOptions {
         AshSceneOptions {
             aspect_ratio,
             screen_projection_size,
+            clip_space_policy: AshClipSpacePolicy::default(),
             camera_y: self.camera_y,
             camera_z: self.camera_z,
             target_y: self.target_y,
@@ -276,6 +277,44 @@ pub const ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH: &str =
 pub const ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH: &str =
     "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AshClipSpacePolicy {
+    #[default]
+    CpuVulkanZeroToOneYDown,
+    NagaVulkanZeroToOneYDown,
+}
+
+impl AshClipSpacePolicy {
+    pub const fn projection_y_sign(self) -> f32 {
+        match self {
+            Self::CpuVulkanZeroToOneYDown => -1.0,
+            Self::NagaVulkanZeroToOneYDown => 1.0,
+        }
+    }
+
+    pub const fn spirv_coordinate_adjustment(self) -> AshSpirvCoordinateAdjustment {
+        match self {
+            Self::CpuVulkanZeroToOneYDown => AshSpirvCoordinateAdjustment::Disabled,
+            Self::NagaVulkanZeroToOneYDown => AshSpirvCoordinateAdjustment::NagaWriter,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AshSpirvCoordinateAdjustment {
+    Disabled,
+    NagaWriter,
+}
+
+impl AshSpirvCoordinateAdjustment {
+    pub const fn adjust_coordinate_space(self) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::NagaWriter => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AshWgslResourceKind {
     UniformBuffer,
@@ -300,7 +339,8 @@ pub struct AshMtoonWgslShaderAbi {
     pub fragment_entry: &'static str,
     pub vertex_spirv_file: &'static str,
     pub fragment_spirv_file: &'static str,
-    pub adjust_coordinate_space: bool,
+    pub clip_space_policy: AshClipSpacePolicy,
+    pub spirv_coordinate_adjustment: AshSpirvCoordinateAdjustment,
     pub descriptor_binding_model: AshDescriptorBindingModel,
 }
 
@@ -313,7 +353,8 @@ impl Default for AshMtoonWgslShaderAbi {
             fragment_entry: ASH_MTOON_WGSL_FRAGMENT_ENTRY,
             vertex_spirv_file: ASH_MTOON_WGSL_VERTEX_SPIRV_FILE,
             fragment_spirv_file: ASH_MTOON_WGSL_FRAGMENT_SPIRV_FILE,
-            adjust_coordinate_space: false,
+            clip_space_policy: AshClipSpacePolicy::CpuVulkanZeroToOneYDown,
+            spirv_coordinate_adjustment: AshSpirvCoordinateAdjustment::Disabled,
             descriptor_binding_model: AshDescriptorBindingModel::SeparateImageSampler,
         }
     }
@@ -1310,6 +1351,7 @@ pub struct AshSceneUniform {
 pub struct AshSceneOptions {
     pub aspect_ratio: f32,
     pub screen_projection_size: ScreenProjectionSize,
+    pub clip_space_policy: AshClipSpacePolicy,
     pub camera_y: f32,
     pub camera_z: f32,
     pub target_y: f32,
@@ -1326,6 +1368,7 @@ impl Default for AshSceneOptions {
                 width: 64.0,
                 height: 64.0,
             },
+            clip_space_policy: AshClipSpacePolicy::default(),
             camera_y: 1.0,
             camera_z: 5.0,
             target_y: 1.0,
@@ -1379,7 +1422,7 @@ impl AshSceneOptions {
             0.1,
             20.0,
         );
-        projection.y_axis.y *= -1.0;
+        projection.y_axis.y *= self.clip_space_policy.projection_y_sign();
         projection
     }
 
@@ -4293,6 +4336,8 @@ pub struct AshMtoonShaderCacheKey {
     pub fragment_entry: String,
     pub vertex_spirv_hash: Option<u64>,
     pub fragment_spirv_hash: Option<u64>,
+    pub clip_space_policy: AshClipSpacePolicy,
+    pub spirv_coordinate_adjustment: AshSpirvCoordinateAdjustment,
 }
 
 impl AshMtoonShaderCacheKey {
@@ -4300,11 +4345,14 @@ impl AshMtoonShaderCacheKey {
         vertex_entry: impl Into<String>,
         fragment_entry: impl Into<String>,
     ) -> Self {
+        let abi = AshMtoonWgslShaderAbi::default();
         Self {
             vertex_entry: vertex_entry.into(),
             fragment_entry: fragment_entry.into(),
             vertex_spirv_hash: None,
             fragment_spirv_hash: None,
+            clip_space_policy: abi.clip_space_policy,
+            spirv_coordinate_adjustment: abi.spirv_coordinate_adjustment,
         }
     }
 
@@ -4314,12 +4362,25 @@ impl AshMtoonShaderCacheKey {
         vertex_words: &[u32],
         fragment_words: &[u32],
     ) -> Self {
+        let abi = AshMtoonWgslShaderAbi::default();
         Self {
             vertex_entry: vertex_entry.into(),
             fragment_entry: fragment_entry.into(),
             vertex_spirv_hash: Some(ash_mtoon_spirv_words_hash(vertex_words)),
             fragment_spirv_hash: Some(ash_mtoon_spirv_words_hash(fragment_words)),
+            clip_space_policy: abi.clip_space_policy,
+            spirv_coordinate_adjustment: abi.spirv_coordinate_adjustment,
         }
+    }
+
+    pub fn with_coordinate_policy(
+        mut self,
+        clip_space_policy: AshClipSpacePolicy,
+        spirv_coordinate_adjustment: AshSpirvCoordinateAdjustment,
+    ) -> Self {
+        self.clip_space_policy = clip_space_policy;
+        self.spirv_coordinate_adjustment = spirv_coordinate_adjustment;
+        self
     }
 }
 
@@ -7988,6 +8049,7 @@ mod tests {
         let custom = AshSceneUniform::from_scene_options(AshSceneOptions {
             aspect_ratio: 2.0,
             screen_projection_size: ScreenProjectionSize::from_pixels(128, 64),
+            clip_space_policy: AshClipSpacePolicy::CpuVulkanZeroToOneYDown,
             camera_y: 1.25,
             camera_z: 3.0,
             target_y: 0.75,
@@ -8002,6 +8064,27 @@ mod tests {
         assert_eq!(custom.light_dir[3], 0.5);
         assert_eq!(custom.light_color, [1.0, 0.5, 0.25, 0.0]);
         assert_eq!(custom.mtoon_lighting[3], 0.2);
+    }
+
+    #[test]
+    fn scene_options_carry_typed_clip_space_policy() {
+        let cpu_vulkan = AshSceneOptions::default();
+        let naga_adjusted = AshSceneOptions {
+            clip_space_policy: AshClipSpacePolicy::NagaVulkanZeroToOneYDown,
+            ..Default::default()
+        };
+        assert_eq!(
+            cpu_vulkan.clip_space_policy.spirv_coordinate_adjustment(),
+            AshSpirvCoordinateAdjustment::Disabled
+        );
+        assert_eq!(
+            naga_adjusted
+                .clip_space_policy
+                .spirv_coordinate_adjustment(),
+            AshSpirvCoordinateAdjustment::NagaWriter
+        );
+        assert_eq!(cpu_vulkan.projection().y_axis.y.signum(), -1.0);
+        assert_eq!(naga_adjusted.projection().y_axis.y.signum(), 1.0);
     }
 
     #[test]
@@ -9237,6 +9320,18 @@ mod tests {
         assert_ne!(keys.pipeline, changed_shader_keys.pipeline);
         assert_eq!(keys.descriptor_sets, changed_shader_keys.descriptor_sets);
 
+        let changed_coordinate_policy = shader.clone().with_coordinate_policy(
+            AshClipSpacePolicy::NagaVulkanZeroToOneYDown,
+            AshSpirvCoordinateAdjustment::NagaWriter,
+        );
+        let changed_coordinate_keys =
+            ash_mtoon_renderer_cache_keys(&frame, extent, changed_coordinate_policy);
+        assert_ne!(keys.pipeline, changed_coordinate_keys.pipeline);
+        assert_eq!(
+            keys.descriptor_sets,
+            changed_coordinate_keys.descriptor_sets
+        );
+
         let resized_keys = ash_mtoon_renderer_cache_keys(
             &frame,
             vk::Extent2D {
@@ -9854,7 +9949,23 @@ mod tests {
             wgsl_abi.default_fragment_spirv_path(),
             PathBuf::from(ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH)
         );
-        assert!(!wgsl_abi.adjust_coordinate_space);
+        assert_eq!(
+            wgsl_abi.clip_space_policy,
+            AshClipSpacePolicy::CpuVulkanZeroToOneYDown
+        );
+        assert_eq!(
+            wgsl_abi.spirv_coordinate_adjustment,
+            AshSpirvCoordinateAdjustment::Disabled
+        );
+        assert_eq!(
+            wgsl_abi.clip_space_policy.spirv_coordinate_adjustment(),
+            wgsl_abi.spirv_coordinate_adjustment
+        );
+        assert!(
+            !wgsl_abi
+                .spirv_coordinate_adjustment
+                .adjust_coordinate_space()
+        );
         assert_eq!(
             wgsl_abi.descriptor_binding_model,
             AshDescriptorBindingModel::SeparateImageSampler

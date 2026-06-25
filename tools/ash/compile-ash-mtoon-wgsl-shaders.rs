@@ -108,6 +108,14 @@ fn validate_shader_abi(
     abi: AshMtoonWgslShaderAbi,
     module: &naga::Module,
 ) -> Result<(), Box<dyn Error>> {
+    let expected_adjustment = abi.clip_space_policy.spirv_coordinate_adjustment();
+    if abi.spirv_coordinate_adjustment != expected_adjustment {
+        return Err(format!(
+            "WGSL ABI mismatch: clip-space policy {:?} requires {:?}, found {:?}",
+            abi.clip_space_policy, expected_adjustment, abi.spirv_coordinate_adjustment
+        )
+        .into());
+    }
     validate_entry_point(module, naga::ShaderStage::Vertex, abi.vertex_entry)?;
     validate_entry_point(module, naga::ShaderStage::Fragment, abi.fragment_entry)?;
 
@@ -270,7 +278,10 @@ fn compile_stage(
     out: &Path,
 ) -> Result<(), Box<dyn Error>> {
     let mut options = spv::Options::default();
-    if !abi.adjust_coordinate_space {
+    if !abi
+        .spirv_coordinate_adjustment
+        .adjust_coordinate_space()
+    {
         options
             .flags
             .remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
