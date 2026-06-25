@@ -116,11 +116,7 @@ struct Options {
     #[arg(long)]
     require_resize_recreate: bool,
     /// Number of queued MToon frames allowed before waiting. Ignored by `--simple-preview`.
-    ///
-    /// The current MToon path uses shared frame-dynamic descriptor and buffer
-    /// caches, so it deliberately accepts only `1` until per-frame-slot dynamic
-    /// resources are implemented.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 2)]
     frames_in_flight: usize,
     /// Print renderer cache hit/rebuild counters before exiting.
     #[arg(long)]
@@ -747,6 +743,19 @@ struct MtoonPersistentFallbackTextureCache {
     textures: MtoonVulkanFallbackTextures,
 }
 
+#[derive(Default)]
+struct MtoonFrameSlotDynamicCaches {
+    descriptors: Option<MtoonPersistentDescriptorSetCache>,
+    buffers: Option<MtoonPersistentBufferCache>,
+    uniforms: Option<MtoonPersistentUniformCache>,
+}
+
+fn mtoon_frame_slot_dynamic_caches(count: usize) -> Vec<MtoonFrameSlotDynamicCaches> {
+    std::iter::repeat_with(MtoonFrameSlotDynamicCaches::default)
+        .take(count)
+        .collect()
+}
+
 struct MtoonFrameSync {
     image_available: vk::Semaphore,
     render_finished: vk::Semaphore,
@@ -802,10 +811,8 @@ struct MtoonWindowedAshRenderer {
     current_frame: usize,
     images_in_flight: Vec<vk::Fence>,
     persistent_cache: Option<MtoonPersistentPipelineCache>,
-    persistent_descriptors: Option<MtoonPersistentDescriptorSetCache>,
     persistent_samplers: Option<MtoonPersistentSamplerCache>,
-    persistent_buffers: Option<MtoonPersistentBufferCache>,
-    persistent_uniforms: Option<MtoonPersistentUniformCache>,
+    frame_slot_dynamic_caches: Vec<MtoonFrameSlotDynamicCaches>,
     persistent_textures: Option<MtoonPersistentTextureCache>,
     persistent_fallback_textures: Option<MtoonPersistentFallbackTextureCache>,
     cache_stats: AshMtoonWindowedCacheStats,
@@ -904,10 +911,8 @@ impl MtoonWindowedAshRenderer {
             current_frame: 0,
             images_in_flight,
             persistent_cache: None,
-            persistent_descriptors: None,
             persistent_samplers: None,
-            persistent_buffers: None,
-            persistent_uniforms: None,
+            frame_slot_dynamic_caches: mtoon_frame_slot_dynamic_caches(sync_plan.frames_in_flight),
             persistent_textures: None,
             persistent_fallback_textures: None,
             cache_stats: AshMtoonWindowedCacheStats::default(),
@@ -976,6 +981,7 @@ impl MtoonWindowedAshRenderer {
         let fragment_entry = self.fragment_entry.clone();
         let command_buffer = self.materialize_swapchain_frame(
             frame,
+            selection.frame_slot,
             selection.swapchain_image_slot,
             &vertex_entry,
             &fragment_entry,
@@ -1010,9 +1016,7 @@ impl MtoonWindowedAshRenderer {
         unsafe {
             self.device.device_wait_idle()?;
         }
-        if let Some(cache) = self.persistent_descriptors.take() {
-            self.destroy_persistent_descriptor_set_cache(cache);
-        }
+        self.destroy_frame_slot_dynamic_caches();
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
@@ -1045,6 +1049,7 @@ impl MtoonWindowedAshRenderer {
     fn materialize_swapchain_frame(
         &mut self,
         frame: &AshRendererFrame,
+        frame_slot: usize,
         image_index: usize,
         vertex_entry: &CString,
         fragment_entry: &CString,
@@ -1068,29 +1073,32 @@ impl MtoonWindowedAshRenderer {
             cache_keys.pipeline,
         )?;
         self.ensure_persistent_sampler_cache(frame, cache_keys.samplers)?;
-        self.ensure_persistent_buffer_cache(frame, cache_keys.buffers)?;
-        self.ensure_persistent_uniform_cache(frame, cache_keys.uniforms)?;
         self.ensure_persistent_texture_cache(frame, cache_keys.textures)?;
         self.ensure_persistent_fallback_textures()?;
-        self.ensure_persistent_descriptor_set_cache(frame, cache_keys.descriptor_sets)?;
+        self.ensure_frame_slot_buffer_cache(frame_slot, frame, cache_keys.buffers)?;
+        self.ensure_frame_slot_uniform_cache(frame_slot, frame, cache_keys.uniforms)?;
+        self.ensure_frame_slot_descriptor_set_cache(frame_slot, frame, cache_keys.descriptor_sets)?;
         let persistent = self
             .persistent_cache
             .as_ref()
             .ok_or("missing ash windowed persistent pipeline cache")?;
         let descriptor_sets = &self
-            .persistent_descriptors
-            .as_ref()
-            .ok_or("missing ash windowed persistent descriptor set cache")?
+            .frame_slot_dynamic_caches
+            .get(frame_slot)
+            .and_then(|slot| slot.descriptors.as_ref())
+            .ok_or("missing ash windowed frame-slot descriptor set cache")?
             .descriptor_sets;
         let buffers = &self
-            .persistent_buffers
-            .as_ref()
-            .ok_or("missing ash windowed persistent buffer cache")?
+            .frame_slot_dynamic_caches
+            .get(frame_slot)
+            .and_then(|slot| slot.buffers.as_ref())
+            .ok_or("missing ash windowed frame-slot buffer cache")?
             .buffers;
         let uniform_buffers = &self
-            .persistent_uniforms
-            .as_ref()
-            .ok_or("missing ash windowed persistent uniform cache")?
+            .frame_slot_dynamic_caches
+            .get(frame_slot)
+            .and_then(|slot| slot.uniforms.as_ref())
+            .ok_or("missing ash windowed frame-slot uniform cache")?
             .buffers;
         let texture_images = &self
             .persistent_textures
@@ -1153,9 +1161,7 @@ impl MtoonWindowedAshRenderer {
             return Ok(());
         }
         self.cache_stats.pipeline.rebuild();
-        if let Some(cache) = self.persistent_descriptors.take() {
-            self.destroy_persistent_descriptor_set_cache(cache);
-        }
+        self.destroy_frame_slot_dynamic_caches();
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
@@ -1191,13 +1197,15 @@ impl MtoonWindowedAshRenderer {
         Ok(())
     }
 
-    fn ensure_persistent_descriptor_set_cache(
+    fn ensure_frame_slot_descriptor_set_cache(
         &mut self,
+        frame_slot: usize,
         frame: &AshRendererFrame,
         key: AshMtoonDescriptorSetCacheKey,
     ) -> Result<(), Box<dyn Error>> {
         if self
-            .persistent_descriptors
+            .frame_slot_dynamic_caches(frame_slot)?
+            .descriptors
             .as_ref()
             .is_some_and(|cache| cache.key == key)
         {
@@ -1205,7 +1213,11 @@ impl MtoonWindowedAshRenderer {
             return Ok(());
         }
         self.cache_stats.descriptors.rebuild();
-        if let Some(cache) = self.persistent_descriptors.take() {
+        if let Some(cache) = self
+            .frame_slot_dynamic_caches_mut(frame_slot)?
+            .descriptors
+            .take()
+        {
             self.destroy_persistent_descriptor_set_cache(cache);
         }
         let layouts = self
@@ -1219,12 +1231,31 @@ impl MtoonWindowedAshRenderer {
             ash_descriptor_set_allocation_plan(&ash_descriptor_set_layout_plans(frame));
         let descriptor_sets =
             self.allocate_descriptor_sets(descriptor_pool, &allocation_plan, layouts)?;
-        self.persistent_descriptors = Some(MtoonPersistentDescriptorSetCache {
-            key,
-            descriptor_pool,
-            descriptor_sets,
-        });
+        self.frame_slot_dynamic_caches_mut(frame_slot)?.descriptors =
+            Some(MtoonPersistentDescriptorSetCache {
+                key,
+                descriptor_pool,
+                descriptor_sets,
+            });
         Ok(())
+    }
+
+    fn frame_slot_dynamic_caches(
+        &self,
+        frame_slot: usize,
+    ) -> Result<&MtoonFrameSlotDynamicCaches, Box<dyn Error>> {
+        self.frame_slot_dynamic_caches
+            .get(frame_slot)
+            .ok_or_else(|| format!("ash windowed frame slot {frame_slot} is out of range").into())
+    }
+
+    fn frame_slot_dynamic_caches_mut(
+        &mut self,
+        frame_slot: usize,
+    ) -> Result<&mut MtoonFrameSlotDynamicCaches, Box<dyn Error>> {
+        self.frame_slot_dynamic_caches
+            .get_mut(frame_slot)
+            .ok_or_else(|| format!("ash windowed frame slot {frame_slot} is out of range").into())
     }
 
     fn ensure_persistent_sampler_cache(
@@ -1252,17 +1283,24 @@ impl MtoonWindowedAshRenderer {
         Ok(())
     }
 
-    fn ensure_persistent_buffer_cache(
+    fn ensure_frame_slot_buffer_cache(
         &mut self,
+        frame_slot: usize,
         frame: &AshRendererFrame,
         key: AshMtoonBufferCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        if let Some(cache) = self
-            .persistent_buffers
+        let cache_hit = self
+            .frame_slot_dynamic_caches(frame_slot)?
+            .buffers
             .as_ref()
-            .filter(|cache| cache.key == key)
-        {
+            .is_some_and(|cache| cache.key == key);
+        if cache_hit {
             self.cache_stats.buffers.hit();
+            let cache = self
+                .frame_slot_dynamic_caches(frame_slot)?
+                .buffers
+                .as_ref()
+                .ok_or("missing ash windowed frame-slot buffer cache after cache hit")?;
             cache
                 .buffers
                 .iter()
@@ -1271,7 +1309,11 @@ impl MtoonWindowedAshRenderer {
             return Ok(());
         }
         self.cache_stats.buffers.rebuild();
-        if let Some(cache) = self.persistent_buffers.take() {
+        if let Some(cache) = self
+            .frame_slot_dynamic_caches_mut(frame_slot)?
+            .buffers
+            .take()
+        {
             self.destroy_persistent_buffer_cache(cache);
         }
         let buffers = frame
@@ -1279,21 +1321,29 @@ impl MtoonWindowedAshRenderer {
             .iter()
             .map(|buffer| self.create_upload_buffer(buffer.usage, &buffer.bytes))
             .collect::<Result<Vec<_>, _>>()?;
-        self.persistent_buffers = Some(MtoonPersistentBufferCache { key, buffers });
+        self.frame_slot_dynamic_caches_mut(frame_slot)?.buffers =
+            Some(MtoonPersistentBufferCache { key, buffers });
         Ok(())
     }
 
-    fn ensure_persistent_uniform_cache(
+    fn ensure_frame_slot_uniform_cache(
         &mut self,
+        frame_slot: usize,
         frame: &AshRendererFrame,
         key: AshMtoonUniformCacheKey,
     ) -> Result<(), Box<dyn Error>> {
-        if let Some(cache) = self
-            .persistent_uniforms
+        let cache_hit = self
+            .frame_slot_dynamic_caches(frame_slot)?
+            .uniforms
             .as_ref()
-            .filter(|cache| cache.key == key)
-        {
+            .is_some_and(|cache| cache.key == key);
+        if cache_hit {
             self.cache_stats.uniforms.hit();
+            let cache = self
+                .frame_slot_dynamic_caches(frame_slot)?
+                .uniforms
+                .as_ref()
+                .ok_or("missing ash windowed frame-slot uniform cache after cache hit")?;
             cache
                 .buffers
                 .iter()
@@ -1302,7 +1352,11 @@ impl MtoonWindowedAshRenderer {
             return Ok(());
         }
         self.cache_stats.uniforms.rebuild();
-        if let Some(cache) = self.persistent_uniforms.take() {
+        if let Some(cache) = self
+            .frame_slot_dynamic_caches_mut(frame_slot)?
+            .uniforms
+            .take()
+        {
             self.destroy_persistent_uniform_cache(cache);
         }
         let buffers = frame
@@ -1312,7 +1366,8 @@ impl MtoonWindowedAshRenderer {
                 self.create_host_buffer(vk::BufferUsageFlags::UNIFORM_BUFFER, &uniform.bytes)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        self.persistent_uniforms = Some(MtoonPersistentUniformCache { key, buffers });
+        self.frame_slot_dynamic_caches_mut(frame_slot)?.uniforms =
+            Some(MtoonPersistentUniformCache { key, buffers });
         Ok(())
     }
 
@@ -1891,6 +1946,24 @@ impl MtoonWindowedAshRenderer {
         self.destroy_buffers(cache.buffers);
     }
 
+    fn destroy_frame_slot_dynamic_caches(&mut self) {
+        let caches = std::mem::take(&mut self.frame_slot_dynamic_caches);
+        let mut reset = Vec::with_capacity(caches.len());
+        for mut cache in caches {
+            if let Some(descriptors) = cache.descriptors.take() {
+                self.destroy_persistent_descriptor_set_cache(descriptors);
+            }
+            if let Some(buffers) = cache.buffers.take() {
+                self.destroy_persistent_buffer_cache(buffers);
+            }
+            if let Some(uniforms) = cache.uniforms.take() {
+                self.destroy_persistent_uniform_cache(uniforms);
+            }
+            reset.push(MtoonFrameSlotDynamicCaches::default());
+        }
+        self.frame_slot_dynamic_caches = reset;
+    }
+
     fn destroy_persistent_texture_cache(&self, cache: MtoonPersistentTextureCache) {
         self.destroy_images(cache.images);
     }
@@ -1969,20 +2042,12 @@ impl Drop for MtoonWindowedAshRenderer {
         unsafe {
             let _ = self.device.device_wait_idle();
         }
-        if let Some(cache) = self.persistent_descriptors.take() {
-            self.destroy_persistent_descriptor_set_cache(cache);
-        }
+        self.destroy_frame_slot_dynamic_caches();
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
-        }
-        if let Some(cache) = self.persistent_buffers.take() {
-            self.destroy_persistent_buffer_cache(cache);
-        }
-        if let Some(cache) = self.persistent_uniforms.take() {
-            self.destroy_persistent_uniform_cache(cache);
         }
         if let Some(cache) = self.persistent_textures.take() {
             self.destroy_persistent_texture_cache(cache);

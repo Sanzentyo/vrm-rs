@@ -79,7 +79,7 @@ struct Options {
     ash_windowed_resize_width: u32,
     #[arg(long, default_value_t = 540)]
     ash_windowed_resize_height: u32,
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 2)]
     ash_windowed_frames_in_flight: u32,
     #[arg(long)]
     skip_core: bool,
@@ -680,13 +680,6 @@ fn run_ash_windowed_ci(options: &Options) -> Result<(), String> {
     if options.ash_windowed_frames_in_flight == 0 {
         return Err("--ash-windowed-frames-in-flight must be at least 1".to_owned());
     }
-    if options.ash_windowed_frames_in_flight != 1 {
-        return Err(
-            "--ash-windowed-frames-in-flight must be 1 until Ash frame-slot dynamic resources are implemented"
-                .to_owned(),
-        );
-    }
-
     compile_ash_windowed_mtoon_shaders(options)?;
     if options.ash_windowed_smoke {
         run_ash_windowed_viewer_smoke(options, false)?;

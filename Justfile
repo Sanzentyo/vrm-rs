@@ -105,22 +105,22 @@ ash-mtoon-naga-probe out_dir="target/ash-mtoon-naga-probe":
     cargo +nightly -Zscript tools/ash/compile-wgsl-to-spirv.rs --prelude crates/vrm-adapter/src/mtoon_reference.wgsl --source crates/vrm-adapter-ash/shaders/mtoon_base_naga_probe.wgsl --entry fs_main --stage fragment --out "{{ out_dir }}/mtoon_probe.frag.spv" --no-adjust-coordinate-space --print-reflection
 
 # Open a real Vulkan window and draw full MToon through ash + swapchain with VRMA playback.
-ash-windowed-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames_in_flight="1":
+ash-windowed-viewer avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames_in_flight="2":
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --frames-in-flight "{{ frames_in_flight }}"
 
 # Smoke the animated ash windowed viewer for a few frames, then exit automatically.
-ash-windowed-viewer-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="3" frames_in_flight="1":
+ash-windowed-viewer-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="3" frames_in_flight="2":
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --frames-in-flight "{{ frames_in_flight }}"
 
 # Smoke the animated ash windowed viewer long enough to require steady-state cache hits.
-ash-windowed-viewer-cache-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="24" frames_in_flight="1":
+ash-windowed-viewer-cache-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="24" frames_in_flight="2":
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --frames-in-flight "{{ frames_in_flight }}" --print-cache-stats --require-cache-hits
 
 # Smoke swapchain recreation after a programmatic resize in the animated ash windowed viewer.
-ash-windowed-viewer-resize-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="36" resize_after="8" resize_width="960" resize_height="540" frames_in_flight="1":
+ash-windowed-viewer-resize-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="36" resize_after="8" resize_width="960" resize_height="540" frames_in_flight="2":
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --frames-in-flight "{{ frames_in_flight }}" --resize-after-frames "{{ resize_after }}" --resize-width "{{ resize_width }}" --resize-height "{{ resize_height }}" --print-cache-stats --require-cache-hits --require-resize-recreate
 

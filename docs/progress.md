@@ -19,13 +19,21 @@
   blocked status and one-change cutover rule in
   `tools/render-parity/imq-cli-migration-status.md`. The rule explicitly avoids
   `legacy-js`, fallback, wrapper, alias, or dual-report modes.
-- Applied the review's highest-risk Ash windowed synchronization finding as a
-  conservative safety gate. The MToon windowed viewer and local CI Ash windowed
-  lane now default to `--frames-in-flight 1`, and `AshWindowedRunValidation`
-  rejects deeper MToon queues until descriptor sets, vertex/index/storage
-  buffers, and uniform buffers are duplicated per frame slot. `AshWindowedFrameSyncPlan`
-  remains a reusable sync plan, but the example no longer advertises unsafe
-  multi-frame dynamic-resource sharing as the normal path.
+- Closed the review's highest-risk Ash windowed synchronization finding by
+  moving frame-dynamic Vulkan resources into per-frame-slot caches. The MToon
+  windowed viewer now keeps descriptor sets, vertex/index/storage buffers, and
+  uniform buffers per queued frame slot, while pipeline/layout/sampler/texture
+  caches remain persistent at their natural lifetimes. The viewer, `just`
+  recipes, and local CI Ash windowed lane can therefore use the default
+  `--frames-in-flight 2` without rewriting descriptor sets or host-visible
+  dynamic buffers that may still be read by another in-flight frame.
+- Verified the per-frame-slot Ash windowed path locally with `just
+  ci-ash-windowed`. The 24-frame cache smoke reported `frames_in_flight=2`,
+  `swapchain_images=3`, descriptor/buffer/uniform rebuilds of `2`, and
+  steady-state hits afterward. The resize smoke reported `requested=true`,
+  `events_after_request=1`, `recreates=2`, and descriptor/buffer/uniform
+  rebuilds of `4`, which matches two frame slots rebuilt before and after
+  swapchain recreation.
 
 ## 2026-06-23
 
