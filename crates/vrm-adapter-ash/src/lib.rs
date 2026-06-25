@@ -2362,6 +2362,452 @@ impl AshRendererFrame {
     pub fn resource_manifest(&self) -> AshRendererResourceManifest {
         ash_renderer_resource_manifest(self)
     }
+
+    pub fn validate(&self) -> Result<(), AshRendererFrameValidationError> {
+        validate_ash_renderer_frame(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AshRendererFrameValidationError {
+    DescriptorSetPipelinePlanOutOfRange {
+        descriptor_set_index: usize,
+        pipeline_plan_index: usize,
+        pipeline_count: usize,
+    },
+    DescriptorBindingMissingUniform {
+        descriptor_set_index: usize,
+        binding: u32,
+    },
+    DescriptorBindingUniformOutOfRange {
+        descriptor_set_index: usize,
+        binding: u32,
+        uniform_upload_index: usize,
+        uniform_count: usize,
+    },
+    DescriptorBindingMissingStorageBuffer {
+        descriptor_set_index: usize,
+        binding: u32,
+    },
+    DescriptorBindingStorageBufferOutOfRange {
+        descriptor_set_index: usize,
+        binding: u32,
+        buffer_upload_index: usize,
+        buffer_count: usize,
+    },
+    DescriptorBindingTextureOutOfRange {
+        descriptor_set_index: usize,
+        binding: u32,
+        texture_upload_index: usize,
+        texture_count: usize,
+    },
+    UnsupportedDescriptorType {
+        descriptor_set_index: usize,
+        binding: u32,
+        descriptor_type: vk::DescriptorType,
+    },
+    PipelineDescriptorSetOutOfRange {
+        pipeline_index: usize,
+        descriptor_set_index: usize,
+        descriptor_set_count: usize,
+    },
+    PipelineDescriptorSetPipelineMismatch {
+        pipeline_index: usize,
+        descriptor_set_index: usize,
+        pipeline_plan_index: usize,
+        descriptor_set_pipeline_plan_index: usize,
+    },
+    DrawPipelinePlanOutOfRange {
+        draw_index: usize,
+        primitive_index: usize,
+        pipeline_plan_index: usize,
+    },
+    DrawDescriptorSetOutOfRange {
+        draw_index: usize,
+        primitive_index: usize,
+        descriptor_set_index: usize,
+        descriptor_set_count: usize,
+    },
+    DrawPipelineDescriptorSetMismatch {
+        draw_index: usize,
+        primitive_index: usize,
+        pipeline_plan_index: usize,
+        descriptor_set_index: usize,
+        expected_descriptor_set_index: usize,
+    },
+    DrawVertexBufferOutOfRange {
+        draw_index: usize,
+        primitive_index: usize,
+        vertex_buffer_index: usize,
+        buffer_count: usize,
+    },
+    DrawIndexBufferOutOfRange {
+        draw_index: usize,
+        primitive_index: usize,
+        index_buffer_index: usize,
+        buffer_count: usize,
+    },
+    DrawVertexBufferRoleMismatch {
+        draw_index: usize,
+        primitive_index: usize,
+        vertex_buffer_index: usize,
+        role: AshBufferRole,
+    },
+    DrawIndexBufferRoleMismatch {
+        draw_index: usize,
+        primitive_index: usize,
+        index_buffer_index: usize,
+        role: AshBufferRole,
+    },
+}
+
+impl fmt::Display for AshRendererFrameValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DescriptorSetPipelinePlanOutOfRange {
+                descriptor_set_index,
+                pipeline_plan_index,
+                pipeline_count,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} references pipeline plan {pipeline_plan_index}, but only {pipeline_count} pipelines exist"
+            ),
+            Self::DescriptorBindingMissingUniform {
+                descriptor_set_index,
+                binding,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} is missing a uniform upload index"
+            ),
+            Self::DescriptorBindingUniformOutOfRange {
+                descriptor_set_index,
+                binding,
+                uniform_upload_index,
+                uniform_count,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} references uniform upload {uniform_upload_index}, but only {uniform_count} uniforms exist"
+            ),
+            Self::DescriptorBindingMissingStorageBuffer {
+                descriptor_set_index,
+                binding,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} is missing a storage buffer upload index"
+            ),
+            Self::DescriptorBindingStorageBufferOutOfRange {
+                descriptor_set_index,
+                binding,
+                buffer_upload_index,
+                buffer_count,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} references storage buffer {buffer_upload_index}, but only {buffer_count} buffers exist"
+            ),
+            Self::DescriptorBindingTextureOutOfRange {
+                descriptor_set_index,
+                binding,
+                texture_upload_index,
+                texture_count,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} references texture upload {texture_upload_index}, but only {texture_count} textures exist"
+            ),
+            Self::UnsupportedDescriptorType {
+                descriptor_set_index,
+                binding,
+                descriptor_type,
+            } => write!(
+                formatter,
+                "descriptor set {descriptor_set_index} binding {binding} uses unsupported descriptor type {descriptor_type:?}"
+            ),
+            Self::PipelineDescriptorSetOutOfRange {
+                pipeline_index,
+                descriptor_set_index,
+                descriptor_set_count,
+            } => write!(
+                formatter,
+                "pipeline {pipeline_index} references descriptor set {descriptor_set_index}, but only {descriptor_set_count} descriptor sets exist"
+            ),
+            Self::PipelineDescriptorSetPipelineMismatch {
+                pipeline_index,
+                descriptor_set_index,
+                pipeline_plan_index,
+                descriptor_set_pipeline_plan_index,
+            } => write!(
+                formatter,
+                "pipeline {pipeline_index} plan {pipeline_plan_index} references descriptor set {descriptor_set_index} from pipeline plan {descriptor_set_pipeline_plan_index}"
+            ),
+            Self::DrawPipelinePlanOutOfRange {
+                draw_index,
+                primitive_index,
+                pipeline_plan_index,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references missing pipeline plan {pipeline_plan_index}"
+            ),
+            Self::DrawDescriptorSetOutOfRange {
+                draw_index,
+                primitive_index,
+                descriptor_set_index,
+                descriptor_set_count,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references descriptor set {descriptor_set_index}, but only {descriptor_set_count} descriptor sets exist"
+            ),
+            Self::DrawPipelineDescriptorSetMismatch {
+                draw_index,
+                primitive_index,
+                pipeline_plan_index,
+                descriptor_set_index,
+                expected_descriptor_set_index,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} uses pipeline plan {pipeline_plan_index} with descriptor set {descriptor_set_index}, expected descriptor set {expected_descriptor_set_index}"
+            ),
+            Self::DrawVertexBufferOutOfRange {
+                draw_index,
+                primitive_index,
+                vertex_buffer_index,
+                buffer_count,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references vertex buffer {vertex_buffer_index}, but only {buffer_count} buffers exist"
+            ),
+            Self::DrawIndexBufferOutOfRange {
+                draw_index,
+                primitive_index,
+                index_buffer_index,
+                buffer_count,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references index buffer {index_buffer_index}, but only {buffer_count} buffers exist"
+            ),
+            Self::DrawVertexBufferRoleMismatch {
+                draw_index,
+                primitive_index,
+                vertex_buffer_index,
+                role,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references buffer {vertex_buffer_index} as a vertex buffer, but its role is {role:?}"
+            ),
+            Self::DrawIndexBufferRoleMismatch {
+                draw_index,
+                primitive_index,
+                index_buffer_index,
+                role,
+            } => write!(
+                formatter,
+                "draw {draw_index} primitive {primitive_index} references buffer {index_buffer_index} as an index buffer, but its role is {role:?}"
+            ),
+        }
+    }
+}
+
+impl Error for AshRendererFrameValidationError {}
+
+pub fn validate_ash_renderer_frame(
+    frame: &AshRendererFrame,
+) -> Result<(), AshRendererFrameValidationError> {
+    for (descriptor_set_index, set) in frame.descriptor_sets.iter().enumerate() {
+        if !frame
+            .pipelines
+            .iter()
+            .any(|pipeline| pipeline.pipeline_plan_index == set.pipeline_plan_index)
+        {
+            return Err(
+                AshRendererFrameValidationError::DescriptorSetPipelinePlanOutOfRange {
+                    descriptor_set_index,
+                    pipeline_plan_index: set.pipeline_plan_index,
+                    pipeline_count: frame.pipelines.len(),
+                },
+            );
+        }
+        for binding in &set.bindings {
+            validate_ash_descriptor_binding(frame, descriptor_set_index, binding)?;
+        }
+    }
+
+    for (pipeline_index, pipeline) in frame.pipelines.iter().enumerate() {
+        let descriptor_set = frame
+            .descriptor_sets
+            .get(pipeline.descriptor_set_index)
+            .ok_or(
+                AshRendererFrameValidationError::PipelineDescriptorSetOutOfRange {
+                    pipeline_index,
+                    descriptor_set_index: pipeline.descriptor_set_index,
+                    descriptor_set_count: frame.descriptor_sets.len(),
+                },
+            )?;
+        if descriptor_set.pipeline_plan_index != pipeline.pipeline_plan_index {
+            return Err(
+                AshRendererFrameValidationError::PipelineDescriptorSetPipelineMismatch {
+                    pipeline_index,
+                    descriptor_set_index: pipeline.descriptor_set_index,
+                    pipeline_plan_index: pipeline.pipeline_plan_index,
+                    descriptor_set_pipeline_plan_index: descriptor_set.pipeline_plan_index,
+                },
+            );
+        }
+    }
+
+    for (draw_index, draw) in frame.draw_calls.iter().enumerate() {
+        validate_ash_draw_call(frame, draw_index, draw)?;
+    }
+
+    Ok(())
+}
+
+fn validate_ash_descriptor_binding(
+    frame: &AshRendererFrame,
+    descriptor_set_index: usize,
+    binding: &AshResolvedDescriptorBinding,
+) -> Result<(), AshRendererFrameValidationError> {
+    match binding.descriptor_type {
+        vk::DescriptorType::UNIFORM_BUFFER => {
+            let uniform_upload_index = binding.uniform_upload_index.ok_or(
+                AshRendererFrameValidationError::DescriptorBindingMissingUniform {
+                    descriptor_set_index,
+                    binding: binding.binding,
+                },
+            )?;
+            if uniform_upload_index >= frame.uniforms.len() {
+                return Err(
+                    AshRendererFrameValidationError::DescriptorBindingUniformOutOfRange {
+                        descriptor_set_index,
+                        binding: binding.binding,
+                        uniform_upload_index,
+                        uniform_count: frame.uniforms.len(),
+                    },
+                );
+            }
+        }
+        vk::DescriptorType::STORAGE_BUFFER => {
+            let buffer_upload_index = binding.buffer_upload_index.ok_or(
+                AshRendererFrameValidationError::DescriptorBindingMissingStorageBuffer {
+                    descriptor_set_index,
+                    binding: binding.binding,
+                },
+            )?;
+            if buffer_upload_index >= frame.buffers.len() {
+                return Err(
+                    AshRendererFrameValidationError::DescriptorBindingStorageBufferOutOfRange {
+                        descriptor_set_index,
+                        binding: binding.binding,
+                        buffer_upload_index,
+                        buffer_count: frame.buffers.len(),
+                    },
+                );
+            }
+        }
+        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLED_IMAGE => {
+            if let Some(texture_upload_index) = binding.texture_upload_index
+                && texture_upload_index >= frame.textures.len()
+            {
+                return Err(
+                    AshRendererFrameValidationError::DescriptorBindingTextureOutOfRange {
+                        descriptor_set_index,
+                        binding: binding.binding,
+                        texture_upload_index,
+                        texture_count: frame.textures.len(),
+                    },
+                );
+            }
+        }
+        vk::DescriptorType::SAMPLER => {}
+        descriptor_type => {
+            return Err(AshRendererFrameValidationError::UnsupportedDescriptorType {
+                descriptor_set_index,
+                binding: binding.binding,
+                descriptor_type,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_ash_draw_call(
+    frame: &AshRendererFrame,
+    draw_index: usize,
+    draw: &AshDrawCallPlan,
+) -> Result<(), AshRendererFrameValidationError> {
+    if let Some(pipeline_plan_index) = draw.pipeline_plan_index {
+        let pipeline = frame
+            .pipelines
+            .iter()
+            .find(|pipeline| pipeline.pipeline_plan_index == pipeline_plan_index)
+            .ok_or(
+                AshRendererFrameValidationError::DrawPipelinePlanOutOfRange {
+                    draw_index,
+                    primitive_index: draw.primitive_index,
+                    pipeline_plan_index,
+                },
+            )?;
+        if let Some(descriptor_set_index) = draw.descriptor_set_index {
+            let descriptor_set = frame.descriptor_sets.get(descriptor_set_index).ok_or(
+                AshRendererFrameValidationError::DrawDescriptorSetOutOfRange {
+                    draw_index,
+                    primitive_index: draw.primitive_index,
+                    descriptor_set_index,
+                    descriptor_set_count: frame.descriptor_sets.len(),
+                },
+            )?;
+            if descriptor_set.pipeline_plan_index != pipeline_plan_index
+                || pipeline.descriptor_set_index != descriptor_set_index
+            {
+                return Err(
+                    AshRendererFrameValidationError::DrawPipelineDescriptorSetMismatch {
+                        draw_index,
+                        primitive_index: draw.primitive_index,
+                        pipeline_plan_index,
+                        descriptor_set_index,
+                        expected_descriptor_set_index: pipeline.descriptor_set_index,
+                    },
+                );
+            }
+        }
+    }
+
+    let vertex_buffer = frame.buffers.get(draw.vertex_buffer_index).ok_or(
+        AshRendererFrameValidationError::DrawVertexBufferOutOfRange {
+            draw_index,
+            primitive_index: draw.primitive_index,
+            vertex_buffer_index: draw.vertex_buffer_index,
+            buffer_count: frame.buffers.len(),
+        },
+    )?;
+    if vertex_buffer.role != AshBufferRole::Vertex {
+        return Err(
+            AshRendererFrameValidationError::DrawVertexBufferRoleMismatch {
+                draw_index,
+                primitive_index: draw.primitive_index,
+                vertex_buffer_index: draw.vertex_buffer_index,
+                role: vertex_buffer.role,
+            },
+        );
+    }
+
+    let index_buffer = frame.buffers.get(draw.index_buffer_index).ok_or(
+        AshRendererFrameValidationError::DrawIndexBufferOutOfRange {
+            draw_index,
+            primitive_index: draw.primitive_index,
+            index_buffer_index: draw.index_buffer_index,
+            buffer_count: frame.buffers.len(),
+        },
+    )?;
+    if index_buffer.role != AshBufferRole::Index {
+        return Err(
+            AshRendererFrameValidationError::DrawIndexBufferRoleMismatch {
+                draw_index,
+                primitive_index: draw.primitive_index,
+                index_buffer_index: draw.index_buffer_index,
+                role: index_buffer.role,
+            },
+        );
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4818,6 +5264,7 @@ pub fn ash_mtoon_materialization_plan_with_options(
     shader: AshMtoonShaderCacheKey,
     drawable_options: AshDrawableFrameOptions,
 ) -> Result<AshMtoonMaterializationPlan, String> {
+    frame.validate().map_err(|error| error.to_string())?;
     let render_target = AshMtoonRenderTargetCacheKey::from_extent(extent);
     let cache_keys = AshMtoonRendererCacheKeys::from_frame(frame, render_target, shader.clone());
     let descriptor_set_layouts = ash_descriptor_set_layout_plans(frame);
@@ -9517,7 +9964,83 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            "descriptor set 0 binding 30 references missing uniform upload 99"
+            "descriptor set 0 binding 30 references uniform upload 99, but only 1 uniforms exist"
+        );
+    }
+
+    #[test]
+    fn renderer_frame_validation_accepts_consistent_frame() {
+        let frame = valid_draw_validation_frame();
+        assert_eq!(frame.validate(), Ok(()));
+        assert_eq!(validate_ash_renderer_frame(&frame), Ok(()));
+        assert!(
+            ash_mtoon_materialization_plan(
+                &frame,
+                vk::Extent2D {
+                    width: 64,
+                    height: 64,
+                },
+                AshMtoonShaderCacheKey::default(),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn renderer_frame_validation_reports_descriptor_and_draw_errors() {
+        let mut frame = valid_draw_validation_frame();
+        frame.descriptor_sets[0].bindings[0].uniform_upload_index = Some(99);
+        assert_eq!(
+            frame.validate(),
+            Err(
+                AshRendererFrameValidationError::DescriptorBindingUniformOutOfRange {
+                    descriptor_set_index: 0,
+                    binding: ash_mtoon_wgsl_scene_binding(),
+                    uniform_upload_index: 99,
+                    uniform_count: 1,
+                }
+            )
+        );
+
+        let mut frame = valid_draw_validation_frame();
+        frame.pipelines[0].descriptor_set_index = 99;
+        assert_eq!(
+            frame.validate(),
+            Err(
+                AshRendererFrameValidationError::PipelineDescriptorSetOutOfRange {
+                    pipeline_index: 0,
+                    descriptor_set_index: 99,
+                    descriptor_set_count: 1,
+                }
+            )
+        );
+
+        let mut frame = valid_draw_validation_frame();
+        frame.draw_calls[0].descriptor_set_index = Some(99);
+        assert_eq!(
+            frame.validate(),
+            Err(
+                AshRendererFrameValidationError::DrawDescriptorSetOutOfRange {
+                    draw_index: 0,
+                    primitive_index: 7,
+                    descriptor_set_index: 99,
+                    descriptor_set_count: 1,
+                }
+            )
+        );
+
+        let mut frame = valid_draw_validation_frame();
+        frame.buffers[0].role = AshBufferRole::Index;
+        assert_eq!(
+            frame.validate(),
+            Err(
+                AshRendererFrameValidationError::DrawVertexBufferRoleMismatch {
+                    draw_index: 0,
+                    primitive_index: 7,
+                    vertex_buffer_index: 0,
+                    role: AshBufferRole::Index,
+                }
+            )
         );
     }
 
@@ -10075,6 +10598,78 @@ mod tests {
         }
     }
 
+    fn valid_draw_validation_frame() -> AshRendererFrame {
+        AshRendererFrame {
+            buffers: vec![
+                AshBufferUpload {
+                    role: AshBufferRole::Vertex,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                    stride: std::mem::size_of::<AshVrmVertex>() as u32,
+                    count: 1,
+                    bytes: bytemuck::bytes_of(&AshVrmVertex::zeroed()).to_vec(),
+                },
+                AshBufferUpload {
+                    role: AshBufferRole::Index,
+                    usage: vk::BufferUsageFlags::INDEX_BUFFER,
+                    stride: std::mem::size_of::<u32>() as u32,
+                    count: 1,
+                    bytes: 0_u32.to_le_bytes().to_vec(),
+                },
+            ],
+            textures: Vec::new(),
+            uniforms: vec![AshUniformUpload {
+                scope: AshUniformScope::Scene,
+                binding: ash_mtoon_wgsl_scene_binding(),
+                bytes: vec![0; std::mem::size_of::<AshSceneUniform>()],
+            }],
+            pipelines: vec![AshGraphicsPipelinePlan {
+                material: MaterialRef(0),
+                pipeline_plan_index: 3,
+                descriptor_set_index: 0,
+                key: AshPipelineKey {
+                    pass: AshMtoonPass::Base,
+                    render_order: 2000,
+                    phase_order: 2000,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                    blend_enable: false,
+                },
+                vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
+                vertex_attributes: ash_vrm_vertex_attributes(),
+                color_format: vk::Format::R8G8B8A8_UNORM,
+                depth_format: Some(ash_reference_depth_format()),
+            }],
+            descriptor_sets: vec![AshDescriptorSetPlan {
+                material: MaterialRef(0),
+                pipeline_plan_index: 3,
+                bindings: vec![AshResolvedDescriptorBinding {
+                    binding: ash_mtoon_wgsl_scene_binding(),
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    uniform_upload_index: Some(0),
+                    texture_upload_index: None,
+                    buffer_upload_index: None,
+                    sampler: None,
+                }],
+            }],
+            draw_calls: vec![AshDrawCallPlan {
+                primitive_index: 7,
+                material: Some(MaterialRef(0)),
+                pipeline_plan_index: Some(3),
+                descriptor_set_index: Some(0),
+                vertex_buffer_index: 0,
+                index_buffer_index: 1,
+                index_count: 1,
+                render_order: 2000,
+                phase_order: 2000,
+            }],
+        }
+    }
+
     #[test]
     fn shader_module_and_stage_plans_expose_vk_infos() {
         let words = [0x0723_0203_u32, 0, 1, 0];
@@ -10309,6 +10904,7 @@ mod tests {
             render_surfaces: Vec::new(),
         };
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
+        assert_eq!(renderer_frame.validate(), Ok(()));
         assert_eq!(renderer_frame.buffers.len(), 3);
         assert_eq!(renderer_frame.uniforms.len(), 4);
         assert_eq!(renderer_frame.pipelines.len(), 1);

@@ -2,6 +2,14 @@
 
 ## 2026-06-25
 
+- Added frame-level Ash renderer plan validation before MToon materialization.
+  `AshRendererFrame::validate` / `validate_ash_renderer_frame` now checks the
+  descriptor-set, pipeline, draw-call, texture/uniform/storage-buffer, and
+  vertex/index-buffer role references as a single structured contract before
+  `ash_mtoon_materialization_plan_with_options` emits descriptor writes and
+  drawable commands. Invalid raw resource indices now fail at the renderer-frame
+  boundary with `AshRendererFrameValidationError` instead of drifting into
+  example-local Vulkan materialization code.
 - Tightened the Ash WGSL/Naga shader ABI gate beyond resource binding presence.
   `vrm-adapter-ash` now publishes a typed MToon WGSL ABI manifest for vertex
   input locations and uniform struct byte sizes alongside the existing
