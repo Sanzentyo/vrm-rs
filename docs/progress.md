@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Added an explicit Ash render-pass compatibility key for renderer cache
+  boundaries. `AshRenderPassCreationPlan::compatibility_key` and
+  `AshRenderPassPlan::{creation_plan,compatibility_key}` now expose the
+  color/depth format, final layout, sample count, and dependency policy that a
+  downstream Vulkan renderer should include when deciding whether graphics
+  pipelines remain usable for a recreated render pass. The windowed MToon
+  viewer stores that key beside its persistent pipeline cache and only reports
+  a pipeline cache hit when both the MToon pipeline key and render-pass
+  compatibility key match.
 - Moved the dependency-light Ash mock integration example onto the same
   materialization command batch path as the real renderers. `renderer_integration`
   now allocates mock handles, converts them to `ash::vk` handle tables, calls

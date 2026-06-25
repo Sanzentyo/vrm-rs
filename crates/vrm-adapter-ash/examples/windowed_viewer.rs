@@ -36,19 +36,19 @@ use vrm_adapter_ash::{
     AshMtoonDescriptorSetCacheKey, AshMtoonMaterializationPlan, AshMtoonPipelineCacheKey,
     AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
     AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand,
-    AshSamplerPlan, AshSwapchainAcquireStatus, AshSwapchainImageSlot, AshSwapchainPresentStatus,
-    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
-    AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles, AshWindowedFrameSyncPlan,
-    AshWindowedResizeValidation, AshWindowedRunValidation, ash_2d_image_resource_plan,
-    ash_2d_image_view_plan, ash_binary_semaphore_plan, ash_classify_swapchain_acquire,
-    ash_classify_swapchain_present, ash_depth_attachment_plan, ash_empty_pipeline_layout_plan,
-    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
-    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
-    ash_host_visible_buffer_plan, ash_memory_allocation_plan, ash_memory_type_index,
-    ash_mtoon_materialization_plan_with_options, ash_one_time_command_buffer_begin_plan,
-    ash_position_color_pipeline_state_plan, ash_primary_command_buffer_allocation_plan,
-    ash_queue_submit_plan, ash_render_pass_begin_plan,
+    AshRenderPassCompatibilityKey, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
+    AshRendererFrame, AshResolvedCommand, AshSamplerPlan, AshSwapchainAcquireStatus,
+    AshSwapchainImageSlot, AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner,
+    AshVrmPrimitive, AshVrmVertex, AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles,
+    AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
+    ash_2d_image_resource_plan, ash_2d_image_view_plan, ash_binary_semaphore_plan,
+    ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
+    ash_empty_pipeline_layout_plan, ash_fallback_texture_mip_level, ash_fallback_texture_rgba,
+    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
+    ash_host_buffer_plan, ash_host_visible_buffer_plan, ash_memory_allocation_plan,
+    ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
+    ash_one_time_command_buffer_begin_plan, ash_position_color_pipeline_state_plan,
+    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
     ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
@@ -731,6 +731,7 @@ impl IntoIterator for MtoonVulkanFallbackBuffers {
 
 struct MtoonPersistentPipelineCache {
     key: AshMtoonPipelineCacheKey,
+    render_pass_compatibility: AshRenderPassCompatibilityKey,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
     pipelines: Vec<vk::Pipeline>,
@@ -790,6 +791,7 @@ struct MtoonSwapchainShell {
     image_views: Vec<vk::ImageView>,
     depth: VulkanImage,
     render_pass: vk::RenderPass,
+    render_pass_compatibility: Option<AshRenderPassCompatibilityKey>,
     framebuffers: Vec<vk::Framebuffer>,
     command_buffers: Vec<vk::CommandBuffer>,
     extent: vk::Extent2D,
@@ -802,6 +804,7 @@ impl MtoonSwapchainShell {
             image_views: Vec::new(),
             depth: VulkanImage::empty(),
             render_pass: vk::RenderPass::null(),
+            render_pass_compatibility: None,
             framebuffers: Vec::new(),
             command_buffers: Vec::new(),
             extent: vk::Extent2D {
@@ -1205,11 +1208,13 @@ impl MtoonWindowedAshRenderer {
         fragment_entry: &CString,
     ) -> Result<(), Box<dyn Error>> {
         let key = materialization.cache_keys.pipeline.clone();
-        if self
-            .persistent_cache
-            .as_ref()
-            .is_some_and(|cache| cache.key == key)
-        {
+        let render_pass_compatibility = self
+            .swapchain
+            .render_pass_compatibility
+            .ok_or("missing ash windowed render-pass compatibility key")?;
+        if self.persistent_cache.as_ref().is_some_and(|cache| {
+            cache.key == key && cache.render_pass_compatibility == render_pass_compatibility
+        }) {
             self.cache_stats.pipeline.hit();
             return Ok(());
         }
@@ -1244,6 +1249,7 @@ impl MtoonWindowedAshRenderer {
         )?;
         self.persistent_cache = Some(MtoonPersistentPipelineCache {
             key,
+            render_pass_compatibility,
             descriptor_set_layouts,
             pipeline_layouts,
             pipelines,
@@ -2207,6 +2213,7 @@ fn create_mtoon_swapchain_shell(
         image_views,
         depth,
         render_pass,
+        render_pass_compatibility: Some(render_pass_plan.compatibility_key()),
         framebuffers,
         command_buffers,
         extent: support.extent,

@@ -2190,7 +2190,7 @@ pub fn ash_memory_type_index(
         })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AshColorAttachmentFinalLayout {
     Present,
     ColorAttachment,
@@ -2205,7 +2205,7 @@ impl AshColorAttachmentFinalLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AshRenderPassDependencyPolicy {
     ColorOnly,
     ColorAndDepth,
@@ -2233,6 +2233,29 @@ impl AshRenderPassDependencyPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AshRenderPassCompatibilityKey {
+    pub color_format: i32,
+    pub depth_format: i32,
+    pub color_final_layout: AshColorAttachmentFinalLayout,
+    pub depth_final_layout: i32,
+    pub sample_count: u32,
+    pub dependency_policy: AshRenderPassDependencyPolicy,
+}
+
+impl AshRenderPassCompatibilityKey {
+    pub fn from_creation_plan(plan: AshRenderPassCreationPlan) -> Self {
+        Self {
+            color_format: plan.color_format.as_raw(),
+            depth_format: plan.depth_format.as_raw(),
+            color_final_layout: plan.color_final_layout,
+            depth_final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL.as_raw(),
+            sample_count: vk::SampleCountFlags::TYPE_1.as_raw(),
+            dependency_policy: plan.dependency_policy,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshRenderPassCreationPlan {
     pub color_format: vk::Format,
@@ -2242,6 +2265,10 @@ pub struct AshRenderPassCreationPlan {
 }
 
 impl AshRenderPassCreationPlan {
+    pub fn compatibility_key(self) -> AshRenderPassCompatibilityKey {
+        AshRenderPassCompatibilityKey::from_creation_plan(self)
+    }
+
     pub fn attachment_descriptions(self) -> [vk::AttachmentDescription; 2] {
         [
             vk::AttachmentDescription::default()
@@ -4262,6 +4289,34 @@ pub struct AshRenderPassPlan {
     pub depth_format: Option<vk::Format>,
     pub color_clear: [f32; 4],
     pub depth_stencil_clear: Option<AshDepthStencilClear>,
+}
+
+impl AshRenderPassPlan {
+    pub fn creation_plan(
+        &self,
+        color_final_layout: AshColorAttachmentFinalLayout,
+        dependency_policy: AshRenderPassDependencyPolicy,
+    ) -> Result<AshRenderPassCreationPlan, String> {
+        let depth_format = self
+            .depth_format
+            .ok_or("ash render pass creation requires a depth format")?;
+        Ok(ash_render_pass_creation_plan(
+            self.color_format,
+            depth_format,
+            color_final_layout,
+            dependency_policy,
+        ))
+    }
+
+    pub fn compatibility_key(
+        &self,
+        color_final_layout: AshColorAttachmentFinalLayout,
+        dependency_policy: AshRenderPassDependencyPolicy,
+    ) -> Result<AshRenderPassCompatibilityKey, String> {
+        Ok(self
+            .creation_plan(color_final_layout, dependency_policy)?
+            .compatibility_key())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -10081,8 +10136,33 @@ mod tests {
             AshColorAttachmentFinalLayout::Present,
             AshRenderPassDependencyPolicy::ColorOnly,
         );
+        let windowed_key = windowed.compatibility_key();
         let windowed_attachments = windowed.attachment_descriptions();
 
+        assert_eq!(
+            windowed_key.color_format,
+            vk::Format::B8G8R8A8_UNORM.as_raw()
+        );
+        assert_eq!(
+            windowed_key.depth_format,
+            ash_reference_depth_format().as_raw()
+        );
+        assert_eq!(
+            windowed_key.color_final_layout,
+            AshColorAttachmentFinalLayout::Present
+        );
+        assert_eq!(
+            windowed_key.depth_final_layout,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL.as_raw()
+        );
+        assert_eq!(
+            windowed_key.sample_count,
+            vk::SampleCountFlags::TYPE_1.as_raw()
+        );
+        assert_eq!(
+            windowed_key.dependency_policy,
+            AshRenderPassDependencyPolicy::ColorOnly
+        );
         assert_eq!(windowed_attachments[0].format, vk::Format::B8G8R8A8_UNORM);
         assert_eq!(
             windowed_attachments[0].final_layout,
@@ -10107,6 +10187,7 @@ mod tests {
             AshColorAttachmentFinalLayout::ColorAttachment,
             AshRenderPassDependencyPolicy::ColorAndDepth,
         );
+        assert_ne!(windowed.compatibility_key(), offscreen.compatibility_key());
         let offscreen_attachments = offscreen.attachment_descriptions();
         let offscreen_dependency = offscreen.subpass_dependency();
 
@@ -11660,6 +11741,22 @@ mod tests {
             drawable.render_pass.depth_format,
             Some(ash_reference_depth_format())
         );
+        let drawable_creation = drawable
+            .render_pass
+            .creation_plan(
+                AshColorAttachmentFinalLayout::ColorAttachment,
+                AshRenderPassDependencyPolicy::ColorAndDepth,
+            )
+            .unwrap();
+        assert_eq!(drawable_creation.color_format, vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(drawable_creation.depth_format, ash_reference_depth_format());
+        assert_eq!(
+            drawable.render_pass.compatibility_key(
+                AshColorAttachmentFinalLayout::ColorAttachment,
+                AshRenderPassDependencyPolicy::ColorAndDepth,
+            ),
+            Ok(drawable_creation.compatibility_key())
+        );
         assert!(drawable.skipped_draws.is_empty());
         assert_eq!(
             drawable.commands,
@@ -12327,6 +12424,13 @@ mod tests {
                 depth: 0.75,
                 stencil: 2,
             })
+        );
+        assert_eq!(
+            drawable.render_pass.creation_plan(
+                AshColorAttachmentFinalLayout::ColorAttachment,
+                AshRenderPassDependencyPolicy::ColorAndDepth,
+            ),
+            Err("ash render pass creation requires a depth format".to_owned())
         );
         assert_eq!(drawable.render_pass.render_area.extent.width, 4);
         assert_eq!(drawable.render_pass.render_area.extent.height, 2);
