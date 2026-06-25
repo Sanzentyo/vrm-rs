@@ -1,8 +1,10 @@
 use ash::vk;
+use ash::vk::Handle;
 use clap::Parser;
 use std::error::Error;
 use vrm_adapter_ash::{
-    AshBufferRole, AshCommandPlan, AshMtoonMaterializationPlan, AshRendererFrame, AshSamplerPlan,
+    AshBufferRole, AshCommandRecordHandleAccess, AshCommandRecordResources,
+    AshMtoonMaterializationPlan, AshRendererFrame, AshResolvedCommand, AshSamplerPlan,
     AshVrmFramePlanOptions, ash_mtoon_materialization_plan, ash_renderer_frame_from_plan,
     frame_plan_from_options,
 };
@@ -74,50 +76,68 @@ impl MockAshRenderer {
             let handle = self.alloc_descriptor_set();
             self.descriptor_sets.push((handle, layout.bindings.len()));
         }
+        let pipeline_handles = self
+            .pipelines
+            .iter()
+            .map(|(handle, _, _)| vk::Pipeline::from_raw(handle.0))
+            .collect::<Vec<_>>();
+        let pipeline_layout_handles = vec![vk::PipelineLayout::null(); plan.pipeline_layouts.len()];
+        let descriptor_set_handles = self
+            .descriptor_sets
+            .iter()
+            .map(|(handle, _)| vk::DescriptorSet::from_raw(handle.0))
+            .collect::<Vec<_>>();
         self.draws.clear();
         let mut pipeline = None;
         let mut descriptor_set = None;
         let mut vertex_buffer = None;
         let mut index_buffer = None;
-        for command in &plan.drawable.commands {
-            match *command {
-                AshCommandPlan::BindGraphicsPipeline { pipeline_index } => {
-                    pipeline = self
-                        .pipelines
-                        .get(pipeline_index)
-                        .map(|pipeline| pipeline.0);
+        let mut planned_draws = frame.draw_calls.iter().filter(|draw| {
+            draw.pipeline_plan_index.is_some()
+                && draw.descriptor_set_index.is_some()
+                && draw.index_count > 0
+        });
+        for command in plan
+            .resolve_commands(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layout_handles,
+                    &descriptor_set_handles,
+                    &self.buffers,
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &(MockBufferHandle, vk::BufferUsageFlags, usize)| {
+                        vk::Buffer::from_raw(buffer.0.0)
+                    },
+                },
+            )
+            .expect("mock renderer command resolution")
+        {
+            match command {
+                AshResolvedCommand::BindGraphicsPipeline(bind) => {
+                    pipeline = Some(MockPipelineHandle(bind.pipeline.as_raw()));
                 }
-                AshCommandPlan::BindDescriptorSet {
-                    descriptor_set_index,
-                    ..
-                } => {
-                    descriptor_set = self
-                        .descriptor_sets
-                        .get(descriptor_set_index)
-                        .map(|set| set.0);
+                AshResolvedCommand::BindDescriptorSet(bind) => {
+                    descriptor_set =
+                        Some(MockDescriptorSetHandle(bind.descriptor_sets[0].as_raw()));
                 }
-                AshCommandPlan::BindVertexBuffer { buffer_index, .. } => {
-                    vertex_buffer = self.buffers.get(buffer_index).map(|buffer| buffer.0);
+                AshResolvedCommand::BindVertexBuffer(bind) => {
+                    vertex_buffer = Some(MockBufferHandle(bind.buffers[0].as_raw()));
                 }
-                AshCommandPlan::BindIndexBuffer { buffer_index, .. } => {
-                    index_buffer = self.buffers.get(buffer_index).map(|buffer| buffer.0);
+                AshResolvedCommand::BindIndexBuffer(bind) => {
+                    index_buffer = Some(MockBufferHandle(bind.buffer.as_raw()));
                 }
-                AshCommandPlan::DrawIndexed {
-                    primitive_index,
-                    index_count,
-                    ..
-                } => {
-                    let draw = frame
-                        .draw_calls
-                        .iter()
-                        .find(|draw| draw.primitive_index == primitive_index)
+                AshResolvedCommand::DrawIndexed(draw_command) => {
+                    let draw = planned_draws
+                        .next()
                         .expect("drawable command references a planned draw");
                     self.draws.push(MockRecordedDraw {
                         pipeline,
                         descriptor_set,
                         vertex_buffer: vertex_buffer.expect("vertex buffer bound before draw"),
                         index_buffer: index_buffer.expect("index buffer bound before draw"),
-                        index_count,
+                        index_count: draw_command.index_count,
                         render_order: draw.render_order,
                         phase_order: draw.phase_order,
                     });

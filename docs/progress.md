@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Moved the dependency-light Ash mock integration example onto the same
+  materialization command batch path as the real renderers. `renderer_integration`
+  now allocates mock handles, converts them to `ash::vk` handle tables, calls
+  `AshMtoonMaterializationPlan::resolve_commands`, and records draws from
+  `AshResolvedCommand` instead of matching `AshCommandPlan` directly. The local
+  full example run against `Seed-san.vrm` still produces 31 mock draws and no
+  skipped draws, so downstream renderer authors now see the intended checked
+  command-resolution API in the smallest Ash integration example as well as the
+  offscreen and windowed renderers.
 - Added batch-level Ash materialization handle resolution. `AshDescriptorWritePlan`
   can now produce an `AshResolvedDescriptorWrite`, and
   `AshMtoonMaterializationPlan::resolve_descriptor_writes` /
