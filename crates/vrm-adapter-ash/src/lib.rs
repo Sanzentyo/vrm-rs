@@ -3179,6 +3179,25 @@ impl fmt::Display for AshDescriptorSetId {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshPipelineId(usize);
+
+impl AshPipelineId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshPipelineId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AshUniformUploadId(usize);
 
 impl AshUniformUploadId {
@@ -4377,19 +4396,19 @@ impl Default for AshDepthStencilClear {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AshCommandPlan {
     BindGraphicsPipeline {
-        pipeline_index: usize,
+        pipeline_id: AshPipelineId,
     },
     BindDescriptorSet {
-        pipeline_index: usize,
-        descriptor_set_index: usize,
+        pipeline_id: AshPipelineId,
+        descriptor_set_id: AshDescriptorSetId,
     },
     BindVertexBuffer {
-        buffer_index: usize,
+        buffer_id: AshBufferUploadId,
         binding: u32,
         offset: vk::DeviceSize,
     },
     BindIndexBuffer {
-        buffer_index: usize,
+        buffer_id: AshBufferUploadId,
         offset: vk::DeviceSize,
         index_type: vk::IndexType,
     },
@@ -4406,11 +4425,9 @@ pub enum AshCommandPlan {
 impl AshCommandPlan {
     pub fn vk_graphics_pipeline(&self, pipelines: &[vk::Pipeline]) -> Result<vk::Pipeline, String> {
         match self {
-            Self::BindGraphicsPipeline { pipeline_index } => {
-                pipelines.get(*pipeline_index).copied().ok_or_else(|| {
-                    format!(
-                        "drawable command references missing graphics pipeline {pipeline_index}"
-                    )
+            Self::BindGraphicsPipeline { pipeline_id } => {
+                pipelines.get(pipeline_id.index()).copied().ok_or_else(|| {
+                    format!("drawable command references missing graphics pipeline {pipeline_id}")
                 })
             }
             other => Err(format!(
@@ -4435,9 +4452,9 @@ impl AshCommandPlan {
         pipeline_layouts: &[vk::PipelineLayout],
     ) -> Result<vk::PipelineLayout, String> {
         match self {
-            Self::BindDescriptorSet { pipeline_index, .. } => {
-                let pipeline = pipeline_plans.get(*pipeline_index).ok_or_else(|| {
-                    format!("drawable command references missing pipeline plan {pipeline_index}")
+            Self::BindDescriptorSet { pipeline_id, .. } => {
+                let pipeline = pipeline_plans.get(pipeline_id.index()).ok_or_else(|| {
+                    format!("drawable command references missing pipeline plan {pipeline_id}")
                 })?;
                 pipeline_layouts
                     .get(pipeline.descriptor_set_index)
@@ -4461,14 +4478,13 @@ impl AshCommandPlan {
     ) -> Result<vk::DescriptorSet, String> {
         match self {
             Self::BindDescriptorSet {
-                descriptor_set_index,
-                ..
+                descriptor_set_id, ..
             } => descriptor_sets
-                .get(*descriptor_set_index)
+                .get(descriptor_set_id.index())
                 .copied()
                 .ok_or_else(|| {
                     format!(
-                        "drawable command references missing descriptor set {descriptor_set_index}"
+                        "drawable command references missing descriptor set {descriptor_set_id}"
                     )
                 }),
             other => Err(format!(
@@ -4494,9 +4510,9 @@ impl AshCommandPlan {
 
     pub fn vertex_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
         match self {
-            Self::BindVertexBuffer { buffer_index, .. } => {
-                buffers.get(*buffer_index).ok_or_else(|| {
-                    format!("drawable command references missing vertex buffer {buffer_index}")
+            Self::BindVertexBuffer { buffer_id, .. } => {
+                buffers.get(buffer_id.index()).ok_or_else(|| {
+                    format!("drawable command references missing vertex buffer {buffer_id}")
                 })
             }
             other => Err(format!(
@@ -4525,9 +4541,9 @@ impl AshCommandPlan {
 
     pub fn index_buffer_resource<'a, T>(&self, buffers: &'a [T]) -> Result<&'a T, String> {
         match self {
-            Self::BindIndexBuffer { buffer_index, .. } => {
-                buffers.get(*buffer_index).ok_or_else(|| {
-                    format!("drawable command references missing index buffer {buffer_index}")
+            Self::BindIndexBuffer { buffer_id, .. } => {
+                buffers.get(buffer_id.index()).ok_or_else(|| {
+                    format!("drawable command references missing index buffer {buffer_id}")
                 })
             }
             other => Err(format!(
@@ -6212,20 +6228,22 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
         }
 
         if bound_pipeline != Some(pipeline_index) {
-            commands.push(AshCommandPlan::BindGraphicsPipeline { pipeline_index });
+            commands.push(AshCommandPlan::BindGraphicsPipeline {
+                pipeline_id: AshPipelineId::new(pipeline_index),
+            });
             bound_pipeline = Some(pipeline_index);
             bound_descriptor_set = None;
         }
         if bound_descriptor_set != Some(descriptor_set_index) {
             commands.push(AshCommandPlan::BindDescriptorSet {
-                pipeline_index,
-                descriptor_set_index,
+                pipeline_id: AshPipelineId::new(pipeline_index),
+                descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
             });
             bound_descriptor_set = Some(descriptor_set_index);
         }
         if bound_vertex_buffer != Some(draw.vertex_buffer_index) {
             commands.push(AshCommandPlan::BindVertexBuffer {
-                buffer_index: draw.vertex_buffer_index,
+                buffer_id: AshBufferUploadId::new(draw.vertex_buffer_index),
                 binding: 0,
                 offset: 0,
             });
@@ -6233,7 +6251,7 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
         }
         if bound_index_buffer != Some(draw.index_buffer_index) {
             commands.push(AshCommandPlan::BindIndexBuffer {
-                buffer_index: draw.index_buffer_index,
+                buffer_id: AshBufferUploadId::new(draw.index_buffer_index),
                 offset: 0,
                 index_type: vk::IndexType::UINT32,
             });
@@ -11737,18 +11755,20 @@ mod tests {
         assert_eq!(
             drawable.commands,
             vec![
-                AshCommandPlan::BindGraphicsPipeline { pipeline_index: 0 },
+                AshCommandPlan::BindGraphicsPipeline {
+                    pipeline_id: AshPipelineId::new(0)
+                },
                 AshCommandPlan::BindDescriptorSet {
-                    pipeline_index: 0,
-                    descriptor_set_index: 0,
+                    pipeline_id: AshPipelineId::new(0),
+                    descriptor_set_id: AshDescriptorSetId::new(0),
                 },
                 AshCommandPlan::BindVertexBuffer {
-                    buffer_index: 1,
+                    buffer_id: AshBufferUploadId::new(1),
                     binding: 0,
                     offset: 0,
                 },
                 AshCommandPlan::BindIndexBuffer {
-                    buffer_index: 2,
+                    buffer_id: AshBufferUploadId::new(2),
                     offset: 0,
                     index_type: vk::IndexType::UINT32,
                 },
@@ -12127,7 +12147,9 @@ mod tests {
         let pipeline_layouts = [vk::PipelineLayout::null()];
         let descriptor_sets = [vk::DescriptorSet::null()];
 
-        let bind_pipeline = AshCommandPlan::BindGraphicsPipeline { pipeline_index: 0 };
+        let bind_pipeline = AshCommandPlan::BindGraphicsPipeline {
+            pipeline_id: AshPipelineId::new(0),
+        };
         assert_eq!(
             bind_pipeline.vk_graphics_pipeline(&pipeline_handles),
             Ok(vk::Pipeline::null())
@@ -12160,12 +12182,17 @@ mod tests {
             ))
         );
         assert_eq!(
-            AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }
-                .vk_graphics_pipeline(&pipeline_handles),
+            AshCommandPlan::BindGraphicsPipeline {
+                pipeline_id: AshPipelineId::new(2)
+            }
+            .vk_graphics_pipeline(&pipeline_handles),
             Err("drawable command references missing graphics pipeline 2".to_owned())
         );
         assert_eq!(
-            AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }.resolve_record_command(
+            AshCommandPlan::BindGraphicsPipeline {
+                pipeline_id: AshPipelineId::new(2)
+            }
+            .resolve_record_command(
                 AshCommandRecordResources::new(
                     &frame.pipelines,
                     &pipeline_handles,
@@ -12181,8 +12208,8 @@ mod tests {
         );
 
         let bind_descriptor = AshCommandPlan::BindDescriptorSet {
-            pipeline_index: 0,
-            descriptor_set_index: 0,
+            pipeline_id: AshPipelineId::new(0),
+            descriptor_set_id: AshDescriptorSetId::new(0),
         };
         assert_eq!(
             bind_descriptor.vk_pipeline_layout(&frame.pipelines, &pipeline_layouts),
@@ -12231,8 +12258,8 @@ mod tests {
         );
         assert_eq!(
             AshCommandPlan::BindDescriptorSet {
-                pipeline_index: 3,
-                descriptor_set_index: 0,
+                pipeline_id: AshPipelineId::new(3),
+                descriptor_set_id: AshDescriptorSetId::new(0),
             }
             .vk_pipeline_layout(&frame.pipelines, &pipeline_layouts),
             Err("drawable command references missing pipeline plan 3".to_owned())
@@ -12243,15 +12270,15 @@ mod tests {
         );
         assert_eq!(
             AshCommandPlan::BindDescriptorSet {
-                pipeline_index: 0,
-                descriptor_set_index: 4,
+                pipeline_id: AshPipelineId::new(0),
+                descriptor_set_id: AshDescriptorSetId::new(4),
             }
             .vk_descriptor_set(&descriptor_sets),
             Err("drawable command references missing descriptor set 4".to_owned())
         );
 
         let vertex = AshCommandPlan::BindVertexBuffer {
-            buffer_index: 1,
+            buffer_id: AshBufferUploadId::new(1),
             binding: 0,
             offset: 16,
         };
@@ -12291,7 +12318,7 @@ mod tests {
         );
 
         let index = AshCommandPlan::BindIndexBuffer {
-            buffer_index: 0,
+            buffer_id: AshBufferUploadId::new(0),
             offset: 4,
             index_type: vk::IndexType::UINT32,
         };
@@ -12371,7 +12398,7 @@ mod tests {
         );
         assert_eq!(
             bind_pipeline.draw_indexed_args(),
-            Err("drawable command is not an indexed draw: BindGraphicsPipeline { pipeline_index: 0 }"
+            Err("drawable command is not an indexed draw: BindGraphicsPipeline { pipeline_id: AshPipelineId(0) }"
                 .to_owned())
         );
     }

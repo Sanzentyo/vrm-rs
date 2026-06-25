@@ -13,6 +13,16 @@
   `cargo clippy -p vrm-adapter-ash --all-targets -- -D warnings`, the lightweight
   local CI script, and `just ci-ash-windowed`; the release-built Seed-san +
   `idle_loop.vrma` windowed and resize smokes still pass with cache hits.
+- Extended that typed-ID boundary to the drawable command stream.
+  `AshCommandPlan` now binds graphics pipelines, descriptor sets, vertex
+  buffers, and index buffers through `AshPipelineId`, `AshDescriptorSetId`, and
+  `AshBufferUploadId` rather than raw `usize` command payloads. The validated
+  draw metadata still records primitive/source indices separately, but the
+  renderer-facing command recorder can no longer mix pipeline, descriptor-set,
+  and buffer index domains by construction. Verification included the
+  `vrm-adapter-ash` lib tests, all-targets clippy, the lightweight local CI
+  script, and `just ci-ash-windowed`; the release windowed and resize smokes
+  still passed with the typed command payloads.
 - Removed the old combined-image-sampler descriptor write surface from
   `vrm-adapter-ash`'s normal renderer handoff. `AshDescriptorWriteResource` and
   `AshDescriptorWriteData` now model only uniform buffers, storage buffers,
