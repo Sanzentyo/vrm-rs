@@ -2764,7 +2764,7 @@ fn validate_ash_descriptor_binding(
                 );
             }
         }
-        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLED_IMAGE => {
+        vk::DescriptorType::SAMPLED_IMAGE => {
             if let Some(texture_upload_index) = binding.texture_upload_index
                 && texture_upload_index >= frame.textures.len()
             {
@@ -3374,25 +3374,6 @@ impl AshDescriptorWritePlan {
                 Ok(f(write))
             }
             (
-                AshDescriptorWriteResource::CombinedImageSampler { .. },
-                AshDescriptorWriteData::CombinedImageSampler {
-                    sampler,
-                    image_view,
-                    image_layout,
-                },
-            ) => {
-                let image_info = [vk::DescriptorImageInfo::default()
-                    .sampler(sampler)
-                    .image_view(image_view)
-                    .image_layout(image_layout)];
-                let write = vk::WriteDescriptorSet::default()
-                    .dst_set(descriptor_set)
-                    .dst_binding(self.binding)
-                    .descriptor_type(self.descriptor_type)
-                    .image_info(&image_info);
-                Ok(f(write))
-            }
-            (
                 AshDescriptorWriteResource::SampledImage { .. },
                 AshDescriptorWriteData::SampledImage {
                     image_view,
@@ -3472,19 +3453,6 @@ impl AshDescriptorWritePlan {
                     .storage_buffer_resource(resources.storage_buffers)?;
                 Ok(AshDescriptorWriteData::whole_buffer(storage_buffer(buffer)))
             }
-            AshDescriptorWriteResource::CombinedImageSampler { .. } => {
-                let sampler = self.resource.sampler(resources.samplers)?;
-                let image_view = self.resource.resolve_image_view(
-                    resources.texture_uploads,
-                    texture_image_view,
-                    fallback_image_view,
-                )?;
-                Ok(AshDescriptorWriteData::combined_image_sampler(
-                    sampler,
-                    image_view,
-                    image_layout,
-                ))
-            }
             AshDescriptorWriteResource::SampledImage { .. } => {
                 let image_view = self.resource.resolve_image_view(
                     resources.texture_uploads,
@@ -3544,11 +3512,6 @@ pub enum AshDescriptorWriteData {
         offset: vk::DeviceSize,
         range: vk::DeviceSize,
     },
-    CombinedImageSampler {
-        sampler: vk::Sampler,
-        image_view: vk::ImageView,
-        image_layout: vk::ImageLayout,
-    },
     SampledImage {
         image_view: vk::ImageView,
         image_layout: vk::ImageLayout,
@@ -3564,18 +3527,6 @@ impl AshDescriptorWriteData {
             buffer,
             offset: 0,
             range: vk::WHOLE_SIZE,
-        }
-    }
-
-    pub fn combined_image_sampler(
-        sampler: vk::Sampler,
-        image_view: vk::ImageView,
-        image_layout: vk::ImageLayout,
-    ) -> Self {
-        Self::CombinedImageSampler {
-            sampler,
-            image_view,
-            image_layout,
         }
     }
 
@@ -3625,22 +3576,6 @@ impl AshResolvedDescriptorWrite {
                     .buffer_info(&buffer_info);
                 Ok(f(write))
             }
-            AshDescriptorWriteData::CombinedImageSampler {
-                sampler,
-                image_view,
-                image_layout,
-            } if self.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                let image_info = [vk::DescriptorImageInfo::default()
-                    .sampler(sampler)
-                    .image_view(image_view)
-                    .image_layout(image_layout)];
-                let write = vk::WriteDescriptorSet::default()
-                    .dst_set(self.descriptor_set)
-                    .dst_binding(self.binding)
-                    .descriptor_type(self.descriptor_type)
-                    .image_info(&image_info);
-                Ok(f(write))
-            }
             AshDescriptorWriteData::SampledImage {
                 image_view,
                 image_layout,
@@ -3676,22 +3611,10 @@ impl AshResolvedDescriptorWrite {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AshDescriptorWriteResource {
-    UniformBuffer {
-        uniform_upload_index: usize,
-    },
-    StorageBuffer {
-        buffer_upload_index: usize,
-    },
-    CombinedImageSampler {
-        sampler_index: usize,
-        image: AshDescriptorImageResource,
-    },
-    SampledImage {
-        image: AshDescriptorImageResource,
-    },
-    Sampler {
-        sampler_index: usize,
-    },
+    UniformBuffer { uniform_upload_index: usize },
+    StorageBuffer { buffer_upload_index: usize },
+    SampledImage { image: AshDescriptorImageResource },
+    Sampler { sampler_index: usize },
 }
 
 impl AshDescriptorWriteResource {
@@ -3723,7 +3646,7 @@ impl AshDescriptorWriteResource {
 
     pub fn sampler(&self, samplers: &[vk::Sampler]) -> Result<vk::Sampler, String> {
         match self {
-            Self::CombinedImageSampler { sampler_index, .. } | Self::Sampler { sampler_index } => {
+            Self::Sampler { sampler_index } => {
                 samplers.get(*sampler_index).copied().ok_or_else(|| {
                     format!("descriptor write references missing sampler {sampler_index}")
                 })
@@ -3736,7 +3659,7 @@ impl AshDescriptorWriteResource {
 
     pub fn image_resource(&self) -> Result<AshDescriptorImageResource, String> {
         match self {
-            Self::CombinedImageSampler { image, .. } | Self::SampledImage { image } => Ok(*image),
+            Self::SampledImage { image } => Ok(*image),
             other => Err(format!(
                 "descriptor write resource does not reference an image: {other:?}"
             )),
@@ -5877,28 +5800,13 @@ pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPl
             .count()
             .max(1) as u32
     };
-    let sampler_count = frame
-        .descriptor_sets
-        .iter()
-        .flat_map(|set| &set.bindings)
-        .filter(|binding| {
-            matches!(
-                binding.descriptor_type,
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-            )
-        })
-        .count()
-        .max(1) as u32;
+    let sampler_count = descriptor_binding_count(vk::DescriptorType::SAMPLER);
     AshDescriptorPoolPlan {
         max_sets: frame.descriptor_sets.len().max(1) as u32,
         pool_sizes: vec![
             AshDescriptorPoolSizePlan {
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: descriptor_binding_count(vk::DescriptorType::UNIFORM_BUFFER),
-            },
-            AshDescriptorPoolSizePlan {
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: sampler_count,
             },
             AshDescriptorPoolSizePlan {
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
@@ -5928,28 +5836,13 @@ pub fn ash_descriptor_pool_plan_from_manifest(
             .count()
             .max(1) as u32
     };
-    let sampler_count = manifest
-        .descriptor_sets
-        .iter()
-        .flat_map(|set| &set.bindings)
-        .filter(|binding| {
-            matches!(
-                binding.descriptor_type,
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-            )
-        })
-        .count()
-        .max(1) as u32;
+    let sampler_count = descriptor_binding_count(vk::DescriptorType::SAMPLER);
     AshDescriptorPoolPlan {
         max_sets: manifest.descriptor_sets.len().max(1) as u32,
         pool_sizes: vec![
             AshDescriptorPoolSizePlan {
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: descriptor_binding_count(vk::DescriptorType::UNIFORM_BUFFER),
-            },
-            AshDescriptorPoolSizePlan {
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: sampler_count,
             },
             AshDescriptorPoolSizePlan {
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
@@ -6021,12 +5914,7 @@ pub fn ash_sampler_resource_plans(frame: &AshRendererFrame) -> Vec<AshSamplerRes
         .flat_map(|(descriptor_set_index, set)| {
             set.bindings
                 .iter()
-                .filter(|binding| {
-                    matches!(
-                        binding.descriptor_type,
-                        vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
-                    )
-                })
+                .filter(|binding| binding.descriptor_type == vk::DescriptorType::SAMPLER)
                 .map(move |binding| (descriptor_set_index, binding))
         })
         .enumerate()
@@ -6084,14 +5972,6 @@ pub fn ash_descriptor_write_plans(
                         buffer_upload_index,
                     }
                 }
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    let current_sampler = sampler_index;
-                    sampler_index = sampler_index.saturating_add(1);
-                    AshDescriptorWriteResource::CombinedImageSampler {
-                        sampler_index: current_sampler,
-                        image: ash_descriptor_image_resource(frame, binding)?,
-                    }
-                }
                 vk::DescriptorType::SAMPLED_IMAGE => AshDescriptorWriteResource::SampledImage {
                     image: ash_descriptor_image_resource(frame, binding)?,
                 },
@@ -6145,9 +6025,9 @@ fn ash_descriptor_binding_lifetime(
     descriptor_type: vk::DescriptorType,
 ) -> AshRendererResourceLifetime {
     match descriptor_type {
-        vk::DescriptorType::SAMPLED_IMAGE
-        | vk::DescriptorType::SAMPLER
-        | vk::DescriptorType::COMBINED_IMAGE_SAMPLER => AshRendererResourceLifetime::Persistent,
+        vk::DescriptorType::SAMPLED_IMAGE | vk::DescriptorType::SAMPLER => {
+            AshRendererResourceLifetime::Persistent
+        }
         _ => AshRendererResourceLifetime::FrameDynamic,
     }
 }
@@ -10555,10 +10435,6 @@ mod tests {
                     descriptor_count: 1,
                 },
                 AshDescriptorPoolSizePlan {
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: 1,
-                },
-                AshDescriptorPoolSizePlan {
                     descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                     descriptor_count: 1,
                 },
@@ -10694,41 +10570,20 @@ mod tests {
                 buffer_upload_index: Some(0),
                 sampler: None,
             });
-        frame.descriptor_sets[0]
-            .bindings
-            .push(AshResolvedDescriptorBinding {
-                binding: 3,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                uniform_upload_index: None,
-                texture_upload_index: None,
-                buffer_upload_index: None,
-                sampler: Some(AshSamplerPlan::default()),
-            });
-
         let sampler_plans = ash_sampler_resource_plans(&frame);
         assert_eq!(
             sampler_plans,
-            vec![
-                AshSamplerResourcePlan {
-                    sampler_index: 0,
-                    descriptor_set_index: 0,
-                    binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
-                    descriptor_type: vk::DescriptorType::SAMPLER,
-                    sampler: AshSamplerPlan::default(),
-                },
-                AshSamplerResourcePlan {
-                    sampler_index: 1,
-                    descriptor_set_index: 0,
-                    binding: 3,
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    sampler: AshSamplerPlan::default(),
-                },
-            ]
+            vec![AshSamplerResourcePlan {
+                sampler_index: 0,
+                descriptor_set_index: 0,
+                binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                sampler: AshSamplerPlan::default(),
+            },]
         );
 
         let plans = ash_descriptor_write_plans(&frame).unwrap();
-        assert_eq!(plans.len(), 5);
+        assert_eq!(plans.len(), 4);
         assert_eq!(
             plans[0].resource,
             AshDescriptorWriteResource::UniformBuffer {
@@ -10753,14 +10608,25 @@ mod tests {
                 buffer_upload_index: 0,
             }
         );
+
+        let mut combined_frame = frame.clone();
+        combined_frame.descriptor_sets[0]
+            .bindings
+            .push(AshResolvedDescriptorBinding {
+                binding: 3,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                uniform_upload_index: None,
+                texture_upload_index: None,
+                buffer_upload_index: None,
+                sampler: Some(AshSamplerPlan::default()),
+            });
         assert_eq!(
-            plans[4].resource,
-            AshDescriptorWriteResource::CombinedImageSampler {
-                sampler_index: 1,
-                image: AshDescriptorImageResource::Fallback {
-                    fallback: GltfMaterialTextureFallback::Black,
-                },
-            }
+            ash_descriptor_write_plans(&combined_frame),
+            Err(
+                "unsupported ash descriptor type in renderer frame: COMBINED_IMAGE_SAMPLER"
+                    .to_owned()
+            )
         );
 
         frame.descriptor_sets[0].bindings[1].texture_upload_index = Some(99);
@@ -10975,40 +10841,6 @@ mod tests {
                 },
             )
             .unwrap();
-
-        let combined_plan = AshDescriptorWritePlan {
-            descriptor_set_index: 0,
-            binding: 12,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            resource: AshDescriptorWriteResource::CombinedImageSampler {
-                sampler_index: 0,
-                image: AshDescriptorImageResource::TextureUpload {
-                    texture_upload_index: 0,
-                },
-            },
-        };
-        assert_eq!(
-            combined_plan.resolve_write_data(
-                AshDescriptorWriteResources::new(
-                    &[vk::Buffer::null()],
-                    &[vk::Buffer::null()],
-                    &[vk::ImageView::null()],
-                    &[vk::Sampler::null()],
-                ),
-                AshDescriptorWriteHandleAccess {
-                    uniform_buffer: |buffer: &vk::Buffer| *buffer,
-                    storage_buffer: |buffer: &vk::Buffer| *buffer,
-                    texture_image_view: |view: &vk::ImageView| *view,
-                    fallback_image_view: |_| vk::ImageView::null(),
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                },
-            ),
-            Ok(AshDescriptorWriteData::combined_image_sampler(
-                vk::Sampler::null(),
-                vk::ImageView::null(),
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            ))
-        );
 
         let mismatch = sampled_image_plan
             .with_write_descriptor_set(
@@ -12897,9 +12729,17 @@ mod tests {
                     },
                     AshDescriptorBindingPlan {
                         binding: 1,
-                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         texture: Some(TextureRef(7)),
+                        color_space: GltfMaterialTextureColorSpace::Srgb,
+                        sampler: None,
+                    },
+                    AshDescriptorBindingPlan {
+                        binding: 2,
+                        descriptor_type: vk::DescriptorType::SAMPLER,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        texture: None,
                         color_space: GltfMaterialTextureColorSpace::Srgb,
                         sampler: Some(AshSamplerPlan {
                             mag_filter: vk::Filter::LINEAR,
@@ -12935,7 +12775,11 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.descriptor_sets[0].bindings[1].descriptor_type,
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+            vk::DescriptorType::SAMPLED_IMAGE
+        );
+        assert_eq!(
+            renderer_frame.descriptor_sets[0].bindings[2].descriptor_type,
+            vk::DescriptorType::SAMPLER
         );
     }
 }

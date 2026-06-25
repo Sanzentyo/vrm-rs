@@ -2,6 +2,17 @@
 
 ## 2026-06-25
 
+- Removed the old combined-image-sampler descriptor write surface from
+  `vrm-adapter-ash`'s normal renderer handoff. `AshDescriptorWriteResource` and
+  `AshDescriptorWriteData` now model only uniform buffers, storage buffers,
+  sampled images, and separate samplers; `ash_descriptor_write_plans` rejects
+  combined image sampler bindings instead of materializing them. Descriptor pool
+  sizing and sampler-resource planning now count only the WGSL-compatible
+  separate sampled-image/sampler ABI, keeping Ash aligned with wgpu and Bevy
+  without a compatibility selector. Reran `just ci-ash-windowed` after the
+  removal; the release-built animated Seed-san windowed smoke and resize smoke
+  still passed with `frames_in_flight=2`, cache hits, and resize recreate
+  validation.
 - Tightened the Ash frame-slot dynamic resource contract after reviewing the
   external Ash adapter audit. `AshFrameSlotDynamicResourcePlan` now exposes
   `resources_for_slot` and `total_dynamic_descriptor_bindings`, and the resource
@@ -228,13 +239,12 @@
   compiles `MTOON_REFERENCE_WGSL` plus
   `crates/vrm-adapter-ash/shaders/mtoon_base_naga_probe.wgsl` into vertex and
   fragment SPIR-V under `target/ash-mtoon-naga-probe/`. The important remaining
-  integration mismatch is descriptor shape: WGSL/WebGPU exposes the texture and
-  sampler as separate bindings (`texture_2d` + `sampler`), while the current ash
-  MToon materialization path uses Vulkan `COMBINED_IMAGE_SAMPLER` bindings. The
-  conversion path is therefore viable, but full shader replacement should first
-  add either a WGSL-compatible separate texture/sampler descriptor plan for ash
-  or a deliberate binding-generation layer that keeps the shared MToon ABI and
-  Vulkan descriptor layout in sync.
+  integration mismatch was descriptor shape: WGSL/WebGPU exposes the texture and
+  sampler as separate bindings (`texture_2d` + `sampler`), while the earlier ash
+  MToon materialization path still used Vulkan combined image/sampler bindings.
+  That mismatch has since been resolved by making the WGSL-compatible separate
+  texture/sampler descriptor plan the normal Ash path and removing the combined
+  descriptor write surface from the renderer handoff.
 - Extended `tools/render-parity/import-acceptance-bundle.rs` so returned
   strict evidence can arrive either as a bundle directory or as a `.zip`.
   Zip imports are dry-run safe, locate the unique `bundle-manifest.json` root,
@@ -2038,7 +2048,7 @@ Open work:
 - Added `tools/ash/compile-ash-mtoon-wgsl-shaders.rs`, a dedicated Rust script that reads `AshMtoonWgslShaderAbi` from `vrm-adapter-ash` and compiles both canonical WGSL entry points to the canonical SPIR-V artifact names through Naga. `just ash-mtoon-wgsl-base-shaders`, the Ash windowed local-CI lane, and the render-parity Ash shader compile path now call this ABI-aware script instead of repeating the WGSL source/prelude/entry/coordinate-space command lines.
 - Promoted the Ash MToon renderer cache-key boundary from `windowed_viewer` internals into public Sans-I/O API. `ash_mtoon_renderer_cache_keys` now derives hashable pipeline, descriptor-set, sampler, buffer, uniform, and texture keys from an `AshRendererFrame`; buffer/uniform keys intentionally track shape for persistent handles while dynamic bytes are rewritten, texture keys include deterministic payload hashes, and `AshMtoonShaderCacheKey::from_spirv_words` lets downstream Vulkan renderers invalidate pipeline caches when WGSL/Naga SPIR-V changes even if entry point names are stable. The windowed example now consumes the same public keys.
 - Added public Ash descriptor-pool sizing plans. `ash_descriptor_pool_plan` derives `max_sets` and per-type `vk::DescriptorPoolSize` data from an `AshRendererFrame`, including the WGSL separate sampled-image/sampler model and owner/sample storage buffers, so the offscreen and windowed Vulkan examples no longer carry duplicate descriptor-pool counting logic.
-- Added public Ash descriptor-write plans. `ash_descriptor_write_plans` validates descriptor binding resource indices and resolves uniform/storage buffers, uploaded textures, fallback textures, separate samplers, and combined image samplers into renderer-owned write records without owning Vulkan handles. Both the offscreen and windowed Ash examples now consume this shared plan instead of duplicating descriptor binding/fallback/sampler-index traversal.
+- Added public Ash descriptor-write plans. `ash_descriptor_write_plans` validates descriptor binding resource indices and resolves uniform/storage buffers, uploaded textures, fallback textures, and separate samplers into renderer-owned write records without owning Vulkan handles. Both the offscreen and windowed Ash examples now consume this shared plan instead of duplicating descriptor binding/fallback/sampler-index traversal.
 - Promoted Ash drawable command recording options into the public renderer boundary. `AshDrawableFrameOptions` now carries render clear policy, `ash_drawable_frame_from_renderer_frame_with_options` can build transparent-background or opaque-background command plans, and both the real offscreen readback renderer and the windowed swapchain renderer now record Vulkan commands from the shared `AshCommandPlan` stream instead of iterating `frame.draw_calls` locally. Skipped draw validation and command ordering are now exercised in the crate before any unsafe Vulkan handle calls.
 - Promoted Ash graphics-pipeline fixed-function state into public renderer data. `ash_graphics_pipeline_state_plan` now derives vertex binding/attributes, topology, viewport/scissor, rasterization, depth, and blend policy from `AshGraphicsPipelinePlan` plus render extent. The offscreen readback renderer and the windowed swapchain renderer both consume this shared plan, leaving shader modules, pipeline layouts, render passes, and `vk::GraphicsPipelineCreateInfo` creation in engine-owned unsafe code while removing another duplicated example-local policy path.
 - Promoted Ash windowed swapchain surface selection into public renderer data. `ash_swapchain_surface_plan` now selects the same UNORM format, MAILBOX/FIFO present mode, clamped or fixed extent, capped image count, pre-transform, opaque composite alpha, and color-attachment usage for both the MToon and simple-preview windowed paths. The examples still query the surface and create/destroy `vk::SwapchainKHR` themselves, but downstream ash apps no longer need to copy the repo's surface policy to match the local smokes.
@@ -2071,7 +2081,7 @@ Open work:
 - Split Ash host-visible buffer planning from the MToon transfer-destination upload helper. `AshBufferResourcePlan` / `ash_host_visible_buffer_plan` now expose size-clamped, host-visible/coherent buffers with caller-owned usage flags for simple-preview and downstream direct-write paths, while `AshHostBufferPlan` keeps the existing `TRANSFER_DST` staging policy used by the MToon renderer resources.
 - Promoted descriptor-less Ash pipeline-layout create-info into public data helpers. `AshEmptyPipelineLayoutPlan` / `ash_empty_pipeline_layout_plan` now covers the simple-preview and downstream debug/minimal-pass layout case without pretending there is a descriptor set, while the existing checked `AshPipelineLayoutPlan` remains the MToon descriptor-set-layout path.
 - Promoted the Ash simple-preview position/color graphics-pipeline state into public data helpers. `ash_position_color_pipeline_state_plan` now owns the two-attribute vertex layout, viewport/scissor, alpha blend, cull, and depth policy used by descriptor-less debug/minimal passes, and the windowed simple-preview path now records through `AshGraphicsPipelineCreateInfoPlan` instead of hand-building the Vulkan fixed-function structs.
-- Promoted Ash descriptor-write create-info envelopes into public data helpers. `AshDescriptorWriteData` and `AshDescriptorWritePlan::with_write_descriptor_set` now build closure-scoped `vk::WriteDescriptorSet` values for uniform/storage buffers, combined image samplers, separate sampled images, and separate samplers; the offscreen readback and windowed MToon renderers now consume that helper so descriptor-set destination/type/binding policy lives in `vrm-adapter-ash` while unsafe descriptor updates and Vulkan handles remain engine-owned.
+- Promoted Ash descriptor-write create-info envelopes into public data helpers. `AshDescriptorWriteData` and `AshDescriptorWritePlan::with_write_descriptor_set` now build closure-scoped `vk::WriteDescriptorSet` values for uniform/storage buffers, separate sampled images, and separate samplers; the offscreen readback and windowed MToon renderers now consume that helper so descriptor-set destination/type/binding policy lives in `vrm-adapter-ash` while unsafe descriptor updates and Vulkan handles remain engine-owned.
 - Promoted Ash drawable bind-command payloads into public data helpers. `AshCommandPlan` now emits `AshBindGraphicsPipelineCommand`, `AshBindDescriptorSetCommand`, `AshBindVertexBufferCommand`, and `AshBindIndexBufferCommand` values with the graphics bind point, first set, descriptor-set array, vertex-buffer array, offsets, and index metadata already arranged for `cmd_bind_*`; the offscreen readback and windowed MToon renderers now use those helpers while keeping the unsafe Vulkan command calls engine-owned.
 - Promoted Ash texture-upload and color-readback command payloads into public data helpers. `AshTextureUploadCommandPlan` now emits transfer-destination barrier, shader-read barrier, and buffer-to-image copy payloads with stage masks and image layouts, while `AshColorAttachmentReadbackPlan` emits the color-attachment transfer-source barrier and image-to-buffer copy payload. The offscreen readback and windowed MToon renderers now consume those helpers instead of hand-writing upload/readback stage masks and copy envelopes.
 - Updated repository delegation guidance in `AGENTS.md` to name `gpt-5.4-mini` workers directly for coverage refreshes and narrow mechanical edits, keeping implementation gates and delegated-diff review on the primary Codex turn.
