@@ -31,23 +31,24 @@ use vrm_adapter_ash::{
     ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH, ASH_MTOON_WGSL_FRAGMENT_ENTRY,
     ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout, AshCommandRecordHandleAccess,
     AshCommandRecordResources, AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess,
-    AshDescriptorWriteResources, AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan,
-    AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
-    AshMtoonMaterializationPlan, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
-    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
-    AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
-    AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand, AshSamplerPlan,
-    AshSwapchainAcquireStatus, AshSwapchainPresentStatus, AshVrmFramePlanOptions,
-    AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameAcquirePlan,
-    AshWindowedFrameSyncHandles, AshWindowedFrameSyncPlan, AshWindowedResizeValidation,
-    AshWindowedRunValidation, ash_2d_image_resource_plan, ash_2d_image_view_plan,
-    ash_binary_semaphore_plan, ash_classify_swapchain_acquire, ash_classify_swapchain_present,
-    ash_depth_attachment_plan, ash_empty_pipeline_layout_plan, ash_fallback_texture_mip_level,
-    ash_fallback_texture_rgba, ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan,
-    ash_graphics_shader_stages_plan, ash_host_buffer_plan, ash_host_visible_buffer_plan,
-    ash_memory_allocation_plan, ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
-    ash_one_time_command_buffer_begin_plan, ash_position_color_pipeline_state_plan,
-    ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
+    AshDescriptorWriteResources, AshDrawableFrameOptions, AshFrameSlot,
+    AshGraphicsPipelineCreateInfoPlan, AshGraphicsPipelinePlan, AshMtoonBufferCacheKey,
+    AshMtoonDescriptorSetCacheKey, AshMtoonMaterializationPlan, AshMtoonPipelineCacheKey,
+    AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
+    AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
+    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand,
+    AshSamplerPlan, AshSwapchainAcquireStatus, AshSwapchainImageSlot, AshSwapchainPresentStatus,
+    AshVrmFramePlanOptions, AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex,
+    AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles, AshWindowedFrameSyncPlan,
+    AshWindowedResizeValidation, AshWindowedRunValidation, ash_2d_image_resource_plan,
+    ash_2d_image_view_plan, ash_binary_semaphore_plan, ash_classify_swapchain_acquire,
+    ash_classify_swapchain_present, ash_depth_attachment_plan, ash_empty_pipeline_layout_plan,
+    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
+    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
+    ash_host_visible_buffer_plan, ash_memory_allocation_plan, ash_memory_type_index,
+    ash_mtoon_materialization_plan_with_options, ash_one_time_command_buffer_begin_plan,
+    ash_position_color_pipeline_state_plan, ash_primary_command_buffer_allocation_plan,
+    ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
     ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
@@ -966,7 +967,7 @@ impl MtoonWindowedAshRenderer {
         let current_frame = sync_plan.frame_slot(self.current_frame)?;
         let sync = self
             .frame_sync
-            .get(current_frame)
+            .get(current_frame.index())
             .ok_or("ash windowed mtoon renderer has no frame sync object")?;
         let sync_handles = AshWindowedFrameSyncHandles {
             image_available: sync.image_available,
@@ -1008,7 +1009,7 @@ impl MtoonWindowedAshRenderer {
             &vertex_entry,
             &fragment_entry,
         )?;
-        self.images_in_flight[selection.swapchain_image_slot] = sync_handles.in_flight;
+        self.images_in_flight[selection.swapchain_image_slot.index()] = sync_handles.in_flight;
         let submit_plan = selection.submit_plan(sync_handles, command_buffer);
         let submit_info_plan = submit_plan.submit_info_plan();
         let submit = submit_info_plan.submit_infos();
@@ -1071,18 +1072,18 @@ impl MtoonWindowedAshRenderer {
     fn materialize_swapchain_frame(
         &mut self,
         frame: &AshRendererFrame,
-        frame_slot: usize,
-        image_index: usize,
+        frame_slot: AshFrameSlot,
+        image_index: AshSwapchainImageSlot,
         vertex_entry: &CString,
         fragment_entry: &CString,
     ) -> Result<vk::CommandBuffer, Box<dyn Error>> {
         let extent = self.swapchain.extent;
-        let framebuffer = self.swapchain.framebuffers[image_index];
+        let framebuffer = self.swapchain.framebuffers[image_index.index()];
         let render_pass = self.swapchain.render_pass;
         let command_buffer = *self
             .swapchain
             .command_buffers
-            .get(image_index)
+            .get(image_index.index())
             .ok_or("swapchain image has no matching draw command buffer")?;
         let materialization = ash_mtoon_materialization_plan_with_options(
             frame,
@@ -1119,19 +1120,19 @@ impl MtoonWindowedAshRenderer {
             .ok_or("missing ash windowed persistent pipeline cache")?;
         let descriptor_sets = &self
             .frame_slot_dynamic_caches
-            .get(frame_slot)
+            .get(frame_slot.index())
             .and_then(|slot| slot.descriptors.as_ref())
             .ok_or("missing ash windowed frame-slot descriptor set cache")?
             .descriptor_sets;
         let buffers = &self
             .frame_slot_dynamic_caches
-            .get(frame_slot)
+            .get(frame_slot.index())
             .and_then(|slot| slot.buffers.as_ref())
             .ok_or("missing ash windowed frame-slot buffer cache")?
             .buffers;
         let uniform_buffers = &self
             .frame_slot_dynamic_caches
-            .get(frame_slot)
+            .get(frame_slot.index())
             .and_then(|slot| slot.uniforms.as_ref())
             .ok_or("missing ash windowed frame-slot uniform cache")?
             .buffers;
@@ -1236,7 +1237,7 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_frame_slot_descriptor_set_cache(
         &mut self,
-        frame_slot: usize,
+        frame_slot: AshFrameSlot,
         materialization: &AshMtoonMaterializationPlan,
         key: AshMtoonDescriptorSetCacheKey,
     ) -> Result<(), Box<dyn Error>> {
@@ -1280,19 +1281,19 @@ impl MtoonWindowedAshRenderer {
 
     fn frame_slot_dynamic_caches(
         &self,
-        frame_slot: usize,
+        frame_slot: AshFrameSlot,
     ) -> Result<&MtoonFrameSlotDynamicCaches, Box<dyn Error>> {
         self.frame_slot_dynamic_caches
-            .get(frame_slot)
+            .get(frame_slot.index())
             .ok_or_else(|| format!("ash windowed frame slot {frame_slot} is out of range").into())
     }
 
     fn frame_slot_dynamic_caches_mut(
         &mut self,
-        frame_slot: usize,
+        frame_slot: AshFrameSlot,
     ) -> Result<&mut MtoonFrameSlotDynamicCaches, Box<dyn Error>> {
         self.frame_slot_dynamic_caches
-            .get_mut(frame_slot)
+            .get_mut(frame_slot.index())
             .ok_or_else(|| format!("ash windowed frame slot {frame_slot} is out of range").into())
     }
 
@@ -1324,7 +1325,7 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_frame_slot_buffer_cache(
         &mut self,
-        frame_slot: usize,
+        frame_slot: AshFrameSlot,
         frame: &AshRendererFrame,
         key: AshMtoonBufferCacheKey,
     ) -> Result<(), Box<dyn Error>> {
@@ -1367,7 +1368,7 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_frame_slot_uniform_cache(
         &mut self,
-        frame_slot: usize,
+        frame_slot: AshFrameSlot,
         frame: &AshRendererFrame,
         key: AshMtoonUniformCacheKey,
     ) -> Result<(), Box<dyn Error>> {

@@ -2,6 +2,13 @@
 
 ## 2026-06-25
 
+- Tightened the Ash windowed sync API with validated slot newtypes.
+  `AshWindowedFrameSyncPlan::frame_slot` now returns `AshFrameSlot`, and
+  `image_index_to_slot` / `select_acquired_frame` return
+  `AshSwapchainImageSlot` for swapchain-image cache/fence indexing. The
+  windowed MToon viewer consumes those typed slots and only drops to `usize`
+  through `index()` at Vulkan-owned array access, keeping the per-frame-slot
+  dynamic resource split from regressing back into raw-index conventions.
 - Added frame-level Ash renderer plan validation before MToon materialization.
   `AshRendererFrame::validate` / `validate_ash_renderer_frame` now checks the
   descriptor-set, pipeline, draw-call, texture/uniform/storage-buffer, and

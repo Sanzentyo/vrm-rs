@@ -688,6 +688,54 @@ pub struct AshWindowedFrameSyncPlan {
     pub swapchain_images: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshFrameSlot(usize);
+
+impl AshFrameSlot {
+    pub fn new(index: usize, frames_in_flight: usize) -> Result<Self, String> {
+        if index >= frames_in_flight {
+            return Err(format!(
+                "current_frame {index} is outside frames_in_flight {frames_in_flight}"
+            ));
+        }
+        Ok(Self(index))
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshFrameSlot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshSwapchainImageSlot(usize);
+
+impl AshSwapchainImageSlot {
+    pub fn new(index: usize, swapchain_images: usize) -> Result<Self, String> {
+        if index >= swapchain_images {
+            return Err(format!(
+                "swapchain image index {index} is outside swapchain_images {swapchain_images}"
+            ));
+        }
+        Ok(Self(index))
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshSwapchainImageSlot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 impl AshWindowedFrameSyncPlan {
     pub fn new(frames_in_flight: usize, swapchain_images: usize) -> Result<Self, String> {
         if frames_in_flight == 0 {
@@ -714,31 +762,19 @@ impl AshWindowedFrameSyncPlan {
         self.swapchain_images
     }
 
-    pub fn frame_slot(self, current_frame: usize) -> Result<usize, String> {
-        if current_frame >= self.frames_in_flight {
-            return Err(format!(
-                "current_frame {current_frame} is outside frames_in_flight {}",
-                self.frames_in_flight
-            ));
-        }
-        Ok(current_frame)
+    pub fn frame_slot(self, current_frame: usize) -> Result<AshFrameSlot, String> {
+        AshFrameSlot::new(current_frame, self.frames_in_flight)
     }
 
     pub fn next_frame_index(self, current_frame: usize) -> Result<usize, String> {
         let slot = self.frame_slot(current_frame)?;
-        Ok((slot + 1) % self.frames_in_flight)
+        Ok((slot.index() + 1) % self.frames_in_flight)
     }
 
-    pub fn image_index_to_slot(self, image_index: u32) -> Result<usize, String> {
+    pub fn image_index_to_slot(self, image_index: u32) -> Result<AshSwapchainImageSlot, String> {
         let slot = usize::try_from(image_index)
             .map_err(|_| format!("swapchain image index {image_index} does not fit usize"))?;
-        if slot >= self.swapchain_images {
-            return Err(format!(
-                "swapchain image index {slot} is outside swapchain_images {}",
-                self.swapchain_images
-            ));
-        }
-        Ok(slot)
+        AshSwapchainImageSlot::new(slot, self.swapchain_images)
     }
 
     pub fn select_acquired_frame(
@@ -757,7 +793,7 @@ impl AshWindowedFrameSyncPlan {
             } => {
                 let frame_slot = self.frame_slot(current_frame)?;
                 let image_slot = self.image_index_to_slot(image_index)?;
-                let previous_image_fence = *image_fences.get(image_slot).ok_or_else(|| {
+                let previous_image_fence = *image_fences.get(image_slot.index()).ok_or_else(|| {
                     format!(
                         "swapchain image slot {image_slot} has no matching in-flight fence entry"
                     )
@@ -785,8 +821,8 @@ pub enum AshWindowedFrameAcquirePlan {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshWindowedFrameSyncSelection {
-    pub frame_slot: usize,
-    pub swapchain_image_slot: usize,
+    pub frame_slot: AshFrameSlot,
+    pub swapchain_image_slot: AshSwapchainImageSlot,
     pub image_index: u32,
     pub acquired_suboptimal: bool,
     pub previous_image_fence: vk::Fence,
@@ -9038,10 +9074,14 @@ mod tests {
         assert_eq!(plan.semaphore_count(), 4);
         assert_eq!(plan.fence_count(), 2);
         assert_eq!(plan.image_fence_slots(), 3);
-        assert_eq!(plan.frame_slot(1), Ok(1));
+        assert_eq!(plan.frame_slot(1).map(AshFrameSlot::index), Ok(1));
         assert_eq!(plan.next_frame_index(0), Ok(1));
         assert_eq!(plan.next_frame_index(1), Ok(0));
-        assert_eq!(plan.image_index_to_slot(2), Ok(2));
+        assert_eq!(
+            plan.image_index_to_slot(2)
+                .map(AshSwapchainImageSlot::index),
+            Ok(2)
+        );
     }
 
     #[test]
@@ -9062,8 +9102,8 @@ mod tests {
             AshWindowedFrameAcquirePlan::NeedsRecreate => panic!("expected acquired frame"),
         };
 
-        assert_eq!(selection.frame_slot, 1);
-        assert_eq!(selection.swapchain_image_slot, 2);
+        assert_eq!(selection.frame_slot.index(), 1);
+        assert_eq!(selection.swapchain_image_slot.index(), 2);
         assert_eq!(selection.image_index, 2);
         assert!(selection.acquired_suboptimal);
         assert_eq!(selection.previous_image_fence, vk::Fence::null());
