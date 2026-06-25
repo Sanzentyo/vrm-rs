@@ -5456,7 +5456,7 @@ impl AshMtoonSamplerCacheKey {
             samplers: ash_sampler_resource_plans(frame)
                 .into_iter()
                 .map(|plan| AshMtoonSamplerBindingCacheKey {
-                    descriptor_set_index: plan.descriptor_set_id.index(),
+                    descriptor_set_id: plan.descriptor_set_id,
                     binding: plan.binding,
                     descriptor_type: plan.descriptor_type.as_raw(),
                     sampler: AshMtoonSamplerPlanCacheKey::from_sampler(plan.sampler),
@@ -5468,7 +5468,7 @@ impl AshMtoonSamplerCacheKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AshMtoonSamplerBindingCacheKey {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub binding: u32,
     pub descriptor_type: i32,
     pub sampler: AshMtoonSamplerPlanCacheKey,

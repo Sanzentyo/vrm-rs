@@ -2,6 +2,12 @@
 
 ## 2026-06-25
 
+- Continued the Ash typed-cache-key cleanup by changing
+  `AshMtoonSamplerBindingCacheKey` to carry `AshDescriptorSetId` instead of a
+  raw descriptor-set table index. Sampler cache invalidation now speaks the same
+  descriptor-set ID domain as descriptor-write plans, resource manifests, and
+  drawable commands; raw `descriptor_set_index` values remain only in validation
+  diagnostics and checked vector lookup boundaries.
 - Finished the next typed-ID pass from the Ash adapter review by introducing
   `AshPipelinePlanId` for MToon pipeline-plan references. Descriptor-set plans,
   graphics pipeline plans, draw calls, uniform scopes, renderer resource
