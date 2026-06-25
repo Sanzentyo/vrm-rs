@@ -2392,9 +2392,9 @@ pub struct AshResolvedDescriptorBinding {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub stage_flags: vk::ShaderStageFlags,
-    pub uniform_upload_index: Option<usize>,
-    pub texture_upload_index: Option<usize>,
-    pub buffer_upload_index: Option<usize>,
+    pub uniform_upload_id: Option<AshUniformUploadId>,
+    pub texture_upload_id: Option<AshTextureUploadId>,
+    pub buffer_upload_id: Option<AshBufferUploadId>,
     pub sampler: Option<AshSamplerPlan>,
 }
 
@@ -2729,12 +2729,13 @@ fn validate_ash_descriptor_binding(
 ) -> Result<(), AshRendererFrameValidationError> {
     match binding.descriptor_type {
         vk::DescriptorType::UNIFORM_BUFFER => {
-            let uniform_upload_index = binding.uniform_upload_index.ok_or(
+            let uniform_upload_id = binding.uniform_upload_id.ok_or(
                 AshRendererFrameValidationError::DescriptorBindingMissingUniform {
                     descriptor_set_index,
                     binding: binding.binding,
                 },
             )?;
+            let uniform_upload_index = uniform_upload_id.index();
             if uniform_upload_index >= frame.uniforms.len() {
                 return Err(
                     AshRendererFrameValidationError::DescriptorBindingUniformOutOfRange {
@@ -2747,12 +2748,13 @@ fn validate_ash_descriptor_binding(
             }
         }
         vk::DescriptorType::STORAGE_BUFFER => {
-            let buffer_upload_index = binding.buffer_upload_index.ok_or(
+            let buffer_upload_id = binding.buffer_upload_id.ok_or(
                 AshRendererFrameValidationError::DescriptorBindingMissingStorageBuffer {
                     descriptor_set_index,
                     binding: binding.binding,
                 },
             )?;
+            let buffer_upload_index = buffer_upload_id.index();
             if buffer_upload_index >= frame.buffers.len() {
                 return Err(
                     AshRendererFrameValidationError::DescriptorBindingStorageBufferOutOfRange {
@@ -2765,17 +2767,18 @@ fn validate_ash_descriptor_binding(
             }
         }
         vk::DescriptorType::SAMPLED_IMAGE => {
-            if let Some(texture_upload_index) = binding.texture_upload_index
-                && texture_upload_index >= frame.textures.len()
-            {
-                return Err(
-                    AshRendererFrameValidationError::DescriptorBindingTextureOutOfRange {
-                        descriptor_set_index,
-                        binding: binding.binding,
-                        texture_upload_index,
-                        texture_count: frame.textures.len(),
-                    },
-                );
+            if let Some(texture_upload_id) = binding.texture_upload_id {
+                let texture_upload_index = texture_upload_id.index();
+                if texture_upload_index >= frame.textures.len() {
+                    return Err(
+                        AshRendererFrameValidationError::DescriptorBindingTextureOutOfRange {
+                            descriptor_set_index,
+                            binding: binding.binding,
+                            texture_upload_index,
+                            texture_count: frame.textures.len(),
+                        },
+                    );
+                }
             }
         }
         vk::DescriptorType::SAMPLER => {}
@@ -3093,9 +3096,9 @@ pub struct AshRendererDescriptorSetLayoutResource {
 pub struct AshRendererDescriptorBindingResource {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
-    pub uniform_upload_index: Option<usize>,
-    pub texture_upload_index: Option<usize>,
-    pub buffer_upload_index: Option<usize>,
+    pub uniform_upload_id: Option<AshUniformUploadId>,
+    pub texture_upload_id: Option<AshTextureUploadId>,
+    pub buffer_upload_id: Option<AshBufferUploadId>,
     pub lifetime: AshRendererResourceLifetime,
 }
 
@@ -5851,9 +5854,9 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
                 .map(|binding| AshRendererDescriptorBindingResource {
                     binding: binding.binding,
                     descriptor_type: binding.descriptor_type,
-                    uniform_upload_index: binding.uniform_upload_index,
-                    texture_upload_index: binding.texture_upload_index,
-                    buffer_upload_index: binding.buffer_upload_index,
+                    uniform_upload_id: binding.uniform_upload_id,
+                    texture_upload_id: binding.texture_upload_id,
+                    buffer_upload_id: binding.buffer_upload_id,
                     lifetime: ash_descriptor_binding_lifetime(binding.descriptor_type),
                 })
                 .collect(),
@@ -6089,38 +6092,36 @@ pub fn ash_descriptor_write_plans(
         for binding in &set.bindings {
             let resource = match binding.descriptor_type {
                 vk::DescriptorType::UNIFORM_BUFFER => {
-                    let uniform_upload_index = binding.uniform_upload_index.ok_or_else(|| {
+                    let uniform_upload_id = binding.uniform_upload_id.ok_or_else(|| {
                         format!(
                             "descriptor set {descriptor_set_index} binding {} is missing a uniform upload index",
                             binding.binding
                         )
                     })?;
+                    let uniform_upload_index = uniform_upload_id.index();
                     if uniform_upload_index >= frame.uniforms.len() {
                         return Err(format!(
                             "descriptor set {descriptor_set_index} binding {} references missing uniform upload {uniform_upload_index}",
                             binding.binding
                         ));
                     }
-                    AshDescriptorWriteResource::UniformBuffer {
-                        uniform_upload_id: AshUniformUploadId::new(uniform_upload_index),
-                    }
+                    AshDescriptorWriteResource::UniformBuffer { uniform_upload_id }
                 }
                 vk::DescriptorType::STORAGE_BUFFER => {
-                    let buffer_upload_index = binding.buffer_upload_index.ok_or_else(|| {
+                    let buffer_upload_id = binding.buffer_upload_id.ok_or_else(|| {
                         format!(
                             "descriptor set {descriptor_set_index} binding {} is missing a storage buffer upload index",
                             binding.binding
                         )
                     })?;
+                    let buffer_upload_index = buffer_upload_id.index();
                     if buffer_upload_index >= frame.buffers.len() {
                         return Err(format!(
                             "descriptor set {descriptor_set_index} binding {} references missing storage buffer upload {buffer_upload_index}",
                             binding.binding
                         ));
                     }
-                    AshDescriptorWriteResource::StorageBuffer {
-                        buffer_upload_id: AshBufferUploadId::new(buffer_upload_index),
-                    }
+                    AshDescriptorWriteResource::StorageBuffer { buffer_upload_id }
                 }
                 vk::DescriptorType::SAMPLED_IMAGE => AshDescriptorWriteResource::SampledImage {
                     image: ash_descriptor_image_resource(frame, binding)?,
@@ -6153,16 +6154,15 @@ fn ash_descriptor_image_resource(
     frame: &AshRendererFrame,
     binding: &AshResolvedDescriptorBinding,
 ) -> Result<AshDescriptorImageResource, String> {
-    if let Some(texture_upload_index) = binding.texture_upload_index {
+    if let Some(texture_upload_id) = binding.texture_upload_id {
+        let texture_upload_index = texture_upload_id.index();
         if texture_upload_index >= frame.textures.len() {
             return Err(format!(
                 "descriptor binding {} references missing texture upload {texture_upload_index}",
                 binding.binding
             ));
         }
-        Ok(AshDescriptorImageResource::TextureUpload {
-            texture_upload_id: AshTextureUploadId::new(texture_upload_index),
-        })
+        Ok(AshDescriptorImageResource::TextureUpload { texture_upload_id })
     } else {
         Ok(AshDescriptorImageResource::Fallback {
             fallback: ash_texture_fallback_for_binding(binding.binding)
@@ -6348,7 +6348,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                     binding: binding.binding,
                     descriptor_type: binding.descriptor_type,
                     stage_flags: binding.stage_flags,
-                    uniform_upload_index: (binding.descriptor_type
+                    uniform_upload_id: (binding.descriptor_type
                         == vk::DescriptorType::UNIFORM_BUFFER)
                         .then(|| match binding.binding {
                             binding if binding == ash_mtoon_uniform_binding() => {
@@ -6373,21 +6373,24 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                                 scene_uniform_upload_index
                             }
                             _ => pipeline_plan_index * ASH_MTOON_UNIFORMS_PER_PIPELINE,
-                        }),
-                    texture_upload_index: binding.texture.and_then(|texture| {
+                        })
+                        .map(AshUniformUploadId::new),
+                    texture_upload_id: binding.texture.and_then(|texture| {
                         texture_indices
                             .get(&AshTextureUploadKey {
                                 texture,
                                 color_space: binding.color_space,
                             })
                             .copied()
+                            .map(AshTextureUploadId::new)
                     }),
-                    buffer_upload_index: (binding.descriptor_type
+                    buffer_upload_id: (binding.descriptor_type
                         == vk::DescriptorType::STORAGE_BUFFER)
                         .then(|| {
                             owner_sample_override_buffer_indices
                                 [&(pipeline.material, pipeline_plan_index)]
-                        }),
+                        })
+                        .map(AshBufferUploadId::new),
                     sampler: binding.sampler,
                 })
                 .collect(),
@@ -10469,7 +10472,7 @@ mod tests {
     fn mtoon_materialization_plan_validates_descriptor_writes() {
         let mut frame =
             cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
-        frame.descriptor_sets[0].bindings[0].uniform_upload_index = Some(99);
+        frame.descriptor_sets[0].bindings[0].uniform_upload_id = Some(AshUniformUploadId::new(99));
         let error = ash_mtoon_materialization_plan(
             &frame,
             vk::Extent2D {
@@ -10506,7 +10509,7 @@ mod tests {
     #[test]
     fn renderer_frame_validation_reports_descriptor_and_draw_errors() {
         let mut frame = valid_draw_validation_frame();
-        frame.descriptor_sets[0].bindings[0].uniform_upload_index = Some(99);
+        frame.descriptor_sets[0].bindings[0].uniform_upload_id = Some(AshUniformUploadId::new(99));
         assert_eq!(
             frame.validate(),
             Err(
@@ -10571,9 +10574,9 @@ mod tests {
                 binding: ash_mtoon_wgsl_owner_sample_override_binding(),
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                uniform_upload_index: None,
-                texture_upload_index: None,
-                buffer_upload_index: Some(0),
+                uniform_upload_id: None,
+                texture_upload_id: None,
+                buffer_upload_id: Some(AshBufferUploadId::new(0)),
                 sampler: None,
             });
 
@@ -10717,9 +10720,9 @@ mod tests {
                 binding: ash_mtoon_wgsl_owner_sample_override_binding(),
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                uniform_upload_index: None,
-                texture_upload_index: None,
-                buffer_upload_index: Some(0),
+                uniform_upload_id: None,
+                texture_upload_id: None,
+                buffer_upload_id: Some(AshBufferUploadId::new(0)),
                 sampler: None,
             });
         let sampler_plans = ash_sampler_resource_plans(&frame);
@@ -10770,9 +10773,9 @@ mod tests {
                 binding: 3,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                uniform_upload_index: None,
-                texture_upload_index: None,
-                buffer_upload_index: None,
+                uniform_upload_id: None,
+                texture_upload_id: None,
+                buffer_upload_id: None,
                 sampler: Some(AshSamplerPlan::default()),
             });
         assert_eq!(
@@ -10783,7 +10786,7 @@ mod tests {
             )
         );
 
-        frame.descriptor_sets[0].bindings[1].texture_upload_index = Some(99);
+        frame.descriptor_sets[0].bindings[1].texture_upload_id = Some(AshTextureUploadId::new(99));
         assert_eq!(
             ash_descriptor_write_plans(&frame),
             Err("descriptor binding 1 references missing texture upload 99".to_owned())
@@ -11076,27 +11079,27 @@ mod tests {
                         binding: ash_mtoon_wgsl_scene_binding(),
                         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        uniform_upload_index: Some(0),
-                        texture_upload_index: None,
-                        buffer_upload_index: None,
+                        uniform_upload_id: Some(AshUniformUploadId::new(0)),
+                        texture_upload_id: None,
+                        buffer_upload_id: None,
                         sampler: None,
                     },
                     AshResolvedDescriptorBinding {
                         binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::Main),
                         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                        uniform_upload_index: None,
-                        texture_upload_index: Some(0),
-                        buffer_upload_index: None,
+                        uniform_upload_id: None,
+                        texture_upload_id: Some(AshTextureUploadId::new(0)),
+                        buffer_upload_id: None,
                         sampler: Some(AshSamplerPlan::default()),
                     },
                     AshResolvedDescriptorBinding {
                         binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
                         descriptor_type: vk::DescriptorType::SAMPLER,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                        uniform_upload_index: None,
-                        texture_upload_index: Some(0),
-                        buffer_upload_index: None,
+                        uniform_upload_id: None,
+                        texture_upload_id: Some(AshTextureUploadId::new(0)),
+                        buffer_upload_id: None,
                         sampler: Some(AshSamplerPlan::default()),
                     },
                 ],
@@ -11157,9 +11160,9 @@ mod tests {
                     binding: ash_mtoon_wgsl_scene_binding(),
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    uniform_upload_index: Some(0),
-                    texture_upload_index: None,
-                    buffer_upload_index: None,
+                    uniform_upload_id: Some(AshUniformUploadId::new(0)),
+                    texture_upload_id: None,
+                    buffer_upload_id: None,
                     sampler: None,
                 }],
             }],
@@ -11471,8 +11474,8 @@ mod tests {
             ash_mtoon_scene_binding()
         );
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[0].uniform_upload_index,
-            Some(0)
+            renderer_frame.descriptor_sets[0].bindings[0].uniform_upload_id,
+            Some(AshUniformUploadId::new(0))
         );
         let descriptor_binding = |binding_number| {
             renderer_frame.descriptor_sets[0]
@@ -11482,24 +11485,24 @@ mod tests {
                 .expect("descriptor binding")
         };
         assert_eq!(
-            descriptor_binding(ash_mtoon_wgsl_scene_binding()).uniform_upload_index,
-            Some(3)
+            descriptor_binding(ash_mtoon_wgsl_scene_binding()).uniform_upload_id,
+            Some(AshUniformUploadId::new(3))
         );
         assert_eq!(
-            descriptor_binding(ash_mtoon_wgsl_uv_uniform_binding()).uniform_upload_index,
-            Some(1)
+            descriptor_binding(ash_mtoon_wgsl_uv_uniform_binding()).uniform_upload_id,
+            Some(AshUniformUploadId::new(1))
         );
         assert_eq!(
-            descriptor_binding(ash_mtoon_wgsl_render_extra_binding()).uniform_upload_index,
-            Some(2)
+            descriptor_binding(ash_mtoon_wgsl_render_extra_binding()).uniform_upload_id,
+            Some(AshUniformUploadId::new(2))
         );
         assert_eq!(
             descriptor_binding(ash_mtoon_wgsl_owner_sample_override_binding()).descriptor_type,
             vk::DescriptorType::STORAGE_BUFFER
         );
         assert_eq!(
-            descriptor_binding(ash_mtoon_wgsl_owner_sample_override_binding()).buffer_upload_index,
-            Some(0)
+            descriptor_binding(ash_mtoon_wgsl_owner_sample_override_binding()).buffer_upload_id,
+            Some(AshBufferUploadId::new(0))
         );
         assert_eq!(
             renderer_frame.pipelines[0].vertex_attributes,
@@ -11893,7 +11896,7 @@ mod tests {
                 })
             })
             .unwrap();
-        let buffer_index = binding.buffer_upload_index.unwrap();
+        let buffer_index = binding.buffer_upload_id.unwrap().index();
         let buffer = &renderer_frame.buffers[buffer_index];
         let record = bytemuck::pod_read_unaligned::<AshOwnerSampleOverrideRecord>(
             &buffer.bytes[..std::mem::size_of::<AshOwnerSampleOverrideRecord>()],
@@ -12935,8 +12938,8 @@ mod tests {
         let renderer_frame = ash_renderer_frame_from_plan(&plan);
         assert_eq!(renderer_frame.textures.len(), 1);
         assert_eq!(
-            renderer_frame.descriptor_sets[0].bindings[1].texture_upload_index,
-            Some(0)
+            renderer_frame.descriptor_sets[0].bindings[1].texture_upload_id,
+            Some(AshTextureUploadId::new(0))
         );
         assert_eq!(
             renderer_frame.descriptor_sets[0].bindings[1].descriptor_type,
