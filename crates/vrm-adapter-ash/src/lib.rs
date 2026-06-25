@@ -2926,6 +2926,63 @@ impl AshRendererResourceManifest {
                 })
                 .count()
     }
+
+    pub fn persistent_content_resource_count(&self) -> usize {
+        self.textures
+            .iter()
+            .filter(|resource| resource.lifetime == AshRendererResourceLifetime::Persistent)
+            .count()
+            + self
+                .samplers
+                .iter()
+                .filter(|resource| resource.lifetime == AshRendererResourceLifetime::Persistent)
+                .count()
+            + self
+                .descriptor_set_layouts
+                .iter()
+                .filter(|resource| resource.lifetime == AshRendererResourceLifetime::Persistent)
+                .count()
+            + self
+                .pipelines
+                .iter()
+                .filter(|resource| resource.lifetime == AshRendererResourceLifetime::Persistent)
+                .count()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshFrameSlotDynamicResourcePlan {
+    pub slots: Vec<AshFrameSlotDynamicResources>,
+    pub persistent_handle_resources: usize,
+    pub persistent_content_resources: usize,
+}
+
+impl AshFrameSlotDynamicResourcePlan {
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn total_dynamic_buffer_handles(&self) -> usize {
+        self.slots.iter().map(|slot| slot.buffers).sum()
+    }
+
+    pub fn total_dynamic_uniform_handles(&self) -> usize {
+        self.slots.iter().map(|slot| slot.uniforms).sum()
+    }
+
+    pub fn total_dynamic_descriptor_sets(&self) -> usize {
+        self.slots.iter().map(|slot| slot.descriptor_sets).sum()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AshFrameSlotDynamicResources {
+    pub frame_slot: AshFrameSlot,
+    pub buffers: usize,
+    pub uniforms: usize,
+    pub descriptor_sets: usize,
+    pub descriptor_bindings: usize,
+    pub descriptor_pool: AshDescriptorPoolPlan,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -5279,6 +5336,13 @@ impl AshMtoonMaterializationPlan {
     pub fn draw_command_count(&self) -> usize {
         self.drawable.commands.len()
     }
+
+    pub fn frame_slot_dynamic_resource_plan(
+        &self,
+        sync_plan: AshWindowedFrameSyncPlan,
+    ) -> Result<AshFrameSlotDynamicResourcePlan, String> {
+        ash_frame_slot_dynamic_resource_plan(sync_plan, &self.resource_manifest)
+    }
 }
 
 pub fn ash_mtoon_materialization_plan(
@@ -5499,6 +5563,52 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
     }
 }
 
+pub fn ash_frame_slot_dynamic_resource_plan(
+    sync_plan: AshWindowedFrameSyncPlan,
+    manifest: &AshRendererResourceManifest,
+) -> Result<AshFrameSlotDynamicResourcePlan, String> {
+    let sync_plan =
+        AshWindowedFrameSyncPlan::new(sync_plan.frames_in_flight, sync_plan.swapchain_images)?;
+    let buffers = manifest
+        .buffers
+        .iter()
+        .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+        .count();
+    let uniforms = manifest
+        .uniforms
+        .iter()
+        .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+        .count();
+    let dynamic_descriptor_sets = manifest
+        .descriptor_sets
+        .iter()
+        .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+        .collect::<Vec<_>>();
+    let descriptor_sets = dynamic_descriptor_sets.len();
+    let descriptor_bindings = dynamic_descriptor_sets
+        .iter()
+        .map(|set| set.bindings.len())
+        .sum();
+    let descriptor_pool = ash_descriptor_pool_plan_from_manifest(manifest);
+    let slots = (0..sync_plan.frames_in_flight)
+        .map(|index| {
+            Ok(AshFrameSlotDynamicResources {
+                frame_slot: sync_plan.frame_slot(index)?,
+                buffers,
+                uniforms,
+                descriptor_sets,
+                descriptor_bindings,
+                descriptor_pool: descriptor_pool.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(AshFrameSlotDynamicResourcePlan {
+        slots,
+        persistent_handle_resources: manifest.persistent_handle_resource_count(),
+        persistent_content_resources: manifest.persistent_content_resource_count(),
+    })
+}
+
 pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPlan {
     let descriptor_binding_count = |descriptor_type| {
         frame
@@ -5523,6 +5633,57 @@ pub fn ash_descriptor_pool_plan(frame: &AshRendererFrame) -> AshDescriptorPoolPl
         .max(1) as u32;
     AshDescriptorPoolPlan {
         max_sets: frame.descriptor_sets.len().max(1) as u32,
+        pool_sizes: vec![
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::UNIFORM_BUFFER),
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::SAMPLED_IMAGE),
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: sampler_count,
+            },
+            AshDescriptorPoolSizePlan {
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: descriptor_binding_count(vk::DescriptorType::STORAGE_BUFFER),
+            },
+        ],
+    }
+}
+
+pub fn ash_descriptor_pool_plan_from_manifest(
+    manifest: &AshRendererResourceManifest,
+) -> AshDescriptorPoolPlan {
+    let descriptor_binding_count = |descriptor_type| {
+        manifest
+            .descriptor_sets
+            .iter()
+            .flat_map(|set| &set.bindings)
+            .filter(|binding| binding.descriptor_type == descriptor_type)
+            .count()
+            .max(1) as u32
+    };
+    let sampler_count = manifest
+        .descriptor_sets
+        .iter()
+        .flat_map(|set| &set.bindings)
+        .filter(|binding| {
+            matches!(
+                binding.descriptor_type,
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER
+            )
+        })
+        .count()
+        .max(1) as u32;
+    AshDescriptorPoolPlan {
+        max_sets: manifest.descriptor_sets.len().max(1) as u32,
         pool_sizes: vec![
             AshDescriptorPoolSizePlan {
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -11123,6 +11284,64 @@ mod tests {
         assert_eq!(
             manifest.dynamic_resource_count(),
             manifest.buffers.len() + manifest.uniforms.len() + manifest.descriptor_sets.len()
+        );
+        assert_eq!(
+            manifest.persistent_content_resource_count(),
+            manifest.textures.len()
+                + manifest.samplers.len()
+                + manifest.descriptor_set_layouts.len()
+                + manifest.pipelines.len()
+        );
+
+        let sync_plan = AshWindowedFrameSyncPlan::new(2, 3).unwrap();
+        let frame_slot_plan = ash_frame_slot_dynamic_resource_plan(sync_plan, &manifest).unwrap();
+        assert_eq!(frame_slot_plan.slot_count(), 2);
+        assert_eq!(
+            frame_slot_plan.persistent_handle_resources,
+            manifest.persistent_handle_resource_count()
+        );
+        assert_eq!(
+            frame_slot_plan.persistent_content_resources,
+            manifest.persistent_content_resource_count()
+        );
+        assert_eq!(
+            frame_slot_plan.total_dynamic_buffer_handles(),
+            manifest.buffers.len() * 2
+        );
+        assert_eq!(
+            frame_slot_plan.total_dynamic_uniform_handles(),
+            manifest.uniforms.len() * 2
+        );
+        assert_eq!(
+            frame_slot_plan.total_dynamic_descriptor_sets(),
+            manifest.descriptor_sets.len() * 2
+        );
+        assert!(
+            frame_slot_plan
+                .slots
+                .iter()
+                .enumerate()
+                .all(|(index, slot)| {
+                    slot.frame_slot.index() == index
+                        && slot.buffers == manifest.buffers.len()
+                        && slot.uniforms == manifest.uniforms.len()
+                        && slot.descriptor_sets == manifest.descriptor_sets.len()
+                        && slot.descriptor_pool == ash_descriptor_pool_plan_from_manifest(&manifest)
+                })
+        );
+
+        let materialization = ash_mtoon_materialization_plan(
+            &renderer_frame,
+            vk::Extent2D {
+                width: 128,
+                height: 64,
+            },
+            AshMtoonShaderCacheKey::from_entries("vs", "fs"),
+        )
+        .unwrap();
+        assert_eq!(
+            materialization.frame_slot_dynamic_resource_plan(sync_plan),
+            Ok(frame_slot_plan)
         );
 
         let drawable = ash_drawable_frame_from_renderer_frame(

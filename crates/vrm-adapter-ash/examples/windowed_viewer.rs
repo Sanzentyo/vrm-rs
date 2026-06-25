@@ -1095,6 +1095,22 @@ impl MtoonWindowedAshRenderer {
             },
         )
         .map_err(|error| -> Box<dyn Error> { error.into() })?;
+        let frame_slot_resource_plan = materialization.frame_slot_dynamic_resource_plan(
+            AshWindowedFrameSyncPlan::new(self.frame_sync.len(), self.swapchain.image_views.len())?,
+        )?;
+        let frame_slot_resources = frame_slot_resource_plan
+            .slots
+            .iter()
+            .find(|resources| resources.frame_slot == frame_slot)
+            .ok_or_else(|| {
+                format!("missing ash windowed dynamic resource plan for {frame_slot}")
+            })?;
+        if frame_slot_resources.descriptor_pool != materialization.descriptor_pool {
+            return Err(
+                "ash windowed frame-slot descriptor pool plan drifted from materialization plan"
+                    .into(),
+            );
+        }
         let cache_keys = &materialization.cache_keys;
         self.ensure_persistent_pipeline_cache(
             &materialization,

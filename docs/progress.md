@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Promoted the Ash frame-slot dynamic resource boundary into reusable data.
+  `ash_frame_slot_dynamic_resource_plan` and
+  `AshMtoonMaterializationPlan::frame_slot_dynamic_resource_plan` now derive
+  per-`AshFrameSlot` buffer, uniform, descriptor-set, binding, and descriptor
+  pool allocation counts from `AshRendererResourceManifest` plus
+  `AshWindowedFrameSyncPlan`. The windowed viewer now checks that its selected
+  frame-slot descriptor pool plan matches the materialization facade before
+  touching Vulkan handles, so downstream multi-frame Ash integrations can copy
+  the typed plan instead of rediscovering the example's cache split.
 - Tightened the Ash windowed sync API with validated slot newtypes.
   `AshWindowedFrameSyncPlan::frame_slot` now returns `AshFrameSlot`, and
   `image_index_to_slot` / `select_acquired_frame` return
