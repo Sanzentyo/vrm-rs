@@ -3179,6 +3179,29 @@ impl fmt::Display for AshDescriptorSetId {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshDescriptorSetLayoutId(usize);
+
+impl AshDescriptorSetLayoutId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn from_descriptor_set_id(id: AshDescriptorSetId) -> Self {
+        Self(id.index())
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshDescriptorSetLayoutId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AshPipelineId(usize);
 
 impl AshPipelineId {
@@ -3275,7 +3298,7 @@ impl fmt::Display for AshSamplerId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorSetLayoutPlan {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bindings: Vec<AshDescriptorBindingLayoutKey>,
@@ -3307,7 +3330,7 @@ impl AshDescriptorSetLayoutPlan {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshPipelineLayoutPlan {
-    pub descriptor_set_layout_index: usize,
+    pub descriptor_set_layout_id: AshDescriptorSetLayoutId,
 }
 
 impl AshPipelineLayoutPlan {
@@ -3316,13 +3339,13 @@ impl AshPipelineLayoutPlan {
         descriptor_set_layouts: &[vk::DescriptorSetLayout],
     ) -> Result<[vk::DescriptorSetLayout; 1], String> {
         descriptor_set_layouts
-            .get(self.descriptor_set_layout_index)
+            .get(self.descriptor_set_layout_id.index())
             .copied()
             .map(|layout| [layout])
             .ok_or_else(|| {
                 format!(
                     "pipeline layout references missing descriptor set layout {}",
-                    self.descriptor_set_layout_index
+                    self.descriptor_set_layout_id
                 )
             })
     }
@@ -3353,24 +3376,27 @@ pub const fn ash_empty_pipeline_layout_plan() -> AshEmptyPipelineLayoutPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshDescriptorSetAllocationPlan {
-    pub descriptor_set_layout_indices: Vec<usize>,
+    pub descriptor_set_layout_ids: Vec<AshDescriptorSetLayoutId>,
 }
 
 impl AshDescriptorSetAllocationPlan {
     pub fn descriptor_set_count(&self) -> usize {
-        self.descriptor_set_layout_indices.len()
+        self.descriptor_set_layout_ids.len()
     }
 
     pub fn vk_set_layouts(
         &self,
         descriptor_set_layouts: &[vk::DescriptorSetLayout],
     ) -> Result<Vec<vk::DescriptorSetLayout>, String> {
-        self.descriptor_set_layout_indices
+        self.descriptor_set_layout_ids
             .iter()
-            .map(|index| {
-                descriptor_set_layouts.get(*index).copied().ok_or_else(|| {
-                    format!("descriptor set allocation references missing layout {index}")
-                })
+            .map(|id| {
+                descriptor_set_layouts
+                    .get(id.index())
+                    .copied()
+                    .ok_or_else(|| {
+                        format!("descriptor set allocation references missing layout {id}")
+                    })
             })
             .collect()
     }
@@ -5988,7 +6014,7 @@ pub fn ash_descriptor_set_layout_plans(
         .iter()
         .enumerate()
         .map(|(descriptor_set_index, set)| AshDescriptorSetLayoutPlan {
-            descriptor_set_index,
+            descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
             material: set.material,
             pipeline_plan_index: set.pipeline_plan_index,
             bindings: set
@@ -6010,7 +6036,9 @@ pub fn ash_pipeline_layout_plans(
     descriptor_set_layouts
         .iter()
         .map(|layout| AshPipelineLayoutPlan {
-            descriptor_set_layout_index: layout.descriptor_set_index,
+            descriptor_set_layout_id: AshDescriptorSetLayoutId::from_descriptor_set_id(
+                layout.descriptor_set_id,
+            ),
         })
         .collect()
 }
@@ -6019,9 +6047,11 @@ pub fn ash_descriptor_set_allocation_plan(
     descriptor_set_layouts: &[AshDescriptorSetLayoutPlan],
 ) -> AshDescriptorSetAllocationPlan {
     AshDescriptorSetAllocationPlan {
-        descriptor_set_layout_indices: descriptor_set_layouts
+        descriptor_set_layout_ids: descriptor_set_layouts
             .iter()
-            .map(|layout| layout.descriptor_set_index)
+            .map(|layout| {
+                AshDescriptorSetLayoutId::from_descriptor_set_id(layout.descriptor_set_id)
+            })
             .collect(),
     }
 }
@@ -10596,7 +10626,7 @@ mod tests {
         let plans = ash_descriptor_set_layout_plans(&frame);
 
         assert_eq!(plans.len(), frame.descriptor_sets.len());
-        assert_eq!(plans[0].descriptor_set_index, 0);
+        assert_eq!(plans[0].descriptor_set_id, AshDescriptorSetId::new(0));
         assert_eq!(plans[0].material, frame.descriptor_sets[0].material);
         assert_eq!(
             plans[0].pipeline_plan_index,
@@ -10623,7 +10653,7 @@ mod tests {
         assert_eq!(
             ash_pipeline_layout_plans(&plans),
             vec![AshPipelineLayoutPlan {
-                descriptor_set_layout_index: 0
+                descriptor_set_layout_id: AshDescriptorSetLayoutId::new(0)
             }]
         );
 
@@ -10646,13 +10676,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             AshPipelineLayoutPlan {
-                descriptor_set_layout_index: 0
+                descriptor_set_layout_id: AshDescriptorSetLayoutId::new(0)
             }
             .vk_set_layouts(&layout_handles),
             Ok([vk::DescriptorSetLayout::null()])
         );
         AshPipelineLayoutPlan {
-            descriptor_set_layout_index: 0,
+            descriptor_set_layout_id: AshDescriptorSetLayoutId::new(0),
         }
         .with_pipeline_layout_create_info(&layout_handles, |info| {
             assert_eq!(info.set_layout_count, 1);
@@ -10663,14 +10693,14 @@ mod tests {
         assert!(empty_layout_info.p_set_layouts.is_null());
         assert_eq!(
             AshPipelineLayoutPlan {
-                descriptor_set_layout_index: 3
+                descriptor_set_layout_id: AshDescriptorSetLayoutId::new(3)
             }
             .vk_set_layouts(&[]),
             Err("pipeline layout references missing descriptor set layout 3".to_owned())
         );
         assert_eq!(
             AshDescriptorSetAllocationPlan {
-                descriptor_set_layout_indices: vec![2]
+                descriptor_set_layout_ids: vec![AshDescriptorSetLayoutId::new(2)]
             }
             .vk_set_layouts(&[]),
             Err("descriptor set allocation references missing layout 2".to_owned())

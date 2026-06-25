@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Continued the Ash static-review cleanup from the external
+  `vrm-rs-ash-adapter-review-and-compare-cleanup` package. Descriptor-set-layout
+  planning now uses `AshDescriptorSetLayoutId` instead of raw `usize` fields:
+  `AshDescriptorSetLayoutPlan` records its source `AshDescriptorSetId`,
+  `AshPipelineLayoutPlan` references a typed descriptor-set-layout id, and
+  `AshDescriptorSetAllocationPlan` resolves typed layout ids into engine-owned
+  `vk::DescriptorSetLayout` handles with the existing checked error path. This
+  narrows another renderer-edge index domain called out by the review without
+  adding compatibility shims or changing Vulkan handle ownership.
 - Started replacing raw Ash renderer-edge resource indices with typed IDs.
   Descriptor-write and sampler-resource handoff plans now use
   `AshDescriptorSetId`, `AshUniformUploadId`, `AshBufferUploadId`,
