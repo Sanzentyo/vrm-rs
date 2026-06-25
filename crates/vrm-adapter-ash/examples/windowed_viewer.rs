@@ -1765,30 +1765,30 @@ impl MtoonWindowedAshRenderer {
         descriptor_sets: &[vk::DescriptorSet],
         resources: MtoonDescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
-        for plan in &materialization.descriptor_writes {
-            let write_data = plan
-                .resolve_write_data(
-                    AshDescriptorWriteResources::new(
-                        resources.uniform_buffers,
-                        resources.buffers,
-                        resources.images,
-                        resources.samplers,
-                    ),
-                    AshDescriptorWriteHandleAccess {
-                        uniform_buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
-                        storage_buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
-                        texture_image_view: |image: &MtoonVulkanImage| image.view,
-                        fallback_image_view: |fallback| {
-                            resources.fallback_textures.get(fallback).view
-                        },
-                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    },
-                )
-                .map_err(std::io::Error::other)?;
-            plan.with_write_descriptor_set(descriptor_sets, write_data, |write| unsafe {
-                self.device.update_descriptor_sets(&[write], &[]);
-            })
+        let resolved_writes = materialization
+            .resolve_descriptor_writes(
+                descriptor_sets,
+                AshDescriptorWriteResources::new(
+                    resources.uniform_buffers,
+                    resources.buffers,
+                    resources.images,
+                    resources.samplers,
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
+                    storage_buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
+                    texture_image_view: |image: &MtoonVulkanImage| image.view,
+                    fallback_image_view: |fallback| resources.fallback_textures.get(fallback).view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            )
             .map_err(std::io::Error::other)?;
+        for write in resolved_writes {
+            write
+                .with_write_descriptor_set(|vk_write| unsafe {
+                    self.device.update_descriptor_sets(&[vk_write], &[]);
+                })
+                .map_err(std::io::Error::other)?;
         }
         Ok(())
     }
@@ -1885,21 +1885,21 @@ impl MtoonWindowedAshRenderer {
                 &render_pass_info,
                 vk::SubpassContents::INLINE,
             );
-            for command in &drawable.commands {
-                let resolved = command
-                    .resolve_record_command(
-                        AshCommandRecordResources::new(
-                            &frame.pipelines,
-                            context.pipelines,
-                            context.pipeline_layouts,
-                            context.descriptor_sets,
-                            context.buffers,
-                        ),
-                        AshCommandRecordHandleAccess {
-                            buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
-                        },
-                    )
-                    .map_err(std::io::Error::other)?;
+            let resolved_commands = materialization
+                .resolve_commands(
+                    AshCommandRecordResources::new(
+                        &frame.pipelines,
+                        context.pipelines,
+                        context.pipeline_layouts,
+                        context.descriptor_sets,
+                        context.buffers,
+                    ),
+                    AshCommandRecordHandleAccess {
+                        buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
+                    },
+                )
+                .map_err(std::io::Error::other)?;
+            for resolved in resolved_commands {
                 match resolved {
                     AshResolvedCommand::BindGraphicsPipeline(bind) => {
                         self.device.cmd_bind_pipeline(

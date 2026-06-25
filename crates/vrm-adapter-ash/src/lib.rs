@@ -3243,13 +3243,21 @@ pub struct AshDescriptorWritePlan {
     pub resource: AshDescriptorWriteResource,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct AshDescriptorWriteResources<'a, Uniform, Storage, Image> {
     pub uniform_buffers: &'a [Uniform],
     pub storage_buffers: &'a [Storage],
     pub texture_uploads: &'a [Image],
     pub samplers: &'a [vk::Sampler],
 }
+
+impl<Uniform, Storage, Image> Clone for AshDescriptorWriteResources<'_, Uniform, Storage, Image> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Uniform, Storage, Image> Copy for AshDescriptorWriteResources<'_, Uniform, Storage, Image> {}
 
 impl<'a, Uniform, Storage, Image> AshDescriptorWriteResources<'a, Uniform, Storage, Image> {
     pub const fn new(
@@ -3454,6 +3462,39 @@ impl AshDescriptorWritePlan {
             }
         }
     }
+
+    pub fn resolve_write<
+        Uniform,
+        Storage,
+        Image,
+        UniformBuffer,
+        StorageBuffer,
+        TextureImageView,
+        FallbackImageView,
+    >(
+        &self,
+        descriptor_sets: &[vk::DescriptorSet],
+        resources: AshDescriptorWriteResources<'_, Uniform, Storage, Image>,
+        access: AshDescriptorWriteHandleAccess<
+            UniformBuffer,
+            StorageBuffer,
+            TextureImageView,
+            FallbackImageView,
+        >,
+    ) -> Result<AshResolvedDescriptorWrite, String>
+    where
+        UniformBuffer: FnOnce(&Uniform) -> vk::Buffer,
+        StorageBuffer: FnOnce(&Storage) -> vk::Buffer,
+        TextureImageView: FnOnce(&Image) -> vk::ImageView,
+        FallbackImageView: FnOnce(GltfMaterialTextureFallback) -> vk::ImageView,
+    {
+        Ok(AshResolvedDescriptorWrite {
+            descriptor_set: self.vk_descriptor_set(descriptor_sets)?,
+            binding: self.binding,
+            descriptor_type: self.descriptor_type,
+            data: self.resolve_write_data(resources, access)?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3507,6 +3548,89 @@ impl AshDescriptorWriteData {
 
     pub fn sampler(sampler: vk::Sampler) -> Self {
         Self::Sampler { sampler }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshResolvedDescriptorWrite {
+    pub descriptor_set: vk::DescriptorSet,
+    pub binding: u32,
+    pub descriptor_type: vk::DescriptorType,
+    pub data: AshDescriptorWriteData,
+}
+
+impl AshResolvedDescriptorWrite {
+    pub fn with_write_descriptor_set<R>(
+        self,
+        f: impl FnOnce(vk::WriteDescriptorSet<'_>) -> R,
+    ) -> Result<R, String> {
+        match self.data {
+            AshDescriptorWriteData::Buffer {
+                buffer,
+                offset,
+                range,
+            } if matches!(
+                self.descriptor_type,
+                vk::DescriptorType::UNIFORM_BUFFER | vk::DescriptorType::STORAGE_BUFFER
+            ) =>
+            {
+                let buffer_info = [vk::DescriptorBufferInfo::default()
+                    .buffer(buffer)
+                    .offset(offset)
+                    .range(range)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(self.descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .buffer_info(&buffer_info);
+                Ok(f(write))
+            }
+            AshDescriptorWriteData::CombinedImageSampler {
+                sampler,
+                image_view,
+                image_layout,
+            } if self.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                let image_info = [vk::DescriptorImageInfo::default()
+                    .sampler(sampler)
+                    .image_view(image_view)
+                    .image_layout(image_layout)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(self.descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            AshDescriptorWriteData::SampledImage {
+                image_view,
+                image_layout,
+            } if self.descriptor_type == vk::DescriptorType::SAMPLED_IMAGE => {
+                let image_info = [vk::DescriptorImageInfo::default()
+                    .image_view(image_view)
+                    .image_layout(image_layout)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(self.descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            AshDescriptorWriteData::Sampler { sampler }
+                if self.descriptor_type == vk::DescriptorType::SAMPLER =>
+            {
+                let image_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(self.descriptor_set)
+                    .dst_binding(self.binding)
+                    .descriptor_type(self.descriptor_type)
+                    .image_info(&image_info);
+                Ok(f(write))
+            }
+            data => Err(format!(
+                "descriptor write data {data:?} does not match descriptor type {:?}",
+                self.descriptor_type
+            )),
+        }
     }
 }
 
@@ -3654,6 +3778,22 @@ pub struct AshDrawableFramePlan {
     pub render_pass: AshRenderPassPlan,
     pub commands: Vec<AshCommandPlan>,
     pub skipped_draws: Vec<AshSkippedDraw>,
+}
+
+impl AshDrawableFramePlan {
+    pub fn resolve_commands<Buffer, BufferHandle>(
+        &self,
+        resources: AshCommandRecordResources<'_, Buffer>,
+        access: AshCommandRecordHandleAccess<BufferHandle>,
+    ) -> Result<Vec<AshResolvedCommand>, String>
+    where
+        BufferHandle: Copy + Fn(&Buffer) -> vk::Buffer,
+    {
+        self.commands
+            .iter()
+            .map(|command| command.resolve_record_command(resources, access))
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4379,7 +4519,7 @@ impl AshCommandPlan {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct AshCommandRecordResources<'a, Buffer> {
     pub pipeline_plans: &'a [AshGraphicsPipelinePlan],
     pub pipelines: &'a [vk::Pipeline],
@@ -4387,6 +4527,14 @@ pub struct AshCommandRecordResources<'a, Buffer> {
     pub descriptor_sets: &'a [vk::DescriptorSet],
     pub buffers: &'a [Buffer],
 }
+
+impl<Buffer> Clone for AshCommandRecordResources<'_, Buffer> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Buffer> Copy for AshCommandRecordResources<'_, Buffer> {}
 
 impl<'a, Buffer> AshCommandRecordResources<'a, Buffer> {
     pub const fn new(
@@ -5342,6 +5490,48 @@ impl AshMtoonMaterializationPlan {
         sync_plan: AshWindowedFrameSyncPlan,
     ) -> Result<AshFrameSlotDynamicResourcePlan, String> {
         ash_frame_slot_dynamic_resource_plan(sync_plan, &self.resource_manifest)
+    }
+
+    pub fn resolve_descriptor_writes<
+        Uniform,
+        Storage,
+        Image,
+        UniformBuffer,
+        StorageBuffer,
+        TextureImageView,
+        FallbackImageView,
+    >(
+        &self,
+        descriptor_sets: &[vk::DescriptorSet],
+        resources: AshDescriptorWriteResources<'_, Uniform, Storage, Image>,
+        access: AshDescriptorWriteHandleAccess<
+            UniformBuffer,
+            StorageBuffer,
+            TextureImageView,
+            FallbackImageView,
+        >,
+    ) -> Result<Vec<AshResolvedDescriptorWrite>, String>
+    where
+        UniformBuffer: Copy + Fn(&Uniform) -> vk::Buffer,
+        StorageBuffer: Copy + Fn(&Storage) -> vk::Buffer,
+        TextureImageView: Copy + Fn(&Image) -> vk::ImageView,
+        FallbackImageView: Copy + Fn(GltfMaterialTextureFallback) -> vk::ImageView,
+    {
+        self.descriptor_writes
+            .iter()
+            .map(|write| write.resolve_write(descriptor_sets, resources, access))
+            .collect()
+    }
+
+    pub fn resolve_commands<Buffer, BufferHandle>(
+        &self,
+        resources: AshCommandRecordResources<'_, Buffer>,
+        access: AshCommandRecordHandleAccess<BufferHandle>,
+    ) -> Result<Vec<AshResolvedCommand>, String>
+    where
+        BufferHandle: Copy + Fn(&Buffer) -> vk::Buffer,
+    {
+        self.drawable.resolve_commands(resources, access)
     }
 }
 
@@ -10599,6 +10789,40 @@ mod tests {
             ),
             Ok(AshDescriptorWriteData::whole_buffer(vk::Buffer::null()))
         );
+        let resolved_write = plan
+            .resolve_write(
+                &descriptor_sets,
+                AshDescriptorWriteResources::new(
+                    &[vk::Buffer::null()],
+                    &[vk::Buffer::null()],
+                    &[vk::ImageView::null()],
+                    &[vk::Sampler::null()],
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: |buffer: &vk::Buffer| *buffer,
+                    storage_buffer: |buffer: &vk::Buffer| *buffer,
+                    texture_image_view: |view: &vk::ImageView| *view,
+                    fallback_image_view: |_| vk::ImageView::null(),
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            resolved_write,
+            AshResolvedDescriptorWrite {
+                descriptor_set: vk::DescriptorSet::null(),
+                binding: 7,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                data: AshDescriptorWriteData::whole_buffer(vk::Buffer::null()),
+            }
+        );
+        resolved_write
+            .with_write_descriptor_set(|write| {
+                assert_eq!(write.dst_set, vk::DescriptorSet::null());
+                assert_eq!(write.dst_binding, 7);
+                assert_eq!(write.descriptor_type, vk::DescriptorType::UNIFORM_BUFFER);
+            })
+            .unwrap();
 
         let wrote_buffer = plan
             .with_write_descriptor_set(
@@ -11342,6 +11566,81 @@ mod tests {
         assert_eq!(
             materialization.frame_slot_dynamic_resource_plan(sync_plan),
             Ok(frame_slot_plan)
+        );
+        fn null_uniform_buffer(_: &AshUniformUpload) -> vk::Buffer {
+            vk::Buffer::null()
+        }
+        fn null_storage_buffer(_: &AshBufferUpload) -> vk::Buffer {
+            vk::Buffer::null()
+        }
+        fn null_texture_view(_: &AshTextureResourcePlan) -> vk::ImageView {
+            vk::ImageView::null()
+        }
+        fn null_fallback_view(_: GltfMaterialTextureFallback) -> vk::ImageView {
+            vk::ImageView::null()
+        }
+        fn null_upload_buffer(_: &AshBufferUpload) -> vk::Buffer {
+            vk::Buffer::null()
+        }
+        let descriptor_set_handles =
+            vec![vk::DescriptorSet::null(); materialization.descriptor_set_layouts.len()];
+        let sampler_handles = vec![vk::Sampler::null(); materialization.sampler_resources.len()];
+        let resolved_writes = materialization
+            .resolve_descriptor_writes(
+                &descriptor_set_handles,
+                AshDescriptorWriteResources::new(
+                    &renderer_frame.uniforms,
+                    &renderer_frame.buffers,
+                    &renderer_frame.textures,
+                    &sampler_handles,
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: null_uniform_buffer,
+                    storage_buffer: null_storage_buffer,
+                    texture_image_view: null_texture_view,
+                    fallback_image_view: null_fallback_view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            resolved_writes.len(),
+            materialization.descriptor_writes.len()
+        );
+        resolved_writes
+            .iter()
+            .copied()
+            .try_for_each(|write| {
+                write.with_write_descriptor_set(|vk_write| {
+                    assert_eq!(vk_write.dst_set, vk::DescriptorSet::null());
+                    assert_eq!(vk_write.descriptor_count, 1);
+                })
+            })
+            .unwrap();
+        let pipeline_handles = vec![vk::Pipeline::null(); renderer_frame.pipelines.len()];
+        let pipeline_layouts = vec![vk::PipelineLayout::null(); renderer_frame.pipelines.len()];
+        let resolved_commands = materialization
+            .resolve_commands(
+                AshCommandRecordResources::new(
+                    &renderer_frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_set_handles,
+                    &renderer_frame.buffers,
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: null_upload_buffer,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            resolved_commands.len(),
+            materialization.draw_command_count()
+        );
+        assert!(
+            resolved_commands
+                .iter()
+                .any(|command| matches!(command, AshResolvedCommand::DrawIndexed(_)))
         );
 
         let drawable = ash_drawable_frame_from_renderer_frame(

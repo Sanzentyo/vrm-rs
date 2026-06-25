@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Added batch-level Ash materialization handle resolution. `AshDescriptorWritePlan`
+  can now produce an `AshResolvedDescriptorWrite`, and
+  `AshMtoonMaterializationPlan::resolve_descriptor_writes` /
+  `resolve_commands` batch-resolve descriptor writes and drawable command
+  streams against engine-owned Vulkan handles before the unsafe update/record
+  calls. Both the real offscreen `unsafe_device_renderer` and the animated
+  `windowed_viewer` now consume those batch APIs, keeping checked descriptor
+  and command preconditions in `vrm-adapter-ash` instead of reimplementing the
+  loop at each renderer edge.
 - Promoted the Ash frame-slot dynamic resource boundary into reusable data.
   `ash_frame_slot_dynamic_resource_plan` and
   `AshMtoonMaterializationPlan::frame_slot_dynamic_resource_plan` now derive
