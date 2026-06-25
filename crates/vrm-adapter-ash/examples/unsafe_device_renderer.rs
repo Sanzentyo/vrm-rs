@@ -19,7 +19,7 @@ use vrm_adapter::{
 };
 use vrm_adapter_ash::{
     ASH_FALLBACK_TEXTURES, AshColorAttachmentFinalLayout, AshCommandPlan,
-    AshDescriptorSetLayoutPlan, AshDescriptorWriteData, AshDescriptorWriteResource,
+    AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess, AshDescriptorWriteResources,
     AshDiagnosticOwnerId, AshDrawableFrameOptions, AshGraphicsPipelinePlan,
     AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan,
     AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
@@ -720,69 +720,25 @@ impl UnsafeAshDeviceRenderer {
         resources: DescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
         for plan in ash_descriptor_write_plans(frame)? {
-            let write_data = match &plan.resource {
-                AshDescriptorWriteResource::UniformBuffer {
-                    uniform_upload_index: _,
-                } => {
-                    let uniform = plan
-                        .resource
-                        .uniform_resource(resources.uniform_buffers)
-                        .map_err(io::Error::other)?;
-                    AshDescriptorWriteData::whole_buffer(uniform.buffer)
-                }
-                AshDescriptorWriteResource::CombinedImageSampler {
-                    sampler_index: _,
-                    image: _,
-                } => {
-                    let sampler = plan
-                        .resource
-                        .sampler(resources.samplers)
-                        .map_err(io::Error::other)?;
-                    let image = plan
-                        .resource
-                        .image_resource()
-                        .map_err(io::Error::other)?
-                        .resolve_resource(resources.images, |fallback| {
-                            resources.fallback_textures.get(fallback)
-                        })
-                        .map_err(io::Error::other)?;
-                    AshDescriptorWriteData::combined_image_sampler(
-                        sampler,
-                        image.view,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    )
-                }
-                AshDescriptorWriteResource::SampledImage { image: _ } => {
-                    let image = plan
-                        .resource
-                        .image_resource()
-                        .map_err(io::Error::other)?
-                        .resolve_resource(resources.images, |fallback| {
-                            resources.fallback_textures.get(fallback)
-                        })
-                        .map_err(io::Error::other)?;
-                    AshDescriptorWriteData::sampled_image(
-                        image.view,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    )
-                }
-                AshDescriptorWriteResource::Sampler { sampler_index: _ } => {
-                    let sampler = plan
-                        .resource
-                        .sampler(resources.samplers)
-                        .map_err(io::Error::other)?;
-                    AshDescriptorWriteData::sampler(sampler)
-                }
-                AshDescriptorWriteResource::StorageBuffer {
-                    buffer_upload_index: _,
-                } => {
-                    let buffer = plan
-                        .resource
-                        .storage_buffer_resource(resources.buffers)
-                        .map_err(io::Error::other)?;
-                    AshDescriptorWriteData::whole_buffer(buffer.buffer)
-                }
-            };
+            let write_data = plan
+                .resolve_write_data(
+                    AshDescriptorWriteResources::new(
+                        resources.uniform_buffers,
+                        resources.buffers,
+                        resources.images,
+                        resources.samplers,
+                    ),
+                    AshDescriptorWriteHandleAccess {
+                        uniform_buffer: |buffer: &VulkanBuffer| buffer.buffer,
+                        storage_buffer: |buffer: &VulkanBuffer| buffer.buffer,
+                        texture_image_view: |image: &VulkanImage| image.view,
+                        fallback_image_view: |fallback| {
+                            resources.fallback_textures.get(fallback).view
+                        },
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    },
+                )
+                .map_err(io::Error::other)?;
             plan.with_write_descriptor_set(descriptor_sets, write_data, |write| unsafe {
                 self.device.update_descriptor_sets(&[write], &[]);
             })

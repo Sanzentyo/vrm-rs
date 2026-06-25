@@ -2379,6 +2379,44 @@ pub struct AshDescriptorWritePlan {
     pub resource: AshDescriptorWriteResource,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AshDescriptorWriteResources<'a, Uniform, Storage, Image> {
+    pub uniform_buffers: &'a [Uniform],
+    pub storage_buffers: &'a [Storage],
+    pub texture_uploads: &'a [Image],
+    pub samplers: &'a [vk::Sampler],
+}
+
+impl<'a, Uniform, Storage, Image> AshDescriptorWriteResources<'a, Uniform, Storage, Image> {
+    pub const fn new(
+        uniform_buffers: &'a [Uniform],
+        storage_buffers: &'a [Storage],
+        texture_uploads: &'a [Image],
+        samplers: &'a [vk::Sampler],
+    ) -> Self {
+        Self {
+            uniform_buffers,
+            storage_buffers,
+            texture_uploads,
+            samplers,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshDescriptorWriteHandleAccess<
+    UniformBuffer,
+    StorageBuffer,
+    TextureImageView,
+    FallbackImageView,
+> {
+    pub uniform_buffer: UniformBuffer,
+    pub storage_buffer: StorageBuffer,
+    pub texture_image_view: TextureImageView,
+    pub fallback_image_view: FallbackImageView,
+    pub image_layout: vk::ImageLayout,
+}
+
 impl AshDescriptorWritePlan {
     pub fn vk_descriptor_set(
         &self,
@@ -2474,6 +2512,82 @@ impl AshDescriptorWritePlan {
             (resource, data) => Err(format!(
                 "descriptor write data {data:?} does not match resource {resource:?}"
             )),
+        }
+    }
+
+    pub fn resolve_write_data<
+        Uniform,
+        Storage,
+        Image,
+        UniformBuffer,
+        StorageBuffer,
+        TextureImageView,
+        FallbackImageView,
+    >(
+        &self,
+        resources: AshDescriptorWriteResources<'_, Uniform, Storage, Image>,
+        access: AshDescriptorWriteHandleAccess<
+            UniformBuffer,
+            StorageBuffer,
+            TextureImageView,
+            FallbackImageView,
+        >,
+    ) -> Result<AshDescriptorWriteData, String>
+    where
+        UniformBuffer: FnOnce(&Uniform) -> vk::Buffer,
+        StorageBuffer: FnOnce(&Storage) -> vk::Buffer,
+        TextureImageView: FnOnce(&Image) -> vk::ImageView,
+        FallbackImageView: FnOnce(GltfMaterialTextureFallback) -> vk::ImageView,
+    {
+        let AshDescriptorWriteHandleAccess {
+            uniform_buffer,
+            storage_buffer,
+            texture_image_view,
+            fallback_image_view,
+            image_layout,
+        } = access;
+
+        match &self.resource {
+            AshDescriptorWriteResource::UniformBuffer { .. } => {
+                let uniform = self.resource.uniform_resource(resources.uniform_buffers)?;
+                Ok(AshDescriptorWriteData::whole_buffer(uniform_buffer(
+                    uniform,
+                )))
+            }
+            AshDescriptorWriteResource::StorageBuffer { .. } => {
+                let buffer = self
+                    .resource
+                    .storage_buffer_resource(resources.storage_buffers)?;
+                Ok(AshDescriptorWriteData::whole_buffer(storage_buffer(buffer)))
+            }
+            AshDescriptorWriteResource::CombinedImageSampler { .. } => {
+                let sampler = self.resource.sampler(resources.samplers)?;
+                let image_view = self.resource.resolve_image_view(
+                    resources.texture_uploads,
+                    texture_image_view,
+                    fallback_image_view,
+                )?;
+                Ok(AshDescriptorWriteData::combined_image_sampler(
+                    sampler,
+                    image_view,
+                    image_layout,
+                ))
+            }
+            AshDescriptorWriteResource::SampledImage { .. } => {
+                let image_view = self.resource.resolve_image_view(
+                    resources.texture_uploads,
+                    texture_image_view,
+                    fallback_image_view,
+                )?;
+                Ok(AshDescriptorWriteData::sampled_image(
+                    image_view,
+                    image_layout,
+                ))
+            }
+            AshDescriptorWriteResource::Sampler { .. } => {
+                let sampler = self.resource.sampler(resources.samplers)?;
+                Ok(AshDescriptorWriteData::sampler(sampler))
+            }
         }
     }
 }
@@ -2598,6 +2712,27 @@ impl AshDescriptorWriteResource {
             other => Err(format!(
                 "descriptor write resource does not reference an image: {other:?}"
             )),
+        }
+    }
+
+    pub fn resolve_image_view<Image>(
+        &self,
+        texture_uploads: &[Image],
+        texture_image_view: impl FnOnce(&Image) -> vk::ImageView,
+        fallback_image_view: impl FnOnce(GltfMaterialTextureFallback) -> vk::ImageView,
+    ) -> Result<vk::ImageView, String> {
+        match self.image_resource()? {
+            AshDescriptorImageResource::TextureUpload {
+                texture_upload_index,
+            } => texture_uploads
+                .get(texture_upload_index)
+                .map(texture_image_view)
+                .ok_or_else(|| {
+                    format!(
+                        "descriptor image references missing texture upload {texture_upload_index}"
+                    )
+                }),
+            AshDescriptorImageResource::Fallback { fallback } => Ok(fallback_image_view(fallback)),
         }
     }
 }
@@ -9144,6 +9279,25 @@ mod tests {
             )
         );
 
+        assert_eq!(
+            plan.resolve_write_data(
+                AshDescriptorWriteResources::new(
+                    &[vk::Buffer::null()],
+                    &[vk::Buffer::null()],
+                    &[vk::ImageView::null()],
+                    &[vk::Sampler::null()],
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: |buffer: &vk::Buffer| *buffer,
+                    storage_buffer: |buffer: &vk::Buffer| *buffer,
+                    texture_image_view: |view: &vk::ImageView| *view,
+                    fallback_image_view: |_| vk::ImageView::null(),
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            ),
+            Ok(AshDescriptorWriteData::whole_buffer(vk::Buffer::null()))
+        );
+
         let wrote_buffer = plan
             .with_write_descriptor_set(
                 &descriptor_sets,
@@ -9166,6 +9320,27 @@ mod tests {
             descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
             resource: AshDescriptorWriteResource::SampledImage { image },
         };
+        assert_eq!(
+            sampled_image_plan.resolve_write_data(
+                AshDescriptorWriteResources::new(
+                    &[vk::Buffer::null()],
+                    &[vk::Buffer::null()],
+                    &[vk::ImageView::null()],
+                    &[vk::Sampler::null()],
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: |buffer: &vk::Buffer| *buffer,
+                    storage_buffer: |buffer: &vk::Buffer| *buffer,
+                    texture_image_view: |view: &vk::ImageView| *view,
+                    fallback_image_view: |_| vk::ImageView::null(),
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            ),
+            Ok(AshDescriptorWriteData::sampled_image(
+                vk::ImageView::null(),
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ))
+        );
         sampled_image_plan
             .with_write_descriptor_set(
                 &descriptor_sets,
@@ -9180,6 +9355,40 @@ mod tests {
                 },
             )
             .unwrap();
+
+        let combined_plan = AshDescriptorWritePlan {
+            descriptor_set_index: 0,
+            binding: 12,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            resource: AshDescriptorWriteResource::CombinedImageSampler {
+                sampler_index: 0,
+                image: AshDescriptorImageResource::TextureUpload {
+                    texture_upload_index: 0,
+                },
+            },
+        };
+        assert_eq!(
+            combined_plan.resolve_write_data(
+                AshDescriptorWriteResources::new(
+                    &[vk::Buffer::null()],
+                    &[vk::Buffer::null()],
+                    &[vk::ImageView::null()],
+                    &[vk::Sampler::null()],
+                ),
+                AshDescriptorWriteHandleAccess {
+                    uniform_buffer: |buffer: &vk::Buffer| *buffer,
+                    storage_buffer: |buffer: &vk::Buffer| *buffer,
+                    texture_image_view: |view: &vk::ImageView| *view,
+                    fallback_image_view: |_| vk::ImageView::null(),
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                },
+            ),
+            Ok(AshDescriptorWriteData::combined_image_sampler(
+                vk::Sampler::null(),
+                vk::ImageView::null(),
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ))
+        );
 
         let mismatch = sampled_image_plan
             .with_write_descriptor_set(
