@@ -1806,7 +1806,7 @@ where
 #[derive(Clone, Debug, PartialEq)]
 struct AshOwnerSampleOverridePipelineUpload {
     material: MaterialRef,
-    pipeline_plan_index: usize,
+    pipeline_plan_id: AshPipelinePlanId,
     records: Vec<AshOwnerSampleOverrideRecord>,
     usage: vk::BufferUsageFlags,
 }
@@ -1839,7 +1839,7 @@ fn ash_owner_sample_override_buffers_for_pipelines(
                 .unwrap_or_else(|| vec![empty_ash_owner_sample_override_record()]);
             Ok(AshOwnerSampleOverridePipelineUpload {
                 material: pipeline.material,
-                pipeline_plan_index,
+                pipeline_plan_id: AshPipelinePlanId::new(pipeline_plan_index),
                 records,
                 usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             })
@@ -2383,7 +2383,7 @@ pub const fn ash_framebuffer_plan(extent: vk::Extent2D) -> AshFramebufferPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshDescriptorSetPlan {
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub bindings: Vec<AshResolvedDescriptorBinding>,
 }
 
@@ -2402,7 +2402,7 @@ pub struct AshResolvedDescriptorBinding {
 pub struct AshDrawCallPlan {
     pub primitive_index: usize,
     pub material: Option<MaterialRef>,
-    pub pipeline_plan_index: Option<usize>,
+    pub pipeline_plan_id: Option<AshPipelinePlanId>,
     pub descriptor_set_id: Option<AshDescriptorSetId>,
     pub vertex_buffer_id: AshBufferUploadId,
     pub index_buffer_id: AshBufferUploadId,
@@ -2677,12 +2677,12 @@ pub fn validate_ash_renderer_frame(
         if !frame
             .pipelines
             .iter()
-            .any(|pipeline| pipeline.pipeline_plan_index == set.pipeline_plan_index)
+            .any(|pipeline| pipeline.pipeline_plan_id == set.pipeline_plan_id)
         {
             return Err(
                 AshRendererFrameValidationError::DescriptorSetPipelinePlanOutOfRange {
                     descriptor_set_index,
-                    pipeline_plan_index: set.pipeline_plan_index,
+                    pipeline_plan_index: set.pipeline_plan_id.index(),
                     pipeline_count: frame.pipelines.len(),
                 },
             );
@@ -2701,13 +2701,13 @@ pub fn validate_ash_renderer_frame(
                 descriptor_set_count: frame.descriptor_sets.len(),
             },
         )?;
-        if descriptor_set.pipeline_plan_index != pipeline.pipeline_plan_index {
+        if descriptor_set.pipeline_plan_id != pipeline.pipeline_plan_id {
             return Err(
                 AshRendererFrameValidationError::PipelineDescriptorSetPipelineMismatch {
                     pipeline_index,
                     descriptor_set_index,
-                    pipeline_plan_index: pipeline.pipeline_plan_index,
-                    descriptor_set_pipeline_plan_index: descriptor_set.pipeline_plan_index,
+                    pipeline_plan_index: pipeline.pipeline_plan_id.index(),
+                    descriptor_set_pipeline_plan_index: descriptor_set.pipeline_plan_id.index(),
                 },
             );
         }
@@ -2796,16 +2796,16 @@ fn validate_ash_draw_call(
     draw_index: usize,
     draw: &AshDrawCallPlan,
 ) -> Result<(), AshRendererFrameValidationError> {
-    if let Some(pipeline_plan_index) = draw.pipeline_plan_index {
+    if let Some(pipeline_plan_id) = draw.pipeline_plan_id {
         let pipeline = frame
             .pipelines
             .iter()
-            .find(|pipeline| pipeline.pipeline_plan_index == pipeline_plan_index)
+            .find(|pipeline| pipeline.pipeline_plan_id == pipeline_plan_id)
             .ok_or(
                 AshRendererFrameValidationError::DrawPipelinePlanOutOfRange {
                     draw_index,
                     primitive_index: draw.primitive_index,
-                    pipeline_plan_index,
+                    pipeline_plan_index: pipeline_plan_id.index(),
                 },
             )?;
         if let Some(descriptor_set_id) = draw.descriptor_set_id {
@@ -2818,14 +2818,14 @@ fn validate_ash_draw_call(
                     descriptor_set_count: frame.descriptor_sets.len(),
                 },
             )?;
-            if descriptor_set.pipeline_plan_index != pipeline_plan_index
+            if descriptor_set.pipeline_plan_id != pipeline_plan_id
                 || pipeline.descriptor_set_id != descriptor_set_id
             {
                 return Err(
                     AshRendererFrameValidationError::DrawPipelineDescriptorSetMismatch {
                         draw_index,
                         primitive_index: draw.primitive_index,
-                        pipeline_plan_index,
+                        pipeline_plan_index: pipeline_plan_id.index(),
                         descriptor_set_index,
                         expected_descriptor_set_index: pipeline.descriptor_set_id.index(),
                     },
@@ -3087,7 +3087,7 @@ pub struct AshDescriptorBindingLayoutKey {
 pub struct AshRendererDescriptorSetLayoutResource {
     pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub bindings: Vec<AshDescriptorBindingLayoutKey>,
     pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
@@ -3107,7 +3107,7 @@ pub struct AshRendererDescriptorBindingResource {
 pub struct AshRendererDescriptorSetResource {
     pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub bindings: Vec<AshRendererDescriptorBindingResource>,
     pub handle_lifetime: AshRendererResourceLifetime,
     pub lifetime: AshRendererResourceLifetime,
@@ -3117,7 +3117,7 @@ pub struct AshRendererDescriptorSetResource {
 pub struct AshRendererPipelineResource {
     pub pipeline_id: AshPipelineId,
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub descriptor_set_id: AshDescriptorSetId,
     pub key: AshPipelineKey,
     pub vertex_stride: u32,
@@ -3200,6 +3200,25 @@ impl AshDescriptorSetLayoutId {
 }
 
 impl fmt::Display for AshDescriptorSetLayoutId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AshPipelinePlanId(usize);
+
+impl AshPipelinePlanId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for AshPipelinePlanId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
@@ -3304,7 +3323,7 @@ impl fmt::Display for AshSamplerId {
 pub struct AshDescriptorSetLayoutPlan {
     pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub bindings: Vec<AshDescriptorBindingLayoutKey>,
 }
 
@@ -4766,38 +4785,41 @@ pub enum AshSkippedDrawReason {
 pub enum AshUniformScope {
     Material {
         material: MaterialRef,
-        pipeline_plan_index: usize,
+        pipeline_plan_id: AshPipelinePlanId,
     },
     MaterialUv {
         material: MaterialRef,
-        pipeline_plan_index: usize,
+        pipeline_plan_id: AshPipelinePlanId,
     },
     MaterialExtra {
         material: MaterialRef,
-        pipeline_plan_index: usize,
+        pipeline_plan_id: AshPipelinePlanId,
     },
     Scene,
 }
 
 impl AshUniformScope {
-    pub const fn material(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+    pub const fn material(material: MaterialRef, pipeline_plan_id: AshPipelinePlanId) -> Self {
         Self::Material {
             material,
-            pipeline_plan_index,
+            pipeline_plan_id,
         }
     }
 
-    pub const fn material_uv(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+    pub const fn material_uv(material: MaterialRef, pipeline_plan_id: AshPipelinePlanId) -> Self {
         Self::MaterialUv {
             material,
-            pipeline_plan_index,
+            pipeline_plan_id,
         }
     }
 
-    pub const fn material_extra(material: MaterialRef, pipeline_plan_index: usize) -> Self {
+    pub const fn material_extra(
+        material: MaterialRef,
+        pipeline_plan_id: AshPipelinePlanId,
+    ) -> Self {
         Self::MaterialExtra {
             material,
-            pipeline_plan_index,
+            pipeline_plan_id,
         }
     }
 
@@ -4819,20 +4841,17 @@ impl AshUniformScope {
         }
     }
 
-    pub const fn pipeline_plan_index(self) -> Option<usize> {
+    pub const fn pipeline_plan_id(self) -> Option<AshPipelinePlanId> {
         match self {
             Self::Material {
-                pipeline_plan_index,
-                ..
+                pipeline_plan_id, ..
             }
             | Self::MaterialUv {
-                pipeline_plan_index,
-                ..
+                pipeline_plan_id, ..
             }
             | Self::MaterialExtra {
-                pipeline_plan_index,
-                ..
-            } => Some(pipeline_plan_index),
+                pipeline_plan_id, ..
+            } => Some(pipeline_plan_id),
             Self::Scene => None,
         }
     }
@@ -4848,7 +4867,7 @@ pub struct AshUniformUpload {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshGraphicsPipelinePlan {
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
     pub descriptor_set_id: AshDescriptorSetId,
     pub key: AshPipelineKey,
     pub vertex_stride: u32,
@@ -5361,8 +5380,8 @@ pub struct AshMtoonDescriptorLayoutBindingCacheKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AshMtoonGraphicsPipelineCacheKey {
     pub material: MaterialRef,
-    pub pipeline_plan_index: usize,
-    pub descriptor_set_index: usize,
+    pub pipeline_plan_id: AshPipelinePlanId,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub pass: AshMtoonPass,
     pub render_order: i32,
     pub phase_order: i32,
@@ -5383,8 +5402,8 @@ impl AshMtoonGraphicsPipelineCacheKey {
     pub fn from_pipeline(pipeline: &AshGraphicsPipelinePlan) -> Self {
         Self {
             material: pipeline.material,
-            pipeline_plan_index: pipeline.pipeline_plan_index,
-            descriptor_set_index: pipeline.descriptor_set_id.index(),
+            pipeline_plan_id: pipeline.pipeline_plan_id,
+            descriptor_set_id: pipeline.descriptor_set_id,
             pass: pipeline.key.pass,
             render_order: pipeline.key.render_order,
             phase_order: pipeline.key.phase_order,
@@ -5826,7 +5845,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             |(descriptor_set_index, set)| AshRendererDescriptorSetLayoutResource {
                 descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                 material: set.material,
-                pipeline_plan_index: set.pipeline_plan_index,
+                pipeline_plan_id: set.pipeline_plan_id,
                 bindings: set
                     .bindings
                     .iter()
@@ -5848,7 +5867,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .map(|(index, set)| AshRendererDescriptorSetResource {
             descriptor_set_id: AshDescriptorSetId::new(index),
             material: set.material,
-            pipeline_plan_index: set.pipeline_plan_index,
+            pipeline_plan_id: set.pipeline_plan_id,
             bindings: set
                 .bindings
                 .iter()
@@ -5872,7 +5891,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .map(|(index, pipeline)| AshRendererPipelineResource {
             pipeline_id: AshPipelineId::new(index),
             material: pipeline.material,
-            pipeline_plan_index: pipeline.pipeline_plan_index,
+            pipeline_plan_id: pipeline.pipeline_plan_id,
             descriptor_set_id: pipeline.descriptor_set_id,
             key: pipeline.key,
             vertex_stride: pipeline.vertex_stride,
@@ -6020,7 +6039,7 @@ pub fn ash_descriptor_set_layout_plans(
         .map(|(descriptor_set_index, set)| AshDescriptorSetLayoutPlan {
             descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
             material: set.material,
-            pipeline_plan_index: set.pipeline_plan_index,
+            pipeline_plan_id: set.pipeline_plan_id,
             bindings: set
                 .bindings
                 .iter()
@@ -6208,7 +6227,7 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
     let mut bound_index_buffer = None;
 
     for draw in &frame.draw_calls {
-        let Some(pipeline_plan_index) = draw.pipeline_plan_index else {
+        let Some(pipeline_plan_id) = draw.pipeline_plan_id else {
             skipped_draws.push(AshSkippedDraw {
                 primitive_index: draw.primitive_index,
                 reason: AshSkippedDrawReason::MissingPipeline,
@@ -6218,7 +6237,7 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
         let Some(pipeline_index) = frame
             .pipelines
             .iter()
-            .position(|pipeline| pipeline.pipeline_plan_index == pipeline_plan_index)
+            .position(|pipeline| pipeline.pipeline_plan_id == pipeline_plan_id)
         else {
             skipped_draws.push(AshSkippedDraw {
                 primitive_index: draw.primitive_index,
@@ -6333,7 +6352,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
     let owner_sample_override_buffer_indices = owner_sample_override_buffers
         .iter()
         .enumerate()
-        .map(|(index, upload)| ((upload.material, upload.pipeline_plan_index), index))
+        .map(|(index, upload)| ((upload.material, upload.pipeline_plan_id.index()), index))
         .collect::<HashMap<_, _>>();
     let descriptor_sets = plan
         .mtoon_pipelines
@@ -6341,7 +6360,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
         .enumerate()
         .map(|(pipeline_plan_index, pipeline)| AshDescriptorSetPlan {
             material: pipeline.material,
-            pipeline_plan_index,
+            pipeline_plan_id: AshPipelinePlanId::new(pipeline_plan_index),
             bindings: pipeline
                 .descriptor_bindings
                 .iter()
@@ -6409,7 +6428,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 .copied()
                 .map(|descriptor_set_index| AshGraphicsPipelinePlan {
                     material: pipeline.material,
-                    pipeline_plan_index,
+                    pipeline_plan_id: AshPipelinePlanId::new(pipeline_plan_index),
                     descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                     key: pipeline.key,
                     vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
@@ -6465,7 +6484,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
         draw_calls.push(AshDrawCallPlan {
             primitive_index,
             material: primitive.material,
-            pipeline_plan_index,
+            pipeline_plan_id: pipeline_plan_index.map(AshPipelinePlanId::new),
             descriptor_set_id: descriptor_set_index.map(AshDescriptorSetId::new),
             vertex_buffer_id: AshBufferUploadId::new(vertex_buffer_index),
             index_buffer_id: AshBufferUploadId::new(index_buffer_index),
@@ -6504,7 +6523,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 };
                 pipelines.push(AshGraphicsPipelinePlan {
                     material,
-                    pipeline_plan_index: resolve_pipeline_plan_index,
+                    pipeline_plan_id: AshPipelinePlanId::new(resolve_pipeline_plan_index),
                     descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                     key: ash_owner_sample_resolve_pipeline_key(source_pipeline.key),
                     vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
@@ -6533,7 +6552,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 draw_calls.push(AshDrawCallPlan {
                     primitive_index,
                     material: primitive.material,
-                    pipeline_plan_index: Some(resolve_pipeline_plan_index),
+                    pipeline_plan_id: Some(AshPipelinePlanId::new(resolve_pipeline_plan_index)),
                     descriptor_set_id: Some(AshDescriptorSetId::new(descriptor_set_index)),
                     vertex_buffer_id: AshBufferUploadId::new(resolve_vertex_buffer_index),
                     index_buffer_id: AshBufferUploadId::new(resolve_index_buffer_index),
@@ -6563,22 +6582,20 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
             .iter()
             .enumerate()
             .flat_map(|(pipeline_plan_index, pipeline)| {
+                let pipeline_plan_id = AshPipelinePlanId::new(pipeline_plan_index);
                 [
                     AshUniformUpload {
-                        scope: AshUniformScope::material(pipeline.material, pipeline_plan_index),
+                        scope: AshUniformScope::material(pipeline.material, pipeline_plan_id),
                         binding: ash_mtoon_uniform_binding(),
                         bytes: pipeline.uniform.bytes().to_vec(),
                     },
                     AshUniformUpload {
-                        scope: AshUniformScope::material_uv(pipeline.material, pipeline_plan_index),
+                        scope: AshUniformScope::material_uv(pipeline.material, pipeline_plan_id),
                         binding: ash_mtoon_uv_uniform_binding(),
                         bytes: pipeline.uv_uniform.bytes().to_vec(),
                     },
                     AshUniformUpload {
-                        scope: AshUniformScope::material_extra(
-                            pipeline.material,
-                            pipeline_plan_index,
-                        ),
+                        scope: AshUniformScope::material_extra(pipeline.material, pipeline_plan_id),
                         binding: ash_mtoon_render_extra_binding(),
                         bytes: pipeline.render_extra_uniform.bytes().to_vec(),
                     },
@@ -8233,7 +8250,7 @@ fn descriptor_set_indices(
     descriptor_sets
         .iter()
         .enumerate()
-        .map(|(index, set)| ((set.material, set.pipeline_plan_index), index))
+        .map(|(index, set)| ((set.material, set.pipeline_plan_id.index()), index))
         .collect()
 }
 
@@ -10633,8 +10650,8 @@ mod tests {
         assert_eq!(plans[0].descriptor_set_id, AshDescriptorSetId::new(0));
         assert_eq!(plans[0].material, frame.descriptor_sets[0].material);
         assert_eq!(
-            plans[0].pipeline_plan_index,
-            frame.descriptor_sets[0].pipeline_plan_index
+            plans[0].pipeline_plan_id,
+            frame.descriptor_sets[0].pipeline_plan_id
         );
         assert_eq!(
             plans[0].bindings.len(),
@@ -11048,7 +11065,7 @@ mod tests {
             }],
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(0),
-                pipeline_plan_index: 0,
+                pipeline_plan_id: AshPipelinePlanId::new(0),
                 descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     pass: AshMtoonPass::Base,
@@ -11074,7 +11091,7 @@ mod tests {
             }],
             descriptor_sets: vec![AshDescriptorSetPlan {
                 material: MaterialRef(0),
-                pipeline_plan_index: 0,
+                pipeline_plan_id: AshPipelinePlanId::new(0),
                 bindings: vec![
                     AshResolvedDescriptorBinding {
                         binding: ash_mtoon_wgsl_scene_binding(),
@@ -11135,7 +11152,7 @@ mod tests {
             }],
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(0),
-                pipeline_plan_index: 3,
+                pipeline_plan_id: AshPipelinePlanId::new(3),
                 descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     pass: AshMtoonPass::Base,
@@ -11156,7 +11173,7 @@ mod tests {
             }],
             descriptor_sets: vec![AshDescriptorSetPlan {
                 material: MaterialRef(0),
-                pipeline_plan_index: 3,
+                pipeline_plan_id: AshPipelinePlanId::new(3),
                 bindings: vec![AshResolvedDescriptorBinding {
                     binding: ash_mtoon_wgsl_scene_binding(),
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -11170,7 +11187,7 @@ mod tests {
             draw_calls: vec![AshDrawCallPlan {
                 primitive_index: 7,
                 material: Some(MaterialRef(0)),
-                pipeline_plan_index: Some(3),
+                pipeline_plan_id: Some(AshPipelinePlanId::new(3)),
                 descriptor_set_id: Some(AshDescriptorSetId::new(0)),
                 vertex_buffer_id: AshBufferUploadId::new(0),
                 index_buffer_id: AshBufferUploadId::new(1),
@@ -11425,15 +11442,15 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.uniforms[0].scope,
-            AshUniformScope::material(MaterialRef(0), 0)
+            AshUniformScope::material(MaterialRef(0), AshPipelinePlanId::new(0))
         );
         assert_eq!(
             renderer_frame.uniforms[0].scope.material_ref(),
             Some(MaterialRef(0))
         );
         assert_eq!(
-            renderer_frame.uniforms[0].scope.pipeline_plan_index(),
-            Some(0)
+            renderer_frame.uniforms[0].scope.pipeline_plan_id(),
+            Some(AshPipelinePlanId::new(0))
         );
         assert_eq!(
             renderer_frame.uniforms[0].binding,
@@ -11445,7 +11462,7 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.uniforms[1].scope,
-            AshUniformScope::material_uv(MaterialRef(0), 0)
+            AshUniformScope::material_uv(MaterialRef(0), AshPipelinePlanId::new(0))
         );
         assert_eq!(
             renderer_frame.uniforms[1].binding,
@@ -11457,7 +11474,7 @@ mod tests {
         );
         assert_eq!(
             renderer_frame.uniforms[2].scope,
-            AshUniformScope::material_extra(MaterialRef(0), 0)
+            AshUniformScope::material_extra(MaterialRef(0), AshPipelinePlanId::new(0))
         );
         assert_eq!(
             renderer_frame.uniforms[2].binding,
@@ -11469,7 +11486,7 @@ mod tests {
         );
         assert_eq!(renderer_frame.uniforms[3].scope, AshUniformScope::Scene);
         assert_eq!(renderer_frame.uniforms[3].scope.material_ref(), None);
-        assert_eq!(renderer_frame.uniforms[3].scope.pipeline_plan_index(), None);
+        assert_eq!(renderer_frame.uniforms[3].scope.pipeline_plan_id(), None);
         assert_eq!(
             renderer_frame.uniforms[3].binding,
             ash_mtoon_scene_binding()
@@ -11531,7 +11548,10 @@ mod tests {
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
         );
         assert_eq!(renderer_frame.buffers[0].count, 1);
-        assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
+        assert_eq!(
+            renderer_frame.draw_calls[0].pipeline_plan_id,
+            Some(AshPipelinePlanId::new(0))
+        );
         assert_eq!(
             renderer_frame.draw_calls[0].descriptor_set_id,
             Some(AshDescriptorSetId::new(0))
@@ -12153,12 +12173,18 @@ mod tests {
 
         assert_eq!(renderer_frame.draw_calls.len(), 2);
         assert_eq!(renderer_frame.pipelines.len(), 2);
-        assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
+        assert_eq!(
+            renderer_frame.draw_calls[0].pipeline_plan_id,
+            Some(AshPipelinePlanId::new(0))
+        );
         assert_eq!(
             renderer_frame.draw_calls[0].descriptor_set_id,
             Some(AshDescriptorSetId::new(0))
         );
-        assert_eq!(renderer_frame.draw_calls[1].pipeline_plan_index, Some(1));
+        assert_eq!(
+            renderer_frame.draw_calls[1].pipeline_plan_id,
+            Some(AshPipelinePlanId::new(1))
+        );
         assert_eq!(
             renderer_frame.draw_calls[1].descriptor_set_id,
             Some(AshDescriptorSetId::new(1))
@@ -12175,7 +12201,7 @@ mod tests {
         frame.draw_calls.push(AshDrawCallPlan {
             primitive_index: 7,
             material: Some(MaterialRef(0)),
-            pipeline_plan_index: Some(99),
+            pipeline_plan_id: Some(AshPipelinePlanId::new(99)),
             descriptor_set_id: Some(AshDescriptorSetId::new(0)),
             vertex_buffer_id: AshBufferUploadId::new(0),
             index_buffer_id: AshBufferUploadId::new(1),
@@ -12505,7 +12531,7 @@ mod tests {
     fn graphics_pipeline_state_plan_exposes_fixed_function_state() {
         let pipeline = AshGraphicsPipelinePlan {
             material: MaterialRef(3),
-            pipeline_plan_index: 9,
+            pipeline_plan_id: AshPipelinePlanId::new(9),
             descriptor_set_id: AshDescriptorSetId::new(2),
             key: AshPipelineKey {
                 pass: AshMtoonPass::Base,
@@ -12587,7 +12613,7 @@ mod tests {
     fn graphics_pipeline_create_info_plan_wraps_state_and_layout_lookup() {
         let pipeline = AshGraphicsPipelinePlan {
             material: MaterialRef(3),
-            pipeline_plan_index: 9,
+            pipeline_plan_id: AshPipelinePlanId::new(9),
             descriptor_set_id: AshDescriptorSetId::new(1),
             key: AshPipelineKey {
                 pass: AshMtoonPass::Base,

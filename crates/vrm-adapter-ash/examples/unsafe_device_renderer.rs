@@ -1362,22 +1362,22 @@ fn ash_material_draw_metadata(
         .iter()
         .filter_map(|draw| {
             let primitive = primitives.get(draw.primitive_index)?;
-            let graphics_pipeline = draw.pipeline_plan_index.and_then(|index| {
+            let graphics_pipeline = draw.pipeline_plan_id.and_then(|pipeline_plan_id| {
                 frame
                     .pipelines
                     .iter()
-                    .find(|pipeline| pipeline.pipeline_plan_index == index)
+                    .find(|pipeline| pipeline.pipeline_plan_id == pipeline_plan_id)
             });
-            let source_pipeline_index = draw
+            let source_pipeline_id = draw
                 .descriptor_set_id
                 .and_then(|id| frame.descriptor_sets.get(id.index()))
-                .map(|descriptor_set| descriptor_set.pipeline_plan_index)
-                .or(draw.pipeline_plan_index);
-            let pipeline = source_pipeline_index.and_then(|index| pipelines.get(index))?;
+                .map(|descriptor_set| descriptor_set.pipeline_plan_id)
+                .or(draw.pipeline_plan_id);
+            let pipeline = source_pipeline_id.and_then(|id| pipelines.get(id.index()))?;
             let policy = graphics_pipeline
                 .map(|pipeline| pipeline.key)
                 .unwrap_or(pipeline.key);
-            let role = if draw.pipeline_plan_index == source_pipeline_index {
+            let role = if draw.pipeline_plan_id == source_pipeline_id {
                 "source"
             } else {
                 "owner-sample-resolve"
@@ -2019,7 +2019,7 @@ mod tests {
         let frame = AshRendererFrame {
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(14),
-                pipeline_plan_index: 1,
+                pipeline_plan_id: AshPipelinePlanId::new(1),
                 descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     cull_mode: vk::CullModeFlags::empty(),
@@ -2036,14 +2036,14 @@ mod tests {
             }],
             descriptor_sets: vec![AshDescriptorSetPlan {
                 material: MaterialRef(14),
-                pipeline_plan_index: 0,
+                pipeline_plan_id: AshPipelinePlanId::new(0),
                 bindings: Vec::new(),
             }],
             draw_calls: vec![
                 AshDrawCallPlan {
                     primitive_index: 0,
                     material: Some(MaterialRef(14)),
-                    pipeline_plan_index: Some(0),
+                    pipeline_plan_id: Some(AshPipelinePlanId::new(0)),
                     descriptor_set_id: Some(AshDescriptorSetId::new(0)),
                     vertex_buffer_id: AshBufferUploadId::new(0),
                     index_buffer_id: AshBufferUploadId::new(1),
@@ -2054,7 +2054,7 @@ mod tests {
                 AshDrawCallPlan {
                     primitive_index: 0,
                     material: Some(MaterialRef(14)),
-                    pipeline_plan_index: Some(1),
+                    pipeline_plan_id: Some(AshPipelinePlanId::new(1)),
                     descriptor_set_id: Some(AshDescriptorSetId::new(0)),
                     vertex_buffer_id: AshBufferUploadId::new(2),
                     index_buffer_id: AshBufferUploadId::new(3),

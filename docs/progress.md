@@ -2,6 +2,13 @@
 
 ## 2026-06-25
 
+- Finished the next typed-ID pass from the Ash adapter review by introducing
+  `AshPipelinePlanId` for MToon pipeline-plan references. Descriptor-set plans,
+  graphics pipeline plans, draw calls, uniform scopes, renderer resource
+  manifest entries, drawable lowering, cache keys, and the mock/offscreen Ash
+  examples now carry pipeline-plan identity as a typed ID instead of exposing a
+  public raw `usize`; numeric indices remain only at internal enumeration,
+  checked lookup, and diagnostic error-message boundaries.
 - Continued the Ash static-review cleanup from the external
   `vrm-rs-ash-adapter-review-and-compare-cleanup` package. Descriptor-set-layout
   planning now uses `AshDescriptorSetLayoutId` instead of raw `usize` fields:
