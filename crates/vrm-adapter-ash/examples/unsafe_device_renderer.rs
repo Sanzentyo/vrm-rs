@@ -18,14 +18,14 @@ use vrm_adapter::{
     RenderOwnerSurfaceKey,
 };
 use vrm_adapter_ash::{
-    ASH_FALLBACK_TEXTURES, AshColorAttachmentFinalLayout, AshCommandPlan,
-    AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess, AshDescriptorWriteResources,
-    AshDiagnosticOwnerId, AshDrawableFrameOptions, AshGraphicsPipelinePlan,
-    AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass, AshMtoonPipelinePlan,
-    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
-    AshVrmFramePlanOptions, AshVrmPrimitive, ash_2d_image_resource_plan,
-    ash_color_attachment_readback_plan, ash_depth_attachment_plan, ash_descriptor_pool_plan,
-    ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
+    ASH_FALLBACK_TEXTURES, AshColorAttachmentFinalLayout, AshCommandRecordHandleAccess,
+    AshCommandRecordResources, AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess,
+    AshDescriptorWriteResources, AshDiagnosticOwnerId, AshDrawableFrameOptions,
+    AshGraphicsPipelinePlan, AshMaterialExtraUniform, AshMtoonLightAccumulation, AshMtoonPass,
+    AshMtoonPipelinePlan, AshRenderPassCreationPlan, AshRenderPassDependencyPolicy,
+    AshRendererFrame, AshResolvedCommand, AshSamplerPlan, AshVrmFramePlanOptions, AshVrmPrimitive,
+    ash_2d_image_resource_plan, ash_color_attachment_readback_plan, ash_depth_attachment_plan,
+    ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan, ash_descriptor_set_layout_plans,
     ash_descriptor_write_plans, ash_drawable_frame_from_renderer_frame_with_options,
     ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
     ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
@@ -862,25 +862,29 @@ impl UnsafeAshDeviceRenderer {
                 vk::SubpassContents::INLINE,
             );
             for command in &drawable.commands {
-                match command {
-                    AshCommandPlan::BindGraphicsPipeline { .. } => {
-                        let bind = command
-                            .bind_graphics_pipeline_command(context.pipelines)
-                            .map_err(io::Error::other)?;
+                let resolved = command
+                    .resolve_record_command(
+                        AshCommandRecordResources::new(
+                            &frame.pipelines,
+                            context.pipelines,
+                            context.pipeline_layouts,
+                            context.descriptor_sets,
+                            context.buffers,
+                        ),
+                        AshCommandRecordHandleAccess {
+                            buffer: |buffer: &VulkanBuffer| buffer.buffer,
+                        },
+                    )
+                    .map_err(io::Error::other)?;
+                match resolved {
+                    AshResolvedCommand::BindGraphicsPipeline(bind) => {
                         self.device.cmd_bind_pipeline(
                             command_buffer,
                             bind.bind_point,
                             bind.pipeline,
                         );
                     }
-                    AshCommandPlan::BindDescriptorSet { .. } => {
-                        let bind = command
-                            .bind_descriptor_set_command(
-                                &frame.pipelines,
-                                context.pipeline_layouts,
-                                context.descriptor_sets,
-                            )
-                            .map_err(io::Error::other)?;
+                    AshResolvedCommand::BindDescriptorSet(bind) => {
                         self.device.cmd_bind_descriptor_sets(
                             command_buffer,
                             bind.bind_point,
@@ -890,14 +894,7 @@ impl UnsafeAshDeviceRenderer {
                             &bind.dynamic_offsets,
                         );
                     }
-                    AshCommandPlan::BindVertexBuffer { .. } => {
-                        let buffer = command
-                            .vertex_buffer_resource(context.buffers)
-                            .map_err(io::Error::other)?
-                            .buffer;
-                        let bind = command
-                            .bind_vertex_buffer_command(buffer)
-                            .map_err(io::Error::other)?;
+                    AshResolvedCommand::BindVertexBuffer(bind) => {
                         self.device.cmd_bind_vertex_buffers(
                             command_buffer,
                             bind.first_binding,
@@ -905,14 +902,7 @@ impl UnsafeAshDeviceRenderer {
                             &bind.offsets,
                         );
                     }
-                    AshCommandPlan::BindIndexBuffer { .. } => {
-                        let buffer = command
-                            .index_buffer_resource(context.buffers)
-                            .map_err(io::Error::other)?
-                            .buffer;
-                        let bind = command
-                            .bind_index_buffer_command(buffer)
-                            .map_err(io::Error::other)?;
+                    AshResolvedCommand::BindIndexBuffer(bind) => {
                         self.device.cmd_bind_index_buffer(
                             command_buffer,
                             bind.buffer,
@@ -920,8 +910,7 @@ impl UnsafeAshDeviceRenderer {
                             bind.index_type,
                         );
                     }
-                    AshCommandPlan::DrawIndexed { .. } => {
-                        let draw = command.draw_indexed_args().map_err(io::Error::other)?;
+                    AshResolvedCommand::DrawIndexed(draw) => {
                         self.device.cmd_draw_indexed(
                             command_buffer,
                             draw.index_count,

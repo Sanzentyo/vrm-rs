@@ -29,14 +29,14 @@ use vrm_adapter::ScreenProjectionSize;
 use vrm_adapter_ash::{
     ASH_FALLBACK_TEXTURES, ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH,
     ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH, ASH_MTOON_WGSL_FRAGMENT_ENTRY,
-    ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout, AshCommandPlan,
-    AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess, AshDescriptorWriteResources,
-    AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan, AshGraphicsPipelinePlan,
-    AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey, AshMtoonPipelineCacheKey,
-    AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey, AshMtoonTextureCacheKey,
-    AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshSamplerPlan,
-    AshSwapchainAcquireStatus, AshSwapchainPresentStatus, AshVrmFramePlanOptions,
+    ASH_MTOON_WGSL_VERTEX_ENTRY, AshColorAttachmentFinalLayout, AshCommandRecordHandleAccess,
+    AshCommandRecordResources, AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess,
+    AshDescriptorWriteResources, AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan,
+    AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
+    AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
+    AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
+    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand,
+    AshSamplerPlan, AshSwapchainAcquireStatus, AshSwapchainPresentStatus, AshVrmFramePlanOptions,
     AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameAcquirePlan,
     AshWindowedFrameSyncHandles, AshWindowedFrameSyncPlan, AshWindowedResizeValidation,
     AshWindowedRunValidation, ash_2d_image_resource_plan, ash_2d_image_view_plan,
@@ -1776,25 +1776,29 @@ impl MtoonWindowedAshRenderer {
                 vk::SubpassContents::INLINE,
             );
             for command in &drawable.commands {
-                match command {
-                    AshCommandPlan::BindGraphicsPipeline { .. } => {
-                        let bind = command
-                            .bind_graphics_pipeline_command(context.pipelines)
-                            .map_err(std::io::Error::other)?;
+                let resolved = command
+                    .resolve_record_command(
+                        AshCommandRecordResources::new(
+                            &frame.pipelines,
+                            context.pipelines,
+                            context.pipeline_layouts,
+                            context.descriptor_sets,
+                            context.buffers,
+                        ),
+                        AshCommandRecordHandleAccess {
+                            buffer: |buffer: &MtoonVulkanBuffer| buffer.buffer,
+                        },
+                    )
+                    .map_err(std::io::Error::other)?;
+                match resolved {
+                    AshResolvedCommand::BindGraphicsPipeline(bind) => {
                         self.device.cmd_bind_pipeline(
                             command_buffer,
                             bind.bind_point,
                             bind.pipeline,
                         );
                     }
-                    AshCommandPlan::BindDescriptorSet { .. } => {
-                        let bind = command
-                            .bind_descriptor_set_command(
-                                &frame.pipelines,
-                                context.pipeline_layouts,
-                                context.descriptor_sets,
-                            )
-                            .map_err(std::io::Error::other)?;
+                    AshResolvedCommand::BindDescriptorSet(bind) => {
                         self.device.cmd_bind_descriptor_sets(
                             command_buffer,
                             bind.bind_point,
@@ -1804,14 +1808,7 @@ impl MtoonWindowedAshRenderer {
                             &bind.dynamic_offsets,
                         );
                     }
-                    AshCommandPlan::BindVertexBuffer { .. } => {
-                        let buffer = command
-                            .vertex_buffer_resource(context.buffers)
-                            .map_err(std::io::Error::other)?
-                            .buffer;
-                        let bind = command
-                            .bind_vertex_buffer_command(buffer)
-                            .map_err(std::io::Error::other)?;
+                    AshResolvedCommand::BindVertexBuffer(bind) => {
                         self.device.cmd_bind_vertex_buffers(
                             command_buffer,
                             bind.first_binding,
@@ -1819,14 +1816,7 @@ impl MtoonWindowedAshRenderer {
                             &bind.offsets,
                         );
                     }
-                    AshCommandPlan::BindIndexBuffer { .. } => {
-                        let buffer = command
-                            .index_buffer_resource(context.buffers)
-                            .map_err(std::io::Error::other)?
-                            .buffer;
-                        let bind = command
-                            .bind_index_buffer_command(buffer)
-                            .map_err(std::io::Error::other)?;
+                    AshResolvedCommand::BindIndexBuffer(bind) => {
                         self.device.cmd_bind_index_buffer(
                             command_buffer,
                             bind.buffer,
@@ -1834,8 +1824,7 @@ impl MtoonWindowedAshRenderer {
                             bind.index_type,
                         );
                     }
-                    AshCommandPlan::DrawIndexed { .. } => {
-                        let draw = command.draw_indexed_args().map_err(std::io::Error::other)?;
+                    AshResolvedCommand::DrawIndexed(draw) => {
                         self.device.cmd_draw_indexed(
                             command_buffer,
                             draw.index_count,

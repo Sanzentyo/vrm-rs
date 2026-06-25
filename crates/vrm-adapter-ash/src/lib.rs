@@ -3476,6 +3476,84 @@ impl AshCommandPlan {
             )),
         }
     }
+
+    pub fn resolve_record_command<Buffer, BufferHandle>(
+        &self,
+        resources: AshCommandRecordResources<'_, Buffer>,
+        access: AshCommandRecordHandleAccess<BufferHandle>,
+    ) -> Result<AshResolvedCommand, String>
+    where
+        BufferHandle: FnOnce(&Buffer) -> vk::Buffer,
+    {
+        match self {
+            Self::BindGraphicsPipeline { .. } => Ok(AshResolvedCommand::BindGraphicsPipeline(
+                self.bind_graphics_pipeline_command(resources.pipelines)?,
+            )),
+            Self::BindDescriptorSet { .. } => Ok(AshResolvedCommand::BindDescriptorSet(
+                self.bind_descriptor_set_command(
+                    resources.pipeline_plans,
+                    resources.pipeline_layouts,
+                    resources.descriptor_sets,
+                )?,
+            )),
+            Self::BindVertexBuffer { .. } => {
+                let buffer = self.vertex_buffer_resource(resources.buffers)?;
+                Ok(AshResolvedCommand::BindVertexBuffer(
+                    self.bind_vertex_buffer_command((access.buffer)(buffer))?,
+                ))
+            }
+            Self::BindIndexBuffer { .. } => {
+                let buffer = self.index_buffer_resource(resources.buffers)?;
+                Ok(AshResolvedCommand::BindIndexBuffer(
+                    self.bind_index_buffer_command((access.buffer)(buffer))?,
+                ))
+            }
+            Self::DrawIndexed { .. } => {
+                Ok(AshResolvedCommand::DrawIndexed(self.draw_indexed_args()?))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshCommandRecordResources<'a, Buffer> {
+    pub pipeline_plans: &'a [AshGraphicsPipelinePlan],
+    pub pipelines: &'a [vk::Pipeline],
+    pub pipeline_layouts: &'a [vk::PipelineLayout],
+    pub descriptor_sets: &'a [vk::DescriptorSet],
+    pub buffers: &'a [Buffer],
+}
+
+impl<'a, Buffer> AshCommandRecordResources<'a, Buffer> {
+    pub const fn new(
+        pipeline_plans: &'a [AshGraphicsPipelinePlan],
+        pipelines: &'a [vk::Pipeline],
+        pipeline_layouts: &'a [vk::PipelineLayout],
+        descriptor_sets: &'a [vk::DescriptorSet],
+        buffers: &'a [Buffer],
+    ) -> Self {
+        Self {
+            pipeline_plans,
+            pipelines,
+            pipeline_layouts,
+            descriptor_sets,
+            buffers,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AshCommandRecordHandleAccess<BufferHandle> {
+    pub buffer: BufferHandle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshResolvedCommand {
+    BindGraphicsPipeline(AshBindGraphicsPipelineCommand),
+    BindDescriptorSet(AshBindDescriptorSetCommand),
+    BindVertexBuffer(AshBindVertexBufferCommand),
+    BindIndexBuffer(AshBindIndexBufferCommand),
+    DrawIndexed(AshDrawIndexedCommand),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10348,8 +10426,43 @@ mod tests {
             })
         );
         assert_eq!(
+            bind_pipeline.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null(), vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
+            Ok(AshResolvedCommand::BindGraphicsPipeline(
+                AshBindGraphicsPipelineCommand {
+                    bind_point: vk::PipelineBindPoint::GRAPHICS,
+                    pipeline: vk::Pipeline::null(),
+                }
+            ))
+        );
+        assert_eq!(
             AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }
                 .vk_graphics_pipeline(&pipeline_handles),
+            Err("drawable command references missing graphics pipeline 2".to_owned())
+        );
+        assert_eq!(
+            AshCommandPlan::BindGraphicsPipeline { pipeline_index: 2 }.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
             Err("drawable command references missing graphics pipeline 2".to_owned())
         );
 
@@ -10378,6 +10491,29 @@ mod tests {
                 descriptor_sets: [vk::DescriptorSet::null()],
                 dynamic_offsets: [],
             })
+        );
+        assert_eq!(
+            bind_descriptor.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
+            Ok(AshResolvedCommand::BindDescriptorSet(
+                AshBindDescriptorSetCommand {
+                    bind_point: vk::PipelineBindPoint::GRAPHICS,
+                    layout: vk::PipelineLayout::null(),
+                    first_set: 0,
+                    descriptor_sets: [vk::DescriptorSet::null()],
+                    dynamic_offsets: [],
+                }
+            ))
         );
         assert_eq!(
             AshCommandPlan::BindDescriptorSet {
@@ -10415,6 +10551,27 @@ mod tests {
             })
         );
         assert_eq!(
+            vertex.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null(), vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
+            Ok(AshResolvedCommand::BindVertexBuffer(
+                AshBindVertexBufferCommand {
+                    first_binding: 0,
+                    buffers: [vk::Buffer::null()],
+                    offsets: [16],
+                }
+            ))
+        );
+        assert_eq!(
             vertex.vertex_buffer_resource::<u32>(&[]),
             Err("drawable command references missing vertex buffer 1".to_owned())
         );
@@ -10432,6 +10589,27 @@ mod tests {
                 offset: 4,
                 index_type: vk::IndexType::UINT32,
             })
+        );
+        assert_eq!(
+            index.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
+            Ok(AshResolvedCommand::BindIndexBuffer(
+                AshBindIndexBufferCommand {
+                    buffer: vk::Buffer::null(),
+                    offset: 4,
+                    index_type: vk::IndexType::UINT32,
+                }
+            ))
         );
         assert_eq!(
             index.index_buffer_resource::<u32>(&[]),
@@ -10455,6 +10633,27 @@ mod tests {
                 vertex_offset: -3,
                 first_instance: 4,
             })
+        );
+        assert_eq!(
+            draw.resolve_record_command(
+                AshCommandRecordResources::new(
+                    &frame.pipelines,
+                    &pipeline_handles,
+                    &pipeline_layouts,
+                    &descriptor_sets,
+                    &[vk::Buffer::null()],
+                ),
+                AshCommandRecordHandleAccess {
+                    buffer: |buffer: &vk::Buffer| *buffer,
+                },
+            ),
+            Ok(AshResolvedCommand::DrawIndexed(AshDrawIndexedCommand {
+                index_count: 12,
+                instance_count: 1,
+                first_index: 2,
+                vertex_offset: -3,
+                first_instance: 4,
+            }))
         );
         assert_eq!(
             bind_pipeline.draw_indexed_args(),
