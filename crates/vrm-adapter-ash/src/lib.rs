@@ -309,11 +309,32 @@ pub enum AshWgslResourceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshWgslValueType {
+    F32,
+    Vec2F32,
+    Vec3F32,
+    Vec4F32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshWgslResourceBinding {
     pub name: &'static str,
     pub group: u32,
     pub binding: u32,
     pub kind: AshWgslResourceKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWgslVertexInputLocation {
+    pub name: &'static str,
+    pub location: u32,
+    pub value_type: AshWgslValueType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWgslStructLayout {
+    pub name: &'static str,
+    pub byte_size: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -510,6 +531,81 @@ pub const ASH_MTOON_WGSL_RESOURCE_BINDINGS: [AshWgslResourceBinding; 24] = [
 
 pub const fn ash_mtoon_wgsl_resource_bindings() -> &'static [AshWgslResourceBinding] {
     &ASH_MTOON_WGSL_RESOURCE_BINDINGS
+}
+
+pub const ASH_MTOON_WGSL_VERTEX_INPUT_LOCATIONS: [AshWgslVertexInputLocation; 9] = [
+    AshWgslVertexInputLocation {
+        name: "position",
+        location: 0,
+        value_type: AshWgslValueType::Vec3F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "tex_coord_0",
+        location: 1,
+        value_type: AshWgslValueType::Vec2F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "tex_coord_0_dx",
+        location: 2,
+        value_type: AshWgslValueType::Vec2F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "tex_coord_0_dy",
+        location: 3,
+        value_type: AshWgslValueType::Vec2F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "color_0",
+        location: 4,
+        value_type: AshWgslValueType::Vec4F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "normal",
+        location: 5,
+        value_type: AshWgslValueType::Vec3F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "tangent",
+        location: 6,
+        value_type: AshWgslValueType::Vec4F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "normal_scale",
+        location: 7,
+        value_type: AshWgslValueType::F32,
+    },
+    AshWgslVertexInputLocation {
+        name: "double_sided",
+        location: 8,
+        value_type: AshWgslValueType::F32,
+    },
+];
+
+pub const fn ash_mtoon_wgsl_vertex_input_locations() -> &'static [AshWgslVertexInputLocation] {
+    &ASH_MTOON_WGSL_VERTEX_INPUT_LOCATIONS
+}
+
+pub const ASH_MTOON_WGSL_STRUCT_LAYOUTS: [AshWgslStructLayout; 4] = [
+    AshWgslStructLayout {
+        name: "MtoonGpuUniform",
+        byte_size: MTOON_GPU_UNIFORM_SIZE as u32,
+    },
+    AshWgslStructLayout {
+        name: "AshSceneUniform",
+        byte_size: std::mem::size_of::<AshSceneUniform>() as u32,
+    },
+    AshWgslStructLayout {
+        name: "AshMaterialUvUniform",
+        byte_size: std::mem::size_of::<AshMaterialUvUniform>() as u32,
+    },
+    AshWgslStructLayout {
+        name: "AshMaterialExtraUniform",
+        byte_size: std::mem::size_of::<AshMaterialExtraUniform>() as u32,
+    },
+];
+
+pub const fn ash_mtoon_wgsl_struct_layouts() -> &'static [AshWgslStructLayout] {
+    &ASH_MTOON_WGSL_STRUCT_LAYOUTS
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10069,6 +10165,48 @@ mod tests {
                     .all(|right| (left.group, left.binding) != (right.group, right.binding))
             );
         }
+        let vertex_inputs = ash_mtoon_wgsl_vertex_input_locations();
+        assert_eq!(vertex_inputs.len(), 9);
+        assert_eq!(
+            vertex_inputs[0],
+            AshWgslVertexInputLocation {
+                name: "position",
+                location: 0,
+                value_type: AshWgslValueType::Vec3F32,
+            }
+        );
+        assert_eq!(
+            vertex_inputs[8],
+            AshWgslVertexInputLocation {
+                name: "double_sided",
+                location: 8,
+                value_type: AshWgslValueType::F32,
+            }
+        );
+        for (index, left) in vertex_inputs.iter().enumerate() {
+            assert!(
+                vertex_inputs[index + 1..]
+                    .iter()
+                    .all(|right| left.location != right.location)
+            );
+        }
+        let layouts = ash_mtoon_wgsl_struct_layouts();
+        assert_eq!(layouts.len(), 4);
+        assert!(layouts.iter().any(|layout| {
+            layout.name == "MtoonGpuUniform" && layout.byte_size == MTOON_GPU_UNIFORM_SIZE as u32
+        }));
+        assert!(layouts.iter().any(|layout| {
+            layout.name == "AshSceneUniform"
+                && layout.byte_size == std::mem::size_of::<AshSceneUniform>() as u32
+        }));
+        assert!(layouts.iter().any(|layout| {
+            layout.name == "AshMaterialUvUniform"
+                && layout.byte_size == std::mem::size_of::<AshMaterialUvUniform>() as u32
+        }));
+        assert!(layouts.iter().any(|layout| {
+            layout.name == "AshMaterialExtraUniform"
+                && layout.byte_size == std::mem::size_of::<AshMaterialExtraUniform>() as u32
+        }));
 
         assert!(wgsl_shader.contains("@group(0) @binding(0)"));
         assert!(wgsl_shader.contains("@group(0) @binding(1)"));

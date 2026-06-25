@@ -2,6 +2,17 @@
 
 ## 2026-06-25
 
+- Tightened the Ash WGSL/Naga shader ABI gate beyond resource binding presence.
+  `vrm-adapter-ash` now publishes a typed MToon WGSL ABI manifest for vertex
+  input locations and uniform struct byte sizes alongside the existing
+  resource bindings. `tools/ash/compile-ash-mtoon-wgsl-shaders.rs` validates
+  the Naga-parsed WGSL AST against that manifest before writing SPIR-V:
+  entries, clip-space policy, resource names/kinds, `VertexInput` locations and
+  f32/vector shapes, plus `MtoonGpuUniform`, `AshSceneUniform`,
+  `AshMaterialUvUniform`, and `AshMaterialExtraUniform` layout spans must all
+  match Rust. `--print-reflection` now prints the checked vertex inputs and
+  struct spans, making shader ABI drift fail at compile time instead of showing
+  up later as descriptor or vertex-layout bugs.
 - Cleaned up the remaining Ash GLSL utility naming after the WGSL/Naga MToon
   handoff became the only normal path. The descriptor-less windowed debug
   shader compiler moved from `tools/ash/compile-ash-mtoon-base-shaders.rs` to

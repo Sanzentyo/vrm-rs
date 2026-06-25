@@ -14,13 +14,17 @@ vrm-adapter-ash = { path = "../../crates/vrm-adapter-ash" }
 use clap::Parser;
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
-use naga::{AddressSpace, ImageClass, ImageDimension, ScalarKind, TypeInner};
+use naga::{
+    AddressSpace, Binding, ImageClass, ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize,
+};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use vrm_adapter_ash::{
-    AshMtoonWgslShaderAbi, AshWgslResourceKind, ash_mtoon_wgsl_resource_bindings,
+    AshMtoonWgslShaderAbi, AshWgslResourceKind, AshWgslValueType,
+    ash_mtoon_wgsl_resource_bindings, ash_mtoon_wgsl_struct_layouts,
+    ash_mtoon_wgsl_vertex_input_locations,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -104,6 +108,12 @@ struct ReflectedResource {
     kind: AshWgslResourceKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReflectedVertexInput {
+    name: String,
+    value_type: AshWgslValueType,
+}
+
 fn validate_shader_abi(
     abi: AshMtoonWgslShaderAbi,
     module: &naga::Module,
@@ -169,9 +179,14 @@ fn validate_shader_abi(
         .into());
     }
 
+    validate_vertex_input_locations(module, abi.vertex_entry)?;
+    validate_struct_layouts(module)?;
+
     println!(
-        "validated Ash MToon WGSL ABI: {} resource bindings, entries {}/{}",
+        "validated Ash MToon WGSL ABI: {} resource bindings, {} vertex inputs, {} struct layouts, entries {}/{}",
         expected.len(),
+        ash_mtoon_wgsl_vertex_input_locations().len(),
+        ash_mtoon_wgsl_struct_layouts().len(),
         abi.vertex_entry,
         abi.fragment_entry
     );
@@ -235,6 +250,175 @@ fn reflect_resource_bindings(
         }
     }
     Ok(reflected)
+}
+
+fn validate_vertex_input_locations(
+    module: &naga::Module,
+    vertex_entry: &str,
+) -> Result<(), Box<dyn Error>> {
+    let reflected = reflect_vertex_input_locations(module, vertex_entry)?;
+    let expected = ash_mtoon_wgsl_vertex_input_locations();
+    let expected_locations = expected
+        .iter()
+        .map(|input| (input.location, input))
+        .collect::<HashMap<_, _>>();
+
+    for input in expected {
+        let Some(actual) = reflected.get(&input.location) else {
+            return Err(format!(
+                "WGSL ABI mismatch: missing vertex input {} at location {}",
+                input.name, input.location
+            )
+            .into());
+        };
+        if actual.name != input.name {
+            return Err(format!(
+                "WGSL ABI mismatch at vertex location {}: expected name {}, found {}",
+                input.location, input.name, actual.name
+            )
+            .into());
+        }
+        if actual.value_type != input.value_type {
+            return Err(format!(
+                "WGSL ABI mismatch for vertex input {} at location {}: expected {:?}, found {:?}",
+                input.name, input.location, input.value_type, actual.value_type
+            )
+            .into());
+        }
+    }
+
+    let unexpected = reflected
+        .iter()
+        .filter(|(location, _)| !expected_locations.contains_key(location))
+        .map(|(location, input)| format!("{} at location {location}", input.name))
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        return Err(format!(
+            "WGSL ABI mismatch: unexpected vertex inputs: {}",
+            unexpected.join(", ")
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn reflect_vertex_input_locations(
+    module: &naga::Module,
+    vertex_entry: &str,
+) -> Result<HashMap<u32, ReflectedVertexInput>, Box<dyn Error>> {
+    let entry = module
+        .entry_points
+        .iter()
+        .find(|entry| entry.stage == naga::ShaderStage::Vertex && entry.name == vertex_entry)
+        .ok_or_else(|| format!("WGSL ABI mismatch: missing vertex entry point {vertex_entry}"))?;
+    let argument = match entry.function.arguments.as_slice() {
+        [argument] => argument,
+        arguments => {
+            return Err(format!(
+                "WGSL ABI mismatch: vertex entry {vertex_entry} must have exactly one input struct argument, found {}",
+                arguments.len()
+            )
+            .into());
+        }
+    };
+    if argument.binding.is_some() {
+        return Err(format!(
+            "WGSL ABI mismatch: vertex entry {vertex_entry} argument must use a struct, not a direct binding"
+        )
+        .into());
+    }
+    let argument_type = &module.types[argument.ty];
+    if argument_type.name.as_deref() != Some("VertexInput") {
+        return Err(format!(
+            "WGSL ABI mismatch: vertex entry {vertex_entry} input type must be VertexInput, found {}",
+            argument_type.name.as_deref().unwrap_or("<unnamed>")
+        )
+        .into());
+    }
+    let TypeInner::Struct { members, .. } = &argument_type.inner else {
+        return Err(format!(
+            "WGSL ABI mismatch: vertex entry {vertex_entry} input type VertexInput is not a struct"
+        )
+        .into());
+    };
+
+    let mut reflected = HashMap::new();
+    for member in members {
+        let Some(name) = member.name.clone() else {
+            return Err("WGSL ABI mismatch: unnamed VertexInput member".into());
+        };
+        let Some(Binding::Location { location, .. }) = member.binding else {
+            return Err(format!(
+                "WGSL ABI mismatch: VertexInput member {name} has no @location binding"
+            )
+            .into());
+        };
+        let value_type = reflected_value_type(module, member.ty)
+            .map_err(|error| format!("WGSL ABI mismatch for VertexInput.{name}: {error}"))?;
+        if let Some(previous) =
+            reflected.insert(location, ReflectedVertexInput { name, value_type })
+        {
+            return Err(format!(
+                "WGSL ABI mismatch: duplicate vertex location {location} for {} and {}",
+                previous.name,
+                reflected
+                    .get(&location)
+                    .map(|input| input.name.as_str())
+                    .unwrap_or("<unknown>")
+            )
+            .into());
+        }
+    }
+    Ok(reflected)
+}
+
+fn validate_struct_layouts(module: &naga::Module) -> Result<(), Box<dyn Error>> {
+    let structs = module
+        .types
+        .iter()
+        .filter_map(|(_, ty)| {
+            let TypeInner::Struct { span, .. } = ty.inner else {
+                return None;
+            };
+            ty.name.as_deref().map(|name| (name, span))
+        })
+        .collect::<HashMap<_, _>>();
+    for layout in ash_mtoon_wgsl_struct_layouts() {
+        let Some(actual_size) = structs.get(layout.name).copied() else {
+            return Err(format!(
+                "WGSL ABI mismatch: missing struct layout {}",
+                layout.name
+            )
+            .into());
+        };
+        if actual_size != layout.byte_size {
+            return Err(format!(
+                "WGSL ABI mismatch for struct {}: expected byte size {}, found {}",
+                layout.name, layout.byte_size, actual_size
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn reflected_value_type(
+    module: &naga::Module,
+    handle: naga::Handle<naga::Type>,
+) -> Result<AshWgslValueType, String> {
+    match module.types[handle].inner {
+        TypeInner::Scalar(scalar) if is_f32(scalar) => Ok(AshWgslValueType::F32),
+        TypeInner::Vector { size, scalar } if is_f32(scalar) => match size {
+            VectorSize::Bi => Ok(AshWgslValueType::Vec2F32),
+            VectorSize::Tri => Ok(AshWgslValueType::Vec3F32),
+            VectorSize::Quad => Ok(AshWgslValueType::Vec4F32),
+        },
+        ref other => Err(format!("expected f32 scalar/vector, found {other:?}")),
+    }
+}
+
+fn is_f32(scalar: Scalar) -> bool {
+    scalar.kind == ScalarKind::Float && scalar.width == 4
 }
 
 fn reflected_resource_kind(
@@ -349,6 +533,31 @@ fn print_reflection(module: &naga::Module) {
                 global.space, binding.group, binding.binding
             );
         }
+    }
+    if let Ok(mut locations) = reflect_vertex_input_locations(module, "vs_main").map(|locations| {
+        let mut locations = locations.into_iter().collect::<Vec<_>>();
+        locations.sort_by_key(|(location, _)| *location);
+        locations
+    }) {
+        println!("vertex input locations:");
+        for (location, input) in locations.drain(..) {
+            println!("  {:?} location={} {}", input.value_type, location, input.name);
+        }
+    }
+    println!("struct layouts:");
+    let mut structs = module
+        .types
+        .iter()
+        .filter_map(|(_, ty)| {
+            let TypeInner::Struct { span, .. } = ty.inner else {
+                return None;
+            };
+            ty.name.as_deref().map(|name| (name.to_owned(), span))
+        })
+        .collect::<Vec<_>>();
+    structs.sort_by(|left, right| left.0.cmp(&right.0));
+    for (name, span) in structs {
+        println!("  {name} {span} bytes");
     }
 }
 
