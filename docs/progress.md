@@ -10,6 +10,14 @@
   textures, samplers, descriptor-set layouts, and pipelines remain outside the
   slot ring. This keeps the P0 shared-dynamic-resource hazard guarded by a typed
   library plan instead of only by the windowed example's cache layout.
+- Reran the real Ash windowed release smoke with `just ci-ash-windowed` after
+  the frame-slot/resource-cache changes. The WGSL/Naga compiler validated 24
+  resource bindings, 9 vertex inputs, 4 struct layouts, and `vs_main`/`fs_main`,
+  then the animated Seed-san + `idle_loop.vrma` windowed path passed the
+  24-frame cache-hit smoke with `frames_in_flight=2` and `swapchain_images=3`.
+  The resize smoke also passed with `requested=true`, `events_after_request=1`,
+  and `recreates=2`, while graphics pipelines were rebuilt only for the changed
+  render-pass generation.
 - Kept the Ash windowed MToon pipeline cache alive across compatible swapchain
   recreation. `recreate_swapchain` still waits for idle and drops all
   frame-slot dynamic buffers, uniforms, descriptor pools/sets, framebuffers,
