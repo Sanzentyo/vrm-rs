@@ -1043,9 +1043,6 @@ impl MtoonWindowedAshRenderer {
             self.device.device_wait_idle()?;
         }
         self.destroy_frame_slot_dynamic_caches();
-        if let Some(cache) = self.persistent_cache.take() {
-            self.destroy_persistent_cache(cache);
-        }
         let old_swapchain = self.swapchain.swapchain;
         let old = std::mem::replace(&mut self.swapchain, MtoonSwapchainShell::empty());
         self.destroy_swapchain_shell(old, false);
@@ -1063,9 +1060,19 @@ impl MtoonWindowedAshRenderer {
                 old_swapchain,
             },
             window,
-        );
+        )?;
         destroy_swapchain_handle(&self.swapchain_loader, old_swapchain);
-        self.swapchain = new_swapchain?;
+        let new_render_pass_compatibility = new_swapchain
+            .render_pass_compatibility
+            .ok_or("new ash windowed swapchain has no render-pass compatibility key")?;
+        let cache_is_compatible = self
+            .persistent_cache
+            .as_ref()
+            .is_some_and(|cache| cache.render_pass_compatibility == new_render_pass_compatibility);
+        if !cache_is_compatible && let Some(cache) = self.persistent_cache.take() {
+            self.destroy_persistent_cache(cache);
+        }
+        self.swapchain = new_swapchain;
         let sync_plan =
             AshWindowedFrameSyncPlan::new(self.frame_sync.len(), self.swapchain.image_views.len())?;
         self.images_in_flight = vec![vk::Fence::null(); sync_plan.image_fence_slots()];

@@ -2,6 +2,13 @@
 
 ## 2026-06-25
 
+- Kept the Ash windowed MToon pipeline cache alive across compatible swapchain
+  recreation. `recreate_swapchain` still waits for idle and drops all
+  frame-slot dynamic buffers, uniforms, descriptor pools/sets, framebuffers,
+  and command buffers, but it now preserves the persistent graphics pipelines
+  when the new render pass has the same `AshRenderPassCompatibilityKey`. If
+  color/depth formats, final layouts, sample count, or dependency policy change,
+  the stale pipeline cache is destroyed before the next frame materializes.
 - Added an explicit Ash render-pass compatibility key for renderer cache
   boundaries. `AshRenderPassCreationPlan::compatibility_key` and
   `AshRenderPassPlan::{creation_plan,compatibility_key}` now expose the
