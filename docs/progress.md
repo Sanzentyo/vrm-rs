@@ -34,6 +34,16 @@
   `events_after_request=1`, `recreates=2`, and descriptor/buffer/uniform
   rebuilds of `4`, which matches two frame slots rebuilt before and after
   swapchain recreation.
+- Tightened the preferred Ash WGSL/Naga shader ABI contract. `vrm-adapter-ash`
+  now exposes a typed `ASH_MTOON_WGSL_RESOURCE_BINDINGS` table for the
+  canonical `mtoon_base.wgsl` entry points, names, bind group/binding numbers,
+  and resource kinds. `tools/ash/compile-ash-mtoon-wgsl-shaders.rs` validates
+  Naga reflection against that table before writing SPIR-V, so the local shader
+  compile path now fails on missing, extra, renamed, or type-mismatched WGSL
+  bindings instead of relying on string-presence tests alone.
+  `just ci-ash-windowed` now prints `validated Ash MToon WGSL ABI: 24 resource
+  bindings, entries vs_main/fs_main` before running the release windowed cache
+  and resize smokes.
 
 ## 2026-06-23
 

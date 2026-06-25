@@ -277,6 +277,22 @@ pub const ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH: &str =
     "target/ash-mtoon-wgsl-base-shaders/mtoon_base.wgsl.frag.spv";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AshWgslResourceKind {
+    UniformBuffer,
+    SampledImage,
+    Sampler,
+    StorageBuffer,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWgslResourceBinding {
+    pub name: &'static str,
+    pub group: u32,
+    pub binding: u32,
+    pub kind: AshWgslResourceKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AshMtoonWgslShaderAbi {
     pub prelude_path: &'static str,
     pub source_path: &'static str,
@@ -319,6 +335,157 @@ impl AshMtoonWgslShaderAbi {
     pub fn default_fragment_spirv_path(self) -> PathBuf {
         self.fragment_spirv_path(ASH_MTOON_WGSL_DEFAULT_SPIRV_DIR)
     }
+}
+
+pub const ASH_MTOON_WGSL_RESOURCE_BINDINGS: [AshWgslResourceBinding; 24] = [
+    AshWgslResourceBinding {
+        name: "mtoon",
+        group: 0,
+        binding: ash_mtoon_uniform_binding(),
+        kind: AshWgslResourceKind::UniformBuffer,
+    },
+    AshWgslResourceBinding {
+        name: "main_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::Main),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "main_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Main),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "shade_multiply_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::ShadeMultiply),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "shade_multiply_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::ShadeMultiply),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "shading_shift_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::ShadingShift),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "shading_shift_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::ShadingShift),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "normal_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::Normal),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "normal_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Normal),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "matcap_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::Matcap),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "matcap_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::Matcap),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "rim_multiply_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::RimMultiply),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "rim_multiply_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::RimMultiply),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "outline_width_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::OutlineWidth),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "outline_width_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::OutlineWidth),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "uv_animation_mask_texture",
+        group: 0,
+        binding: ash_mtoon_sampled_image_binding(MtoonTextureSlot::UvAnimationMask),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "uv_animation_mask_sampler",
+        group: 0,
+        binding: ash_mtoon_texture_sampler_binding(MtoonTextureSlot::UvAnimationMask),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "emissive_texture",
+        group: 0,
+        binding: ash_material_sampled_image_binding(GltfMaterialTextureSlot::Emissive),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "emissive_sampler",
+        group: 0,
+        binding: ash_material_sampler_binding(GltfMaterialTextureSlot::Emissive),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "occlusion_texture",
+        group: 0,
+        binding: ash_material_sampled_image_binding(GltfMaterialTextureSlot::Occlusion),
+        kind: AshWgslResourceKind::SampledImage,
+    },
+    AshWgslResourceBinding {
+        name: "occlusion_sampler",
+        group: 0,
+        binding: ash_material_sampler_binding(GltfMaterialTextureSlot::Occlusion),
+        kind: AshWgslResourceKind::Sampler,
+    },
+    AshWgslResourceBinding {
+        name: "scene",
+        group: 0,
+        binding: ash_mtoon_wgsl_scene_binding(),
+        kind: AshWgslResourceKind::UniformBuffer,
+    },
+    AshWgslResourceBinding {
+        name: "material_uv",
+        group: 0,
+        binding: ash_mtoon_wgsl_uv_uniform_binding(),
+        kind: AshWgslResourceKind::UniformBuffer,
+    },
+    AshWgslResourceBinding {
+        name: "material_extra",
+        group: 0,
+        binding: ash_mtoon_wgsl_render_extra_binding(),
+        kind: AshWgslResourceKind::UniformBuffer,
+    },
+];
+
+pub const fn ash_mtoon_wgsl_resource_bindings() -> &'static [AshWgslResourceBinding] {
+    &ASH_MTOON_WGSL_RESOURCE_BINDINGS
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9692,6 +9859,31 @@ mod tests {
             wgsl_abi.descriptor_binding_model,
             AshDescriptorBindingModel::SeparateImageSampler
         );
+        let wgsl_resources = ash_mtoon_wgsl_resource_bindings();
+        assert_eq!(wgsl_resources.len(), 24);
+        assert_eq!(
+            wgsl_resources[0],
+            AshWgslResourceBinding {
+                name: "mtoon",
+                group: 0,
+                binding: ash_mtoon_uniform_binding(),
+                kind: AshWgslResourceKind::UniformBuffer,
+            }
+        );
+        assert!(wgsl_resources.iter().any(|resource| {
+            resource.name == "emissive_sampler"
+                && resource.group == 0
+                && resource.binding
+                    == ash_material_sampler_binding(GltfMaterialTextureSlot::Emissive)
+                && resource.kind == AshWgslResourceKind::Sampler
+        }));
+        for (index, left) in wgsl_resources.iter().enumerate() {
+            assert!(
+                wgsl_resources[index + 1..]
+                    .iter()
+                    .all(|right| (left.group, left.binding) != (right.group, right.binding))
+            );
+        }
 
         for (slot, expected_name) in [
             (MtoonTextureSlot::Main, "main_texture"),
