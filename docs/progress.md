@@ -24,6 +24,14 @@
   `AshBufferUploadId` where applicable. The mock renderer, unsafe offscreen
   renderer, drawable command lowering, and validation tests all use the typed
   fields before resolving into engine-owned Vulkan handle tables.
+- Brought the renderer resource manifest into the same ID language.
+  `AshRendererBufferResource`, `AshRendererTextureResource`,
+  `AshRendererUniformResource`, `AshRendererSamplerResource`,
+  `AshRendererDescriptorSetLayoutResource`, `AshRendererDescriptorSetResource`,
+  and `AshRendererPipelineResource` now expose typed resource IDs instead of
+  unqualified manifest indices. The manifest lifetime/cache contract therefore
+  describes the same buffer, texture, uniform, descriptor-set, and pipeline
+  domains consumed by descriptor writes and drawable commands.
 - Started replacing raw Ash renderer-edge resource indices with typed IDs.
   Descriptor-write and sampler-resource handoff plans now use
   `AshDescriptorSetId`, `AshUniformUploadId`, `AshBufferUploadId`,

@@ -3031,7 +3031,7 @@ pub struct AshFrameSlotDynamicResources {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererBufferResource {
-    pub index: usize,
+    pub buffer_id: AshBufferUploadId,
     pub role: AshBufferRole,
     pub usage: vk::BufferUsageFlags,
     pub stride: u32,
@@ -3043,7 +3043,7 @@ pub struct AshRendererBufferResource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererTextureResource {
-    pub index: usize,
+    pub texture_upload_id: AshTextureUploadId,
     pub texture: Option<TextureRef>,
     pub color_space: GltfMaterialTextureColorSpace,
     pub format: vk::Format,
@@ -3058,7 +3058,7 @@ pub struct AshRendererTextureResource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererUniformResource {
-    pub index: usize,
+    pub uniform_upload_id: AshUniformUploadId,
     pub scope: AshUniformScope,
     pub binding: u32,
     pub byte_len: usize,
@@ -3068,7 +3068,7 @@ pub struct AshRendererUniformResource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererSamplerResource {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub sampler: Option<AshSamplerPlan>,
@@ -3085,7 +3085,7 @@ pub struct AshDescriptorBindingLayoutKey {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererDescriptorSetLayoutResource {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bindings: Vec<AshDescriptorBindingLayoutKey>,
@@ -3105,7 +3105,7 @@ pub struct AshRendererDescriptorBindingResource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererDescriptorSetResource {
-    pub index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub bindings: Vec<AshRendererDescriptorBindingResource>,
@@ -3115,7 +3115,7 @@ pub struct AshRendererDescriptorSetResource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AshRendererPipelineResource {
-    pub index: usize,
+    pub pipeline_id: AshPipelineId,
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
     pub descriptor_set_id: AshDescriptorSetId,
@@ -5766,7 +5766,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .iter()
         .enumerate()
         .map(|(index, buffer)| AshRendererBufferResource {
-            index,
+            buffer_id: AshBufferUploadId::new(index),
             role: buffer.role,
             usage: buffer.usage,
             stride: buffer.stride,
@@ -5781,7 +5781,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .iter()
         .enumerate()
         .map(|(index, texture)| AshRendererTextureResource {
-            index,
+            texture_upload_id: AshTextureUploadId::new(index),
             texture: texture.upload.texture,
             color_space: texture.upload.color_space,
             format: texture.upload.format,
@@ -5799,7 +5799,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .iter()
         .enumerate()
         .map(|(index, uniform)| AshRendererUniformResource {
-            index,
+            uniform_upload_id: AshUniformUploadId::new(index),
             scope: uniform.scope,
             binding: uniform.binding,
             byte_len: uniform.bytes.len(),
@@ -5810,7 +5810,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
     let samplers = ash_sampler_resource_plans(frame)
         .into_iter()
         .map(|plan| AshRendererSamplerResource {
-            descriptor_set_index: plan.descriptor_set_id.index(),
+            descriptor_set_id: plan.descriptor_set_id,
             binding: plan.binding,
             descriptor_type: plan.descriptor_type,
             sampler: Some(plan.sampler),
@@ -5824,7 +5824,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .enumerate()
         .map(
             |(descriptor_set_index, set)| AshRendererDescriptorSetLayoutResource {
-                descriptor_set_index,
+                descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                 material: set.material,
                 pipeline_plan_index: set.pipeline_plan_index,
                 bindings: set
@@ -5846,7 +5846,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .iter()
         .enumerate()
         .map(|(index, set)| AshRendererDescriptorSetResource {
-            index,
+            descriptor_set_id: AshDescriptorSetId::new(index),
             material: set.material,
             pipeline_plan_index: set.pipeline_plan_index,
             bindings: set
@@ -5870,7 +5870,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
         .iter()
         .enumerate()
         .map(|(index, pipeline)| AshRendererPipelineResource {
-            index,
+            pipeline_id: AshPipelineId::new(index),
             material: pipeline.material,
             pipeline_plan_index: pipeline.pipeline_plan_index,
             descriptor_set_id: pipeline.descriptor_set_id,
@@ -11571,6 +11571,25 @@ mod tests {
                 && resource.lifetime == AshRendererResourceLifetime::Persistent
                 && resource.depth_format == Some(ash_reference_depth_format())
         }));
+        assert_eq!(manifest.buffers[0].buffer_id, AshBufferUploadId::new(0));
+        assert_eq!(manifest.buffers[1].buffer_id, AshBufferUploadId::new(1));
+        assert_eq!(
+            manifest.uniforms[3].uniform_upload_id,
+            AshUniformUploadId::new(3)
+        );
+        assert_eq!(
+            manifest.descriptor_set_layouts[0].descriptor_set_id,
+            AshDescriptorSetId::new(0)
+        );
+        assert_eq!(
+            manifest.descriptor_sets[0].descriptor_set_id,
+            AshDescriptorSetId::new(0)
+        );
+        assert_eq!(manifest.pipelines[0].pipeline_id, AshPipelineId::new(0));
+        assert_eq!(
+            manifest.pipelines[0].descriptor_set_id,
+            AshDescriptorSetId::new(0)
+        );
         assert_eq!(manifest.buffers[0].role, AshBufferRole::OwnerSampleOverride);
         assert_eq!(manifest.buffers[1].role, AshBufferRole::Vertex);
         assert_eq!(manifest.buffers[2].role, AshBufferRole::Index);
