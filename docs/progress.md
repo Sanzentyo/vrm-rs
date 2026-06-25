@@ -17,6 +17,13 @@
   `AshBufferUploadId`. Descriptor validation and write planning still report
   numeric indices in diagnostics, but renderer-facing bindings now carry the
   resource category in the type until the checked lookup boundary.
+- Extended the same typed-ID boundary across renderer-frame pipeline and draw
+  plans. `AshGraphicsPipelinePlan`, `AshGraphicsPipelineStatePlan`,
+  `AshRendererPipelineResource`, and `AshDrawCallPlan` now carry descriptor-set,
+  vertex-buffer, and index-buffer references as `AshDescriptorSetId` /
+  `AshBufferUploadId` where applicable. The mock renderer, unsafe offscreen
+  renderer, drawable command lowering, and validation tests all use the typed
+  fields before resolving into engine-owned Vulkan handle tables.
 - Started replacing raw Ash renderer-edge resource indices with typed IDs.
   Descriptor-write and sampler-resource handoff plans now use
   `AshDescriptorSetId`, `AshUniformUploadId`, `AshBufferUploadId`,

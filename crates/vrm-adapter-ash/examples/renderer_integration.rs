@@ -94,7 +94,7 @@ impl MockAshRenderer {
         let mut index_buffer = None;
         let mut planned_draws = frame.draw_calls.iter().filter(|draw| {
             draw.pipeline_plan_index.is_some()
-                && draw.descriptor_set_index.is_some()
+                && draw.descriptor_set_id.is_some()
                 && draw.index_count > 0
         });
         for command in plan

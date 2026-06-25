@@ -1369,8 +1369,8 @@ fn ash_material_draw_metadata(
                     .find(|pipeline| pipeline.pipeline_plan_index == index)
             });
             let source_pipeline_index = draw
-                .descriptor_set_index
-                .and_then(|index| frame.descriptor_sets.get(index))
+                .descriptor_set_id
+                .and_then(|id| frame.descriptor_sets.get(id.index()))
                 .map(|descriptor_set| descriptor_set.pipeline_plan_index)
                 .or(draw.pipeline_plan_index);
             let pipeline = source_pipeline_index.and_then(|index| pipelines.get(index))?;
@@ -2020,7 +2020,7 @@ mod tests {
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(14),
                 pipeline_plan_index: 1,
-                descriptor_set_index: 0,
+                descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     cull_mode: vk::CullModeFlags::empty(),
                     depth_write_enable: false,
@@ -2044,9 +2044,9 @@ mod tests {
                     primitive_index: 0,
                     material: Some(MaterialRef(14)),
                     pipeline_plan_index: Some(0),
-                    descriptor_set_index: Some(0),
-                    vertex_buffer_index: 0,
-                    index_buffer_index: 1,
+                    descriptor_set_id: Some(AshDescriptorSetId::new(0)),
+                    vertex_buffer_id: AshBufferUploadId::new(0),
+                    index_buffer_id: AshBufferUploadId::new(1),
                     index_count: 3,
                     render_order: 2000,
                     phase_order: 19,
@@ -2055,9 +2055,9 @@ mod tests {
                     primitive_index: 0,
                     material: Some(MaterialRef(14)),
                     pipeline_plan_index: Some(1),
-                    descriptor_set_index: Some(0),
-                    vertex_buffer_index: 2,
-                    index_buffer_index: 3,
+                    descriptor_set_id: Some(AshDescriptorSetId::new(0)),
+                    vertex_buffer_id: AshBufferUploadId::new(2),
+                    index_buffer_id: AshBufferUploadId::new(3),
                     index_count: 3,
                     render_order: 12_000,
                     phase_order: 10_019,

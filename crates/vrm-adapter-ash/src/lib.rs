@@ -2403,9 +2403,9 @@ pub struct AshDrawCallPlan {
     pub primitive_index: usize,
     pub material: Option<MaterialRef>,
     pub pipeline_plan_index: Option<usize>,
-    pub descriptor_set_index: Option<usize>,
-    pub vertex_buffer_index: usize,
-    pub index_buffer_index: usize,
+    pub descriptor_set_id: Option<AshDescriptorSetId>,
+    pub vertex_buffer_id: AshBufferUploadId,
+    pub index_buffer_id: AshBufferUploadId,
     pub index_count: u32,
     pub render_order: i32,
     pub phase_order: i32,
@@ -2693,21 +2693,19 @@ pub fn validate_ash_renderer_frame(
     }
 
     for (pipeline_index, pipeline) in frame.pipelines.iter().enumerate() {
-        let descriptor_set = frame
-            .descriptor_sets
-            .get(pipeline.descriptor_set_index)
-            .ok_or(
-                AshRendererFrameValidationError::PipelineDescriptorSetOutOfRange {
-                    pipeline_index,
-                    descriptor_set_index: pipeline.descriptor_set_index,
-                    descriptor_set_count: frame.descriptor_sets.len(),
-                },
-            )?;
+        let descriptor_set_index = pipeline.descriptor_set_id.index();
+        let descriptor_set = frame.descriptor_sets.get(descriptor_set_index).ok_or(
+            AshRendererFrameValidationError::PipelineDescriptorSetOutOfRange {
+                pipeline_index,
+                descriptor_set_index,
+                descriptor_set_count: frame.descriptor_sets.len(),
+            },
+        )?;
         if descriptor_set.pipeline_plan_index != pipeline.pipeline_plan_index {
             return Err(
                 AshRendererFrameValidationError::PipelineDescriptorSetPipelineMismatch {
                     pipeline_index,
-                    descriptor_set_index: pipeline.descriptor_set_index,
+                    descriptor_set_index,
                     pipeline_plan_index: pipeline.pipeline_plan_index,
                     descriptor_set_pipeline_plan_index: descriptor_set.pipeline_plan_index,
                 },
@@ -2810,7 +2808,8 @@ fn validate_ash_draw_call(
                     pipeline_plan_index,
                 },
             )?;
-        if let Some(descriptor_set_index) = draw.descriptor_set_index {
+        if let Some(descriptor_set_id) = draw.descriptor_set_id {
+            let descriptor_set_index = descriptor_set_id.index();
             let descriptor_set = frame.descriptor_sets.get(descriptor_set_index).ok_or(
                 AshRendererFrameValidationError::DrawDescriptorSetOutOfRange {
                     draw_index,
@@ -2820,7 +2819,7 @@ fn validate_ash_draw_call(
                 },
             )?;
             if descriptor_set.pipeline_plan_index != pipeline_plan_index
-                || pipeline.descriptor_set_index != descriptor_set_index
+                || pipeline.descriptor_set_id != descriptor_set_id
             {
                 return Err(
                     AshRendererFrameValidationError::DrawPipelineDescriptorSetMismatch {
@@ -2828,18 +2827,19 @@ fn validate_ash_draw_call(
                         primitive_index: draw.primitive_index,
                         pipeline_plan_index,
                         descriptor_set_index,
-                        expected_descriptor_set_index: pipeline.descriptor_set_index,
+                        expected_descriptor_set_index: pipeline.descriptor_set_id.index(),
                     },
                 );
             }
         }
     }
 
-    let vertex_buffer = frame.buffers.get(draw.vertex_buffer_index).ok_or(
+    let vertex_buffer_index = draw.vertex_buffer_id.index();
+    let vertex_buffer = frame.buffers.get(vertex_buffer_index).ok_or(
         AshRendererFrameValidationError::DrawVertexBufferOutOfRange {
             draw_index,
             primitive_index: draw.primitive_index,
-            vertex_buffer_index: draw.vertex_buffer_index,
+            vertex_buffer_index,
             buffer_count: frame.buffers.len(),
         },
     )?;
@@ -2848,17 +2848,18 @@ fn validate_ash_draw_call(
             AshRendererFrameValidationError::DrawVertexBufferRoleMismatch {
                 draw_index,
                 primitive_index: draw.primitive_index,
-                vertex_buffer_index: draw.vertex_buffer_index,
+                vertex_buffer_index,
                 role: vertex_buffer.role,
             },
         );
     }
 
-    let index_buffer = frame.buffers.get(draw.index_buffer_index).ok_or(
+    let index_buffer_index = draw.index_buffer_id.index();
+    let index_buffer = frame.buffers.get(index_buffer_index).ok_or(
         AshRendererFrameValidationError::DrawIndexBufferOutOfRange {
             draw_index,
             primitive_index: draw.primitive_index,
-            index_buffer_index: draw.index_buffer_index,
+            index_buffer_index,
             buffer_count: frame.buffers.len(),
         },
     )?;
@@ -2867,7 +2868,7 @@ fn validate_ash_draw_call(
             AshRendererFrameValidationError::DrawIndexBufferRoleMismatch {
                 draw_index,
                 primitive_index: draw.primitive_index,
-                index_buffer_index: draw.index_buffer_index,
+                index_buffer_index,
                 role: index_buffer.role,
             },
         );
@@ -3117,7 +3118,7 @@ pub struct AshRendererPipelineResource {
     pub index: usize,
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub key: AshPipelineKey,
     pub vertex_stride: u32,
     pub vertex_attributes: Vec<AshVertexAttributePlan>,
@@ -4486,12 +4487,12 @@ impl AshCommandPlan {
                     format!("drawable command references missing pipeline plan {pipeline_id}")
                 })?;
                 pipeline_layouts
-                    .get(pipeline.descriptor_set_index)
+                    .get(pipeline.descriptor_set_id.index())
                     .copied()
                     .ok_or_else(|| {
                         format!(
                             "drawable command references missing pipeline layout {}",
-                            pipeline.descriptor_set_index
+                            pipeline.descriptor_set_id
                         )
                     })
             }
@@ -4848,7 +4849,7 @@ pub struct AshUniformUpload {
 pub struct AshGraphicsPipelinePlan {
     pub material: MaterialRef,
     pub pipeline_plan_index: usize,
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub key: AshPipelineKey,
     pub vertex_stride: u32,
     pub vertex_attributes: Vec<AshVertexAttributePlan>,
@@ -4866,7 +4867,7 @@ pub struct AshVertexAttributePlan {
 
 #[derive(Clone, Debug)]
 pub struct AshGraphicsPipelineStatePlan {
-    pub descriptor_set_index: usize,
+    pub descriptor_set_id: AshDescriptorSetId,
     pub vertex_binding: vk::VertexInputBindingDescription,
     pub vertex_attributes: Vec<vk::VertexInputAttributeDescription>,
     pub topology: vk::PrimitiveTopology,
@@ -4900,7 +4901,7 @@ pub fn ash_graphics_pipeline_state_plan(
     extent: vk::Extent2D,
 ) -> AshGraphicsPipelineStatePlan {
     AshGraphicsPipelineStatePlan {
-        descriptor_set_index: pipeline.descriptor_set_index,
+        descriptor_set_id: pipeline.descriptor_set_id,
         vertex_binding: vk::VertexInputBindingDescription {
             binding: 0,
             stride: pipeline.vertex_stride,
@@ -4957,7 +4958,7 @@ pub fn ash_position_color_pipeline_state_plan(
     color_offset: u32,
 ) -> AshGraphicsPipelineStatePlan {
     AshGraphicsPipelineStatePlan {
-        descriptor_set_index: 0,
+        descriptor_set_id: AshDescriptorSetId::new(0),
         vertex_binding: vk::VertexInputBindingDescription {
             binding: 0,
             stride: vertex_stride,
@@ -5081,12 +5082,12 @@ pub fn ash_graphics_pipeline_create_info_plan<'a>(
 ) -> Result<AshGraphicsPipelineCreateInfoPlan<'a>, String> {
     let state = ash_graphics_pipeline_state_plan(pipeline, extent);
     let layout = pipeline_layouts
-        .get(state.descriptor_set_index)
+        .get(state.descriptor_set_id.index())
         .copied()
         .ok_or_else(|| {
             format!(
                 "pipeline descriptor set index {} is out of range for {} pipeline layouts",
-                state.descriptor_set_index,
+                state.descriptor_set_id,
                 pipeline_layouts.len()
             )
         })?;
@@ -5383,7 +5384,7 @@ impl AshMtoonGraphicsPipelineCacheKey {
         Self {
             material: pipeline.material,
             pipeline_plan_index: pipeline.pipeline_plan_index,
-            descriptor_set_index: pipeline.descriptor_set_index,
+            descriptor_set_index: pipeline.descriptor_set_id.index(),
             pass: pipeline.key.pass,
             render_order: pipeline.key.render_order,
             phase_order: pipeline.key.phase_order,
@@ -5872,7 +5873,7 @@ pub fn ash_renderer_resource_manifest(frame: &AshRendererFrame) -> AshRendererRe
             index,
             material: pipeline.material,
             pipeline_plan_index: pipeline.pipeline_plan_index,
-            descriptor_set_index: pipeline.descriptor_set_index,
+            descriptor_set_id: pipeline.descriptor_set_id,
             key: pipeline.key,
             vertex_stride: pipeline.vertex_stride,
             vertex_attributes: pipeline.vertex_attributes.clone(),
@@ -6225,9 +6226,9 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
             });
             continue;
         };
-        let Some(descriptor_set_index) = draw
-            .descriptor_set_index
-            .filter(|index| *index < frame.descriptor_sets.len())
+        let Some(descriptor_set_id) = draw
+            .descriptor_set_id
+            .filter(|id| id.index() < frame.descriptor_sets.len())
         else {
             skipped_draws.push(AshSkippedDraw {
                 primitive_index: draw.primitive_index,
@@ -6235,14 +6236,14 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
             });
             continue;
         };
-        if draw.vertex_buffer_index >= frame.buffers.len() {
+        if draw.vertex_buffer_id.index() >= frame.buffers.len() {
             skipped_draws.push(AshSkippedDraw {
                 primitive_index: draw.primitive_index,
                 reason: AshSkippedDrawReason::MissingVertexBuffer,
             });
             continue;
         }
-        if draw.index_buffer_index >= frame.buffers.len() {
+        if draw.index_buffer_id.index() >= frame.buffers.len() {
             skipped_draws.push(AshSkippedDraw {
                 primitive_index: draw.primitive_index,
                 reason: AshSkippedDrawReason::MissingIndexBuffer,
@@ -6264,28 +6265,28 @@ pub fn ash_drawable_frame_from_renderer_frame_with_options(
             bound_pipeline = Some(pipeline_index);
             bound_descriptor_set = None;
         }
-        if bound_descriptor_set != Some(descriptor_set_index) {
+        if bound_descriptor_set != Some(descriptor_set_id) {
             commands.push(AshCommandPlan::BindDescriptorSet {
                 pipeline_id: AshPipelineId::new(pipeline_index),
-                descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
+                descriptor_set_id,
             });
-            bound_descriptor_set = Some(descriptor_set_index);
+            bound_descriptor_set = Some(descriptor_set_id);
         }
-        if bound_vertex_buffer != Some(draw.vertex_buffer_index) {
+        if bound_vertex_buffer != Some(draw.vertex_buffer_id) {
             commands.push(AshCommandPlan::BindVertexBuffer {
-                buffer_id: AshBufferUploadId::new(draw.vertex_buffer_index),
+                buffer_id: draw.vertex_buffer_id,
                 binding: 0,
                 offset: 0,
             });
-            bound_vertex_buffer = Some(draw.vertex_buffer_index);
+            bound_vertex_buffer = Some(draw.vertex_buffer_id);
         }
-        if bound_index_buffer != Some(draw.index_buffer_index) {
+        if bound_index_buffer != Some(draw.index_buffer_id) {
             commands.push(AshCommandPlan::BindIndexBuffer {
-                buffer_id: AshBufferUploadId::new(draw.index_buffer_index),
+                buffer_id: draw.index_buffer_id,
                 offset: 0,
                 index_type: vk::IndexType::UINT32,
             });
-            bound_index_buffer = Some(draw.index_buffer_index);
+            bound_index_buffer = Some(draw.index_buffer_id);
         }
         commands.push(AshCommandPlan::DrawIndexed {
             primitive_index: draw.primitive_index,
@@ -6409,7 +6410,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 .map(|descriptor_set_index| AshGraphicsPipelinePlan {
                     material: pipeline.material,
                     pipeline_plan_index,
-                    descriptor_set_index,
+                    descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                     key: pipeline.key,
                     vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
                     vertex_attributes: ash_vrm_vertex_attributes(),
@@ -6465,9 +6466,9 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
             primitive_index,
             material: primitive.material,
             pipeline_plan_index,
-            descriptor_set_index,
-            vertex_buffer_index,
-            index_buffer_index,
+            descriptor_set_id: descriptor_set_index.map(AshDescriptorSetId::new),
+            vertex_buffer_id: AshBufferUploadId::new(vertex_buffer_index),
+            index_buffer_id: AshBufferUploadId::new(index_buffer_index),
             index_count: primitive.indices.len() as u32,
             render_order,
             phase_order,
@@ -6504,7 +6505,7 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                 pipelines.push(AshGraphicsPipelinePlan {
                     material,
                     pipeline_plan_index: resolve_pipeline_plan_index,
-                    descriptor_set_index,
+                    descriptor_set_id: AshDescriptorSetId::new(descriptor_set_index),
                     key: ash_owner_sample_resolve_pipeline_key(source_pipeline.key),
                     vertex_stride: std::mem::size_of::<AshVrmVertex>() as u32,
                     vertex_attributes: ash_vrm_vertex_attributes(),
@@ -6533,9 +6534,9 @@ pub fn ash_renderer_frame_from_plan_with_owner_sample_selection(
                     primitive_index,
                     material: primitive.material,
                     pipeline_plan_index: Some(resolve_pipeline_plan_index),
-                    descriptor_set_index: Some(descriptor_set_index),
-                    vertex_buffer_index: resolve_vertex_buffer_index,
-                    index_buffer_index: resolve_index_buffer_index,
+                    descriptor_set_id: Some(AshDescriptorSetId::new(descriptor_set_index)),
+                    vertex_buffer_id: AshBufferUploadId::new(resolve_vertex_buffer_index),
+                    index_buffer_id: AshBufferUploadId::new(resolve_index_buffer_index),
                     index_count: resolve_indices.len() as u32,
                     render_order: render_order.saturating_add(10_000),
                     phase_order: phase_order.saturating_add(10_000),
@@ -10523,7 +10524,7 @@ mod tests {
         );
 
         let mut frame = valid_draw_validation_frame();
-        frame.pipelines[0].descriptor_set_index = 99;
+        frame.pipelines[0].descriptor_set_id = AshDescriptorSetId::new(99);
         assert_eq!(
             frame.validate(),
             Err(
@@ -10536,7 +10537,7 @@ mod tests {
         );
 
         let mut frame = valid_draw_validation_frame();
-        frame.draw_calls[0].descriptor_set_index = Some(99);
+        frame.draw_calls[0].descriptor_set_id = Some(AshDescriptorSetId::new(99));
         assert_eq!(
             frame.validate(),
             Err(
@@ -11048,7 +11049,7 @@ mod tests {
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(0),
                 pipeline_plan_index: 0,
-                descriptor_set_index: 0,
+                descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     pass: AshMtoonPass::Base,
                     render_order: 2000,
@@ -11135,7 +11136,7 @@ mod tests {
             pipelines: vec![AshGraphicsPipelinePlan {
                 material: MaterialRef(0),
                 pipeline_plan_index: 3,
-                descriptor_set_index: 0,
+                descriptor_set_id: AshDescriptorSetId::new(0),
                 key: AshPipelineKey {
                     pass: AshMtoonPass::Base,
                     render_order: 2000,
@@ -11170,9 +11171,9 @@ mod tests {
                 primitive_index: 7,
                 material: Some(MaterialRef(0)),
                 pipeline_plan_index: Some(3),
-                descriptor_set_index: Some(0),
-                vertex_buffer_index: 0,
-                index_buffer_index: 1,
+                descriptor_set_id: Some(AshDescriptorSetId::new(0)),
+                vertex_buffer_id: AshBufferUploadId::new(0),
+                index_buffer_id: AshBufferUploadId::new(1),
                 index_count: 1,
                 render_order: 2000,
                 phase_order: 2000,
@@ -11531,7 +11532,10 @@ mod tests {
         );
         assert_eq!(renderer_frame.buffers[0].count, 1);
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
-        assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+        assert_eq!(
+            renderer_frame.draw_calls[0].descriptor_set_id,
+            Some(AshDescriptorSetId::new(0))
+        );
 
         let manifest = renderer_frame.resource_manifest();
         assert_eq!(manifest.buffers.len(), renderer_frame.buffers.len());
@@ -12033,7 +12037,7 @@ mod tests {
         assert_eq!(renderer_frame.draw_calls.len(), 2);
         assert_eq!(renderer_frame.draw_calls[1].index_count, 6);
         let vertex_buffer =
-            &renderer_frame.buffers[renderer_frame.draw_calls[1].vertex_buffer_index];
+            &renderer_frame.buffers[renderer_frame.draw_calls[1].vertex_buffer_id.index()];
         let vertex = bytemuck::pod_read_unaligned::<AshVrmVertex>(
             &vertex_buffer.bytes[..std::mem::size_of::<AshVrmVertex>()],
         );
@@ -12131,9 +12135,15 @@ mod tests {
         assert_eq!(renderer_frame.draw_calls.len(), 2);
         assert_eq!(renderer_frame.pipelines.len(), 2);
         assert_eq!(renderer_frame.draw_calls[0].pipeline_plan_index, Some(0));
-        assert_eq!(renderer_frame.draw_calls[0].descriptor_set_index, Some(0));
+        assert_eq!(
+            renderer_frame.draw_calls[0].descriptor_set_id,
+            Some(AshDescriptorSetId::new(0))
+        );
         assert_eq!(renderer_frame.draw_calls[1].pipeline_plan_index, Some(1));
-        assert_eq!(renderer_frame.draw_calls[1].descriptor_set_index, Some(1));
+        assert_eq!(
+            renderer_frame.draw_calls[1].descriptor_set_id,
+            Some(AshDescriptorSetId::new(1))
+        );
         assert_eq!(
             renderer_frame.pipelines[1].key.cull_mode,
             vk::CullModeFlags::FRONT
@@ -12147,9 +12157,9 @@ mod tests {
             primitive_index: 7,
             material: Some(MaterialRef(0)),
             pipeline_plan_index: Some(99),
-            descriptor_set_index: Some(0),
-            vertex_buffer_index: 0,
-            index_buffer_index: 1,
+            descriptor_set_id: Some(AshDescriptorSetId::new(0)),
+            vertex_buffer_id: AshBufferUploadId::new(0),
+            index_buffer_id: AshBufferUploadId::new(1),
             index_count: 3,
             render_order: 2000,
             phase_order: 2000,
@@ -12477,7 +12487,7 @@ mod tests {
         let pipeline = AshGraphicsPipelinePlan {
             material: MaterialRef(3),
             pipeline_plan_index: 9,
-            descriptor_set_index: 2,
+            descriptor_set_id: AshDescriptorSetId::new(2),
             key: AshPipelineKey {
                 pass: AshMtoonPass::Base,
                 render_order: 2000,
@@ -12509,7 +12519,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.descriptor_set_index, 2);
+        assert_eq!(state.descriptor_set_id, AshDescriptorSetId::new(2));
         assert_eq!(state.vertex_binding.stride, 64);
         assert_eq!(state.vertex_attributes.len(), 1);
         assert_eq!(state.vertex_attributes[0].location, 3);
@@ -12559,7 +12569,7 @@ mod tests {
         let pipeline = AshGraphicsPipelinePlan {
             material: MaterialRef(3),
             pipeline_plan_index: 9,
-            descriptor_set_index: 1,
+            descriptor_set_id: AshDescriptorSetId::new(1),
             key: AshPipelineKey {
                 pass: AshMtoonPass::Base,
                 render_order: 2000,
@@ -12600,7 +12610,7 @@ mod tests {
         )
         .expect("valid descriptor-set layout index");
 
-        assert_eq!(plan.state.descriptor_set_index, 1);
+        assert_eq!(plan.state.descriptor_set_id, AshDescriptorSetId::new(1));
         assert_eq!(plan.layout, layouts[1]);
         plan.with_graphics_pipeline_create_info(|info| {
             assert_eq!(info.stage_count, 2);
@@ -12611,7 +12621,7 @@ mod tests {
         });
 
         let mut out_of_range = pipeline.clone();
-        out_of_range.descriptor_set_index = 2;
+        out_of_range.descriptor_set_id = AshDescriptorSetId::new(2);
         let error = ash_graphics_pipeline_create_info_plan(
             &out_of_range,
             vk::Extent2D {
