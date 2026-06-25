@@ -4,7 +4,7 @@
 //! plans and CPU-bakes VRM geometry, while the example owns the unsafe Vulkan
 //! instance/device/surface/swapchain edge. The default path materializes a full
 //! `AshRendererFrame` with WGSL/Naga MToon SPIR-V and presents directly to the
-//! swapchain; `--simple-preview` keeps the older CPU-projected mesh preview.
+//! swapchain; `--simple-preview` uses a descriptor-less CPU-projected debug mesh.
 
 use ash::khr::{surface, swapchain};
 use ash::{Entry, vk};
@@ -56,6 +56,11 @@ use vrm_adapter_ash::{
     ash_windowed_submit_plan,
 };
 
+const ASH_WINDOWED_SIMPLE_DEFAULT_VERTEX_SPIRV_PATH: &str =
+    "target/ash-windowed-simple-shaders/windowed_simple.vert.spv";
+const ASH_WINDOWED_SIMPLE_DEFAULT_FRAGMENT_SPIRV_PATH: &str =
+    "target/ash-windowed-simple-shaders/windowed_simple.frag.spv";
+
 #[derive(Clone, Debug, Parser)]
 #[command(about = "Open a real ash/Vulkan window and draw a VRM avatar")]
 struct Options {
@@ -83,7 +88,7 @@ struct Options {
     /// Initial window height.
     #[arg(long, default_value_t = 720)]
     height: u32,
-    /// Use the legacy CPU-projected simple mesh preview instead of full MToon swapchain rendering.
+    /// Use the descriptor-less CPU-projected simple mesh preview instead of full MToon swapchain rendering.
     #[arg(long)]
     simple_preview: bool,
     /// Vertex SPIR-V for the active viewer path.
@@ -453,9 +458,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     .validate()?;
     let avatar = WindowedAvatar::new(options)?;
+    let (vertex_spv, fragment_spv) = shader_paths_for_options(&avatar.options);
     let shaders = ShaderModules {
-        vertex: read_spirv_words(&avatar.options.vertex_spv, avatar.options.simple_preview)?,
-        fragment: read_spirv_words(&avatar.options.fragment_spv, avatar.options.simple_preview)?,
+        vertex: read_spirv_words(&vertex_spv, avatar.options.simple_preview)?,
+        fragment: read_spirv_words(&fragment_spv, avatar.options.simple_preview)?,
         vertex_entry: if avatar.options.simple_preview {
             "main".to_owned()
         } else {
@@ -482,6 +488,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+fn shader_paths_for_options(options: &Options) -> (PathBuf, PathBuf) {
+    if !options.simple_preview {
+        return (options.vertex_spv.clone(), options.fragment_spv.clone());
+    }
+    let default_mtoon_vertex = PathBuf::from(ASH_MTOON_WGSL_DEFAULT_VERTEX_SPIRV_PATH);
+    let default_mtoon_fragment = PathBuf::from(ASH_MTOON_WGSL_DEFAULT_FRAGMENT_SPIRV_PATH);
+    let vertex = if options.vertex_spv == default_mtoon_vertex {
+        PathBuf::from(ASH_WINDOWED_SIMPLE_DEFAULT_VERTEX_SPIRV_PATH)
+    } else {
+        options.vertex_spv.clone()
+    };
+    let fragment = if options.fragment_spv == default_mtoon_fragment {
+        PathBuf::from(ASH_WINDOWED_SIMPLE_DEFAULT_FRAGMENT_SPIRV_PATH)
+    } else {
+        options.fragment_spv.clone()
+    };
+    (vertex, fragment)
 }
 
 fn build_simple_mesh(

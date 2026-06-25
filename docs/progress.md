@@ -2,6 +2,15 @@
 
 ## 2026-06-25
 
+- Cleaned up the remaining Ash GLSL utility naming after the WGSL/Naga MToon
+  handoff became the only normal path. The descriptor-less windowed debug
+  shader compiler moved from `tools/ash/compile-ash-mtoon-base-shaders.rs` to
+  `tools/ash/compile-ash-glsl-shaders.rs`, `just ash-windowed-simple-shaders`
+  now emits `windowed_simple.vert.spv` / `windowed_simple.frag.spv`, and the
+  old `ash-mtoon-smoke-*` just aliases were removed rather than kept as
+  compatibility shims. `windowed_viewer --simple-preview` now resolves those
+  simple shader outputs by default instead of accidentally trying to use the
+  MToon WGSL SPIR-V defaults.
 - Routed the real Ash offscreen Vulkan readback materialization through
   `AshMtoonMaterializationPlan` as well. `unsafe_device_renderer` now derives
   descriptor-set layouts, descriptor-pool/allocation plans, sampler resources,

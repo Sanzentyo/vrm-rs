@@ -19,7 +19,7 @@ use std::{
 
 #[derive(Clone, Debug, Parser)]
 #[command(
-    name = "compile-ash-mtoon-base-shaders",
+    name = "compile-ash-glsl-shaders",
     about = "Compile source ash GLSL utility shaders to local SPIR-V files"
 )]
 struct Options {
@@ -51,8 +51,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     validate_source(&options.fragment)?;
     fs::create_dir_all(&options.out_dir)?;
     let shaders = CompiledShaders {
-        vertex_spv: options.out_dir.join("mtoon_base.vert.spv"),
-        fragment_spv: options.out_dir.join("mtoon_base.frag.spv"),
+        vertex_spv: options.out_dir.join("windowed_simple.vert.spv"),
+        fragment_spv: options.out_dir.join("windowed_simple.frag.spv"),
     };
     compile_shader(
         &options.glslang,
@@ -69,7 +69,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     validate_spirv(&shaders.vertex_spv)?;
     validate_spirv(&shaders.fragment_spv)?;
     println!(
-        "compiled ash MToon base shaders: {} {}",
+        "compiled ash GLSL utility shaders: {} {}",
         display_path(&shaders.vertex_spv),
         display_path(&shaders.fragment_spv)
     );

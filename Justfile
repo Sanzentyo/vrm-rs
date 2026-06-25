@@ -87,7 +87,7 @@ ash-mtoon-base-readback avatar=".external-fixtures/official/Seed-san.vrm" out_di
 
 # Compile the source-controlled ash windowed viewer GLSL shaders to local SPIR-V artifacts.
 ash-windowed-simple-shaders out_dir="target/ash-windowed-simple-shaders":
-    cargo +nightly -Zscript tools/ash/compile-ash-mtoon-base-shaders.rs --vertex crates/vrm-adapter-ash/shaders/windowed_simple.vert.glsl --fragment crates/vrm-adapter-ash/shaders/windowed_simple.frag.glsl --out-dir "{{ out_dir }}"
+    cargo +nightly -Zscript tools/ash/compile-ash-glsl-shaders.rs --vertex crates/vrm-adapter-ash/shaders/windowed_simple.vert.glsl --fragment crates/vrm-adapter-ash/shaders/windowed_simple.frag.glsl --out-dir "{{ out_dir }}"
 
 # Probe whether naga can compile the shared WGSL MToon reference into Vulkan SPIR-V.
 ash-mtoon-naga-probe out_dir="target/ash-mtoon-naga-probe":
@@ -113,13 +113,6 @@ ash-windowed-viewer-cache-smoke avatar=".external-fixtures/official/Seed-san.vrm
 ash-windowed-viewer-resize-smoke avatar=".external-fixtures/official/Seed-san.vrm" animation=".external-fixtures/official/idle_loop.vrma" shader_dir="target/ash-mtoon-wgsl-base-shaders" frames="36" resize_after="8" resize_width="960" resize_height="540" frames_in_flight="2":
     just ash-mtoon-wgsl-base-shaders "{{ shader_dir }}"
     cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --avatar "{{ avatar }}" --animation "{{ animation }}" --vertex-spv "{{ shader_dir }}/mtoon_base.wgsl.vert.spv" --fragment-spv "{{ shader_dir }}/mtoon_base.wgsl.frag.spv" --vertex-entry vs_main --fragment-entry fs_main --max-frames "{{ frames }}" --frames-in-flight "{{ frames_in_flight }}" --resize-after-frames "{{ resize_after }}" --resize-width "{{ resize_width }}" --resize-height "{{ resize_height }}" --print-cache-stats --require-cache-hits --require-resize-recreate
-
-# Backward-compatible aliases for earlier Ash shader handoff notes.
-ash-mtoon-smoke-shaders out_dir="target/ash-mtoon-wgsl-base-shaders":
-    just ash-mtoon-wgsl-base-shaders "{{ out_dir }}"
-
-ash-mtoon-smoke-readback avatar=".external-fixtures/official/Seed-san.vrm" out_dir=".external-fixtures/ash-readback-smoke" artifact="Seed-san.external-base" width="32" height="32" shader_dir="target/ash-mtoon-wgsl-base-shaders":
-    just ash-mtoon-base-readback "{{ avatar }}" "{{ out_dir }}" "{{ artifact }}" "{{ width }}" "{{ height }}" "{{ shader_dir }}"
 
 # Stable render-parity gates. Existing recipes default to diagnostic mode; override `run_mode` to change lanes.
 

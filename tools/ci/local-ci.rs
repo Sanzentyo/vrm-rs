@@ -1026,7 +1026,7 @@ fn run_render_tool_self_tests() -> Result<(), String> {
 }
 
 const RENDER_TOOL_HELP_SCRIPTS: &[&str] = &[
-    "tools/ash/compile-ash-mtoon-base-shaders.rs",
+    "tools/ash/compile-ash-glsl-shaders.rs",
     "tools/ash/compile-ash-mtoon-wgsl-shaders.rs",
     "tools/ash/compile-wgsl-to-spirv.rs",
     "tools/render-parity/apply-owner-sample-correction.rs",
