@@ -2,6 +2,14 @@
 
 ## 2026-06-25
 
+- Tightened the Ash frame-slot dynamic resource contract after reviewing the
+  external Ash adapter audit. `AshFrameSlotDynamicResourcePlan` now exposes
+  `resources_for_slot` and `total_dynamic_descriptor_bindings`, and the resource
+  manifest test asserts that per-slot buffers, uniforms, descriptor sets, and
+  descriptor bindings are duplicated for `frames-in-flight=2` while persistent
+  textures, samplers, descriptor-set layouts, and pipelines remain outside the
+  slot ring. This keeps the P0 shared-dynamic-resource hazard guarded by a typed
+  library plan instead of only by the windowed example's cache layout.
 - Kept the Ash windowed MToon pipeline cache alive across compatible swapchain
   recreation. `recreate_swapchain` still waits for idle and drops all
   frame-slot dynamic buffers, uniforms, descriptor pools/sets, framebuffers,

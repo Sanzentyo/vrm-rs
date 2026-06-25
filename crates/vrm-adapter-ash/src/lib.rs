@@ -2989,6 +2989,15 @@ impl AshFrameSlotDynamicResourcePlan {
         self.slots.len()
     }
 
+    pub fn resources_for_slot(
+        &self,
+        frame_slot: AshFrameSlot,
+    ) -> Option<&AshFrameSlotDynamicResources> {
+        self.slots
+            .iter()
+            .find(|resources| resources.frame_slot == frame_slot)
+    }
+
     pub fn total_dynamic_buffer_handles(&self) -> usize {
         self.slots.iter().map(|slot| slot.buffers).sum()
     }
@@ -2999,6 +3008,10 @@ impl AshFrameSlotDynamicResourcePlan {
 
     pub fn total_dynamic_descriptor_sets(&self) -> usize {
         self.slots.iter().map(|slot| slot.descriptor_sets).sum()
+    }
+
+    pub fn total_dynamic_descriptor_bindings(&self) -> usize {
+        self.slots.iter().map(|slot| slot.descriptor_bindings).sum()
     }
 }
 
@@ -11600,6 +11613,12 @@ mod tests {
 
         let sync_plan = AshWindowedFrameSyncPlan::new(2, 3).unwrap();
         let frame_slot_plan = ash_frame_slot_dynamic_resource_plan(sync_plan, &manifest).unwrap();
+        let dynamic_descriptor_bindings = manifest
+            .descriptor_sets
+            .iter()
+            .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+            .map(|resource| resource.bindings.len())
+            .sum::<usize>();
         assert_eq!(frame_slot_plan.slot_count(), 2);
         assert_eq!(
             frame_slot_plan.persistent_handle_resources,
@@ -11621,6 +11640,22 @@ mod tests {
             frame_slot_plan.total_dynamic_descriptor_sets(),
             manifest.descriptor_sets.len() * 2
         );
+        assert_eq!(
+            frame_slot_plan.total_dynamic_descriptor_bindings(),
+            dynamic_descriptor_bindings * 2
+        );
+        assert_eq!(
+            frame_slot_plan
+                .resources_for_slot(AshFrameSlot::new(1, 2).unwrap())
+                .map(|slot| slot.frame_slot.index()),
+            Some(1)
+        );
+        assert_eq!(
+            frame_slot_plan
+                .resources_for_slot(AshFrameSlot::new(0, 2).unwrap())
+                .map(|slot| slot.descriptor_bindings),
+            Some(dynamic_descriptor_bindings)
+        );
         assert!(
             frame_slot_plan
                 .slots
@@ -11631,6 +11666,7 @@ mod tests {
                         && slot.buffers == manifest.buffers.len()
                         && slot.uniforms == manifest.uniforms.len()
                         && slot.descriptor_sets == manifest.descriptor_sets.len()
+                        && slot.descriptor_bindings == dynamic_descriptor_bindings
                         && slot.descriptor_pool == ash_descriptor_pool_plan_from_manifest(&manifest)
                 })
         );
