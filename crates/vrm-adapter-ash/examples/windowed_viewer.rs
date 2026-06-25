@@ -40,13 +40,13 @@ use vrm_adapter_ash::{
     AshRendererFrame, AshResolvedCommand, AshSamplerPlan, AshSwapchainAcquireStatus,
     AshSwapchainImageSlot, AshSwapchainPresentStatus, AshVrmFramePlanOptions, AshVrmFramePlanner,
     AshVrmPrimitive, AshVrmVertex, AshWindowedFrameAcquirePlan, AshWindowedFrameSyncHandles,
-    AshWindowedFrameSyncPlan, AshWindowedResizeValidation, AshWindowedRunValidation,
-    ash_2d_image_resource_plan, ash_2d_image_view_plan, ash_binary_semaphore_plan,
-    ash_classify_swapchain_acquire, ash_classify_swapchain_present, ash_depth_attachment_plan,
-    ash_empty_pipeline_layout_plan, ash_fallback_texture_mip_level, ash_fallback_texture_rgba,
-    ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan,
-    ash_host_buffer_plan, ash_host_visible_buffer_plan, ash_memory_allocation_plan,
-    ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
+    AshWindowedFrameSyncPlan, AshWindowedFrameSyncResourcePlan, AshWindowedResizeValidation,
+    AshWindowedRunValidation, ash_2d_image_resource_plan, ash_2d_image_view_plan,
+    ash_binary_semaphore_plan, ash_classify_swapchain_acquire, ash_classify_swapchain_present,
+    ash_depth_attachment_plan, ash_empty_pipeline_layout_plan, ash_fallback_texture_mip_level,
+    ash_fallback_texture_rgba, ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan,
+    ash_graphics_shader_stages_plan, ash_host_buffer_plan, ash_host_visible_buffer_plan,
+    ash_memory_allocation_plan, ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
     ash_one_time_command_buffer_begin_plan, ash_position_color_pipeline_state_plan,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
@@ -908,8 +908,11 @@ impl MtoonWindowedAshRenderer {
         )?;
         let sync_plan =
             AshWindowedFrameSyncPlan::new(frames_in_flight, swapchain.image_views.len())?;
-        let frame_sync = create_mtoon_frame_sync(&device, sync_plan)?;
-        let images_in_flight = vec![vk::Fence::null(); sync_plan.image_fence_slots()];
+        let sync_resource_plan = sync_plan
+            .frame_sync_resource_plan()
+            .map_err(std::io::Error::other)?;
+        let frame_sync = create_mtoon_frame_sync(&device, &sync_resource_plan)?;
+        let images_in_flight = sync_resource_plan.initial_image_fences();
         Ok(Self {
             _entry: entry,
             instance,
@@ -1075,7 +1078,10 @@ impl MtoonWindowedAshRenderer {
         self.swapchain = new_swapchain;
         let sync_plan =
             AshWindowedFrameSyncPlan::new(self.frame_sync.len(), self.swapchain.image_views.len())?;
-        self.images_in_flight = vec![vk::Fence::null(); sync_plan.image_fence_slots()];
+        self.images_in_flight = sync_plan
+            .frame_sync_resource_plan()
+            .map_err(std::io::Error::other)?
+            .initial_image_fences();
         Ok(())
     }
 
@@ -2885,11 +2891,8 @@ fn create_shader_module(
 
 fn create_mtoon_frame_sync(
     device: &ash::Device,
-    plan: AshWindowedFrameSyncPlan,
+    resource_plan: &AshWindowedFrameSyncResourcePlan,
 ) -> Result<Vec<MtoonFrameSync>, vk::Result> {
-    let resource_plan = plan
-        .frame_sync_resource_plan()
-        .map_err(|_| vk::Result::ERROR_INITIALIZATION_FAILED)?;
     let mut sync_objects = Vec::with_capacity(resource_plan.fence_count());
     for slot in &resource_plan.frame_slots {
         let image_available_info = slot.image_available_semaphore.semaphore_create_info();

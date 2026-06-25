@@ -2,6 +2,12 @@
 
 ## 2026-06-25
 
+- Replaced the last raw swapchain image-fence count handoff in the windowed Ash
+  sync resource plan with typed `AshWindowedImageFenceSlotPlan` entries. The
+  windowed viewer now initializes its `images_in_flight` fence table from
+  `AshWindowedFrameSyncResourcePlan::initial_image_fences`, so both frame sync
+  objects and swapchain-image fence slots are described by crate-owned data
+  before Vulkan handle ownership begins.
 - Promoted the remaining windowed Ash frame-sync object policy into crate-owned
   data. `AshWindowedFrameSyncPlan::frame_sync_resource_plan` now returns one
   `AshWindowedFrameSyncSlotResourcePlan` per `AshFrameSlot`, with the two binary

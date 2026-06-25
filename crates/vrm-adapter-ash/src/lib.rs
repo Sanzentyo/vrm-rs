@@ -758,10 +758,6 @@ impl AshWindowedFrameSyncPlan {
         self.frames_in_flight
     }
 
-    pub const fn image_fence_slots(self) -> usize {
-        self.swapchain_images
-    }
-
     pub fn frame_sync_resource_plan(self) -> Result<AshWindowedFrameSyncResourcePlan, String> {
         Self::new(self.frames_in_flight, self.swapchain_images)?;
         let frame_slots = (0..self.frames_in_flight)
@@ -774,9 +770,17 @@ impl AshWindowedFrameSyncPlan {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
+        let image_fence_slots = (0..self.swapchain_images)
+            .map(|index| {
+                Ok(AshWindowedImageFenceSlotPlan {
+                    swapchain_image_slot: AshSwapchainImageSlot::new(index, self.swapchain_images)?,
+                    initial_fence: vk::Fence::null(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         Ok(AshWindowedFrameSyncResourcePlan {
             frame_slots,
-            image_fence_slots: self.swapchain_images,
+            image_fence_slots,
         })
     }
 
@@ -837,7 +841,7 @@ impl AshWindowedFrameSyncPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshWindowedFrameSyncResourcePlan {
     pub frame_slots: Vec<AshWindowedFrameSyncSlotResourcePlan>,
-    pub image_fence_slots: usize,
+    pub image_fence_slots: Vec<AshWindowedImageFenceSlotPlan>,
 }
 
 impl AshWindowedFrameSyncResourcePlan {
@@ -848,6 +852,17 @@ impl AshWindowedFrameSyncResourcePlan {
     pub fn fence_count(&self) -> usize {
         self.frame_slots.len()
     }
+
+    pub fn image_fence_slot_count(&self) -> usize {
+        self.image_fence_slots.len()
+    }
+
+    pub fn initial_image_fences(&self) -> Vec<vk::Fence> {
+        self.image_fence_slots
+            .iter()
+            .map(|slot| slot.initial_fence)
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -856,6 +871,12 @@ pub struct AshWindowedFrameSyncSlotResourcePlan {
     pub image_available_semaphore: AshSemaphorePlan,
     pub render_finished_semaphore: AshSemaphorePlan,
     pub in_flight_fence: AshFencePlan,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AshWindowedImageFenceSlotPlan {
+    pub swapchain_image_slot: AshSwapchainImageSlot,
+    pub initial_fence: vk::Fence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9590,15 +9611,24 @@ mod tests {
 
         assert_eq!(plan.semaphore_count(), 4);
         assert_eq!(plan.fence_count(), 2);
-        assert_eq!(plan.image_fence_slots(), 3);
         assert_eq!(plan.frame_slot(1).map(AshFrameSlot::index), Ok(1));
         assert_eq!(plan.next_frame_slot(0).map(AshFrameSlot::index), Ok(1));
         assert_eq!(plan.next_frame_slot(1).map(AshFrameSlot::index), Ok(0));
         let resource_plan = plan.frame_sync_resource_plan().unwrap();
         assert_eq!(resource_plan.semaphore_count(), 4);
         assert_eq!(resource_plan.fence_count(), 2);
-        assert_eq!(resource_plan.image_fence_slots, 3);
+        assert_eq!(resource_plan.image_fence_slot_count(), 3);
         assert_eq!(resource_plan.frame_slots[0].frame_slot.index(), 0);
+        assert_eq!(
+            resource_plan.image_fence_slots[2]
+                .swapchain_image_slot
+                .index(),
+            2
+        );
+        assert_eq!(
+            resource_plan.initial_image_fences(),
+            vec![vk::Fence::null(), vk::Fence::null(), vk::Fence::null()]
+        );
         assert_eq!(
             resource_plan.frame_slots[0].in_flight_fence.flags,
             vk::FenceCreateFlags::SIGNALED
