@@ -7,7 +7,7 @@ edition = "2024"
 clap = { version = "4.6.1", features = ["derive"] }
 ---
 
-//! Compile the source-controlled ash MToon base GLSL shaders to local SPIR-V artifacts.
+//! Compile source-controlled ash GLSL utility shaders to local SPIR-V artifacts.
 
 use clap::Parser;
 use std::{
@@ -20,14 +20,14 @@ use std::{
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "compile-ash-mtoon-base-shaders",
-    about = "Compile source ash MToon base GLSL shaders to local SPIR-V files"
+    about = "Compile source ash GLSL utility shaders to local SPIR-V files"
 )]
 struct Options {
-    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl")]
+    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/windowed_simple.vert.glsl")]
     vertex: PathBuf,
-    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl")]
+    #[arg(long, default_value = "crates/vrm-adapter-ash/shaders/windowed_simple.frag.glsl")]
     fragment: PathBuf,
-    #[arg(long, default_value = "target/ash-mtoon-base-shaders")]
+    #[arg(long, default_value = "target/ash-windowed-simple-shaders")]
     out_dir: PathBuf,
     #[arg(long, default_value = "glslangValidator")]
     glslang: PathBuf,

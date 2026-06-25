@@ -122,7 +122,7 @@ recipes are convenience entry points. Use these first:
   is awkward.
 - `just render-parity-acceptance-runner-preflight <expected-head>`: check a
   prepared external runner checkout before the long capture starts. It verifies
-  Rust nightly, `just`, Node/npm, `glslangValidator`, the exact repo HEAD,
+  Rust nightly, `just`, Node/npm, the exact repo HEAD,
   clean tracked worktree, pinned three-vrm checkout/build output, the six
   acceptance fixtures, and Ash shader compilation.
 - `just render-parity-acceptance-environments`: validate acceptance-repeat
@@ -531,7 +531,7 @@ RGBA and direct `.imqraw` report writers used by wgpu and Bevy, and recorded in
 `review-manifest.json` as a `comparisons[]` entry. Add
 `--render-ash-visual-gate` to apply the same selected-PSNR, max-delta, and
 alpha-consistency gate to Ash.
-The local runner compiles the source-controlled Ash MToon GLSL handoff into
+The local runner compiles the source-controlled Ash MToon WGSL handoff into
 SPIR-V under `target/render-parity-ash-mtoon-shaders` and passes it through
 `unsafe_device_renderer --vertex-spv --fragment-spv`, so the review path no
 longer compares the built-in color-smoke shader. The same runner also forwards
@@ -558,7 +558,7 @@ Ash now also accepts the same normal-map diagnostic axis as wgpu/Bevy:
 `--normal-map-mode generated-tangents|derivative|view-derivative`,
 `--normal-map-scale`, and `--disable-normal-maps` are forwarded through the
 local render-parity runner into the release-built Vulkan readback example. The
-GLSL handoff shader implements the derivative and view-derivative fallback path
+WGSL handoff shader implements the derivative and view-derivative fallback path
 using `dFdx`/`dFdy` and the material-extra view-derivative flag. On Seed-san the
 2026-06-19 diagnostic runs
 `target/render-parity-ash-review-128-normal-derivative` and
@@ -603,15 +603,15 @@ just ash-mtoon-base-readback
 
 This compiles `crates/vrm-adapter-ash/shaders/mtoon_base.wgsl` with naga,
 writes local Vulkan SPIR-V under `target/`, feeds those modules into
-`unsafe_device_renderer --descriptor-binding-model separate-image-sampler
---vertex-spv --fragment-spv --vertex-entry vs_main --fragment-entry fs_main`,
+`unsafe_device_renderer --vertex-spv --fragment-spv --vertex-entry vs_main
+--fragment-entry fs_main`,
 and verifies the direct `.imqraw` bundle against the `.rgba.json` readback
 artifact. The shader consumes the shared MToon uniform ABI, WGSL-style separate
 texture/sampler bindings, normal/tangent vertex attributes, UV animation, the
 main texture slot, and a frame-level scene uniform for view-projection, light
-direction/color, and MToon lighting accumulation. The older GLSL shader handoff
-is still available through `just ash-mtoon-glsl-base-readback` for explicit
-legacy combined-image-sampler checks. The Ash renderer frame still emits the
+direction/color, and MToon lighting accumulation. The older MToon GLSL shader
+handoff and combined-image-sampler check have been removed. The Ash renderer
+frame still emits the
 same packed material-extra and UV-transform uniform surfaces used by the wgpu
 and Bevy captures, so the next WGSL expansion can move transformed shade,
 shading-shift, normal, matcap, rim, emissive, occlusion, and UV-animation-mask

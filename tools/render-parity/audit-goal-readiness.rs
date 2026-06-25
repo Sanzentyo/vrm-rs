@@ -314,8 +314,7 @@ fn check_wgpu_ash_material_examples() -> Check {
         Path::new("examples/wgpu_mtoon_pipeline_materialization.rs"),
         Path::new("examples/ash_mtoon_pipeline_materialization.rs"),
         Path::new("examples/mtoon_renderer_skeletons.rs"),
-        Path::new("crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl"),
-        Path::new("crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl"),
+        Path::new("crates/vrm-adapter-ash/shaders/mtoon_base.wgsl"),
     ];
     if let Some(path) = required_paths.iter().find(|path| !path.exists()) {
         return missing(
@@ -788,8 +787,7 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         "crates/vrm-adapter-wgpu/examples/vrma_viewer.rs",
         "crates/vrm-adapter-wgpu/src/lib.rs",
         "crates/vrm-adapter-ash/src/lib.rs",
-        "crates/vrm-adapter-ash/shaders/mtoon_base.vert.glsl",
-        "crates/vrm-adapter-ash/shaders/mtoon_base.frag.glsl",
+        "crates/vrm-adapter-ash/shaders/mtoon_base.wgsl",
         "docs/vrma-fixture-discovery.md",
         "docs/render-parity.md",
     ] {

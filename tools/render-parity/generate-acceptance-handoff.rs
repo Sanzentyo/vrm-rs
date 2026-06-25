@@ -151,7 +151,7 @@ fn handoff_markdown(handoff: &Handoff) -> String {
          ## Runner Requirements\n\n\
          - Rust nightly with `cargo +nightly -Zscript`.\n\
          - `just`, Node.js, npm, Playwright browser support, and a Vulkan-capable environment for the Ash readback path.\n\
-         - `glslangValidator` on `PATH` for the source-controlled Ash MToon GLSL handoff.\n\
+         - Ash MToon shaders are compiled from the source-controlled WGSL ABI through the Rust/Naga tool; no legacy GLSL handoff is required.\n\
          - Enough time to run three repeated six-fixture acceptance captures.\n\n\
          ## Prepare The Runner Checkout\n\n\
          ```powershell\n{preparation}```\n\n\

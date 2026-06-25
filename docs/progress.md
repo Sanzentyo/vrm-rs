@@ -2,6 +2,25 @@
 
 ## 2026-06-25
 
+- Removed the legacy Ash MToon combined-image-sampler/GLSL handoff from the
+  normal adapter surface. `AshVrmFramePlanOptions` no longer exposes
+  `--descriptor-binding-model`, `AshRenderOptions` no longer carries a binding
+  model switch, and MToon descriptor planning always emits the WGSL/Naga
+  separate sampled-image/sampler ABI. The old `mtoon_base.vert.glsl` /
+  `mtoon_base.frag.glsl` files and `just ash-mtoon-glsl-base-readback` recipe
+  were removed; GLSL remains only for the descriptor-less simple-preview debug
+  shaders. The acceptance preflight and handoff docs no longer require
+  `glslangValidator` for Ash MToon.
+- Verified the fixed WGSL ABI path with `cargo fmt --all -- --check`,
+  `cargo test -p vrm-adapter-ash --lib`,
+  `cargo clippy -p vrm-adapter-ash --all-targets -- -D warnings`,
+  `cargo run --release -p vrm-adapter-ash --example unsafe_device_renderer --
+  --help`, `cargo +nightly -Zscript tools/ash/compile-ash-mtoon-wgsl-shaders.rs
+  --out-dir target/ash-mtoon-wgsl-base-shaders --print-reflection`, `just
+  ash-renderer-integration`, `just ci-ash-windowed`, and `just
+  ash-mtoon-base-readback`. The readback recipe now invokes
+  `unsafe_device_renderer` without `--descriptor-binding-model` and verifies
+  the direct `.imqraw` artifact against the `.rgba.json` output.
 - Wired the real Ash MToon windowed swapchain path through
   `AshMtoonMaterializationPlan`. `windowed_viewer` now builds one
   `ash_mtoon_materialization_plan_with_options` per renderer frame and consumes

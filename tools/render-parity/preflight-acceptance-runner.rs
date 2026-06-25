@@ -106,11 +106,6 @@ fn command_checks() -> Vec<Check> {
         ("just", "just", &["--version"][..]),
         ("node", "node", &["--version"][..]),
         ("npm", npm_program(), &["--version"][..]),
-        (
-            "glslang_validator",
-            "glslangValidator",
-            &["--version"][..],
-        ),
     ]
     .into_iter()
     .map(|(name, program, args)| check_command(name, program, args))

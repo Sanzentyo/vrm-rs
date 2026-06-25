@@ -201,7 +201,6 @@ impl WindowedAvatar {
                 disable_normal_maps: frame_options.disable_normal_maps,
                 normal_map_mode: frame_options.normal_map_mode,
                 normal_map_scale: frame_options.normal_map_scale,
-                descriptor_binding_model: frame_options.descriptor_binding_model,
             },
         )?;
         ash_renderer_frame_from_plan_with_owner_sample_selection(&plan, None)

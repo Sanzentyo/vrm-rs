@@ -1892,8 +1892,6 @@ fn capture_ash_readback(
         .arg(options.render_mtoon_light_accumulation.as_cli_value())
         .arg("--diagnostic-render")
         .arg(options.render_diagnostic_mode.as_cli_value())
-        .arg("--descriptor-binding-model")
-        .arg("separate-image-sampler")
         .arg("--clear-alpha")
         .arg(render_clear_alpha(options).to_string())
         .arg("--out")
