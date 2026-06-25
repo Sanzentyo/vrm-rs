@@ -31,9 +31,9 @@ Error: unsupported metric input: unknown sample domain `rgb-visible`
 
 Until an `imq` revision exposes those domains and threshold gates in the actual
 CLI/crate, `tools/render-parity/compare-imqraw.rs` remains the authoritative
-VRM-specific direct-raw gate. `compare-psnr.mjs` remains only a diagnostic
-cross-check over `.rgba.json` artifacts, and the public `imq` CLI remains an
-independent raw-buffer cross-check for generic color/all metrics.
+VRM-specific direct-raw gate. The previous JavaScript `.rgba.json` comparator is
+retired and is not a fallback or diagnostic mode. The public `imq` CLI remains
+an independent raw-buffer cross-check for generic color/all metrics only.
 
 The repository-local direct-raw comparator reports `mae` beside `mse`, `psnr`,
 `maxChannelDelta`, and `maxPixelDelta` for every metric domain. It also includes
@@ -44,9 +44,10 @@ material-color comparison.
 ## Current Comparator Role
 
 `tools/render-parity/compare-imqraw.rs` currently compares two direct
-single-image `.imqraw` artifacts and emits the same report shape as the older
-`.rgba.json` comparator. `tools/render-parity/compare-psnr.mjs` still compares
-two `.rgba.json` diagnostic artifacts:
+single-image `.imqraw` artifacts and emits the versioned
+`vrm-rs.render-parity.imqraw-comparison` report contract. `.rgba.json`
+artifacts remain for visual review, diff/PNG generation, and byte-consistency
+verification only:
 
 ```json
 {
@@ -211,10 +212,10 @@ The final render parity path should avoid `.rgba.json` for numeric comparison:
     decimal JSON conversion.
   - Current status: `tools/render-parity/compare-imqraw.rs` already compares
     direct single-image renderer `.imqraw` bundles and emits
-    `.imqraw-rust.json` reports with the same local VRM domains as
-    `compare-psnr.mjs`. The main pass/fail summary now consumes those
-    `.imqraw-rust.json` reports. Public `imq` still needs to expose those
-    domains and thresholds directly before the local comparator can be retired.
+    `.imqraw-rust.json` reports with the current local VRM domains. The main
+    pass/fail summary consumes those `.imqraw-rust.json` reports. Public `imq`
+    still needs to expose those domains and thresholds directly before the local
+    Rust comparator can be retired.
 
 PNG and HTML artifacts should remain review artifacts only. Numeric parity
 should operate on raw RGBA8 data.
@@ -232,9 +233,9 @@ The structured report should include:
 - Thresholds.
 - Pass/fail status.
 
-The field names do not need to be byte-for-byte compatible with
-`compare-psnr.mjs`, but `tools/ci/local-ci.rs` should be able to consume the
-report without lossy text parsing.
+The report is intentionally not compatible with the retired JavaScript report
+shape. `tools/ci/local-ci.rs` should consume the structured report without lossy
+text parsing.
 
 ## Priority
 
@@ -243,8 +244,7 @@ report without lossy text parsing.
 3. Add selected-metric threshold gates.
 4. Add `rgb-interior1px` and `rgb-visible-interior1px`.
 5. Add `rgb-nonblack` and `rgb-nonblack-interior1px`.
-6. Switch local render-parity numeric reports to direct renderer `imqraw`
-   inputs after the installed `imq` CLI supports the required VRM metric
-   domains and gates.
-7. Retire `compare-psnr.mjs` after render-parity recipes no longer depend on
-   metrics that only exist in the local comparator.
+6. Keep local render-parity numeric reports on direct renderer `imqraw` inputs.
+7. Replace `tools/render-parity/compare-imqraw.rs` with the public `imq` CLI in
+   one change after the installed CLI supports every required VRM metric domain,
+   diagnostic, and gate. Do not add a fallback, wrapper, alias, or dual mode.

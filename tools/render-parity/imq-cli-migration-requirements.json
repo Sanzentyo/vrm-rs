@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "status": "blocked",
+  "currentComparator": {
+    "implementation": "tools/render-parity/compare-imqraw.rs",
+    "input": "direct-imqraw",
+    "reportSchema": {
+      "name": "vrm-rs.render-parity.imqraw-comparison",
+      "version": 1
+    }
+  },
+  "targetComparator": {
+    "implementation": "public-imq-cli",
+    "input": "direct-imqraw"
+  },
+  "cutoverPolicy": {
+    "replaceCurrentComparatorInOneChange": true,
+    "allowLegacyJsComparator": false,
+    "allowFallbackComparator": false,
+    "allowCompatibilityWrapper": false,
+    "allowTransitionalMode": false,
+    "rgbaJsonRoles": [
+      "visual-review",
+      "debug",
+      "imqraw-consistency-verification"
+    ]
+  },
+  "requiredCapabilities": [
+    {
+      "id": "direct-imqraw-input",
+      "required": true,
+      "requirements": {
+        "pixelFormat": "rgba8",
+        "recordSelection": "index",
+        "rejectDimensionMismatch": true,
+        "rejectUnsupportedPixelFormat": true
+      }
+    },
+    {
+      "id": "vrm-metric-domains",
+      "required": true,
+      "domains": [
+        "rgba",
+        "rgb-all",
+        "rgb-opaque",
+        "rgb-visible",
+        "rgb-nonblack",
+        "rgb-interior1px",
+        "rgb-visible-interior1px",
+        "rgb-nonblack-interior1px",
+        "rgb-shared-nonblack-interior1px",
+        "rgb-shared-nonblack-interior2px",
+        "rgb-shared-nonblack-interior3px",
+        "rgb-shared-nonblack-flat32-interior1px",
+        "rgb-shared-nonblack-gradient-interior1px"
+      ],
+      "perDomainFields": [
+        "pixels",
+        "channels",
+        "mse",
+        "mae",
+        "psnr",
+        "maxChannelDelta",
+        "maxPixelDelta"
+      ]
+    },
+    {
+      "id": "alpha-diagnostics",
+      "required": true,
+      "fields": [
+        "expected.transparent",
+        "expected.opaque",
+        "expected.partial",
+        "actual.transparent",
+        "actual.opaque",
+        "actual.partial",
+        "mismatches",
+        "maxDelta",
+        "mismatchesBeyondOne"
+      ]
+    },
+    {
+      "id": "changed-pixel-diagnostics",
+      "required": true,
+      "highDeltaThresholds": [32, 64, 96, 128],
+      "requiredClasses": [
+        "rgbaChanged",
+        "rgbChanged",
+        "alphaChanged",
+        "expectedOnlyRgb",
+        "actualOnlyRgb",
+        "sharedNonblackRgbChanged",
+        "sharedNonblackInterior1pxRgbChanged",
+        "sharedNonblackInterior2pxRgbChanged",
+        "sharedNonblackInterior3pxRgbChanged",
+        "sharedNonblackFlat32Interior1pxRgbChanged",
+        "sharedNonblackGradientInterior1pxRgbChanged"
+      ]
+    },
+    {
+      "id": "selected-metric-gates",
+      "required": true,
+      "options": [
+        "selected-metric",
+        "fail-under",
+        "max-selected-channel-delta",
+        "max-alpha-delta"
+      ],
+      "nonPassingExitStatusRequired": true
+    },
+    {
+      "id": "structured-json-report",
+      "required": true,
+      "requiredFields": [
+        "schema",
+        "comparator",
+        "expected",
+        "actual",
+        "width",
+        "height",
+        "channels",
+        "sourceFormat",
+        "selectedMetric",
+        "alpha",
+        "changedPixels",
+        "pass",
+        "thresholds"
+      ],
+      "sourceFormatValue": "imqraw"
+    },
+    {
+      "id": "deterministic-rgba8-semantics",
+      "required": true,
+      "requirements": {
+        "origin": "top-left",
+        "channelOrder": "rgba",
+        "channelType": "u8",
+        "noPngRoundTrip": true,
+        "noRgbaJsonNumericInput": true
+      }
+    }
+  ],
+  "requiredValidationCommands": [
+    "cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs --help",
+    "cargo +nightly -Zscript tools/render-parity/verify-imqraw-rgba.rs --help",
+    "just render-parity-samples-ash-gated",
+    "just render-parity-acceptance-repeat",
+    "just render-parity-goal-readiness"
+  ]
+}

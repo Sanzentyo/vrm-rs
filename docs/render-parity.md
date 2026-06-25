@@ -105,7 +105,7 @@ recipes are convenience entry points. Use these first:
   `.external-fixtures/render-parity-acceptance-handoff/handoff.{md,json}` for
   an external GPU/driver runner. The handoff records the exact vrm-rs HEAD,
   repository URL, expected three-vrm commit, fixture-preparation command,
-  preflight command, two-phase capture/finalize runner commands, the legacy
+  preflight command, two-phase capture/finalize runner commands, the strict
   one-command runner command, and final returned-bundle intake command.
 - `just render-parity-acceptance-runner-kit`: copy the current handoff into a
   small external-only kit under
@@ -455,8 +455,8 @@ runner bundle can be imported with
   readback checksum metadata after that explicit diagnostic correction.
 - `just imqraw-compare`, `just imqraw-deltas`, and `just imqraw-verify`:
   direct raw-buffer comparisons. These are the preferred numeric path; the
-  legacy `.psnr.json` report is retained as a diagnostic cross-check over
-  `.rgba.json` artifacts.
+  repository does not retain a JavaScript RGBA comparator or `.psnr.json`
+  fallback.
 
 When adding a new source-like render diagnostic generator or analyzer, also add
 its `--help` smoke to `RENDER_TOOL_HELP_SCRIPTS` in `tools/ci/local-ci.rs` so
@@ -633,8 +633,8 @@ The current public
 needed by this repository, so the local runner uses the Rust comparator below
 as the authoritative direct-raw numeric gate.
 
-For direct renderer raw-buffer checks with the same VRM-specific metric domains
-as `compare-psnr.mjs`, use the Rust imqraw comparator:
+For direct renderer raw-buffer checks with the current VRM-specific metric
+domains, use the Rust imqraw comparator:
 
 ```powershell
 cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs `
@@ -644,11 +644,11 @@ cargo +nightly -Zscript tools/render-parity/compare-imqraw.rs `
   --out .external-fixtures/render-parity/reports/Seed-san.wgpu-vs-three-vrm.imqraw-rust.json
 ```
 
-`tools/ci/local-ci.rs --render-parity` writes this direct-imqraw report beside
-the existing `.psnr.json` report as `<fixture>.<renderer>-vs-three-vrm.imqraw-rust.json`.
-The pass/fail summary consumes the `.imqraw-rust.json` report. The older
-`.psnr.json` report remains a diagnostic cross-check over the renderer
-`.rgba.json` artifacts and is embedded in `visual-review.html`.
+`tools/ci/local-ci.rs --render-parity` writes this direct-imqraw report as
+`<fixture>.<renderer>-vs-three-vrm.imqraw-rust.json`. The pass/fail summary
+consumes that report. `.rgba.json` artifacts remain for visual review, PNG/diff
+generation, and byte-consistency verification against `.imqraw`; they are not a
+numeric comparator input.
 
 For direct raw-buffer hotspot inspection, use:
 
@@ -1761,23 +1761,15 @@ buffers produced by the renderers. The remaining feature gap before replacing
 the repository-local comparator with the public `imq` CLI is tracked in
 `docs/imq-compare-vrm-parity-requirements.md`.
 
-## PSNR
+## Direct Raw Comparison
 
-Use the dependency-free comparator:
-
-```powershell
-node tools\render-parity\compare-psnr.mjs `
-  --expected .external-fixtures\render-parity\three-vrm\Seed-san.frame000.rgba.json `
-  --actual .external-fixtures\render-parity\wgpu\Seed-san.frame000.rgba.json `
-  --out .external-fixtures\render-parity\reports\Seed-san.wgpu.frame000.psnr.json `
-  --metric rgb-visible `
-  --fail-under 40
-```
-
-The report contains dimensions, MSE, MAE, PSNR, maximum channel delta, maximum
-pixel delta, alpha counts/mismatches, RGB-only opaque/visible/interior metrics, the
-selected metric, and pass/fail status. Exact matches report `"Infinity"` for
-PSNR. The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
+Use `tools/render-parity/compare-imqraw.rs` for repository-local numeric
+comparison until the public `imq` CLI implements every capability listed in
+`tools/render-parity/imq-cli-migration-requirements.json`. The report contains
+dimensions, MSE, MAE, PSNR, maximum channel delta, maximum pixel delta, alpha
+counts/mismatches, RGB-only opaque/visible/interior metrics, the selected metric,
+thresholds, and pass/fail status. Exact matches report `"Infinity"` for PSNR.
+The comparator accepts `--metric rgba`, `--metric rgb-opaque`,
 `--metric rgb-visible`, `--metric rgb-nonblack`,
 `--metric rgb-interior1px`, `--metric rgb-visible-interior1px`,
 `--metric rgb-nonblack-interior1px`, and
@@ -1908,7 +1900,6 @@ set defaults to `Seed-san.vrm`. The render pass writes per-fixture artifacts:
 - `.external-fixtures/render-parity/wgpu/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/bevy/<fixture>.frame000.{rgba.json,png,imqraw}`
 - `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.imqraw-rust.json` (numeric gate)
-- `.external-fixtures/render-parity/reports/<fixture>.{wgpu,bevy}-vs-three-vrm.psnr.json` (RGBA JSON diagnostic)
 - `.external-fixtures/render-parity/diff/<fixture>.{wgpu,bevy}-vs-three-vrm.diff.png`
 - `.external-fixtures/render-parity/summary.md`
 - `.external-fixtures/render-parity/visual-review.html`

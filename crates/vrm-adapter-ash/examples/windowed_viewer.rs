@@ -116,7 +116,11 @@ struct Options {
     #[arg(long)]
     require_resize_recreate: bool,
     /// Number of queued MToon frames allowed before waiting. Ignored by `--simple-preview`.
-    #[arg(long, default_value_t = 2)]
+    ///
+    /// The current MToon path uses shared frame-dynamic descriptor and buffer
+    /// caches, so it deliberately accepts only `1` until per-frame-slot dynamic
+    /// resources are implemented.
+    #[arg(long, default_value_t = 1)]
     frames_in_flight: usize,
     /// Print renderer cache hit/rebuild counters before exiting.
     #[arg(long)]

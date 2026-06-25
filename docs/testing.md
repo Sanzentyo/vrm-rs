@@ -112,19 +112,22 @@ Run the local render parity pass with:
 cargo +nightly -Zscript tools/ci/local-ci.rs -- --render-parity
 ```
 
-This regenerates the Seed-san three-vrm, wgpu, and Bevy RGBA/PNG artifacts under `.external-fixtures/render-parity/`, writes PSNR reports under `.external-fixtures/render-parity/reports/`, creates diff heatmaps under `.external-fixtures/render-parity/diff/`, writes `.external-fixtures/render-parity/summary.md`, creates `.external-fixtures/render-parity/visual-review.html` for side-by-side review, and writes `.external-fixtures/render-parity/review-manifest.json` as a machine-readable audit index. Use `--render-fail-under N` only after a renderer has reached a threshold that should be enforced.
+This regenerates the Seed-san three-vrm, wgpu, and Bevy direct `.imqraw`
+artifacts plus companion RGBA/PNG review artifacts under
+`.external-fixtures/render-parity/`, writes Rust comparator reports under
+`.external-fixtures/render-parity/reports/`, creates diff heatmaps under
+`.external-fixtures/render-parity/diff/`, writes the summary and visual-review
+page, and writes `review-manifest.json` as a machine-readable audit index. Use
+`--render-fail-under N` only after a renderer has reached a threshold that
+should be enforced.
 The run validates that manifest before returning success. To re-check a
 previous artifact set, run `just render-parity-validate
 .external-fixtures/render-parity/review-manifest.json`.
-The three-vrm, wgpu, and Bevy captures also write `.frame000.imqraw` files
-beside their `.rgba.json` artifacts. Check them with
-`imq bundle-info PATH --format json` or pipe the bundle into
-`imq image - - --stdin-format imqraw` until the installed CLI auto-detects
-`.imqraw` path arguments.
-`tools/render-parity/compare-imqraw.rs` compares those direct bundles with the
-same VRM domains as `compare-psnr.mjs`. The render parity runner uses the
-`.imqraw-rust.json` reports as the numeric gate and still writes `.psnr.json`
-reports as `.rgba.json` diagnostics.
+The three-vrm, wgpu, Bevy, and opt-in Ash captures write `.frame000.imqraw`
+files as the only numeric-gate inputs. `tools/render-parity/compare-imqraw.rs`
+compares those bundles directly and writes `.imqraw-rust.json` reports carrying
+the versioned `vrm-rs.render-parity.imqraw-comparison` schema. The runner does
+not invoke an RGBA JSON comparator and does not produce `.psnr.json` reports.
 The direct imqraw report also includes a `changedPixels` section with RGB/RGBA
 changed-pixel counts, expected-only/actual-only nonblack pixels,
 shared-nonblack interior bands at 1/2/3px, flat32/gradient interiors, and
@@ -138,9 +141,24 @@ denominator explicit. Use those fields to distinguish one-sided
 coverage/ownership regressions from broad material/color regressions, local
 raster edge deltas, or dense-gradient ownership residuals before changing shader
 logic.
-It also runs `tools/render-parity/verify-imqraw-rgba.rs` for each three-vrm,
-wgpu, and Bevy capture, so the numeric-gate `.imqraw` bytes must match the
-`.rgba.json` bytes used for PNGs, diff heatmaps, and diagnostic reports.
+The runner also runs `tools/render-parity/verify-imqraw-rgba.rs` for each
+capture, so the numeric-gate `.imqraw` bytes must match the companion
+`.rgba.json` bytes used for PNGs, diff heatmaps, visual review, and debugging.
+`.rgba.json` is not a numeric gate source.
+
+After JavaScript comparator retirement, acceptance requires all of the
+following:
+
+- Direct `.imqraw` reports are the acceptance lane's numeric gate source.
+- `.rgba.json` is limited to visual review, debugging, and direct-imqraw
+  consistency verification.
+- `tools/render-parity/compare-psnr.mjs` is absent and is not referenced by the
+  acceptance runner.
+- The wgpu, Bevy, and Ash acceptance repeat passes through the direct-imqraw
+  comparator path.
+- Future public `imq` CLI cutover requirements remain tracked in
+  `tools/render-parity/imq-cli-migration-requirements.json` and
+  `tools/render-parity/imq-cli-migration-status.md`.
 Pass `--render-ash-readback` together with `--render-parity` when you want the
 ash unsafe offscreen renderer to emit supplemental `.rgba.json`, `.imqraw`, and
 PNG artifacts under the same render-parity directory. Those ash artifacts are

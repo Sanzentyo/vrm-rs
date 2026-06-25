@@ -19,6 +19,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const CHANGE_THRESHOLDS: [u8; 4] = [32, 64, 96, 128];
+const REPORT_SCHEMA_NAME: &str = "vrm-rs.render-parity.imqraw-comparison";
+const REPORT_SCHEMA_VERSION: u64 = 1;
+const COMPARATOR_IMPLEMENTATION: &str = "tools/render-parity/compare-imqraw.rs";
+const IMQ_CLI_MIGRATION_REQUIREMENTS: &str =
+    "tools/render-parity/imq-cli-migration-requirements.json";
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -331,6 +336,14 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     )?;
     let pass = pass_status(selected, alpha, &options);
     let report = json!({
+        "schema": {
+            "name": REPORT_SCHEMA_NAME,
+            "version": REPORT_SCHEMA_VERSION,
+        },
+        "comparator": {
+            "implementation": COMPARATOR_IMPLEMENTATION,
+            "migrationRequirements": IMQ_CLI_MIGRATION_REQUIREMENTS,
+        },
         "expected": display_path(&options.expected),
         "actual": display_path(&options.actual),
         "width": expected.width,
@@ -362,7 +375,6 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             "maxSelectedChannelDelta": options.max_selected_channel_delta,
             "maxAlphaDelta": options.max_alpha_delta,
         },
-        "failUnder": options.fail_under,
     });
     let output = format!("{}\n", serde_json::to_string_pretty(&report)?);
     if let Some(path) = &options.out {

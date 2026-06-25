@@ -2,8 +2,8 @@
 //!
 //! This example intentionally keeps renderer policy small: it loads real glTF
 //! primitive buffers from `vrm-io`, draws them with a fixed camera/light setup,
-//! and writes the same RGBA JSON artifact consumed by
-//! `tools/render-parity/compare-psnr.mjs`.
+//! and writes a direct `.imqraw` numeric artifact plus companion RGBA JSON/PNG
+//! artifacts for visual review and consistency verification.
 
 #[path = "common/render_capture_correction.rs"]
 mod render_capture_correction;

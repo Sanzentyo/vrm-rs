@@ -4,7 +4,7 @@
 
 このページは、いまローカルに存在するレンダリング比較画像をそのまま並べるためのレビュー用Markdownです。画像・raw比較レポートは `.external-fixtures/` 配下にあり、リポジトリにはコミットしません。基準画像は `three-vrm`、比較対象は Rust 側の `wgpu` / Bevy / Ash です。
 
-数値判断は direct raw 比較の `.imqraw` / `.psnr.json` を優先します。ここでは、目視確認しやすいように PNG を横並びにしています。
+数値判断は direct raw 比較の `.imqraw` と `.imqraw-rust.json` レポートを優先します。`.rgba.json` と PNG は目視レビューと raw 一致確認の補助です。
 
 ## 現時点の結論
 

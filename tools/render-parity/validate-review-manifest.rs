@@ -16,6 +16,12 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const REPORT_SCHEMA_NAME: &str = "vrm-rs.render-parity.imqraw-comparison";
+const REPORT_SCHEMA_VERSION: u64 = 1;
+const COMPARATOR_IMPLEMENTATION: &str = "tools/render-parity/compare-imqraw.rs";
+const IMQ_CLI_MIGRATION_REQUIREMENTS: &str =
+    "tools/render-parity/imq-cli-migration-requirements.json";
+
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "validate-review-manifest",
@@ -104,6 +110,39 @@ fn run_self_test() -> Result<(), Box<dyn Error>> {
         }),
         "self-test.fixture",
     )?;
+    let report_path = Path::new("self-test.imqraw-report.json");
+    validate_imqraw_report_contract(
+        &serde_json::json!({
+            "schema": {
+                "name": REPORT_SCHEMA_NAME,
+                "version": REPORT_SCHEMA_VERSION
+            },
+            "comparator": {
+                "implementation": COMPARATOR_IMPLEMENTATION,
+                "migrationRequirements": IMQ_CLI_MIGRATION_REQUIREMENTS
+            },
+            "sourceFormat": "imqraw"
+        }),
+        report_path,
+    )?;
+    if validate_imqraw_report_contract(
+        &serde_json::json!({
+            "schema": {
+                "name": REPORT_SCHEMA_NAME,
+                "version": REPORT_SCHEMA_VERSION
+            },
+            "comparator": {
+                "implementation": COMPARATOR_IMPLEMENTATION,
+                "migrationRequirements": IMQ_CLI_MIGRATION_REQUIREMENTS
+            },
+            "sourceFormat": "rgba-json"
+        }),
+        report_path,
+    )
+    .is_ok()
+    {
+        return Err("rgba-json numeric reports must be rejected".into());
+    }
 
     for (label, manifest) in [
         (
@@ -145,7 +184,21 @@ fn validate_manifest(
     require_existing_path(manifest, base_dir, "summary")?;
     require_existing_path(manifest, base_dir, "visualReview")?;
     require_existing_path(manifest, base_dir, "artifacts")?;
-    require_string(manifest, "numericGate")?;
+    let numeric_gate = require_string(manifest, "numericGate")?;
+    if numeric_gate != "direct .imqraw via tools/render-parity/compare-imqraw.rs" {
+        return Err(format!("unsupported numericGate: {numeric_gate}").into());
+    }
+    let rgba_json_role = require_string(manifest, "rgbaJsonRole")?;
+    if rgba_json_role != "visual-review-and-imqraw-consistency-verification" {
+        return Err(format!("unsupported rgbaJsonRole: {rgba_json_role}").into());
+    }
+    let migration_requirements = require_string(manifest, "imqCliMigrationRequirements")?;
+    if migration_requirements != IMQ_CLI_MIGRATION_REQUIREMENTS {
+        return Err(format!(
+            "unsupported imqCliMigrationRequirements: {migration_requirements}"
+        )
+        .into());
+    }
     validate_run_mode_contract(manifest)?;
     validate_source_lock(manifest)?;
     validate_environment_lock(manifest)?;
@@ -292,7 +345,6 @@ fn validate_comparison(
         &format!("{source}.capture"),
     )?;
     let numeric_report_path = require_existing_path(comparison, base_dir, "numericReport")?;
-    let diagnostic_report_path = require_existing_path(comparison, base_dir, "diagnosticReport")?;
     require_existing_path(comparison, base_dir, "diffPng")?;
 
     let summary = required_object(comparison, "summary", source)?;
@@ -314,6 +366,7 @@ fn validate_comparison(
 
     let report_text = fs::read_to_string(&numeric_report_path)?;
     let report = serde_json::from_str::<Value>(&report_text)?;
+    validate_imqraw_report_contract(&report, &numeric_report_path)?;
     validate_report_paths(
         &report,
         &reference.imqraw,
@@ -359,22 +412,50 @@ fn validate_comparison(
         }
     }
     validate_summary_matches_report(summary, &report, &numeric_report_path, source)?;
+    Ok(())
+}
 
-    let diagnostic_text = fs::read_to_string(&diagnostic_report_path)?;
-    let diagnostic_report = serde_json::from_str::<Value>(&diagnostic_text)?;
-    validate_report_paths(
-        &diagnostic_report,
-        &reference.rgba_json,
-        &capture.rgba_json,
-        &diagnostic_report_path,
-        source,
-    )?;
+fn validate_imqraw_report_contract(
+    report: &Value,
+    report_path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let source = display_path(report_path);
+    let source_format = require_string(report, "sourceFormat")?;
+    if source_format != "imqraw" {
+        return Err(format!("{source}: sourceFormat must be imqraw").into());
+    }
+    let schema = required_object(report, "schema", &source)?;
+    let schema_name = require_string(schema, "name")?;
+    if schema_name != REPORT_SCHEMA_NAME {
+        return Err(format!("{source}: unsupported report schema {schema_name}").into());
+    }
+    let schema_version = schema
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{source}: schema.version must be an integer"))?;
+    if schema_version != REPORT_SCHEMA_VERSION {
+        return Err(format!(
+            "{source}: unsupported report schema version {schema_version}"
+        )
+        .into());
+    }
+    let comparator = required_object(report, "comparator", &source)?;
+    let implementation = require_string(comparator, "implementation")?;
+    if implementation != COMPARATOR_IMPLEMENTATION {
+        return Err(format!("{source}: unsupported comparator {implementation}").into());
+    }
+    let migration_requirements = require_string(comparator, "migrationRequirements")?;
+    if migration_requirements != IMQ_CLI_MIGRATION_REQUIREMENTS {
+        return Err(format!(
+            "{source}: unsupported migration requirements {migration_requirements}"
+        )
+        .into());
+    }
     Ok(())
 }
 
 #[derive(Clone, Debug)]
 struct ArtifactPaths {
-    rgba_json: PathBuf,
     imqraw: PathBuf,
 }
 
@@ -384,10 +465,10 @@ fn artifact_group_paths(
     source: &str,
 ) -> Result<ArtifactPaths, Box<dyn Error>> {
     expect_object(group, source)?;
-    let rgba_json = require_existing_path(group, base_dir, "rgbaJson")?;
+    require_existing_path(group, base_dir, "rgbaJson")?;
     let imqraw = require_existing_path(group, base_dir, "imqraw")?;
     require_existing_path(group, base_dir, "png")?;
-    Ok(ArtifactPaths { rgba_json, imqraw })
+    Ok(ArtifactPaths { imqraw })
 }
 
 fn validate_report_paths(

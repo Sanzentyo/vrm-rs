@@ -1,5 +1,32 @@
 # Progress
 
+## 2026-06-25
+
+- Incorporated the static review package from
+  `D:\sanze\Downloads\vrm-rs-ash-adapter-review-and-compare-cleanup.zip` for
+  the comparison-cleanup portion. The render-parity numeric gate now treats
+  direct renderer `.imqraw` artifacts plus
+  `tools/render-parity/compare-imqraw.rs` as the only repository-local numeric
+  path. The JavaScript RGBA comparator was deleted, `tools/ci/local-ci.rs` no
+  longer invokes it or writes `.psnr.json` reports, and
+  `tools/render-parity/validate-review-manifest.rs` now requires the versioned
+  `vrm-rs.render-parity.imqraw-comparison` report contract. Companion
+  `.rgba.json` artifacts remain for visual review, PNG/diff generation,
+  debugging, and byte-consistency verification through
+  `verify-imqraw-rgba.rs`.
+- Added machine-readable future public `imq` CLI cutover requirements in
+  `tools/render-parity/imq-cli-migration-requirements.json` plus the current
+  blocked status and one-change cutover rule in
+  `tools/render-parity/imq-cli-migration-status.md`. The rule explicitly avoids
+  `legacy-js`, fallback, wrapper, alias, or dual-report modes.
+- Applied the review's highest-risk Ash windowed synchronization finding as a
+  conservative safety gate. The MToon windowed viewer and local CI Ash windowed
+  lane now default to `--frames-in-flight 1`, and `AshWindowedRunValidation`
+  rejects deeper MToon queues until descriptor sets, vertex/index/storage
+  buffers, and uniform buffers are duplicated per frame slot. `AshWindowedFrameSyncPlan`
+  remains a reusable sync plan, but the example no longer advertises unsafe
+  multi-frame dynamic-resource sharing as the normal path.
+
 ## 2026-06-23
 
 - Moved the ash MToon shader handoff toward shared WGSL. `AshVrmFramePlanOptions`

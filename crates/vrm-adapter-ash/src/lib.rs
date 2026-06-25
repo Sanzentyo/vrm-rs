@@ -391,6 +391,12 @@ impl AshWindowedRunValidation {
         if self.frames_in_flight == 0 {
             return Err("--frames-in-flight must be at least 1".into());
         }
+        if !self.simple_preview && self.frames_in_flight != 1 {
+            return Err(
+                "--frames-in-flight must be 1 for the MToon windowed renderer until frame-slot dynamic resources are implemented"
+                    .into(),
+            );
+        }
         Ok(())
     }
 }
@@ -8218,6 +8224,23 @@ mod tests {
                 require_cache_hits: true,
                 require_resize_recreate: true,
                 resize_after_frames: Some(8),
+                frames_in_flight: 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert_eq!(
+            AshWindowedRunValidation {
+                frames_in_flight: 2,
+                ..Default::default()
+            }
+            .validate(),
+            Err("--frames-in-flight must be 1 for the MToon windowed renderer until frame-slot dynamic resources are implemented".to_owned())
+        );
+        assert!(
+            AshWindowedRunValidation {
+                simple_preview: true,
                 frames_in_flight: 2,
                 ..Default::default()
             }

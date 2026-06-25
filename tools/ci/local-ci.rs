@@ -79,7 +79,7 @@ struct Options {
     ash_windowed_resize_width: u32,
     #[arg(long, default_value_t = 540)]
     ash_windowed_resize_height: u32,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = 1)]
     ash_windowed_frames_in_flight: u32,
     #[arg(long)]
     skip_core: bool,
@@ -680,6 +680,12 @@ fn run_ash_windowed_ci(options: &Options) -> Result<(), String> {
     if options.ash_windowed_frames_in_flight == 0 {
         return Err("--ash-windowed-frames-in-flight must be at least 1".to_owned());
     }
+    if options.ash_windowed_frames_in_flight != 1 {
+        return Err(
+            "--ash-windowed-frames-in-flight must be 1 until Ash frame-slot dynamic resources are implemented"
+                .to_owned(),
+        );
+    }
 
     compile_ash_windowed_mtoon_shaders(options)?;
     if options.ash_windowed_smoke {
@@ -1181,7 +1187,6 @@ fn run_render_parity_ci(options: &Options) -> Result<(), String> {
         verify_render_alpha_consistency(options, fixture)?;
         for renderer in &comparison_renderers {
             compare_render_imqraw_pair(options, fixture, renderer.name, renderer.visual_gate)?;
-            compare_render_rgba_json_pair(options, fixture, renderer.name)?;
             write_render_diff_image(options, fixture, renderer.name)?;
         }
     }
@@ -1958,26 +1963,6 @@ fn render_light_units(options: &Options) -> RenderLightUnits {
     }
 }
 
-fn compare_render_rgba_json_pair(
-    options: &Options,
-    fixture: &RenderFixture,
-    renderer: &str,
-) -> Result<(), String> {
-    let mut command = Command::new("node");
-    command.args([
-        "tools/render-parity/compare-psnr.mjs",
-        "--expected",
-        path(&render_artifact(options, fixture, "three-vrm")).as_str(),
-        "--actual",
-        path(&render_artifact(options, fixture, renderer)).as_str(),
-        "--out",
-        path(&render_report(options, fixture, renderer)).as_str(),
-        "--metric",
-        options.render_psnr_metric.as_cli_value(),
-    ]);
-    run_command(command)
-}
-
 fn validate_render_review_manifest(options: &Options) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command.args([
@@ -2064,13 +2049,6 @@ fn render_imqraw_artifact(options: &Options, fixture: &RenderFixture, renderer: 
         .render_parity_dir
         .join(renderer)
         .join(format!("{}.frame000.imqraw", fixture.stem))
-}
-
-fn render_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
-    options.render_parity_dir.join("reports").join(format!(
-        "{}.{renderer}-vs-three-vrm.psnr.json",
-        fixture.stem
-    ))
 }
 
 fn render_imqraw_report(options: &Options, fixture: &RenderFixture, renderer: &str) -> PathBuf {
@@ -2498,6 +2476,9 @@ fn render_review_manifest_value(
         "summary": path(&options.render_parity_dir.join("summary.md")),
         "visualReview": path(&options.render_parity_dir.join("visual-review.html")),
         "numericGate": "direct .imqraw via tools/render-parity/compare-imqraw.rs",
+        "rgbaJsonRole": "visual-review-and-imqraw-consistency-verification",
+        "imqCliMigrationRequirements":
+            "tools/render-parity/imq-cli-migration-requirements.json",
         "runMode": options.render_run_mode.as_cli_value(),
         "referenceClean": render_reference_clean(options),
         "metric": options.render_psnr_metric.as_cli_value(),
@@ -2666,7 +2647,6 @@ fn render_review_manifest_comparison(
         "visualParityGate": renderer.visual_gate,
         "capture": render_review_manifest_artifacts(options, fixture, renderer.name),
         "numericReport": path(&render_imqraw_report(options, fixture, renderer.name)),
-        "diagnosticReport": path(&render_report(options, fixture, renderer.name)),
         "diffPng": path(&render_diff_png(options, fixture, renderer.name)),
         "summary": {
             "selectedPsnr": report.selected_psnr,
@@ -2998,17 +2978,11 @@ fn report_text(
     renderer: &str,
 ) -> Result<String, String> {
     let imqraw_report = render_imqraw_report(options, fixture, renderer);
-    let rgba_report = render_report(options, fixture, renderer);
     let imqraw_text = std::fs::read_to_string(&imqraw_report)
         .map_err(|err| format!("failed to read {}: {err}", path(&imqraw_report)))?;
-    let rgba_text = std::fs::read_to_string(&rgba_report)
-        .map_err(|err| format!("failed to read {}: {err}", path(&rgba_report)))?;
     Ok(format!(
-        "Direct imqraw gate report ({})\n{}\nRGBA JSON diagnostic report ({})\n{}",
-        path(&imqraw_report),
-        imqraw_text,
-        path(&rgba_report),
-        rgba_text,
+        "Direct imqraw gate report ({})\n{}",
+        path(&imqraw_report), imqraw_text,
     ))
 }
 

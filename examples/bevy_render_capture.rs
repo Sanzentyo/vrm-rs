@@ -1,8 +1,8 @@
 //! Headless Bevy render capture for render-parity experiments.
 //!
 //! This example renders real `vrm-io` mesh primitives through Bevy's renderer
-//! into an offscreen image and writes the shared RGBA JSON artifact consumed by
-//! `tools/render-parity/compare-psnr.mjs`.
+//! into an offscreen image and writes a direct `.imqraw` numeric artifact plus
+//! companion RGBA JSON/PNG visual-review and consistency artifacts.
 
 #[path = "common/render_capture_correction.rs"]
 mod render_capture_correction;
