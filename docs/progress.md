@@ -2,6 +2,21 @@
 
 ## 2026-06-25
 
+- Wired the real Ash MToon windowed swapchain path through
+  `AshMtoonMaterializationPlan`. `windowed_viewer` now builds one
+  `ash_mtoon_materialization_plan_with_options` per renderer frame and consumes
+  its cache keys, descriptor-set layouts, pipeline layouts, descriptor-pool
+  plan, descriptor-set allocation plan, sampler-resource plans,
+  descriptor-write plans, and drawable command stream instead of rebuilding
+  those policies through separate example-local helper calls. This addresses
+  another portion of the static review's concern that downstream Ash engines
+  had to copy materialization ordering from the example rather than consuming a
+  compact crate-owned plan.
+- Verified that refactor with `cargo fmt --all -- --check`,
+  `cargo test -p vrm-adapter-ash --lib`,
+  `cargo clippy -p vrm-adapter-ash --all-targets -- -D warnings`,
+  `cargo run --release -p vrm-adapter-ash --example windowed_viewer -- --help`,
+  `just ash-renderer-integration`, and `just ci-ash-windowed`.
 - Incorporated the static review package from
   `D:\sanze\Downloads\vrm-rs-ash-adapter-review-and-compare-cleanup.zip` for
   the comparison-cleanup portion. The render-parity numeric gate now treats

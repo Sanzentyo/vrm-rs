@@ -33,29 +33,27 @@ use vrm_adapter_ash::{
     AshCommandRecordResources, AshDescriptorSetLayoutPlan, AshDescriptorWriteHandleAccess,
     AshDescriptorWriteResources, AshDrawableFrameOptions, AshGraphicsPipelineCreateInfoPlan,
     AshGraphicsPipelinePlan, AshMtoonBufferCacheKey, AshMtoonDescriptorSetCacheKey,
-    AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey, AshMtoonShaderCacheKey,
-    AshMtoonTextureCacheKey, AshMtoonUniformCacheKey, AshMtoonWindowedCacheStats, AshRenderOptions,
-    AshRenderPassCreationPlan, AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand,
-    AshSamplerPlan, AshSwapchainAcquireStatus, AshSwapchainPresentStatus, AshVrmFramePlanOptions,
+    AshMtoonMaterializationPlan, AshMtoonPipelineCacheKey, AshMtoonSamplerCacheKey,
+    AshMtoonShaderCacheKey, AshMtoonTextureCacheKey, AshMtoonUniformCacheKey,
+    AshMtoonWindowedCacheStats, AshRenderOptions, AshRenderPassCreationPlan,
+    AshRenderPassDependencyPolicy, AshRendererFrame, AshResolvedCommand, AshSamplerPlan,
+    AshSwapchainAcquireStatus, AshSwapchainPresentStatus, AshVrmFramePlanOptions,
     AshVrmFramePlanner, AshVrmPrimitive, AshVrmVertex, AshWindowedFrameAcquirePlan,
     AshWindowedFrameSyncHandles, AshWindowedFrameSyncPlan, AshWindowedResizeValidation,
     AshWindowedRunValidation, ash_2d_image_resource_plan, ash_2d_image_view_plan,
     ash_binary_semaphore_plan, ash_classify_swapchain_acquire, ash_classify_swapchain_present,
-    ash_depth_attachment_plan, ash_descriptor_pool_plan, ash_descriptor_set_allocation_plan,
-    ash_descriptor_set_layout_plans, ash_descriptor_write_plans,
-    ash_drawable_frame_from_renderer_frame_with_options, ash_empty_pipeline_layout_plan,
-    ash_fallback_texture_mip_level, ash_fallback_texture_rgba, ash_framebuffer_plan,
-    ash_graphics_pipeline_create_info_plan, ash_graphics_shader_stages_plan, ash_host_buffer_plan,
-    ash_host_visible_buffer_plan, ash_memory_allocation_plan, ash_memory_type_index,
-    ash_mtoon_renderer_cache_keys, ash_one_time_command_buffer_begin_plan,
-    ash_pipeline_layout_plans, ash_position_color_pipeline_state_plan,
+    ash_depth_attachment_plan, ash_empty_pipeline_layout_plan, ash_fallback_texture_mip_level,
+    ash_fallback_texture_rgba, ash_framebuffer_plan, ash_graphics_pipeline_create_info_plan,
+    ash_graphics_shader_stages_plan, ash_host_buffer_plan, ash_host_visible_buffer_plan,
+    ash_memory_allocation_plan, ash_memory_type_index, ash_mtoon_materialization_plan_with_options,
+    ash_one_time_command_buffer_begin_plan, ash_position_color_pipeline_state_plan,
     ash_primary_command_buffer_allocation_plan, ash_queue_submit_plan, ash_render_pass_begin_plan,
     ash_render_pass_begin_plan_from_clear_values, ash_render_pass_creation_plan,
     ash_renderer_frame_from_plan_with_owner_sample_selection, ash_resettable_command_pool_plan,
-    ash_reusable_command_buffer_begin_plan, ash_sampler_resource_plans, ash_select_depth_format,
-    ash_shader_module_plan, ash_signaled_fence_plan, ash_swapchain_surface_plan,
-    ash_texture_mip_upload_bytes, ash_texture_upload_command_plan, ash_unsignaled_fence_plan,
-    ash_windowed_present_plan, ash_windowed_submit_plan,
+    ash_reusable_command_buffer_begin_plan, ash_select_depth_format, ash_shader_module_plan,
+    ash_signaled_fence_plan, ash_swapchain_surface_plan, ash_texture_mip_upload_bytes,
+    ash_texture_upload_command_plan, ash_unsignaled_fence_plan, ash_windowed_present_plan,
+    ash_windowed_submit_plan,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -1062,22 +1060,35 @@ impl MtoonWindowedAshRenderer {
             .command_buffers
             .get(image_index)
             .ok_or("swapchain image has no matching draw command buffer")?;
-        let cache_keys =
-            ash_mtoon_renderer_cache_keys(frame, extent, self.shader_cache_key.clone());
+        let materialization = ash_mtoon_materialization_plan_with_options(
+            frame,
+            extent,
+            self.shader_cache_key.clone(),
+            AshDrawableFrameOptions {
+                color_clear: [0.0, 0.0, 0.0, 0.0],
+                ..Default::default()
+            },
+        )
+        .map_err(|error| -> Box<dyn Error> { error.into() })?;
+        let cache_keys = &materialization.cache_keys;
         self.ensure_persistent_pipeline_cache(
+            &materialization,
             frame,
             extent,
             render_pass,
             vertex_entry,
             fragment_entry,
-            cache_keys.pipeline,
         )?;
-        self.ensure_persistent_sampler_cache(frame, cache_keys.samplers)?;
-        self.ensure_persistent_texture_cache(frame, cache_keys.textures)?;
+        self.ensure_persistent_sampler_cache(&materialization, cache_keys.samplers.clone())?;
+        self.ensure_persistent_texture_cache(frame, cache_keys.textures.clone())?;
         self.ensure_persistent_fallback_textures()?;
-        self.ensure_frame_slot_buffer_cache(frame_slot, frame, cache_keys.buffers)?;
-        self.ensure_frame_slot_uniform_cache(frame_slot, frame, cache_keys.uniforms)?;
-        self.ensure_frame_slot_descriptor_set_cache(frame_slot, frame, cache_keys.descriptor_sets)?;
+        self.ensure_frame_slot_buffer_cache(frame_slot, frame, cache_keys.buffers.clone())?;
+        self.ensure_frame_slot_uniform_cache(frame_slot, frame, cache_keys.uniforms.clone())?;
+        self.ensure_frame_slot_descriptor_set_cache(
+            frame_slot,
+            &materialization,
+            cache_keys.descriptor_sets.clone(),
+        )?;
         let persistent = self
             .persistent_cache
             .as_ref()
@@ -1116,7 +1127,7 @@ impl MtoonWindowedAshRenderer {
             .ok_or("missing ash windowed persistent sampler cache")?
             .samplers;
         self.update_descriptor_sets(
-            frame,
+            &materialization,
             descriptor_sets,
             MtoonDescriptorUpdateResources {
                 buffers,
@@ -1129,11 +1140,11 @@ impl MtoonWindowedAshRenderer {
         self.cache_stats.command_buffers.hit();
         self.record_mtoon_swapchain_draws(
             command_buffer,
+            &materialization,
             frame,
             MtoonSwapchainDrawContext {
                 render_pass,
                 framebuffer,
-                extent,
                 pipelines: &persistent.pipelines,
                 pipeline_layouts: &persistent.pipeline_layouts,
                 buffers,
@@ -1145,13 +1156,14 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_persistent_pipeline_cache(
         &mut self,
+        materialization: &AshMtoonMaterializationPlan,
         frame: &AshRendererFrame,
         extent: vk::Extent2D,
         render_pass: vk::RenderPass,
         vertex_entry: &CString,
         fragment_entry: &CString,
-        key: AshMtoonPipelineCacheKey,
     ) -> Result<(), Box<dyn Error>> {
+        let key = materialization.cache_keys.pipeline.clone();
         if self
             .persistent_cache
             .as_ref()
@@ -1165,12 +1177,13 @@ impl MtoonWindowedAshRenderer {
         if let Some(cache) = self.persistent_cache.take() {
             self.destroy_persistent_cache(cache);
         }
-        let descriptor_set_layout_plans = ash_descriptor_set_layout_plans(frame);
-        let descriptor_set_layouts = descriptor_set_layout_plans
+        let descriptor_set_layouts = materialization
+            .descriptor_set_layouts
             .iter()
             .map(|plan| self.create_descriptor_set_layout(plan))
             .collect::<Result<Vec<_>, _>>()?;
-        let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layout_plans)
+        let pipeline_layouts = materialization
+            .pipeline_layouts
             .iter()
             .map(|plan| {
                 plan.with_pipeline_layout_create_info(&descriptor_set_layouts, |info| unsafe {
@@ -1200,7 +1213,7 @@ impl MtoonWindowedAshRenderer {
     fn ensure_frame_slot_descriptor_set_cache(
         &mut self,
         frame_slot: usize,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
         key: AshMtoonDescriptorSetCacheKey,
     ) -> Result<(), Box<dyn Error>> {
         if self
@@ -1226,11 +1239,12 @@ impl MtoonWindowedAshRenderer {
             .ok_or("missing ash windowed persistent pipeline cache")?
             .descriptor_set_layouts
             .as_slice();
-        let descriptor_pool = self.create_descriptor_pool(frame)?;
-        let allocation_plan =
-            ash_descriptor_set_allocation_plan(&ash_descriptor_set_layout_plans(frame));
-        let descriptor_sets =
-            self.allocate_descriptor_sets(descriptor_pool, &allocation_plan, layouts)?;
+        let descriptor_pool = self.create_descriptor_pool(materialization)?;
+        let descriptor_sets = self.allocate_descriptor_sets(
+            descriptor_pool,
+            &materialization.descriptor_set_allocation,
+            layouts,
+        )?;
         self.frame_slot_dynamic_caches_mut(frame_slot)?.descriptors =
             Some(MtoonPersistentDescriptorSetCache {
                 key,
@@ -1260,7 +1274,7 @@ impl MtoonWindowedAshRenderer {
 
     fn ensure_persistent_sampler_cache(
         &mut self,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
         key: AshMtoonSamplerCacheKey,
     ) -> Result<(), Box<dyn Error>> {
         if self
@@ -1275,8 +1289,9 @@ impl MtoonWindowedAshRenderer {
         if let Some(cache) = self.persistent_samplers.take() {
             self.destroy_persistent_sampler_cache(cache);
         }
-        let samplers = ash_sampler_resource_plans(frame)
-            .into_iter()
+        let samplers = materialization
+            .sampler_resources
+            .iter()
             .map(|plan| self.create_sampler(plan.sampler))
             .collect::<Result<Vec<_>, _>>()?;
         self.persistent_samplers = Some(MtoonPersistentSamplerCache { key, samplers });
@@ -1675,12 +1690,13 @@ impl MtoonWindowedAshRenderer {
 
     fn create_descriptor_pool(
         &self,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
     ) -> Result<vk::DescriptorPool, vk::Result> {
-        let plan = ash_descriptor_pool_plan(frame);
-        plan.with_descriptor_pool_create_info(|info| unsafe {
-            self.device.create_descriptor_pool(&info, None)
-        })
+        materialization
+            .descriptor_pool
+            .with_descriptor_pool_create_info(|info| unsafe {
+                self.device.create_descriptor_pool(&info, None)
+            })
     }
 
     fn allocate_descriptor_sets(
@@ -1704,11 +1720,11 @@ impl MtoonWindowedAshRenderer {
 
     fn update_descriptor_sets(
         &self,
-        frame: &AshRendererFrame,
+        materialization: &AshMtoonMaterializationPlan,
         descriptor_sets: &[vk::DescriptorSet],
         resources: MtoonDescriptorUpdateResources<'_>,
     ) -> Result<(), Box<dyn Error>> {
-        for plan in ash_descriptor_write_plans(frame)? {
+        for plan in &materialization.descriptor_writes {
             let write_data = plan
                 .resolve_write_data(
                     AshDescriptorWriteResources::new(
@@ -1799,17 +1815,11 @@ impl MtoonWindowedAshRenderer {
     fn record_mtoon_swapchain_draws(
         &self,
         command_buffer: vk::CommandBuffer,
+        materialization: &AshMtoonMaterializationPlan,
         frame: &AshRendererFrame,
         context: MtoonSwapchainDrawContext<'_>,
     ) -> Result<(), Box<dyn Error>> {
-        let drawable = ash_drawable_frame_from_renderer_frame_with_options(
-            frame,
-            context.extent,
-            AshDrawableFrameOptions {
-                color_clear: [0.0, 0.0, 0.0, 0.0],
-                ..Default::default()
-            },
-        );
+        let drawable = &materialization.drawable;
         if !drawable.skipped_draws.is_empty() {
             return Err(format!(
                 "drawable frame has skipped draws: {:?}",
@@ -2082,7 +2092,6 @@ struct MtoonDescriptorUpdateResources<'a> {
 struct MtoonSwapchainDrawContext<'a> {
     render_pass: vk::RenderPass,
     framebuffer: vk::Framebuffer,
-    extent: vk::Extent2D,
     pipelines: &'a [vk::Pipeline],
     pipeline_layouts: &'a [vk::PipelineLayout],
     buffers: &'a [MtoonVulkanBuffer],
