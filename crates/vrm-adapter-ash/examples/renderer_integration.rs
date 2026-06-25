@@ -2,9 +2,9 @@ use ash::vk;
 use clap::Parser;
 use std::error::Error;
 use vrm_adapter_ash::{
-    AshBufferRole, AshCommandPlan, AshDrawableFramePlan, AshRendererFrame, AshSamplerPlan,
-    AshVrmFramePlanOptions, ash_drawable_frame_from_renderer_frame, ash_renderer_frame_from_plan,
-    ash_renderer_resource_manifest, frame_plan_from_options,
+    AshBufferRole, AshCommandPlan, AshMtoonMaterializationPlan, AshRendererFrame, AshSamplerPlan,
+    AshVrmFramePlanOptions, ash_mtoon_materialization_plan, ash_renderer_frame_from_plan,
+    frame_plan_from_options,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -45,7 +45,7 @@ struct MockAshRenderer {
 }
 
 impl MockAshRenderer {
-    fn upload_frame(&mut self, frame: &AshRendererFrame, drawable: &AshDrawableFramePlan) {
+    fn upload_frame(&mut self, frame: &AshRendererFrame, plan: &AshMtoonMaterializationPlan) {
         self.buffers.clear();
         for buffer in &frame.buffers {
             let handle = self.alloc_buffer(buffer.role);
@@ -59,15 +59,9 @@ impl MockAshRenderer {
                 .push((handle, texture.upload.format, texture.upload.extent));
         }
         self.samplers.clear();
-        let sampler_plans = frame
-            .descriptor_sets
-            .iter()
-            .flat_map(|set| set.bindings.iter())
-            .filter_map(|binding| binding.sampler)
-            .collect::<Vec<_>>();
-        for sampler in sampler_plans {
+        for sampler_resource in &plan.sampler_resources {
             let handle = self.alloc_sampler();
-            self.samplers.push((handle, sampler));
+            self.samplers.push((handle, sampler_resource.sampler));
         }
         self.pipelines.clear();
         for pipeline in &frame.pipelines {
@@ -76,16 +70,16 @@ impl MockAshRenderer {
                 .push((handle, pipeline.key.topology, pipeline.key.cull_mode));
         }
         self.descriptor_sets.clear();
-        for set in &frame.descriptor_sets {
+        for layout in &plan.descriptor_set_layouts {
             let handle = self.alloc_descriptor_set();
-            self.descriptor_sets.push((handle, set.bindings.len()));
+            self.descriptor_sets.push((handle, layout.bindings.len()));
         }
         self.draws.clear();
         let mut pipeline = None;
         let mut descriptor_set = None;
         let mut vertex_buffer = None;
         let mut index_buffer = None;
-        for command in &drawable.commands {
+        for command in &plan.drawable.commands {
             match *command {
                 AshCommandPlan::BindGraphicsPipeline { pipeline_index } => {
                     pipeline = self
@@ -167,16 +161,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = AshVrmFramePlanOptions::parse();
     let frame_plan = frame_plan_from_options(&options)?;
     let renderer_frame = ash_renderer_frame_from_plan(&frame_plan);
-    let drawable = ash_drawable_frame_from_renderer_frame(
+    let materialization = ash_mtoon_materialization_plan(
         &renderer_frame,
         vk::Extent2D {
             width: 512,
             height: 512,
         },
-    );
+        Default::default(),
+    )?;
     let mut renderer = MockAshRenderer::default();
-    renderer.upload_frame(&renderer_frame, &drawable);
-    let manifest = ash_renderer_resource_manifest(&renderer_frame);
+    renderer.upload_frame(&renderer_frame, &materialization);
     let total_indices = renderer
         .draws
         .iter()
@@ -209,12 +203,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         renderer.images.len(),
         renderer.samplers.len(),
         renderer.descriptor_sets.len(),
-        drawable.commands.len(),
-        drawable.skipped_draws.len(),
+        materialization.draw_command_count(),
+        materialization.drawable.skipped_draws.len(),
         renderer.draws.len(),
         total_indices,
-        manifest.persistent_resource_count(),
-        manifest.dynamic_resource_count(),
+        materialization
+            .resource_manifest
+            .persistent_resource_count(),
+        materialization.frame_dynamic_resource_count(),
         command_checksum,
         sampler_policy_checksum
     );

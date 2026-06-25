@@ -4691,6 +4691,78 @@ pub fn ash_mtoon_renderer_cache_keys(
     )
 }
 
+#[derive(Clone, Debug)]
+pub struct AshMtoonMaterializationPlan {
+    pub render_target: AshMtoonRenderTargetCacheKey,
+    pub shader: AshMtoonShaderCacheKey,
+    pub cache_keys: AshMtoonRendererCacheKeys,
+    pub resource_manifest: AshRendererResourceManifest,
+    pub descriptor_pool: AshDescriptorPoolPlan,
+    pub descriptor_set_layouts: Vec<AshDescriptorSetLayoutPlan>,
+    pub pipeline_layouts: Vec<AshPipelineLayoutPlan>,
+    pub descriptor_set_allocation: AshDescriptorSetAllocationPlan,
+    pub sampler_resources: Vec<AshSamplerResourcePlan>,
+    pub descriptor_writes: Vec<AshDescriptorWritePlan>,
+    pub drawable: AshDrawableFramePlan,
+}
+
+impl AshMtoonMaterializationPlan {
+    pub fn persistent_handle_resource_count(&self) -> usize {
+        self.resource_manifest.persistent_handle_resource_count()
+    }
+
+    pub fn frame_dynamic_resource_count(&self) -> usize {
+        self.resource_manifest.dynamic_resource_count()
+    }
+
+    pub fn draw_command_count(&self) -> usize {
+        self.drawable.commands.len()
+    }
+}
+
+pub fn ash_mtoon_materialization_plan(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+    shader: AshMtoonShaderCacheKey,
+) -> Result<AshMtoonMaterializationPlan, String> {
+    ash_mtoon_materialization_plan_with_options(
+        frame,
+        extent,
+        shader,
+        AshDrawableFrameOptions::default(),
+    )
+}
+
+pub fn ash_mtoon_materialization_plan_with_options(
+    frame: &AshRendererFrame,
+    extent: vk::Extent2D,
+    shader: AshMtoonShaderCacheKey,
+    drawable_options: AshDrawableFrameOptions,
+) -> Result<AshMtoonMaterializationPlan, String> {
+    let render_target = AshMtoonRenderTargetCacheKey::from_extent(extent);
+    let cache_keys = AshMtoonRendererCacheKeys::from_frame(frame, render_target, shader.clone());
+    let descriptor_set_layouts = ash_descriptor_set_layout_plans(frame);
+    let pipeline_layouts = ash_pipeline_layout_plans(&descriptor_set_layouts);
+    let descriptor_set_allocation = ash_descriptor_set_allocation_plan(&descriptor_set_layouts);
+    Ok(AshMtoonMaterializationPlan {
+        render_target,
+        shader,
+        cache_keys,
+        resource_manifest: ash_renderer_resource_manifest(frame),
+        descriptor_pool: ash_descriptor_pool_plan(frame),
+        descriptor_set_layouts,
+        pipeline_layouts,
+        descriptor_set_allocation,
+        sampler_resources: ash_sampler_resource_plans(frame),
+        descriptor_writes: ash_descriptor_write_plans(frame)?,
+        drawable: ash_drawable_frame_from_renderer_frame_with_options(
+            frame,
+            extent,
+            drawable_options,
+        ),
+    })
+}
+
 pub fn ash_mtoon_spirv_words_hash(words: &[u32]) -> u64 {
     words
         .iter()
@@ -9343,6 +9415,74 @@ mod tests {
         assert_ne!(keys.pipeline, resized_keys.pipeline);
         assert_eq!(keys.descriptor_sets, resized_keys.descriptor_sets);
         assert_eq!(keys.samplers, resized_keys.samplers);
+    }
+
+    #[test]
+    fn mtoon_materialization_plan_groups_renderer_edge_batches() {
+        let frame = cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        let extent = vk::Extent2D {
+            width: 640,
+            height: 360,
+        };
+        let shader = AshMtoonShaderCacheKey::from_spirv_words(
+            "vs_main",
+            "fs_main",
+            &[0x0723_0203, 1, 2, 3, 4],
+            &[0x0723_0203, 5, 6, 7, 8],
+        );
+        let plan = ash_mtoon_materialization_plan(&frame, extent, shader.clone()).unwrap();
+
+        assert_eq!(
+            plan.render_target,
+            AshMtoonRenderTargetCacheKey::from_extent(extent)
+        );
+        assert_eq!(plan.shader, shader);
+        assert_eq!(
+            plan.cache_keys,
+            ash_mtoon_renderer_cache_keys(&frame, extent, shader)
+        );
+        assert_eq!(plan.resource_manifest, frame.resource_manifest());
+        assert_eq!(plan.descriptor_pool, ash_descriptor_pool_plan(&frame));
+        assert_eq!(
+            plan.descriptor_set_layouts,
+            ash_descriptor_set_layout_plans(&frame)
+        );
+        assert_eq!(
+            plan.pipeline_layouts,
+            ash_pipeline_layout_plans(&plan.descriptor_set_layouts)
+        );
+        assert_eq!(
+            plan.descriptor_set_allocation,
+            ash_descriptor_set_allocation_plan(&plan.descriptor_set_layouts)
+        );
+        assert_eq!(plan.sampler_resources, ash_sampler_resource_plans(&frame));
+        assert_eq!(
+            plan.descriptor_writes,
+            ash_descriptor_write_plans(&frame).unwrap()
+        );
+        assert_eq!(plan.persistent_handle_resource_count(), 7);
+        assert_eq!(plan.frame_dynamic_resource_count(), 3);
+        assert_eq!(plan.draw_command_count(), plan.drawable.commands.len());
+    }
+
+    #[test]
+    fn mtoon_materialization_plan_validates_descriptor_writes() {
+        let mut frame =
+            cache_key_test_frame(vec![1, 2, 3, 4], vec![5, 6, 7, 8], vec![255, 0, 0, 255]);
+        frame.descriptor_sets[0].bindings[0].uniform_upload_index = Some(99);
+        let error = ash_mtoon_materialization_plan(
+            &frame,
+            vk::Extent2D {
+                width: 640,
+                height: 360,
+            },
+            AshMtoonShaderCacheKey::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "descriptor set 0 binding 30 references missing uniform upload 99"
+        );
     }
 
     #[test]

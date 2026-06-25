@@ -53,6 +53,13 @@
   `AshMtoonShaderCacheKey` includes both the clip-space policy and SPIR-V
   coordinate-adjustment policy so incompatible shader/projection conventions do
   not share a pipeline cache entry.
+- Added the first reusable Ash MToon materialization facade. `AshMtoonMaterializationPlan`
+  groups `AshRendererFrame` cache keys, resource manifest, descriptor
+  pool/layout/allocation plans, pipeline-layout plans, sampler resources,
+  descriptor writes, and drawable command stream for a render target plus shader
+  ABI. `renderer_integration.rs` now consumes that facade instead of manually
+  rediscovering sampler, descriptor-set, manifest, and drawable helper order,
+  while still keeping all Vulkan handles and unsafe calls outside the facade.
 
 ## 2026-06-23
 
