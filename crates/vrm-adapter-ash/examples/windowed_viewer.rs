@@ -1031,7 +1031,7 @@ impl MtoonWindowedAshRenderer {
                 AshSwapchainPresentStatus::Presented => Ok(RenderStatus::Ok),
                 AshSwapchainPresentStatus::NeedsRecreate => Ok(RenderStatus::NeedsRecreate),
             };
-        self.current_frame = selection.next_frame_index;
+        self.current_frame = selection.next_frame_slot.index();
         status
     }
 

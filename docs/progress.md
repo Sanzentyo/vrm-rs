@@ -2,6 +2,11 @@
 
 ## 2026-06-25
 
+- Tightened the windowed Ash frame-sync handoff by replacing the public raw
+  next-frame value with `next_frame_slot: AshFrameSlot` on
+  `AshWindowedFrameSyncSelection`, and by renaming the helper to
+  `AshWindowedFrameSyncPlan::next_frame_slot`. The windowed viewer now drops
+  back to `usize` only when updating its renderer-owned current-frame counter.
 - Continued the Ash typed-cache-key cleanup by changing
   `AshMtoonSamplerBindingCacheKey` to carry `AshDescriptorSetId` instead of a
   raw descriptor-set table index. Sampler cache invalidation now speaks the same
@@ -2129,7 +2134,7 @@ Open work:
 - Promoted Ash swapchain acquire/present result classification into public data helpers. `ash_classify_swapchain_acquire` and `ash_classify_swapchain_present` now centralize the `ERROR_OUT_OF_DATE_KHR` and suboptimal recreate policy used by both MToon and simple-preview windowed paths while leaving unsafe acquire/present calls in the engine-owned Vulkan edge.
 - Promoted Ash windowed submit/present payloads into public data plans. `ash_windowed_submit_plan` and `ash_windowed_present_plan` now provide the color-attachment wait stage, semaphore/fence, command-buffer, swapchain, and image-index payloads consumed by both MToon and simple-preview windowed paths, leaving `vk::SubmitInfo`/`vk::PresentInfoKHR` construction and unsafe queue calls in downstream Vulkan code.
 - Promoted Ash texture upload staging/copy/barrier policy into public data helpers. `ash_texture_mip_upload_bytes` and `ash_texture_upload_command_plan` now provide tightly packed mip bytes, `vk::BufferImageCopy` regions, and the standard transfer/shader-read image barriers used by both offscreen and windowed MToon examples while keeping Vulkan image allocation, staging buffers, and command recording engine-owned.
-- Promoted Ash windowed frame-sync selection into a public data plan. `AshWindowedFrameSyncPlan::select_acquired_frame` now converts classified acquire results plus engine-owned image-fence slots into frame slot, swapchain image slot, previous-image fence, suboptimal flag, and next-frame index data; `AshWindowedFrameSyncSelection` builds the matching submit/present payload plans while leaving fence waits, acquire, submit, and present calls in downstream Vulkan code.
+- Promoted Ash windowed frame-sync selection into a public data plan. `AshWindowedFrameSyncPlan::select_acquired_frame` now converts classified acquire results plus engine-owned image-fence slots into frame slot, swapchain image slot, previous-image fence, suboptimal flag, and next-frame slot data; `AshWindowedFrameSyncSelection` builds the matching submit/present payload plans while leaving fence waits, acquire, submit, and present calls in downstream Vulkan code.
 - Promoted Ash command-buffer begin and render-pass begin policy into public data helpers. `AshCommandBufferBeginPlan` exposes reusable vs one-time command-buffer flags, and `AshRenderPassBeginPlan` builds render area plus clear-value ordering from `AshRenderPassPlan` while offscreen and windowed examples still own command buffers, render-pass/framebuffer handles, and unsafe `cmd_*` calls.
 - Promoted Ash offscreen color readback barrier/copy policy into public data. `AshColorAttachmentReadbackPlan` now supplies the color-attachment-to-transfer-source image barrier and tightly packed image-to-buffer copy region used by the real offscreen renderer, leaving image handles, readback buffers, queue submission, and host mapping engine-owned.
 - Promoted Ash command-buffer allocation, fence creation, and simple queue-submit payloads into public data helpers. `AshCommandBufferAllocationPlan`, `AshFencePlan`, and `AshQueueSubmitPlan` now expose the primary command-buffer allocation info, signaled/unsignaled fence create-info, command-buffer submit info, and wait-fence payloads used by both the offscreen readback renderer and windowed swapchain renderer. Unsafe allocation, submit, wait, and destruction remain engine-owned, but downstream Ash apps no longer need to copy these remaining small Vulkan policy snippets from the examples.

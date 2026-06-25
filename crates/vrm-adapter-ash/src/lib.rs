@@ -766,9 +766,12 @@ impl AshWindowedFrameSyncPlan {
         AshFrameSlot::new(current_frame, self.frames_in_flight)
     }
 
-    pub fn next_frame_index(self, current_frame: usize) -> Result<usize, String> {
+    pub fn next_frame_slot(self, current_frame: usize) -> Result<AshFrameSlot, String> {
         let slot = self.frame_slot(current_frame)?;
-        Ok((slot.index() + 1) % self.frames_in_flight)
+        AshFrameSlot::new(
+            (slot.index() + 1) % self.frames_in_flight,
+            self.frames_in_flight,
+        )
     }
 
     pub fn image_index_to_slot(self, image_index: u32) -> Result<AshSwapchainImageSlot, String> {
@@ -805,7 +808,7 @@ impl AshWindowedFrameSyncPlan {
                         image_index,
                         acquired_suboptimal: suboptimal,
                         previous_image_fence,
-                        next_frame_index: self.next_frame_index(current_frame)?,
+                        next_frame_slot: self.next_frame_slot(current_frame)?,
                     },
                 ))
             }
@@ -826,7 +829,7 @@ pub struct AshWindowedFrameSyncSelection {
     pub image_index: u32,
     pub acquired_suboptimal: bool,
     pub previous_image_fence: vk::Fence,
-    pub next_frame_index: usize,
+    pub next_frame_slot: AshFrameSlot,
 }
 
 impl AshWindowedFrameSyncSelection {
@@ -9547,8 +9550,8 @@ mod tests {
         assert_eq!(plan.fence_count(), 2);
         assert_eq!(plan.image_fence_slots(), 3);
         assert_eq!(plan.frame_slot(1).map(AshFrameSlot::index), Ok(1));
-        assert_eq!(plan.next_frame_index(0), Ok(1));
-        assert_eq!(plan.next_frame_index(1), Ok(0));
+        assert_eq!(plan.next_frame_slot(0).map(AshFrameSlot::index), Ok(1));
+        assert_eq!(plan.next_frame_slot(1).map(AshFrameSlot::index), Ok(0));
         assert_eq!(
             plan.image_index_to_slot(2)
                 .map(AshSwapchainImageSlot::index),
@@ -9579,7 +9582,7 @@ mod tests {
         assert_eq!(selection.image_index, 2);
         assert!(selection.acquired_suboptimal);
         assert_eq!(selection.previous_image_fence, vk::Fence::null());
-        assert_eq!(selection.next_frame_index, 0);
+        assert_eq!(selection.next_frame_slot, AshFrameSlot::new(0, 2).unwrap());
 
         let sync_handles = AshWindowedFrameSyncHandles {
             image_available: vk::Semaphore::null(),
