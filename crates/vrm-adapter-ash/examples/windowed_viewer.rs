@@ -2887,17 +2887,23 @@ fn create_mtoon_frame_sync(
     device: &ash::Device,
     plan: AshWindowedFrameSyncPlan,
 ) -> Result<Vec<MtoonFrameSync>, vk::Result> {
-    let mut sync_objects = Vec::with_capacity(plan.fence_count());
-    let semaphore_info = ash_binary_semaphore_plan().semaphore_create_info();
-    for _ in 0..plan.fence_count() {
-        let image_available = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+    let resource_plan = plan
+        .frame_sync_resource_plan()
+        .map_err(|_| vk::Result::ERROR_INITIALIZATION_FAILED)?;
+    let mut sync_objects = Vec::with_capacity(resource_plan.fence_count());
+    for slot in &resource_plan.frame_slots {
+        let image_available_info = slot.image_available_semaphore.semaphore_create_info();
+        let image_available = match unsafe { device.create_semaphore(&image_available_info, None) }
+        {
             Ok(semaphore) => semaphore,
             Err(error) => {
                 destroy_mtoon_frame_sync(device, sync_objects);
                 return Err(error);
             }
         };
-        let render_finished = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+        let render_finished_info = slot.render_finished_semaphore.semaphore_create_info();
+        let render_finished = match unsafe { device.create_semaphore(&render_finished_info, None) }
+        {
             Ok(semaphore) => semaphore,
             Err(error) => {
                 unsafe {
@@ -2907,9 +2913,8 @@ fn create_mtoon_frame_sync(
                 return Err(error);
             }
         };
-        let in_flight = match unsafe {
-            device.create_fence(&ash_signaled_fence_plan().fence_create_info(), None)
-        } {
+        let in_flight_info = slot.in_flight_fence.fence_create_info();
+        let in_flight = match unsafe { device.create_fence(&in_flight_info, None) } {
             Ok(fence) => fence,
             Err(error) => {
                 unsafe {

@@ -2,6 +2,12 @@
 
 ## 2026-06-25
 
+- Promoted the remaining windowed Ash frame-sync object policy into crate-owned
+  data. `AshWindowedFrameSyncPlan::frame_sync_resource_plan` now returns one
+  `AshWindowedFrameSyncSlotResourcePlan` per `AshFrameSlot`, with the two binary
+  semaphores and initially signaled in-flight fence required by the windowed
+  swapchain path, while the example still owns Vulkan handle creation and
+  destruction.
 - Tightened the windowed Ash frame-sync handoff by replacing the public raw
   next-frame value with `next_frame_slot: AshFrameSlot` on
   `AshWindowedFrameSyncSelection`, and by renaming the helper to
