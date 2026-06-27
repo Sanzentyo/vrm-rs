@@ -3069,15 +3069,18 @@ impl AshFrameSlotDynamicResourcePlan {
     }
 
     pub fn total_dynamic_buffer_handles(&self) -> usize {
-        self.slots.iter().map(|slot| slot.buffers).sum()
+        self.slots.iter().map(|slot| slot.buffers.len()).sum()
     }
 
     pub fn total_dynamic_uniform_handles(&self) -> usize {
-        self.slots.iter().map(|slot| slot.uniforms).sum()
+        self.slots.iter().map(|slot| slot.uniforms.len()).sum()
     }
 
     pub fn total_dynamic_descriptor_sets(&self) -> usize {
-        self.slots.iter().map(|slot| slot.descriptor_sets).sum()
+        self.slots
+            .iter()
+            .map(|slot| slot.descriptor_sets.len())
+            .sum()
     }
 
     pub fn total_dynamic_descriptor_bindings(&self) -> usize {
@@ -3088,9 +3091,9 @@ impl AshFrameSlotDynamicResourcePlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AshFrameSlotDynamicResources {
     pub frame_slot: AshFrameSlot,
-    pub buffers: usize,
-    pub uniforms: usize,
-    pub descriptor_sets: usize,
+    pub buffers: Vec<AshBufferUploadId>,
+    pub uniforms: Vec<AshUniformUploadId>,
+    pub descriptor_sets: Vec<AshDescriptorSetId>,
     pub descriptor_bindings: usize,
     pub descriptor_pool: AshDescriptorPoolPlan,
 }
@@ -5989,18 +5992,23 @@ pub fn ash_frame_slot_dynamic_resource_plan(
         .buffers
         .iter()
         .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
-        .count();
+        .map(|resource| resource.buffer_id)
+        .collect::<Vec<_>>();
     let uniforms = manifest
         .uniforms
         .iter()
         .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
-        .count();
+        .map(|resource| resource.uniform_upload_id)
+        .collect::<Vec<_>>();
     let dynamic_descriptor_sets = manifest
         .descriptor_sets
         .iter()
         .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
         .collect::<Vec<_>>();
-    let descriptor_sets = dynamic_descriptor_sets.len();
+    let descriptor_sets = dynamic_descriptor_sets
+        .iter()
+        .map(|resource| resource.descriptor_set_id)
+        .collect::<Vec<_>>();
     let descriptor_bindings = dynamic_descriptor_sets
         .iter()
         .map(|set| set.bindings.len())
@@ -6010,9 +6018,9 @@ pub fn ash_frame_slot_dynamic_resource_plan(
         .map(|index| {
             Ok(AshFrameSlotDynamicResources {
                 frame_slot: sync_plan.frame_slot(index)?,
-                buffers,
-                uniforms,
-                descriptor_sets,
+                buffers: buffers.clone(),
+                uniforms: uniforms.clone(),
+                descriptor_sets: descriptor_sets.clone(),
                 descriptor_bindings,
                 descriptor_pool: descriptor_pool.clone(),
             })
@@ -11745,6 +11753,24 @@ mod tests {
             .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
             .map(|resource| resource.bindings.len())
             .sum::<usize>();
+        let dynamic_buffer_ids = manifest
+            .buffers
+            .iter()
+            .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+            .map(|resource| resource.buffer_id)
+            .collect::<Vec<_>>();
+        let dynamic_uniform_ids = manifest
+            .uniforms
+            .iter()
+            .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+            .map(|resource| resource.uniform_upload_id)
+            .collect::<Vec<_>>();
+        let dynamic_descriptor_set_ids = manifest
+            .descriptor_sets
+            .iter()
+            .filter(|resource| resource.lifetime == AshRendererResourceLifetime::FrameDynamic)
+            .map(|resource| resource.descriptor_set_id)
+            .collect::<Vec<_>>();
         assert_eq!(frame_slot_plan.slot_count(), 2);
         assert_eq!(
             frame_slot_plan.persistent_handle_resources,
@@ -11789,9 +11815,9 @@ mod tests {
                 .enumerate()
                 .all(|(index, slot)| {
                     slot.frame_slot.index() == index
-                        && slot.buffers == manifest.buffers.len()
-                        && slot.uniforms == manifest.uniforms.len()
-                        && slot.descriptor_sets == manifest.descriptor_sets.len()
+                        && slot.buffers == dynamic_buffer_ids
+                        && slot.uniforms == dynamic_uniform_ids
+                        && slot.descriptor_sets == dynamic_descriptor_set_ids
                         && slot.descriptor_bindings == dynamic_descriptor_bindings
                         && slot.descriptor_pool == ash_descriptor_pool_plan_from_manifest(&manifest)
                 })

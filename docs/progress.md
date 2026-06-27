@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-06-27
+
+- Tightened the Ash frame-slot dynamic resource handoff by changing
+  `AshFrameSlotDynamicResources` from raw buffer/uniform/descriptor-set counts
+  to typed `AshBufferUploadId`, `AshUniformUploadId`, and `AshDescriptorSetId`
+  lists. Downstream windowed Ash renderers can now duplicate only the exact
+  frame-dynamic resources needed for each in-flight slot without leaving the
+  renderer-facing boundary in an untyped count-only state.
+
 ## 2026-06-25
 
 - Replaced the last raw swapchain image-fence count handoff in the windowed Ash
