@@ -2,6 +2,14 @@
 
 ## 2026-06-27
 
+- Fixed a Bevy render-parity capture regression where release/example execution
+  could render opaque black frames because `bevy_render_capture` referenced the
+  MToon WGSL shader through `AssetServer` path lookup. The capture example now
+  registers the shader as an internal Bevy asset with a fixed handle, so
+  `cargo run`, direct release-binary execution, and strict acceptance lanes all
+  use the same embedded shader source. A current-head Seed-san smoke confirmed
+  wgpu, Bevy, and Ash `.imqraw` captures pass the `rgb-visible >= 34 dB` gate
+  against three-vrm after the fix.
 - Tightened the Ash frame-slot dynamic resource handoff by changing
   `AshFrameSlotDynamicResources` from raw buffer/uniform/descriptor-set counts
   to typed `AshBufferUploadId`, `AshUniformUploadId`, and `AshDescriptorSetId`

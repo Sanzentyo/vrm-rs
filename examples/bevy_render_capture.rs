@@ -13,6 +13,7 @@ mod render_capture_scene;
 
 use bevy::app::{AppExit, ScheduleRunnerPlugin};
 use bevy::asset::RenderAssetUsages;
+use bevy::asset::uuid::uuid;
 use bevy::camera::{CameraProjection, RenderTarget};
 use bevy::core_pipeline::{core_3d::Transparent3d, tonemapping::Tonemapping};
 use bevy::ecs::system::SystemParam;
@@ -38,7 +39,7 @@ use bevy::render::render_resource::{
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
 use bevy::render::storage::ShaderBuffer;
-use bevy::shader::ShaderRef;
+use bevy::shader::{Shader, ShaderRef};
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::{Parser, ValueEnum};
@@ -75,7 +76,6 @@ use vrm_io::{
     generate_tangents as generate_gltf_tangents, image_data_to_rgba8, load_vrm_from_path,
 };
 
-const MTOON_SHADER_ASSET_PATH: &str = "shaders/vrm_mtoon_capture.wgsl";
 #[cfg(test)]
 const MTOON_SHADER_SOURCE: &str = include_str!("../assets/shaders/vrm_mtoon_capture.wgsl");
 const BEVY_PHASE_ORDER_OFFSET_SCALE: f32 = 0.000001;
@@ -117,6 +117,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         )))
         .add_systems(Startup, setup);
 
+    bevy::asset::load_internal_asset!(
+        app,
+        mtoon_shader_handle(),
+        "../assets/shaders/vrm_mtoon_capture.wgsl",
+        Shader::from_wgsl
+    );
+
     if options.diagnostic_render == DiagnosticRender::OwnerId {
         app.sub_app_mut(RenderApp)
             .insert_resource(GpuPreprocessingSupport {
@@ -127,6 +134,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.run();
 
     rx.recv()?.map_err(|message| message.into())
+}
+
+fn mtoon_shader_handle() -> Handle<Shader> {
+    Handle::Uuid(
+        uuid!("42d1d602-2d4d-4fb3-b6bd-7e1a51ea7b11"),
+        Default::default(),
+    )
 }
 
 #[derive(Clone, Debug, Parser, Resource)]
@@ -2595,7 +2609,7 @@ impl From<&BevyMtoonMaterial> for BevyMtoonKey {
 
 impl Material for BevyMtoonMaterial {
     fn fragment_shader() -> ShaderRef {
-        MTOON_SHADER_ASSET_PATH.into()
+        mtoon_shader_handle().into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -3544,6 +3558,14 @@ mod tests {
         assert!(MTOON_SHADER_SOURCE.contains("textureSampleGrad("));
         assert!(!MTOON_SHADER_SOURCE.contains("textureSampleLevel("));
         assert!(!MTOON_SHADER_SOURCE.contains("apply_owner_sample_override"));
+    }
+
+    #[test]
+    fn material_shader_uses_embedded_handle() {
+        let ShaderRef::Handle(handle) = BevyMtoonMaterial::fragment_shader() else {
+            panic!("Bevy render capture shader must not depend on AssetServer path lookup");
+        };
+        assert_eq!(handle.id(), mtoon_shader_handle().id());
     }
 
     #[test]
