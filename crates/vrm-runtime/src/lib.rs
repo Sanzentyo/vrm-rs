@@ -1166,6 +1166,7 @@ impl VrmAnimationMixer {
             active: true,
             order,
             completed: false,
+            replaces: None,
         });
         Ok(id)
     }
@@ -1211,6 +1212,8 @@ impl VrmAnimationMixer {
         Ok(())
     }
 
+    /// Starts `to_clip` at zero weight and linearly blends from the currently
+    /// displayed pose to its configured target weight over `duration` seconds.
     pub fn cross_fade(
         &mut self,
         from: VrmAnimationActionId,
@@ -1218,10 +1221,11 @@ impl VrmAnimationMixer {
         duration: f32,
         mut options: AnimationActionOptions,
     ) -> Result<VrmAnimationActionId, AnimationMixerError> {
-        self.fade_to(from, 0.0, duration)?;
+        self.action_mut(from)?;
         let target = sanitize_weight(options.weight);
         options.weight = 0.0;
         let to = self.play(to_clip, options)?;
+        self.action_mut(to)?.replaces = Some(from);
         self.fade_to(to, target, duration)?;
         Ok(to)
     }
@@ -1260,6 +1264,19 @@ impl VrmAnimationMixer {
         };
         for contribution in contributions {
             output.apply_contribution(&contribution);
+        }
+        let replaced_actions = self
+            .actions
+            .iter()
+            .filter(|action| {
+                action.active && action.fade.is_none() && action.weight >= 1.0 - f32::EPSILON
+            })
+            .filter_map(|action| action.replaces)
+            .collect::<Vec<_>>();
+        for replaced in replaced_actions {
+            if let Some(action) = self.actions.iter_mut().find(|action| action.id == replaced) {
+                action.active = false;
+            }
         }
         self.actions.retain(|action| action.active);
         Ok(output)
@@ -1316,6 +1333,7 @@ pub struct AnimationAction {
     active: bool,
     order: u64,
     completed: bool,
+    replaces: Option<VrmAnimationActionId>,
 }
 
 impl AnimationAction {
@@ -1947,6 +1965,39 @@ mod tests {
         );
         assert!(mixer.actions().all(|action| action.id != idle_action));
         assert!(mixer.actions().any(|action| action.id == wave_action));
+    }
+
+    #[test]
+    fn animation_mixer_cross_fade_is_linear_in_both_directions() {
+        let mut mixer = VrmAnimationMixer::default();
+        let active = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::from_rotation_z(1.0), Quat::from_rotation_z(1.0)),
+            (Vec3::ZERO, Vec3::ZERO),
+            (1.0, 1.0),
+        ));
+        let idle = mixer.add_clip(mixer_clip(
+            1.0,
+            HumanBoneName::Head,
+            (Quat::IDENTITY, Quat::IDENTITY),
+            (Vec3::ZERO, Vec3::ZERO),
+            (0.0, 0.0),
+        ));
+        let active_action = mixer
+            .play(active, AnimationActionOptions::default())
+            .unwrap();
+        mixer
+            .cross_fade(active_action, idle, 1.0, AnimationActionOptions::default())
+            .unwrap();
+
+        let halfway = mixer.update(DeltaTime(0.5)).unwrap();
+
+        assert!((halfway.frame.preset_expressions[&ExpressionName::Blink] - 0.5).abs() <= 0.0001);
+        assert_quat_close(
+            halfway.frame.humanoid_rotations[&HumanBoneName::Head],
+            Quat::from_rotation_z(0.5),
+        );
     }
 
     #[test]

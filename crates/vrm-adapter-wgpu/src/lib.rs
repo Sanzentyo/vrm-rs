@@ -8,8 +8,12 @@ use bytemuck::{Pod, Zeroable};
 use clap::Parser;
 use glam::{Mat4, Vec2, Vec3};
 use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use vrm_adapter::{
     HeadlessSceneState, HumanoidPoseRig, MTOON_REFERENCE_WGSL, MtoonGpuMaterial,
@@ -24,7 +28,10 @@ use vrm_core::{Feature, MaterialRef, NodeRef, TextureRef, VrmAnimation, VrmDocum
 use vrm_io::{
     CpuRgba8Image, GltfAlphaMode, GltfNodeRest, GltfPrimitiveData, LoadedVrm, load_vrm_from_path,
 };
-use vrm_runtime::sample_vrm_animation;
+use vrm_runtime::{
+    AnimationActionOptions, AnimationMixerError, DeltaTime, VrmAnimationActionId,
+    VrmAnimationMixer, sample_vrm_animation,
+};
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -467,6 +474,7 @@ impl Vertex {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct Uniforms {
     view_projection: [[f32; 4]; 4],
+    output_color_transform: [u32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -544,9 +552,82 @@ struct AvatarRuntime {
     loaded: LoadedVrm,
     scene: HeadlessSceneState,
     rig: HumanoidPoseRig,
-    animation: Option<VrmAnimation>,
-    animation_time: f32,
-    animation_speed: f32,
+    playback: AnimationPlayback,
+}
+
+#[derive(Clone, Debug)]
+struct AnimationPlayback {
+    mixer: VrmAnimationMixer,
+    current_action: Option<VrmAnimationActionId>,
+    speed: f32,
+}
+
+impl AnimationPlayback {
+    fn new(animation: Option<VrmAnimation>, speed: f32) -> Result<Self, AnimationMixerError> {
+        let mut playback = Self {
+            mixer: VrmAnimationMixer::default(),
+            current_action: None,
+            speed,
+        };
+        playback.play_immediately(animation)?;
+        Ok(playback)
+    }
+
+    fn play_immediately(
+        &mut self,
+        animation: Option<VrmAnimation>,
+    ) -> Result<(), AnimationMixerError> {
+        self.mixer = VrmAnimationMixer::default();
+        self.current_action = match animation {
+            Some(animation) => {
+                let clip = self.mixer.add_clip(animation);
+                let options = self.action_options();
+                Some(self.mixer.play(clip, options)?)
+            }
+            None => None,
+        };
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn transition_to(
+        &mut self,
+        animation: Option<VrmAnimation>,
+        duration_seconds: f32,
+    ) -> Result<(), AnimationMixerError> {
+        let Some(animation) = animation else {
+            return self.play_immediately(None);
+        };
+        let clip = self.mixer.add_clip(animation);
+        let options = self.action_options();
+        self.current_action = Some(match self.current_action {
+            Some(current) => self
+                .mixer
+                .cross_fade(current, clip, duration_seconds, options)?,
+            None => self.mixer.play(clip, options)?,
+        });
+        Ok(())
+    }
+
+    fn update(
+        &mut self,
+        delta_seconds: f32,
+    ) -> Result<Option<vrm_runtime::VrmAnimationFrame>, AnimationMixerError> {
+        self.current_action
+            .map(|_| {
+                self.mixer
+                    .update(DeltaTime(delta_seconds))
+                    .map(|output| output.frame)
+            })
+            .transpose()
+    }
+
+    fn action_options(&self) -> AnimationActionOptions {
+        AnimationActionOptions {
+            speed: self.speed,
+            ..AnimationActionOptions::default()
+        }
+    }
 }
 
 impl AvatarRuntime {
@@ -555,28 +636,19 @@ impl AvatarRuntime {
         animation: Option<VrmAnimation>,
         animation_speed: f32,
     ) -> Result<Self, Box<dyn Error>> {
-        let mut scene = headless_scene_from_loaded(&loaded)?;
-        scene.update_world_transforms()?;
-        let rig = HumanoidPoseRig::capture(&scene, loaded.model().document())?;
-        Ok(Self {
+        let mut runtime = Self {
             loaded,
-            scene,
-            rig,
-            animation,
-            animation_time: 0.0,
-            animation_speed,
-        })
+            scene: HeadlessSceneState::default(),
+            rig: HumanoidPoseRig::default(),
+            playback: AnimationPlayback::new(None, animation_speed)?,
+        };
+        runtime.set_animation(animation)?;
+        Ok(runtime)
     }
 
     fn update(&mut self, delta_seconds: f32) -> Result<(), Box<dyn Error>> {
-        if let Some(animation) = &self.animation {
-            self.animation_time += delta_seconds * self.animation_speed;
-            let time = if animation.duration > f32::EPSILON {
-                self.animation_time.rem_euclid(animation.duration)
-            } else {
-                0.0
-            };
-            let frame = sample_vrm_animation(animation, time);
+        if let Some(frame) = self.playback.update(delta_seconds)? {
+            self.rig.reset_normalized_pose();
             apply_vrma_animation_frame_with_look_at(
                 &mut self.scene,
                 &mut self.rig,
@@ -586,6 +658,50 @@ impl AvatarRuntime {
         }
         self.scene.update_world_transforms()?;
         Ok(())
+    }
+
+    fn set_animation(&mut self, animation: Option<VrmAnimation>) -> Result<(), Box<dyn Error>> {
+        let (scene, rig) = self.prepare_animation_state(animation.as_ref())?;
+        let playback = AnimationPlayback::new(animation, self.playback.speed)?;
+        self.scene = scene;
+        self.rig = rig;
+        self.playback = playback;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn transition_animation(
+        &mut self,
+        animation: Option<VrmAnimation>,
+        duration_seconds: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        self.playback
+            .transition_to(animation, duration_seconds)
+            .map_err(|error| wgpu_viewer_error("cross-fade animation", error))
+    }
+
+    fn prepare_animation_state(
+        &self,
+        animation: Option<&VrmAnimation>,
+    ) -> Result<(HeadlessSceneState, HumanoidPoseRig), Box<dyn Error>> {
+        let mut scene = headless_scene_from_loaded(&self.loaded)
+            .map_err(|error| wgpu_viewer_boxed_error("rebuild headless scene", error))?;
+        let mut rig = HumanoidPoseRig::capture(&scene, self.loaded.model().document())
+            .map_err(|error| wgpu_viewer_error("capture humanoid rig", error))?;
+        if let Some(animation) = animation {
+            let frame = sample_vrm_animation(animation, 0.0);
+            apply_vrma_animation_frame_with_look_at(
+                &mut scene,
+                &mut rig,
+                self.loaded.model().document(),
+                &frame,
+            )
+            .map_err(|error| wgpu_viewer_error("apply animation initial frame", error))?;
+            scene
+                .update_world_transforms()
+                .map_err(|error| wgpu_viewer_error("update animation world transforms", error))?;
+        }
+        Ok((scene, rig))
     }
 
     fn world_matrices(&self) -> Vec<Mat4> {
@@ -601,6 +717,55 @@ impl AvatarRuntime {
             })
             .collect()
     }
+}
+
+#[derive(Debug)]
+struct WgpuViewerError {
+    context: &'static str,
+    source: Box<dyn Error>,
+}
+
+impl WgpuViewerError {
+    fn new(context: &'static str, source: Box<dyn Error>) -> Self {
+        Self { context, source }
+    }
+}
+
+impl fmt::Display for WgpuViewerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "failed to {} while switching animation: {}",
+            self.context, self.source
+        )
+    }
+}
+
+impl Error for WgpuViewerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn wgpu_viewer_error<E>(context: &'static str, source: E) -> Box<dyn Error>
+where
+    E: Error + 'static,
+{
+    wgpu_viewer_boxed_error(context, Box::new(source))
+}
+
+fn wgpu_viewer_boxed_error(context: &'static str, source: Box<dyn Error>) -> Box<dyn Error> {
+    Box::new(WgpuViewerError::new(context, source))
+}
+
+pub struct WgpuOverlayFrame<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub view: &'a wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub width: u32,
+    pub height: u32,
 }
 
 struct GpuMaterial {
@@ -630,7 +795,7 @@ struct WgpuViewer {
     primitives: Vec<GpuPrimitive>,
     avatar: AvatarRuntime,
     camera: OrbitCamera,
-    last_frame: Instant,
+    last_frame_seconds: f64,
 }
 
 impl WgpuViewer {
@@ -684,6 +849,7 @@ impl WgpuViewer {
             label: Some("vrm-rs wgpu viewer uniforms"),
             contents: bytemuck::bytes_of(&Uniforms {
                 view_projection: Mat4::IDENTITY.to_cols_array_2d(),
+                output_color_transform: output_color_transform(config.format),
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -692,7 +858,7 @@ impl WgpuViewer {
                 label: Some("vrm-rs wgpu viewer uniform layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -775,8 +941,7 @@ impl WgpuViewer {
             cache: None,
         });
         let depth_view = create_depth_view(&device, &config);
-        let mut avatar = AvatarRuntime::new(avatar, animation, options.speed)?;
-        avatar.update(0.0)?;
+        let avatar = AvatarRuntime::new(avatar, animation, options.speed)?;
         let materials =
             create_materials(&device, &queue, &material_bind_group_layout, &avatar.loaded);
         let primitives = create_primitives(&device, &avatar)?;
@@ -793,7 +958,7 @@ impl WgpuViewer {
             primitives,
             avatar,
             camera: OrbitCamera::new(Vec3::new(0.0, options.look_y, 0.0), options.camera_z),
-            last_frame: Instant::now(),
+            last_frame_seconds: frame_time_seconds(),
         })
     }
 
@@ -808,9 +973,9 @@ impl WgpuViewer {
     }
 
     fn update(&mut self) -> Result<(), Box<dyn Error>> {
-        let now = Instant::now();
-        let delta = now.duration_since(self.last_frame).as_secs_f32();
-        self.last_frame = now;
+        let now = frame_time_seconds();
+        let delta = (now - self.last_frame_seconds).max(0.0) as f32;
+        self.last_frame_seconds = now;
         self.avatar.update(delta)?;
         update_primitive_buffers(&self.device, &mut self.primitives, &self.avatar)?;
         let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
@@ -819,22 +984,30 @@ impl WgpuViewer {
             0,
             bytemuck::bytes_of(&Uniforms {
                 view_projection: self.camera.view_projection(aspect).to_cols_array_2d(),
+                output_color_transform: output_color_transform(self.config.format),
             }),
         );
         Ok(())
     }
 
-    fn render(&mut self) -> RenderOutcome {
+    fn render(&mut self) -> Result<RenderOutcome, Box<dyn Error>> {
+        self.render_with_overlay(|_| Ok(()))
+    }
+
+    fn render_with_overlay(
+        &mut self,
+        mut overlay: impl FnMut(WgpuOverlayFrame<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<RenderOutcome, Box<dyn Error>> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return RenderOutcome::Skip;
+                return Ok(RenderOutcome::Skip);
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                return RenderOutcome::Reconfigure;
+                return Ok(RenderOutcome::Reconfigure);
             }
-            wgpu::CurrentSurfaceTexture::Validation => return RenderOutcome::ValidationError,
+            wgpu::CurrentSurfaceTexture::Validation => return Ok(RenderOutcome::ValidationError),
         };
         let view = frame
             .texture
@@ -852,9 +1025,9 @@ impl WgpuViewer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.02,
-                            g: 0.025,
-                            b: 0.03,
+                            r: surface_color_channel(self.config.format, 0.02),
+                            g: surface_color_channel(self.config.format, 0.025),
+                            b: surface_color_channel(self.config.format, 0.03),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -886,15 +1059,25 @@ impl WgpuViewer {
                 pass.draw_indexed(0..primitive.index_count, 0, 0..1);
             }
         }
+        overlay(WgpuOverlayFrame {
+            device: &self.device,
+            queue: &self.queue,
+            encoder: &mut encoder,
+            view: &view,
+            format: self.config.format,
+            width: self.config.width,
+            height: self.config.height,
+        })?;
         self.queue.submit([encoder.finish()]);
         frame.present();
-        RenderOutcome::Rendered
+        Ok(RenderOutcome::Rendered)
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub struct WgpuCanvasViewer {
     inner: WgpuViewer,
+    canvas: web_sys::HtmlCanvasElement,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -907,9 +1090,9 @@ impl WgpuCanvasViewer {
     ) -> Result<Self, Box<dyn Error>> {
         let size = PhysicalSize::new(canvas.width().max(1), canvas.height().max(1));
         let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas))?;
+        let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))?;
         let inner = WgpuViewer::new_from_surface(surface, size, options, avatar, animation).await?;
-        Ok(Self { inner })
+        Ok(Self { inner, canvas })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -917,9 +1100,51 @@ impl WgpuCanvasViewer {
             .resize(PhysicalSize::new(width.max(1), height.max(1)));
     }
 
+    pub fn orbit_camera(&mut self, delta_x: f32, delta_y: f32) {
+        self.inner.camera.orbit(Vec2::new(delta_x, delta_y));
+    }
+
+    pub fn pan_camera(&mut self, delta_x: f32, delta_y: f32) {
+        self.inner.camera.pan(Vec2::new(delta_x, delta_y));
+    }
+
+    pub fn zoom_camera(&mut self, scroll_lines: f32) {
+        self.inner.camera.zoom(scroll_lines);
+    }
+
+    pub fn reset_camera(&mut self) {
+        self.inner.camera.reset();
+    }
+
+    pub fn set_animation(&mut self, animation: Option<VrmAnimation>) -> Result<(), Box<dyn Error>> {
+        self.inner.avatar.set_animation(animation)
+    }
+
+    pub fn transition_animation(
+        &mut self,
+        animation: Option<VrmAnimation>,
+        duration_seconds: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        self.inner
+            .avatar
+            .transition_animation(animation, duration_seconds)
+    }
+
     pub fn render_frame(&mut self) -> Result<bool, Box<dyn Error>> {
+        self.render_frame_with_overlay(|_| Ok(()))
+    }
+
+    pub fn render_frame_with_overlay(
+        &mut self,
+        overlay: impl FnMut(WgpuOverlayFrame<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<bool, Box<dyn Error>> {
+        let width = self.canvas.width().max(1);
+        let height = self.canvas.height().max(1);
+        if self.inner.config.width != width || self.inner.config.height != height {
+            self.resize(width, height);
+        }
         self.inner.update()?;
-        match self.inner.render() {
+        match self.inner.render_with_overlay(overlay)? {
             RenderOutcome::Rendered => Ok(true),
             RenderOutcome::Skip => Ok(false),
             RenderOutcome::Reconfigure => {
@@ -934,6 +1159,20 @@ impl WgpuCanvasViewer {
             }
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn frame_time_seconds() -> f64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn frame_time_seconds() -> f64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map(|performance| performance.now() / 1000.0)
+        .unwrap_or(0.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1067,15 +1306,18 @@ impl ApplicationHandler for App {
                         eprintln!("failed to update VRM viewer: {error}");
                     }
                     match viewer.render() {
-                        RenderOutcome::Rendered | RenderOutcome::Skip => {}
-                        RenderOutcome::Reconfigure => {
+                        Ok(RenderOutcome::Rendered | RenderOutcome::Skip) => {}
+                        Ok(RenderOutcome::Reconfigure) => {
                             viewer.resize(PhysicalSize::new(
                                 viewer.config.width,
                                 viewer.config.height,
                             ));
                         }
-                        RenderOutcome::ValidationError => {
+                        Ok(RenderOutcome::ValidationError) => {
                             eprintln!("failed to acquire a valid wgpu surface texture");
+                        }
+                        Err(error) => {
+                            eprintln!("failed to render VRM viewer: {error}");
                         }
                     }
                 }
@@ -1125,6 +1367,27 @@ fn create_depth_view(
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn output_color_transform(format: wgpu::TextureFormat) -> [u32; 4] {
+    [u32::from(!format.is_srgb()), 0, 0, 0]
+}
+
+fn surface_color_channel(format: wgpu::TextureFormat, linear: f64) -> f64 {
+    if format.is_srgb() {
+        linear
+    } else {
+        linear_to_srgb_channel(linear)
+    }
+}
+
+fn linear_to_srgb_channel(linear: f64) -> f64 {
+    let linear = linear.clamp(0.0, 1.0);
+    if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 fn create_materials(
@@ -1369,6 +1632,7 @@ fn headless_scene_from_loaded(loaded: &LoadedVrm) -> Result<HeadlessSceneState, 
 const VIEWER_SHADER: &str = r#"
 struct Uniforms {
     view_projection: mat4x4<f32>,
+    output_color_transform: vec4<u32>,
 };
 
 @group(0) @binding(0)
@@ -1403,7 +1667,27 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sampled = textureSample(base_texture, base_sampler, input.tex_coord);
-    return sampled * input.color;
+    let linear = sampled * input.color;
+    if uniforms.output_color_transform.x == 0u {
+        return linear;
+    }
+    return vec4<f32>(linear_to_srgb(linear.rgb), linear.a);
+}
+
+fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb_channel(linear.r),
+        linear_to_srgb_channel(linear.g),
+        linear_to_srgb_channel(linear.b),
+    );
+}
+
+fn linear_to_srgb_channel(linear: f32) -> f32 {
+    let clamped = clamp(linear, 0.0, 1.0);
+    if clamped <= 0.0031308 {
+        return clamped * 12.92;
+    }
+    return 1.055 * pow(clamped, 1.0 / 2.4) - 0.055;
 }
 "#;
 
@@ -1588,5 +1872,27 @@ mod tests {
             depth: 0.42,
             pass: RenderOwnerSamplePass::Base,
         }
+    }
+
+    #[test]
+    fn output_color_transform_encodes_only_for_non_srgb_targets() {
+        assert_eq!(
+            output_color_transform(wgpu::TextureFormat::Rgba8UnormSrgb),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            output_color_transform(wgpu::TextureFormat::Bgra8Unorm),
+            [1, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn surface_clear_color_matches_target_encoding() {
+        assert_eq!(
+            surface_color_channel(wgpu::TextureFormat::Rgba8UnormSrgb, 0.25),
+            0.25
+        );
+        let encoded = surface_color_channel(wgpu::TextureFormat::Bgra8Unorm, 0.25);
+        assert!(encoded > 0.53 && encoded < 0.54);
     }
 }
