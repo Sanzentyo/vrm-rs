@@ -1,6 +1,6 @@
 # vrm-rs wgpu web sample
 
-This sample displays a VRM file plus two switchable VRMA clips in a browser canvas through `vrm-adapter-wgpu`. The animation switcher is rendered as a small `egui` overlay on top of the wgpu canvas.
+This sample displays a VRM file plus two switchable VRMA clips in a browser canvas through `vrm-adapter-wgpu`. The animation switcher is rendered as a small `egui` overlay on top of the wgpu canvas. Switching motions uses the generic `vrm-runtime` animation mixer with a 0.35-second linear crossfade instead of replacing the pose instantly.
 
 Published sample: <https://sanzentyo.github.io/vrm-rs/wasm-example/>
 
