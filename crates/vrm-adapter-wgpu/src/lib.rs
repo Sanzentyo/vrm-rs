@@ -497,7 +497,7 @@ impl OrbitCamera {
 
     fn orbit(&mut self, delta: Vec2) {
         self.yaw -= delta.x * 0.006;
-        self.pitch = (self.pitch - delta.y * 0.006).clamp(
+        self.pitch = (self.pitch + delta.y * 0.006).clamp(
             -std::f32::consts::FRAC_PI_2 + 0.01,
             std::f32::consts::FRAC_PI_2 - 0.01,
         );
@@ -1437,6 +1437,15 @@ mod tests {
             }],
             ..VrmDocument::default()
         }
+    }
+
+    #[test]
+    fn orbit_camera_vertical_drag_follows_pointer_direction() {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 3.0);
+
+        camera.orbit(Vec2::new(0.0, 10.0));
+
+        assert!(camera.position().y > camera.target.y);
     }
 
     #[test]

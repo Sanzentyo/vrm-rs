@@ -109,7 +109,7 @@ impl VrmOrbitCamera {
     pub fn orbit(&mut self, delta: Vec2) {
         self.yaw -= delta.x * self.orbit_sensitivity.x;
         self.pitch =
-            (self.pitch - delta.y * self.orbit_sensitivity.y).clamp(self.min_pitch, self.max_pitch);
+            (self.pitch + delta.y * self.orbit_sensitivity.y).clamp(self.min_pitch, self.max_pitch);
     }
 
     pub fn pan(&mut self, delta: Vec2) {
@@ -212,6 +212,15 @@ mod tests {
         assert_eq!(camera.radius, 4.0);
         camera.zoom(100.0);
         assert_eq!(camera.radius, 1.0);
+    }
+
+    #[test]
+    fn orbit_camera_vertical_drag_follows_pointer_direction() {
+        let mut camera = VrmOrbitCamera::new(Vec3::ZERO, 3.0);
+
+        camera.orbit(Vec2::new(0.0, 10.0));
+
+        assert!(camera.transform().translation.y > camera.target.y);
     }
 
     #[test]
