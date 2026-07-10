@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>vrm-rs wgpu web</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #111316;
+        color: #f5f7fa;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        background: rgb(24 28 34 / 78%);
+        border-bottom: 1px solid rgb(210 225 246 / 14%);
+        backdrop-filter: blur(18px);
+      }
+      label,
+      .file-control {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .asset-notice {
+        grid-column: 1 / -1;
+        margin: 0;
+        color: #b8c7d9;
+        font-size: 12px;
+      }
+      .asset-notice a {
+        color: #9fc5ff;
+      }
+      input[type="text"] {
+        min-width: 0;
+        width: 100%;
+      }
+      input[type="file"] {
+        display: none;
+      }
+      button {
+        height: 32px;
+        padding: 0 14px;
+        width: max-content;
+        border: 1px solid rgb(210 225 246 / 28%);
+        border-radius: 8px;
+        background: rgb(255 255 255 / 12%);
+        color: #f5f8fc;
+        cursor: pointer;
+      }
+      .file-name {
+        min-width: 56px;
+        color: #b8c7d9;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      output {
+        min-height: 18px;
+        font-size: 13px;
+        color: #b8c7d9;
+      }
+      output[data-tone="error"] {
+        color: #ffb4a8;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: #050608;
+        cursor: default;
+        touch-action: none;
+      }
+      canvas.dragging {
+        cursor: grabbing;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="controls">
+      <p class="asset-notice">
+        The default avatar and motions are fetched directly from pinned upstream repositories and
+        are not hosted by vrm-rs. Their respective author, license, and VRM metadata terms apply.
+        <a href="https://github.com/Sanzentyo/vrm-rs/blob/master/examples/wasm/wgpu-web/README.md">Details</a>
+      </p>
+      <label>
+        VRM URL
+        <input
+          id="avatar-url"
+          type="text"
+          value="https://raw.githubusercontent.com/vrm-c/vrm-specification/3942748efbc803b258e288e0f6c993c6bb96cebf/samples/Seed-san/vrm/Seed-san.vrm"
+        />
+      </label>
+      <label>
+        VRMA A URL
+        <input
+          id="animation-a-url"
+          type="text"
+          value="https://raw.githubusercontent.com/pixiv/three-vrm/75ab65c9d4e488521d41bff7f5cfd1976a0b16e8/packages/vrm-viewer/examples/models/idle_loop.vrma"
+        />
+      </label>
+      <label>
+        VRMA B URL
+        <input
+          id="animation-b-url"
+          type="text"
+          value="https://raw.githubusercontent.com/pixiv/three-vrm/9d125586f6d7da094b0ac5f204cebf19586f2397/packages/three-vrm-animation/examples/models/test.vrma"
+        />
+      </label>
+      <div class="file-control">
+        VRM File
+        <input id="avatar" type="file" accept=".vrm,.glb,.gltf" />
+        <button type="button" data-file-target="avatar">Choose VRM</button>
+        <span class="file-name" data-file-name="avatar">No file</span>
+      </div>
+      <div class="file-control">
+        VRMA A File
+        <input id="animation-a" type="file" accept=".vrma,.glb,.gltf" />
+        <button type="button" data-file-target="animation-a">Choose A</button>
+        <span class="file-name" data-file-name="animation-a">No file</span>
+      </div>
+      <div class="file-control">
+        VRMA B File
+        <input id="animation-b" type="file" accept=".vrma,.glb,.gltf" />
+        <button type="button" data-file-target="animation-b">Choose B</button>
+        <span class="file-name" data-file-name="animation-b">No file</span>
+      </div>
+      <button type="submit">Start</button>
+      <output id="status"></output>
+    </form>
+    <canvas id="vrm-canvas" width="1280" height="720"></canvas>
+    <script type="module">
+      import init, {
+        orbit_wgpu_vrm_camera,
+        pan_wgpu_vrm_camera,
+        pointer_button_wgpu_vrm_ui,
+        pointer_leave_wgpu_vrm_ui,
+        pointer_move_wgpu_vrm_ui,
+        reset_wgpu_vrm_camera,
+        start_wgpu_vrm_viewer,
+        zoom_wgpu_vrm_camera,
+      } from "./pkg/vrm_rs_wgpu_web.js";
+
+      await init();
+
+      const form = document.querySelector("#controls");
+      const avatar = document.querySelector("#avatar");
+      const avatarUrl = document.querySelector("#avatar-url");
+      const animationA = document.querySelector("#animation-a");
+      const animationAUrl = document.querySelector("#animation-a-url");
+      const animationB = document.querySelector("#animation-b");
+      const animationBUrl = document.querySelector("#animation-b-url");
+      const canvas = document.querySelector("#vrm-canvas");
+      const startButton = form.querySelector("button[type='submit']");
+      const status = document.querySelector("#status");
+      const eguiPanelBounds = { x: 12, y: 12, width: 410, height: 144 };
+
+      function fitCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        const scale = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.floor(rect.width * scale));
+        canvas.height = Math.max(1, Math.floor(rect.height * scale));
+      }
+
+      async function bytes(file) {
+        return new Uint8Array(await file.arrayBuffer());
+      }
+
+      async function sourceBytes(fileInput, urlInput, required) {
+        const file = fileInput.files?.[0];
+        if (file) {
+          return bytes(file);
+        }
+        const url = urlInput.value.trim();
+        if (!url) {
+          if (required) {
+            throw new Error("VRM source is empty");
+          }
+          return new Uint8Array();
+        }
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`${url} returned ${response.status}`);
+        }
+        return new Uint8Array(await response.arrayBuffer());
+      }
+
+      function setStatus(message, tone = "") {
+        status.value = message;
+        status.dataset.tone = tone;
+      }
+
+      function useCamera(action) {
+        try {
+          action();
+        } catch (_error) {
+          // Camera input can arrive before the viewer has started.
+        }
+      }
+
+      function canvasPoint(event) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
+      }
+
+      function isInEguiPanel(point) {
+        return (
+          point.x >= eguiPanelBounds.x &&
+          point.x <= eguiPanelBounds.x + eguiPanelBounds.width &&
+          point.y >= eguiPanelBounds.y &&
+          point.y <= eguiPanelBounds.y + eguiPanelBounds.height
+        );
+      }
+
+      function useEgui(action) {
+        try {
+          action();
+        } catch (_error) {
+          // UI input can arrive before the viewer has started.
+        }
+      }
+
+      let drag = null;
+
+      for (const button of form.querySelectorAll("[data-file-target]")) {
+        button.addEventListener("click", () => {
+          document.querySelector(`#${button.dataset.fileTarget}`).click();
+        });
+      }
+
+      for (const input of form.querySelectorAll("input[type='file']")) {
+        input.addEventListener("change", () => {
+          const name = form.querySelector(`[data-file-name='${input.id}']`);
+          name.textContent = input.files?.[0]?.name ?? "No file";
+        });
+      }
+
+      canvas.addEventListener("pointerdown", (event) => {
+        if (![0, 1, 2].includes(event.button)) {
+          return;
+        }
+        const point = canvasPoint(event);
+        if (event.button === 0) {
+          useEgui(() => pointer_button_wgpu_vrm_ui(point.x, point.y, true));
+        }
+        if (event.button === 0 && isInEguiPanel(point)) {
+          event.preventDefault();
+          return;
+        }
+        drag = {
+          id: event.pointerId,
+          mode: event.button === 0 && !event.shiftKey ? "orbit" : "pan",
+          x: event.clientX,
+          y: event.clientY,
+        };
+        canvas.setPointerCapture(event.pointerId);
+        canvas.classList.add("dragging");
+        event.preventDefault();
+      });
+
+      canvas.addEventListener("pointermove", (event) => {
+        const point = canvasPoint(event);
+        useEgui(() => pointer_move_wgpu_vrm_ui(point.x, point.y));
+        if (!drag || event.pointerId !== drag.id) {
+          return;
+        }
+        const deltaX = event.clientX - drag.x;
+        const deltaY = event.clientY - drag.y;
+        drag.x = event.clientX;
+        drag.y = event.clientY;
+        useCamera(() => {
+          if (drag.mode === "pan") {
+            pan_wgpu_vrm_camera(deltaX, deltaY);
+          } else {
+            orbit_wgpu_vrm_camera(deltaX, deltaY);
+          }
+        });
+        event.preventDefault();
+      });
+
+      function endDrag(event) {
+        if (event.button === 0 || event.type === "pointercancel") {
+          const point = canvasPoint(event);
+          useEgui(() => pointer_button_wgpu_vrm_ui(point.x, point.y, false));
+        }
+        if (drag?.id === event.pointerId) {
+          drag = null;
+          canvas.classList.remove("dragging");
+        }
+      }
+
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", endDrag);
+      canvas.addEventListener("lostpointercapture", endDrag);
+      canvas.addEventListener("click", (event) => {
+        const point = canvasPoint(event);
+        if (!isInEguiPanel(point)) {
+          return;
+        }
+        useEgui(() => {
+          pointer_move_wgpu_vrm_ui(point.x, point.y);
+          pointer_button_wgpu_vrm_ui(point.x, point.y, true);
+          pointer_button_wgpu_vrm_ui(point.x, point.y, false);
+        });
+        event.preventDefault();
+      });
+      canvas.addEventListener("pointerleave", () => {
+        useEgui(pointer_leave_wgpu_vrm_ui);
+      });
+      canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+      canvas.addEventListener(
+        "wheel",
+        (event) => {
+          event.preventDefault();
+          useCamera(() => zoom_wgpu_vrm_camera(-event.deltaY / 100));
+        },
+        { passive: false },
+      );
+      canvas.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        useCamera(reset_wgpu_vrm_camera);
+      });
+
+      fitCanvas();
+      window.addEventListener("resize", fitCanvas);
+      let started = false;
+      async function startViewer() {
+        if (started) {
+          return;
+        }
+        started = true;
+        fitCanvas();
+        startButton.disabled = true;
+        setStatus("Loading");
+        try {
+          await start_wgpu_vrm_viewer(
+            "vrm-canvas",
+            await sourceBytes(avatar, avatarUrl, true),
+            await sourceBytes(animationA, animationAUrl, false),
+            await sourceBytes(animationB, animationBUrl, false),
+          );
+          setStatus("Running");
+        } catch (error) {
+          started = false;
+          startButton.disabled = false;
+          setStatus(error instanceof Error ? error.message : String(error), "error");
+        }
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        startViewer();
+      });
+      startViewer();
+    </script>
+  </body>
+</html>

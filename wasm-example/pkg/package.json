@@ -1,0 +1,16 @@
+{
+  "name": "vrm-rs-wgpu-web",
+  "type": "module",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "vrm_rs_wgpu_web_bg.wasm",
+    "vrm_rs_wgpu_web.js",
+    "vrm_rs_wgpu_web.d.ts"
+  ],
+  "main": "vrm_rs_wgpu_web.js",
+  "types": "vrm_rs_wgpu_web.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
